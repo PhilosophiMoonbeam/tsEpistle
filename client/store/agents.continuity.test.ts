@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import type { AgentCurrentPageHint, AgentThreadState } from '../../shared/agents/contracts.ts'
-import type { WikiSource } from '../../shared/wiki-source.ts'
+import type { WikiSource, WikiSourcePreview } from '../../shared/wiki-source.ts'
 import {
   AGENT_CHAT_RECENT_MAX_AGE,
   AGENT_CHAT_RECENT_STORAGE_KEY,
@@ -25,6 +25,10 @@ const source = (n: number): WikiSource => ({
   sourceRevision: '1',
   excerpt: `Private excerpt ${n}`,
   excerptTruncated: false
+})
+const previewSource = (n: number): WikiSourcePreview => ({
+  ...source(n),
+  structuredExcerpt: { html: `<p>Private excerpt ${n}</p>`, truncated: false }
 })
 let fixtureOwnerId = 1
 const thread = (n: number): AgentThreadState => ({
@@ -93,7 +97,7 @@ const fixture = () => {
       const n = Number(new URL(path, 'http://localhost').searchParams.get('id'))
       if (preview) return preview(n)
       const status = sourceStatus.get(n) ?? 200
-      return Response.json(status === 200 ? source(n) : { message: 'Source unavailable' }, { status })
+      return Response.json(status === 200 ? previewSource(n) : { message: 'Source unavailable' }, { status })
     }
     if (path.startsWith('/_api/agents/sessions/')) {
       if (method === 'DELETE') return Response.json({ deleted: true })
@@ -475,7 +479,7 @@ describe('Automatic conversation source context', () => {
     const oldInitialization = initialize(store, page(2))
     await requestStarted.promise
     await initialize(store, page(3), 2)
-    preview.resolve(Response.json(source(9)))
+    preview.resolve(Response.json(previewSource(9)))
     expect(await oldInitialization).toBe(false)
     expect(store.workspaceOwnerId).toBe(2)
     expect(store.drafts[id(20)]).toBeUndefined()
@@ -497,7 +501,7 @@ describe('Automatic conversation source context', () => {
     const pending = initialize(store, page(2))
     await requestStarted.promise
     store.closeWorkspace()
-    preview.resolve(Response.json(source(9)))
+    preview.resolve(Response.json(previewSource(9)))
     expect(await pending).toBe(false)
     expect(store.drafts[id(20)]).toBeUndefined()
     expect(store.isWorkspaceReady()).toBe(false)
@@ -517,7 +521,7 @@ describe('Automatic conversation source context', () => {
     const restoring = initialize(store, page(2))
     await requestStarted.promise
     expect(await store.openSession(id(40))).toBe(true)
-    preview.resolve(Response.json(source(9)))
+    preview.resolve(Response.json(previewSource(9)))
     expect(await restoring).toBe(false)
     expect(store.thread?.session.id).toBe(id(40))
     expect(store.drafts[id(20)]).toBeUndefined()

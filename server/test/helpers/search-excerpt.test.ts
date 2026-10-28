@@ -1,5 +1,6 @@
 import { describe, expect, it } from '../bun-test.mts'
-import { matchingSearchExcerpt, searchExcerpt } from '../../helpers/search-excerpt.ts'
+import { load } from 'cheerio'
+import { matchingSearchExcerpt, searchExcerpt, structuredSearchExcerpt } from '../../helpers/search-excerpt.ts'
 describe('source preview excerpts', () => {
   it('returns bounded plain text around a query and excludes invisible executable content', () => {
     const render = `<script>credential</script><style>private</style><p hidden>hidden</p><p>${'Opening words. '.repeat(300)}</p><p>Orbital calibration &amp; testing.</p><p>${'Later words. '.repeat(300)}</p>`
@@ -89,5 +90,61 @@ describe('inline matching passages', () => {
     expect(excerpt).toContain('desired[marker]')
     expect(excerpt.length).toBeLessThanOrEqual(320)
     expect(excerpt).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u)
+  })
+})
+
+describe('structured current-render passages', () => {
+  it('retains zero-to-end row spans and explicit group-header associations', () => {
+    const result = structuredSearchExcerpt('<table><tbody><tr><th id="group" rowspan="0" scope="rowgroup">Group A</th><td headers="group">First</td></tr><tr><td headers="group">Second</td></tr></tbody></table>', '', '/en/table')
+    const $ = load(result.html)
+    expect($('tbody > tr').length).toBe(2)
+    expect($('th').attr('rowspan')).toBe('2')
+    expect($('th').attr('scope')).toBe('rowgroup')
+    expect($('tbody > tr').last().children().map((_index, cell) => $(cell).text()).get()).toEqual(['Second'])
+    for (const cell of $('td').toArray()) {
+      const header = $(cell).attr('headers')!
+      expect($('th').filter((_index, node) => $(node).attr('id') === header).text()).toBe('Group A')
+    }
+    expect(result.truncated).toBe(false)
+  })
+
+  it('omits an oversized connected row group instead of changing its table grid', () => {
+    const rows = Array.from({ length: 121 }, (_, index) => `<tr>${index === 0 ? '<th rowspan="121">Group A</th>' : ''}<td>Row ${index + 1}</td></tr>`).join('')
+    const result = structuredSearchExcerpt(`<table><tbody>${rows}</tbody></table>`, 'Row 60', '/en/table')
+    expect(result.html).toBe('')
+    expect(result.truncated).toBe(true)
+  })
+
+  it('preserves native automatic association for column headers without an explicit thead', () => {
+    const result = structuredSearchExcerpt('<table><tr><th>Name</th><th>Amount</th></tr><tr><td>Example</td><td>42</td></tr></table>', '', '/en/table')
+    const $ = load(result.html)
+    expect($('th').map((_index, cell) => $(cell).text()).get()).toEqual(['Name', 'Amount'])
+    expect($('th[scope]').length).toBe(0)
+    expect($('tr').last().children().map((_index, cell) => $(cell).text()).get()).toEqual(['Example', '42'])
+  })
+
+  for (const reversed of [false, true]) {
+    it(`keeps effective ordered-list numbers after truncation (${reversed ? 'implicit reverse' : 'preceding reset'})`, () => {
+      const count = 35, target = reversed ? 1 : 20
+      const items = Array.from({ length: count }, (_, index) => `<li${!reversed && index === 0 ? ' value="100"' : ''}>Step ${index + 1}: ${'context '.repeat(70)}${index + 1 === target ? 'needlemarker' : ''}</li>`).join('')
+      const result = structuredSearchExcerpt(`<ol${reversed ? ' reversed' : ''}>${items}</ol>`, 'needlemarker', '/en/steps')
+      const $ = load(result.html)
+      const first = Number($('ol > li').first().text().match(/^Step (\d+):/u)![1])
+      expect(Number($('ol').attr('start'))).toBe(reversed ? count - first + 1 : 99 + first)
+      expect($('ol').is('[reversed]')).toBe(reversed)
+      expect($('ol').text()).toContain('needlemarker')
+      expect(result.truncated).toBe(true)
+    })
+  }
+
+  it('retains passive structure while removing resource, executable, hidden and unsafe-link payloads', () => {
+    const render = '<p onclick="attack()">Visible <strong>evidence</strong></p><ul><li>One</li></ul><p hidden>hidden-secret</p><p aria-hidden="true">aria-secret</p><img src="https://egress.invalid/image"><svg><image href="https://egress.invalid/svg"></image></svg><iframe src="https://egress.invalid/frame"></iframe><style>body{background:url(https://egress.invalid/css)}</style><script>script-secret</script><form><input autofocus></form><a href="javascript:attack()">Unsafe</a>'
+    const result = structuredSearchExcerpt(render, 'evidence', '/_private/en/source')
+    const $ = load(result.html)
+    expect($('strong').text()).toBe('evidence')
+    expect($('ul > li').text()).toBe('One')
+    expect($('img,svg,iframe,style,script,form,input,[onclick],[style],[src],[srcset]').length).toBe(0)
+    expect($('a').attr('href')).toBeUndefined()
+    expect($.root().text()).not.toMatch(/hidden-secret|aria-secret|script-secret|egress\.invalid/u)
   })
 })

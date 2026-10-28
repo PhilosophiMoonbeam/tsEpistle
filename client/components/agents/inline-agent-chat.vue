@@ -33,17 +33,18 @@
       @keydown="handleNonModalPanelKeydown"
     >
       <div v-if="panelMode === 'modal'" class="inline-agent__panel-navigation">
-        <v-btn
-          prepend-icon="mdi-brain"
-          variant="text"
-          :aria-label="$t('common:agentWorkspace.memory')"
-          :aria-expanded="memoryOpen"
-          aria-controls="agent-memory-panel"
-          :aria-disabled="memoryMutationBusy ? 'true' : undefined"
-          @click="toggleMemory"
-        >{{ $t('common:agentWorkspace.memory') }}</v-btn>
+        <div v-if="narrowPanel" class="inline-agent__panel-tabs" role="tablist" :aria-label="`${$t('common:agentWorkspace.history')} / ${$t('common:agentWorkspace.memory')}`">
+          <button v-for="kind in panelKinds" :key="kind" type="button" role="tab" :aria-selected="kind === 'history'" :tabindex="kind === 'history' ? 0 : -1" :aria-controls="`${panelIdPrefix}-${kind}-content`" @click="selectPanel(kind)" @keydown="handlePanelTabKeydown($event, kind)">{{ kind === 'history' ? $t('common:agentHistoryPanel.conversations4') : $t('common:agentWorkspace.memory') }}</button>
+        </div>
+        <template v-else>
+          <span class="inline-agent__panel-title">{{ $t('common:agentHistoryPanel.conversations4') }}</span>
+          <v-btn variant="text" size="small" @click="selectPanel('memory')">{{ $t('common:agentWorkspace.memory') }}</v-btn>
+        </template>
+        <v-btn icon="mdi-close" variant="text" :aria-label="$t('common:inlineAgentChat.closeAgentSidePanel')" @click="closePanels" />
       </div>
       <AgentHistoryPanel
+        :content-id="`${panelIdPrefix}-history-content`"
+        :compact-header="panelMode === 'modal'"
         :active="historyOpen"
         :heading-id="historyHeadingId"
         :description-id="historyDescriptionId"
@@ -524,22 +525,18 @@
       @keydown="handleNonModalPanelKeydown"
     >
       <div v-if="panelMode === 'modal'" class="inline-agent__panel-navigation">
-        <v-tooltip location="bottom" :text="historyToggleBlocked ? $t('common:agentWorkspace.waitForMemory') : $t('common:agentWorkspace.history')">
-          <template #activator="{ props: tooltipProps }">
-            <v-btn
-              v-bind="tooltipProps"
-              prepend-icon="mdi-history"
-              variant="text"
-              :aria-label="$t('common:agentWorkspace.history')"
-              :aria-expanded="historyOpen"
-              aria-controls="agent-history-panel"
-              :aria-disabled="historyToggleBlocked ? 'true' : undefined"
-              @click="toggleHistory"
-            >{{ $t('common:agentWorkspace.history') }}</v-btn>
-          </template>
-        </v-tooltip>
+        <div v-if="narrowPanel" class="inline-agent__panel-tabs" role="tablist" :aria-label="`${$t('common:agentWorkspace.history')} / ${$t('common:agentWorkspace.memory')}`">
+          <button v-for="kind in panelKinds" :key="kind" type="button" role="tab" :aria-selected="kind === 'memory'" :tabindex="kind === 'memory' ? 0 : -1" :aria-controls="`${panelIdPrefix}-${kind}-content`" :aria-disabled="kind === 'history' && historyToggleBlocked ? 'true' : undefined" @click="selectPanel(kind)" @keydown="handlePanelTabKeydown($event, kind)">{{ kind === 'history' ? $t('common:agentHistoryPanel.conversations4') : $t('common:agentWorkspace.memory') }}</button>
+        </div>
+        <template v-else>
+          <span class="inline-agent__panel-title">{{ $t('common:agentWorkspace.memory') }}</span>
+          <v-btn variant="text" size="small" :aria-disabled="historyToggleBlocked ? 'true' : undefined" @click="selectPanel('history')">{{ $t('common:agentHistoryPanel.conversations4') }}</v-btn>
+        </template>
+        <v-btn icon="mdi-close" variant="text" :aria-label="$t('common:inlineAgentChat.closeAgentSidePanel')" :aria-disabled="memoryMutationBusy ? 'true' : undefined" :title="memoryMutationBusy ? $t('common:agentWorkspace.waitForMemory') : undefined" @click="closePanels" />
       </div>
       <AgentMemoryManager
+        :content-id="`${panelIdPrefix}-memory-content`"
+        :compact-header="panelMode === 'modal'"
         :model-value="memoryOpen"
         :csrf-token="csrfToken"
         :heading-id="memoryHeadingId"
@@ -823,7 +820,10 @@ const panelMode = ref<'wide' | 'docked' | 'modal'>('wide')
 let panelModeMedia: MediaQueryList[] = []
 const widePanelQuery = '(min-width: 1600px)'
 const dockedPanelQuery = '(min-width: 1024px)'
-const mobilePanelQuery = '(max-width: 639.98px)'
+const mobilePanelQuery = '(max-width: 759.98px)'
+const narrowPanel = ref(false)
+const panelKinds = ['history', 'memory'] as const
+let panelOpener: HTMLElement | null = null
 
 const pageHintFromProps = (): AgentCurrentPageHint | null => {
   if (props.pageId < 1 || !props.pageLocale || !props.pagePath || !props.pageUpdatedAt) return null
@@ -1487,7 +1487,21 @@ const toggleMemory = (): void => {
   if (!networkActionAllowed()) return
   updateMemoryOpen(true)
 }
+const selectPanel = (kind: PanelKind): void => {
+  if (kind === 'history' ? historyOpen.value : memoryOpen.value) return
+  if (kind === 'history') toggleHistory()
+  else toggleMemory()
+}
+const handlePanelTabKeydown = (event: KeyboardEvent, kind: PanelKind): void => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  const rtl = event.currentTarget instanceof HTMLElement && window.getComputedStyle(event.currentTarget).direction === 'rtl'
+  const next = event.key === 'Home' ? 'history' : event.key === 'End' ? 'memory'
+    : (event.key === 'ArrowRight') !== rtl ? (kind === 'history' ? 'memory' : 'history') : (kind === 'memory' ? 'history' : 'memory')
+  selectPanel(next)
+}
 const reconcilePanelMode = (): void => {
+  narrowPanel.value = window.matchMedia(mobilePanelQuery).matches
   const nextMode = (panelModeMedia[0]?.matches ?? window.matchMedia(widePanelQuery).matches)
     ? 'wide'
     : (panelModeMedia[1]?.matches ?? window.matchMedia(dockedPanelQuery).matches)
@@ -1674,7 +1688,7 @@ const scheduleTranscriptFrame = (): void => {
     transcriptScrollTopMemory = scrollTop
 
     if ((growthPending || restoreFollowing) && (!hasConversation.value || ((shouldFollow || restoreFollowing) && transcriptFollowing.value))) {
-      const top = !hasConversation.value && !(window.matchMedia(mobilePanelQuery).matches && composerFocused.value)
+      const top = !hasConversation.value && !(window.matchMedia('(max-width: 639.98px)').matches && composerFocused.value)
         ? 0
         : Math.max(0, scrollHeight - clientHeight)
       container.scrollTo({ top, behavior: 'auto' })
@@ -1856,6 +1870,9 @@ watch([historyOpen, memoryOpen, panelMode], async ([history, memory, mode], [pre
     : focusRequest === 'memory' && memory && !previousMemory ? 'memory' : null
   const kind = newlyOpened ?? (lastActivePanel.value === 'memory' && memory ? 'memory' : history ? 'history' : memory ? 'memory' : null)
   const previousFocus = document.activeElement
+  if (!previousHistory && !previousMemory && (history || memory)) {
+    panelOpener = previousFocus instanceof HTMLElement && isVisibleTrigger(previousFocus) ? previousFocus : triggerForPanel(kind ?? 'history')
+  }
   const closingPanelHadFocus = (previousHistory && !history && Boolean(historyPanel.value?.contains(previousFocus))) ||
     (previousMemory && !memory && Boolean(memoryPanel.value?.contains(previousFocus)))
   const restoringTrigger = pendingPanelFocusKind !== null
@@ -1885,18 +1902,33 @@ watch([historyOpen, memoryOpen, panelMode], async ([history, memory, mode], [pre
   panelFocusKind = kind
   panelFocusScope = createModalFocusScope({
     root,
-    restoreTarget: () => triggerForPanel(kind),
+    restoreTarget: () => isVisibleTrigger(panelOpener) ? panelOpener : triggerForPanel(kind),
     additionalRoots: () => [...(panelScrim.value ? [panelScrim.value] : []), ...activeOwnedOverlayRoots('.agent-owned-overlay')],
     onEscape: kind === 'history' ? closeHistory : closeMemory
   })
+  if (narrowPanel.value) root.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true })
 })
 watch([historyOpen, memoryOpen], ([history, memory], [previousHistory, previousMemory]) => {
   const restoreKind = pendingPanelFocusKind
   pendingPanelFocusKind = null
   if (!restoreKind || (restoreKind === 'history' ? history || !previousHistory : memory || !previousMemory)) return
   if (panelMode.value === 'modal' && (history || memory)) return
-  triggerForPanel(restoreKind)?.focus({ preventScroll: true })
+  const target = panelMode.value === 'modal' && isVisibleTrigger(panelOpener) ? panelOpener : triggerForPanel(restoreKind)
+  target?.focus({ preventScroll: true })
+  panelOpener = null
 }, { flush: 'post' })
+watch(narrowPanel, async () => {
+  const root = historyOpen.value ? historyPanel.value : memoryOpen.value ? memoryPanel.value : null
+  const focused = document.activeElement
+  if (!root || panelMode.value !== 'modal' || !(focused instanceof HTMLElement) || !root.contains(focused)) return
+  await nextTick()
+  if (disposed || panelMode.value !== 'modal' || !isVisibleTrigger(root) || activeOwnedOverlayRoots('.agent-owned-overlay').length > 0) return
+  if (isVisibleTrigger(focused)) return
+  const currentFocus = document.activeElement
+  if (currentFocus instanceof HTMLElement && currentFocus !== document.body && currentFocus !== focused && isVisibleTrigger(currentFocus)) return
+  const target = root.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]') ?? root.querySelector<HTMLElement>('.inline-agent__panel-navigation button')
+  target?.focus({ preventScroll: true })
+})
 watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
   if (sessionId !== previousSessionId) {
     resolveDraftDiscard(false, false)
@@ -1933,7 +1965,8 @@ watch([thread, pendingApprovalId, connection], () => {
 onMounted(() => {
   panelModeMedia = [
     window.matchMedia(widePanelQuery),
-    window.matchMedia(dockedPanelQuery)
+    window.matchMedia(dockedPanelQuery),
+    window.matchMedia(mobilePanelQuery)
   ]
   panelModeMedia.forEach(media => { media.addEventListener('change', reconcilePanelMode) })
   reconcilePanelMode()
@@ -2192,10 +2225,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 /* Phones keep Memory in More when closed, but expose it beside an open History panel. */
-@media (max-width: 639.98px) {
+@media (max-width: 759.98px) {
   .inline-agent:not(.inline-agent--history) .inline-agent__memory-toggle { display: none !important; }
 }
-@media (min-width: 640px) {
+@media (min-width: 760px) {
   .inline-agent__panel-menu-item--compact { display: none !important; }
 }
 
@@ -2946,6 +2979,12 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__panel-navigation [aria-disabled='true'] {
   opacity: .6;
 }
+
+.inline-agent__panel-title { flex: 1; font-weight: 650; }
+.inline-agent__panel-tabs { display: flex; flex: 1; min-width: 0; gap: .125rem; padding: .2rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-raised); }
+.inline-agent__panel-tabs button { flex: 1; min-width: 0; min-height: 2.75rem; padding: .35rem .5rem; border-radius: var(--wiki-control-radius); font: inherit; font-size: .875rem; }
+.inline-agent__panel-tabs button[aria-selected='true'] { background: color-mix(in srgb, rgb(var(--v-theme-primary)) 14%, var(--wiki-surface-raised)); font-weight: 650; }
+.inline-agent__panel-tabs button:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
 
 .inline-agent__side > :deep(.agent-history),
 .inline-agent__side > :deep(.agent-memory) {

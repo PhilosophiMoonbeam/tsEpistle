@@ -108,16 +108,24 @@ function updatePosition (): void {
   const bounds = props.anchor.getBoundingClientRect()
   if (bounds.bottom < y || bounds.top > y + height || bounds.right < x || bounds.left > x + width) { emit('dismiss', false); return }
   const margin = 12, gap = 8
+  // Keep this nonmodal reading aid below the actual fixed chrome.
+  const header = props.anchor.ownerDocument.querySelector<HTMLElement>('.nav-header')
+  const headerBox = header?.getBoundingClientRect()
+  let topEdge = y + margin
+  if (header && headerBox && headerBox.top <= topEdge && headerBox.bottom > y && getComputedStyle(header).visibility === 'visible') {
+    topEdge = Math.max(topEdge, headerBox.bottom + margin)
+  }
+  topEdge = Math.min(topEdge, y + height - margin - 1)
   const cardWidth = Math.min(280, Math.max(1, width - margin * 2))
-  const maxHeight = Math.max(1, height - margin * 2)
+  const maxHeight = Math.max(1, y + height - margin - topEdge)
   element.style.width = `${cardWidth}px`
   element.style.maxHeight = `${maxHeight}px`
   const cardHeight = Math.min(element.getBoundingClientRect().height, maxHeight)
-  const below = y + height - bounds.bottom - gap - margin, above = bounds.top - y - gap - margin
+  const below = y + height - bounds.bottom - gap - margin, above = bounds.top - topEdge - gap
   const preferredTop = below >= cardHeight || below >= above ? bounds.bottom + gap : bounds.top - gap - cardHeight
   position.value = {
     left: `${Math.max(x + margin, Math.min(bounds.left, x + width - cardWidth - margin))}px`,
-    top: `${Math.max(y + margin, Math.min(preferredTop, y + height - cardHeight - margin))}px`,
+    top: `${Math.max(topEdge, Math.min(preferredTop, y + height - cardHeight - margin))}px`,
     maxHeight: `${maxHeight}px`,
     visibility: 'visible'
   }

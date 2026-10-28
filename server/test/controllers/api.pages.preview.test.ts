@@ -7,7 +7,7 @@ import type { Mock } from '../bun-test.mts'
 import { configureTransportRuntime, getTransportRuntime } from '../../controllers/_types.ts'
 import errors from '../../operations/errors.ts'
 import { waitForPageRender } from '../../../client/helpers/pages-api.ts'
-import type { WikiSource } from '../../../shared/wiki-source.ts'
+import type { WikiSourcePreview } from '../../../shared/wiki-source.ts'
 import type pageOperations from '../../operations/pages.ts'
 
 type Preview = typeof pageOperations.preview
@@ -32,7 +32,7 @@ const wiki = {
 const sessionId = 'authorized-preview-session'
 const sessionCookie = `preview-session=${sessionId}`
 const pendingCode = 'PAGE_RENDER_PENDING'
-const readySource: WikiSource = {
+const readySource: WikiSourcePreview = {
   id: 7,
   locale: 'en',
   path: 'docs/saved-page',
@@ -42,7 +42,8 @@ const readySource: WikiSource = {
   updatedAt: '2026-10-16T00:00:00.000Z',
   sourceRevision: '42',
   excerpt: 'Saved content',
-  excerptTruncated: false
+  excerptTruncated: false,
+  structuredExcerpt: { html: '<p>Saved content</p>', truncated: false }
 }
 const target = { id: 7, sourceRevision: '42', locale: 'en', path: 'docs/saved-page', visibility: 'private' as const }
 const requests: Array<{ method: string; url: string; cookie: string }> = []

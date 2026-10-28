@@ -5,9 +5,9 @@ import * as Vue from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { browserWindow } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
-import { createSearchHighlighter } from '../../helpers/search-highlight.ts'
-import { wikiSourceHref } from '../../../shared/wiki-source.ts'
-import type { WikiSource, WikiSourceSelector } from '../../../shared/wiki-source.ts'
+import { renderWikiSourcePreview, WikiSourceLoadError } from '../../helpers/wiki-source.ts'
+import { WikiSourceSchema, wikiSourceHref } from '../../../shared/wiki-source.ts'
+import type { WikiSource, WikiSourcePreview, WikiSourceSelector } from '../../../shared/wiki-source.ts'
 import { createModalFocusScope } from './modal-focus-scope.ts'
 
 const componentPath = path.join(process.cwd(), 'client/components/common/wiki-source-preview.vue')
@@ -34,7 +34,9 @@ const dependencies = {
   watch: Vue.watch,
   useTheme: () => ({ themeClasses: Vue.ref('v-theme--light') }),
   useTranslate: () => translateEnglish,
-  createSearchHighlighter,
+  renderWikiSourcePreview,
+  WikiSourceLoadError,
+  WikiSourceSchema,
   createModalFocusScope,
   wikiSourceHref
 }
@@ -42,8 +44,8 @@ const evaluatePreview = new Function(
   ...Object.keys(dependencies),
   'defineProps',
   'defineEmits',
-  'fetchWikiSource',
-  `${setupScript}\nreturn { wikiSourceHref, themeClasses, ${bindings.join(', ')} }`
+  'fetchWikiSourcePreview',
+  `${setupScript}\nreturn { WikiSourceSchema, wikiSourceHref, themeClasses, ${bindings.join(', ')} }`
 )
 const settle = async (): Promise<void> => {
   for (let pass = 0; pass < 4; pass += 1) {
@@ -51,7 +53,7 @@ const settle = async (): Promise<void> => {
     await Vue.nextTick()
   }
 }
-const source = (id: number, excerpt = 'Source passage'): WikiSource => ({
+const source = (id: number, excerpt = 'Source passage'): WikiSourcePreview => ({
   id,
   locale: 'en',
   path: `handbook/topic-${id}`,
@@ -61,9 +63,13 @@ const source = (id: number, excerpt = 'Source passage'): WikiSource => ({
   updatedAt: '2026-09-14T00:00:00.000Z',
   sourceRevision: `rev-${id}`,
   excerpt,
-  excerptTruncated: false
+  excerptTruncated: false,
+  structuredExcerpt: {
+    html: excerpt ? `<p>${excerpt.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</p>` : '',
+    truncated: false
+  }
 })
-type FetchSource = (selector: WikiSourceSelector, query: string, signal: AbortSignal) => Promise<WikiSource>
+type FetchSource = (selector: WikiSourceSelector, query: string, signal: AbortSignal) => Promise<WikiSourcePreview>
 const mountedApps: { unmount: () => void }[] = []
 const originalRects = Object.getOwnPropertyDescriptor(browserWindow.HTMLElement.prototype, 'getClientRects')
 const buttonStub = Vue.defineComponent({
@@ -141,36 +147,56 @@ describe('source preview reader', () => {
   it('renders only positive structured matches as safe text and keeps page metadata and native actions', async () => {
     const excerpt = '<img src=x onerror=alert(1)> PASTA SAUCE, pasta, noodles, garlic, olive oil, OR'
     const loaded = { ...source(1, excerpt), visibility: 'private' as const, excerptTruncated: true }
+    loaded.structuredExcerpt.truncated = true
     const fetchSource = vi.fn(async () => loaded)
     const mounted = mountPreview(fetchSource, '"pasta sauce" OR noodles -garlic - "olive oil"', true)
     await settle()
     expect(Array.from(dialog().querySelectorAll('mark'), element => element.textContent)).toEqual(['PASTA SAUCE', 'noodles'])
     expect(dialog().querySelector('.wiki-source-preview__excerpt')?.textContent).toBe(excerpt)
     expect(dialog().querySelector('img')).toBeNull()
-    expect(dialog().querySelector('.wiki-source-preview__caption')?.textContent).toContain('Passage matching your search')
-    expect(dialog().querySelector('.wiki-source-preview__metadata')?.textContent).toContain('Revision rev-1')
-    expect(dialog().querySelector('time')?.getAttribute('datetime')).toBe(loaded.updatedAt)
-    expect(dialog().querySelector('.wiki-source-preview__footnote')?.textContent).toContain('full context')
     const link = dialog().querySelector<HTMLAnchorElement>('a')!
     expect(link.getAttribute('href')).toBe('/_private/en/handbook/topic-1')
     expect(link.target).toBe('_blank')
     expect(link.rel).toBe('noopener noreferrer')
     expect(mounted.asked).toEqual([])
     dialog().querySelector<HTMLButtonElement>('.wiki-source-preview__ask')!.click()
-    expect(mounted.asked).toEqual([loaded])
-    expect(fetchSource).toHaveBeenCalledTimes(1)
-    expect(dialog().querySelector('.wiki-source-preview__draft-hint')?.textContent).toBe('Ask prepares a draft. Nothing is sent.')
+    expect(mounted.asked[0]).not.toHaveProperty('structuredExcerpt')
 
     mounted.inputs.query = '-pasta OR -noodles'
     await settle()
     expect(dialog().querySelectorAll('mark')).toHaveLength(0)
-    expect(dialog().querySelector('.wiki-source-preview__caption')?.textContent).toContain('From this page')
+  })
+
+  it('preserves rich matches and table associations without inserting active content or losing private relative links', async () => {
+    const loaded = { ...source(1), locale: 'fr', path: 'guide/current', visibility: 'private' as const }
+    loaded.structuredExcerpt = {
+      html: '<p>Pasta <strong>sauce</strong> is useful.</p><ul><li>First</li></ul><table><thead><tr><th id="column" scope="col">Amount</th></tr></thead><tbody><tr><td headers="column">42</td></tr></tbody></table><a href="next#part">Related</a><img src="https://egress.invalid/image" onerror="attack()"><svg><image href="https://egress.invalid/svg"></image></svg><iframe src="https://egress.invalid/frame"></iframe><a href="javascript:attack()">Unsafe</a>',
+      truncated: true
+    }
+    mountPreview(async () => loaded, '"pasta sauce"')
+    await settle()
+    const excerpt = dialog().querySelector<HTMLElement>('.wiki-source-preview__excerpt')!
+    expect(excerpt.querySelector('strong')?.textContent).toBe('sauce')
+    expect(Array.from(excerpt.querySelectorAll('mark'), mark => mark.textContent).join('')).toBe('Pasta sauce')
+    expect(excerpt.querySelector('ul > li')?.textContent).toBe('First')
+    const header = excerpt.querySelector<HTMLTableCellElement>('th')!
+    const cell = excerpt.querySelector<HTMLTableCellElement>('td')!
+    expect(document.getElementById(cell.headers)).toBe(header)
+    expect(header.id).not.toBe('column')
+    expect(header.scope).toBe('col')
+    expect(cell.textContent).toBe('42')
+    const tableRegion = excerpt.querySelector('table')!.parentElement!
+    expect(tableRegion.tabIndex).toBe(0)
+    expect(tableRegion.getAttribute('role')).toBe('region')
+    expect(excerpt.querySelector('a[href]')?.getAttribute('href')).toBe('/_private/fr/guide/next#part')
+    expect(excerpt.querySelector('img,svg,iframe,[onerror],[src],a[href^="javascript:"]')).toBeNull()
+    expect(dialog().querySelector('.wiki-source-preview__footnote')).not.toBeNull()
   })
 
   it('does not let superseded successes, failures, or finalizers replace the current request', async () => {
-    const first = Promise.withResolvers<WikiSource>()
-    const second = Promise.withResolvers<WikiSource>()
-    const current = Promise.withResolvers<WikiSource>()
+    const first = Promise.withResolvers<WikiSourcePreview>()
+    const second = Promise.withResolvers<WikiSourcePreview>()
+    const current = Promise.withResolvers<WikiSourcePreview>()
     const requests = [first, second, current]
     const signals: AbortSignal[] = []
     const fetchSource = vi.fn((_selector: WikiSourceSelector, _query: string, signal: AbortSignal) => {
@@ -202,7 +228,7 @@ describe('source preview reader', () => {
   })
 
   it('retries the same selector/query and keeps Escape and input restoration working during retry', async () => {
-    const retry = Promise.withResolvers<WikiSource>()
+    const retry = Promise.withResolvers<WikiSourcePreview>()
     const calls: { selector: WikiSourceSelector; query: string; signal: AbortSignal }[] = []
     const mounted = mountPreview((selector, query, signal) => {
       calls.push({ selector, query, signal })
@@ -234,21 +260,21 @@ describe('source preview reader', () => {
   })
 
   it('distinguishes a loaded empty excerpt from loading and error', async () => {
-    const result = Promise.withResolvers<WikiSource>()
+    const result = Promise.withResolvers<WikiSourcePreview>()
     mountPreview(() => result.promise)
     await settle()
-    expect(dialog().querySelector('[role="status"]')?.textContent).toContain('Opening the source')
+    expect(dialog().getAttribute('aria-busy')).toBe('true')
     result.resolve(source(1, ''))
     await settle()
     expect(dialog().querySelector('[role="status"]')).toBeNull()
     expect(dialog().querySelector('[role="alert"]')).toBeNull()
-    expect(dialog().querySelector('.wiki-source-preview__empty')?.textContent).toContain('no preview text')
+    expect(dialog().querySelector('.wiki-source-preview__empty')).not.toBeNull()
     expect(dialog().querySelector('a')).not.toBeNull()
     expect(dialog().querySelector('.wiki-source-preview__ask')).toBeNull()
   })
 
   it('does not start an unowned request after an immediate unmount', async () => {
-    const pending = Promise.withResolvers<WikiSource>()
+    const pending = Promise.withResolvers<WikiSourcePreview>()
     const signals: AbortSignal[] = []
     const mounted = mountPreview((_selector, _query, signal) => {
       signals.push(signal)

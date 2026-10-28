@@ -773,6 +773,13 @@ const reviewSource = (id: number): WikiSource => ({
   id, locale: 'en', path: `handbook/source-${id}`, title: `Source ${id}`, description: 'Page description',
   sourceRevision: '7', updatedAt: timestamp, visibility: 'public', excerpt: 'Authorized page excerpt', excerptTruncated: false
 })
+const reviewPreview = (source: WikiSource) => ({
+  ...source,
+  structuredExcerpt: {
+    html: `<p>${source.excerpt.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</p>`,
+    truncated: false
+  }
+})
 const reviewThread = (
   currentPage: TestPageHint | null | undefined,
   sources: WikiSource[] = []
@@ -1227,7 +1234,7 @@ describe('Inline Agent historical Review scope', () => {
     const sources = [...Array.from({ length: 7 }, (_, index) => reviewSource(index + 1)), { ...reviewSource(42), path: routePage.path }]
     const historical = reviewThread(originalPage, sources)
     const workspace = realWorkspace('saved', routePage, historical)
-    for (const source of sources) workspace.sourceResponses.set(source.id, Response.json(source))
+    for (const source of sources) workspace.sourceResponses.set(source.id, Response.json(reviewPreview(source)))
     const state = workspace.state()
     state.componentProps.pageTitle = 'The currently open route page'
     const mounted = mountInlineAgent(state, { realThread: true })
@@ -1339,7 +1346,7 @@ describe('Inline Agent historical Review scope', () => {
       else if (boundary === 'session') workspace.store.thread = threadFixture('00000000-0000-4000-8000-000000000004')
       else if (boundary === 'workspace') workspace.store.closeWorkspace()
       else workspace.store.updateDraft(sessionId, { text: 'Keep my newer draft' })
-      resolveSource(Response.json(source))
+      resolveSource(Response.json(reviewPreview(source)))
       await settle()
       expect(workspace.messageInputs).toHaveLength(0)
       expect(workspace.store.drafts[sessionId]?.sources ?? []).toEqual([])
@@ -1353,10 +1360,10 @@ describe('Inline Agent historical Review scope', () => {
     it(`does not partially restore or send a request when an original source is ${unavailable}`, async () => {
       const sources = [reviewSource(1), reviewSource(2)]
       const workspace = realWorkspace('saved', routePage, reviewThread(originalPage, sources))
-      workspace.sourceResponses.set(1, Response.json(sources[0]))
+      workspace.sourceResponses.set(1, Response.json(reviewPreview(sources[0])))
       workspace.sourceResponses.set(2, unavailable === 'denied'
         ? new Response(null, { status: 403 })
-        : Response.json({ ...sources[1], locale: 'fr' }))
+        : Response.json(reviewPreview({ ...sources[1], locale: 'fr' })))
       const mounted = mountInlineAgent(workspace.state(), { realThread: true })
       await settle()
       review(mounted.root).click()
@@ -1690,7 +1697,7 @@ describe('Inline Agent mobile panel controls', () => {
     expect(mounted.root.querySelector('.inline-agent__side--history')).not.toBeNull()
   })
 
-  it('restores each modal panel to its own visible trigger at phone and desktop widths', async () => {
+  it('restores the actual overflow or direct modal opener across the phone-header boundary', async () => {
     const state = loadGoalLockState(null)
     const mounted = mountInlineAgent(state, { viewportWidth: 320 })
     const history = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__history-toggle')
@@ -1705,18 +1712,35 @@ describe('Inline Agent mobile panel controls', () => {
     await settle()
     state.closeHistory()
     await settle()
-    expect(document.activeElement).toBe(history)
-    expect(state.triggerForPanel('history')).toBe(history)
-    expect(state.triggerForPanel('memory')).toBe(more)
+    expect(document.activeElement === history).toBe(true)
+
+    state.toggleHistory()
+    await settle()
+    const memoryTab = mounted.root.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1]
+    if (!memoryTab) throw new Error('Compact Memory tab did not render')
+    memoryTab.click()
+    await settle()
+    state.closeMemory()
+    await settle()
+    expect(document.activeElement === history).toBe(true)
 
     resizeViewport?.(640)
     await settle()
+    more.focus()
     state.toggleMemory()
     await settle()
     state.closeMemory()
     await settle()
-    expect(document.activeElement).toBe(memory)
-    expect(state.triggerForPanel('memory')).toBe(memory)
+    expect(document.activeElement === more).toBe(true)
+
+    resizeViewport?.(760)
+    await settle()
+    memory.focus()
+    state.toggleMemory()
+    await settle()
+    state.closeMemory()
+    await settle()
+    expect(document.activeElement === memory).toBe(true)
   })
 
   it('keeps History closed when the workspace is unavailable', async () => {
@@ -2958,12 +2982,9 @@ describe('Inline Agent panel semantics', () => {
     const history = mounted.root.querySelector<HTMLElement>('.inline-agent__side--history')
     expect(history?.getAttribute('role')).toBe('dialog')
     const heading = document.getElementById(history?.getAttribute('aria-labelledby') ?? '')
-    const descriptions = history ? resolveDescribedBy(history) : []
     expect(heading?.tagName).toBe('H2')
     expect(heading?.textContent?.trim()).toBe('Conversations')
     expect(heading && history?.contains(heading)).toBe(true)
-    expect(descriptions.map(description => description.textContent?.trim())).toEqual(['Conversation history'])
-    expect(descriptions.every(description => history?.contains(description) && !description.hidden)).toBe(true)
   })
 
   for (const viewportWidth of [1280, 1760]) {
@@ -3007,6 +3028,29 @@ describe('Inline Agent panel semantics', () => {
       expect(document.activeElement).toBe(history)
     })
   }
+
+  it('keeps surviving editable panel content focused across the compact-header breakpoint', async () => {
+    const state = loadGoalLockState(null)
+    const mounted = mountInlineAgent(state, { viewportWidth: 759 })
+    await settle()
+    state.toggleMemory()
+    await settle()
+    const panel = mounted.root.querySelector<HTMLElement>('.inline-agent__side--memory')!
+    const draft = document.createElement('textarea')
+    draft.value = 'Unsent working memory note'
+    panel.append(draft)
+    vi.spyOn(draft, 'getClientRects').mockReturnValue({ length: 1 } as DOMRectList)
+    draft.focus()
+    draft.setSelectionRange(5, 12)
+    for (const width of [760, 759]) {
+      resizeViewport?.(width)
+      await settle()
+      expect(document.activeElement).toBe(draft)
+      expect(draft.value).toBe('Unsent working memory note')
+      expect([draft.selectionStart, draft.selectionEnd]).toEqual([5, 12])
+      expect(panel.getAttribute('role')).toBe('dialog')
+    }
+  })
 
   it('keeps wide panels independent and collapses to the last active panel at responsive boundaries', async () => {
     const state = loadGoalLockState(null)

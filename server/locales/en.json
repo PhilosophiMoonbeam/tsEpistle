@@ -569,6 +569,7 @@
       "instructions": "Use Arrow Up and Down to move through results, Enter to open a result, Alt+Enter to preview a selected result, Tab to reach filters and actions, and Escape to close search.",
       "closeSearch": "Close search",
       "scopeLabel": "Search corpus",
+      "compactToolbar": "Search corpus and filters. Scroll for more controls.",
       "scopeWiki": "Wiki",
       "scopeAllWiki": "All Wiki",
       "scopeDownloaded": "Saved offline",
@@ -1525,6 +1526,13 @@
       "askAboutPage": "Ask about this page",
       "draftOnlyHint": "Ask prepares a draft. Nothing is sent.",
       "closeSourcePreview": "Close source preview",
+      "structuredContinuation": "This excerpt omits content before or after the passage. Open the page for the complete context and table.",
+      "structuredUnavailable": "This content cannot fit safely in a structured preview. Open the page to read it.",
+      "scrollableTable": "Source table — scroll to read more columns and rows",
+      "renderPending": "The current revision is still rendering. Try again shortly.",
+      "unlockRequired": "Open this page to unlock it before previewing.",
+      "noLongerAvailable": "This source is no longer available to you.",
+      "loadFailed": "The source could not be loaded. Try again.",
       "sourceExcerpt": "Source excerpt"
     },
     "login": {

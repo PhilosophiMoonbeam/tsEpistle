@@ -1,13 +1,20 @@
 <template>
   <v-card
     class="agent-history"
+    :id="contentId"
+    :role="compactHeader ? 'tabpanel' : undefined"
+    :aria-labelledby="headingId"
     elevation="0"
     rounded="xl"
     :aria-busy="loading || refreshingHistory || sessionsReloading || sessionsLoadingMore || savingFolder || deleting || sessionMutationBusy || openingSessionIds.size > 0 || movingSessionIds.size > 0"
   >
-    <AgentPanelHeader ref="historyCloseButton" :title="$t('common:agentHistoryPanel.conversations4')" icon="mdi-history" :close-label="$t('common:agentHistoryPanel.closeChatHistory')" :heading-id="headingId" :description-id="descriptionId" @close="closeHistory">
+    <AgentPanelHeader v-if="!compactHeader" ref="historyCloseButton" :title="$t('common:agentHistoryPanel.conversations4')" icon="mdi-history" :close-label="$t('common:agentHistoryPanel.closeChatHistory')" :heading-id="headingId" :description-id="descriptionId" @close="closeHistory">
       {{ archiveCountDescription }}
     </AgentPanelHeader>
+    <div v-else class="sr-only">
+      <h2 :id="headingId">{{ $t('common:agentHistoryPanel.conversations4') }}</h2>
+      <p :id="descriptionId">{{ archiveCountDescription }}</p>
+    </div>
 
     <div class="agent-history__search">
       <v-text-field
@@ -413,7 +420,7 @@ const sessionEditorTitleId = `${historyId}-session-editor-title`
 const deleteTitleId = `${historyId}-delete-title`
 const removeFolderTitleId = `${historyId}-remove-folder-title`
 // biome-ignore lint/correctness/noVueDuplicateKeys: Script-setup prop aliases and the normalized computed binding are not duplicate Options API keys.
-const props = defineProps<{ active: boolean; headingId: string; descriptionId: string; networkBlocked?: boolean }>()
+const props = defineProps<{ active: boolean; headingId: string; descriptionId: string; networkBlocked?: boolean; compactHeader?: boolean; contentId?: string }>()
 const emit = defineEmits<{ close: []; clear: [] }>()
 const { headingId, descriptionId } = props
 const agents = useAgentsStore()

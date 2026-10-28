@@ -15,16 +15,17 @@
             <div class="wiki-source-preview__metadata"><span>{{ source.locale.toUpperCase() }}</span><span v-if="source.visibility === 'private'">{{ $t('common:wikiSourcePreview.privatePage') }}</span><span>{{ $t('common:wikiSourcePreview.revision', { sourceRevision: source.sourceRevision, interpolation: { escapeValue: false } }) }}</span></div>
             <p class="wiki-source-preview__path">{{ source.path }}</p>
             <p v-if="source.description" class="wiki-source-preview__description">{{ source.description }}</p>
-            <div class="wiki-source-preview__caption"><span>{{ hasExcerptMatch ? $t('common:wikiSourcePreview.passageMatchingSearch') : $t('common:wikiSourcePreview.page') }}</span><time :datetime="source.updatedAt">{{ $t('common:wikiSourcePreview.updated', { updated, interpolation: { escapeValue: false } }) }}</time></div>
-            <p v-if="source.excerpt" class="wiki-source-preview__excerpt"><template v-for="(part, index) in excerptParts" :key="index"><mark v-if="part.matched">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></p>
-            <p v-else class="wiki-source-preview__empty">{{ $t('common:wikiSourcePreview.pageHasNoPreview') }}</p>
-            <p v-if="source.excerptTruncated" class="wiki-source-preview__footnote">{{ $t('common:wikiSourcePreview.excerptCurrentPageOpen') }}</p>
+            <div class="wiki-source-preview__caption"><span>{{ renderedExcerpt.matched ? $t('common:wikiSourcePreview.passageMatchingSearch') : $t('common:wikiSourcePreview.page') }}</span><time :datetime="source.updatedAt">{{ $t('common:wikiSourcePreview.updated', { updated, interpolation: { escapeValue: false } }) }}</time></div>
+            <!-- Sanitized passive current-render HTML; highlighting replaces text nodes only. -->
+            <div v-if="renderedExcerpt.html" class="wiki-source-preview__excerpt" v-html="renderedExcerpt.html" />
+            <p v-else class="wiki-source-preview__empty">{{ $t(source.structuredExcerpt.truncated ? 'common:wikiSourcePreview.structuredUnavailable' : 'common:wikiSourcePreview.pageHasNoPreview') }}</p>
+            <p v-if="source.structuredExcerpt.truncated" class="wiki-source-preview__footnote">{{ $t('common:wikiSourcePreview.structuredContinuation') }}</p>
           </template>
         </section>
         <footer v-if="source && !loading && !error" class="wiki-source-preview__actions">
           <div class="wiki-source-preview__action-buttons">
             <v-btn :href="wikiSourceHref(source)" target="_blank" rel="noopener noreferrer" variant="text" append-icon="mdi-open-in-new">{{ $t('common:wikiSourcePreview.openPage') }}<span class="sr-only"> {{ $t('common:wikiSourcePreview.newTab') }}</span></v-btn>
-            <v-btn v-if="canAsk" class="wiki-source-preview__ask" variant="tonal" prepend-icon="mdi-text-box-plus-outline" @click="emit('ask', source)">{{ $t('common:wikiSourcePreview.askAboutPage') }}</v-btn>
+            <v-btn v-if="canAsk" class="wiki-source-preview__ask" variant="tonal" prepend-icon="mdi-text-box-plus-outline" @click="emit('ask', WikiSourceSchema.parse(source))">{{ $t('common:wikiSourcePreview.askAboutPage') }}</v-btn>
           </div>
           <p v-if="canAsk" class="wiki-source-preview__draft-hint">{{ $t('common:wikiSourcePreview.draftOnlyHint', { defaultValue: 'Ask prepares a draft. Nothing is sent.' }) }}</p>
         </footer>
@@ -36,10 +37,9 @@
 <script setup lang="ts">
 import { useTheme } from 'vuetify'
 import { computed, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
-import { wikiSourceHref } from '../../../shared/wiki-source.ts'
-import type { WikiSource, WikiSourceSelector } from '../../../shared/wiki-source.ts'
-import { fetchWikiSource } from '../../helpers/wiki-source.ts'
-import { createSearchHighlighter } from '../../helpers/search-highlight.ts'
+import { WikiSourceSchema, wikiSourceHref } from '../../../shared/wiki-source.ts'
+import type { WikiSource, WikiSourcePreview, WikiSourceSelector } from '../../../shared/wiki-source.ts'
+import { fetchWikiSourcePreview, renderWikiSourcePreview, WikiSourceLoadError } from '../../helpers/wiki-source.ts'
 import { createModalFocusScope } from './modal-focus-scope.ts'
 import type { ModalFocusScope } from './modal-focus-scope.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
@@ -51,16 +51,16 @@ const { themeClasses } = useTheme()
 const titleId = useId()
 const panel = useTemplateRef<HTMLElement>('panel')
 const backdrop = useTemplateRef<HTMLElement>('backdrop')
-const source = ref<WikiSource | null>(null)
+const source = ref<WikiSourcePreview | null>(null)
 const loading = ref(true)
 const error = ref('')
 let request: AbortController | null = null
 let focusScope: ModalFocusScope | null = null
 const restoreTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null
 const updated = computed(() => source.value ? new Date(source.value.updatedAt).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '')
-const excerptHighlighter = computed(() => createSearchHighlighter(props.query ?? ''))
-const excerptParts = computed(() => excerptHighlighter.value(source.value?.excerpt ?? ''))
-const hasExcerptMatch = computed(() => excerptParts.value.some(part => part.matched))
+const renderedExcerpt = computed(() => source.value
+  ? renderWikiSourcePreview(source.value, props.query ?? '', titleId, t('common:wikiSourcePreview.scrollableTable'))
+  : { html: '', matched: false })
 const loadSource = async (): Promise<void> => {
   request?.abort()
   const current = new AbortController()
@@ -73,10 +73,12 @@ const loadSource = async (): Promise<void> => {
   error.value = ''
   loading.value = true
   try {
-    const result = await fetchWikiSource(selector, query, current.signal)
+    const result = await fetchWikiSourcePreview(selector, query, current.signal)
     if (isCurrent()) source.value = result
   } catch (value) {
-    if (isCurrent()) error.value = value instanceof Error ? value.message : t('common:wikiSourcePreview.sourceUnavailable')
+    if (isCurrent()) error.value = value instanceof WikiSourceLoadError
+      ? t(value.status === 503 ? 'common:wikiSourcePreview.renderPending' : value.status === 403 ? 'common:wikiSourcePreview.unlockRequired' : value.status === 404 ? 'common:wikiSourcePreview.noLongerAvailable' : 'common:wikiSourcePreview.loadFailed')
+      : value instanceof Error ? value.message : t('common:wikiSourcePreview.sourceUnavailable')
   } finally {
     if (isCurrent()) loading.value = false
   }
@@ -122,8 +124,20 @@ onBeforeUnmount(() => {
 .wiki-source-preview__description { font-size: 1rem; line-height: var(--wiki-leading-body, 1.625); margin: 0 0 var(--wiki-space-8, 2rem); color: var(--wiki-text-muted, rgb(var(--v-theme-on-surface))); overflow-wrap: anywhere; }
 .wiki-source-preview__caption { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: var(--wiki-space-2, .5rem) var(--wiki-space-4, 1rem); font-size: var(--wiki-type-label, .8125rem); line-height: 1.5; color: var(--wiki-text-muted, rgb(var(--v-theme-on-surface))); border-bottom: 1px solid var(--wiki-surface-border); padding-bottom: var(--wiki-space-3, .75rem); margin-bottom: var(--wiki-space-5, 1.25rem); }
 .wiki-source-preview__caption > span { font-weight: var(--wiki-label-weight, 650); }
-.wiki-source-preview__excerpt { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--wiki-font-reader, inherit); line-height: 1.8; font-size: 1rem; }
-.wiki-source-preview mark { background: rgba(var(--v-theme-primary), .18); color: inherit; border-radius: .15rem; }
+.wiki-source-preview__excerpt { margin: 0; min-width: 0; overflow-wrap: anywhere; font-family: var(--wiki-font-reader, inherit); line-height: 1.8; font-size: 1rem; }
+.wiki-source-preview__excerpt :deep(p), .wiki-source-preview__excerpt :deep(ul), .wiki-source-preview__excerpt :deep(ol), .wiki-source-preview__excerpt :deep(dl), .wiki-source-preview__excerpt :deep(blockquote), .wiki-source-preview__excerpt :deep(pre) { margin: 0 0 1em; }
+.wiki-source-preview__excerpt :deep(ul), .wiki-source-preview__excerpt :deep(ol) { padding-inline-start: 1.5em; }
+.wiki-source-preview__excerpt :deep(blockquote) { padding-inline-start: 1em; border-inline-start: 3px solid var(--wiki-surface-border); }
+.wiki-source-preview__excerpt :deep(pre) { white-space: pre-wrap; overflow-wrap: anywhere; }
+.wiki-source-preview__excerpt :deep(a) { color: var(--wiki-primary-ink, rgb(var(--v-theme-on-surface))); text-decoration: underline; text-underline-offset: .15em; }
+.wiki-source-preview__excerpt :deep(h1), .wiki-source-preview__excerpt :deep(h2), .wiki-source-preview__excerpt :deep(h3), .wiki-source-preview__excerpt :deep(h4), .wiki-source-preview__excerpt :deep(h5), .wiki-source-preview__excerpt :deep(h6) { margin: 1em 0 .5em; font-size: 1.15em; line-height: 1.4; }
+.wiki-source-preview__excerpt :deep(.wiki-source-preview__table-scroll) { max-width: 100%; max-height: min(28rem, 60dvh); overflow: auto; overscroll-behavior: contain; margin-block: 1em; border: 1px solid var(--wiki-surface-border); border-radius: .25rem; }
+.wiki-source-preview__excerpt :deep(.wiki-source-preview__table-scroll:focus-visible), .wiki-source-preview__excerpt :deep(a:focus-visible) { outline: 2px solid var(--wiki-focus-color, currentColor); outline-offset: -3px; }
+.wiki-source-preview__excerpt :deep(table) { width: max-content; min-width: 100%; border-collapse: collapse; font-size: .875rem; line-height: 1.5; }
+.wiki-source-preview__excerpt :deep(caption) { text-align: start; padding: .75em; font-weight: 650; }
+.wiki-source-preview__excerpt :deep(th), .wiki-source-preview__excerpt :deep(td) { min-width: 6rem; max-width: 24rem; padding: .65em .8em; text-align: start; vertical-align: top; border: 1px solid var(--wiki-surface-border); overflow-wrap: anywhere; }
+.wiki-source-preview__excerpt :deep(th) { font-weight: 700; background: rgb(var(--v-theme-on-surface) / .06); }
+.wiki-source-preview__excerpt :deep(mark) { background: rgba(var(--v-theme-primary), .18); color: inherit; border-radius: .15rem; }
 .wiki-source-preview__footnote, .wiki-source-preview__empty { font-size: var(--wiki-type-body-sm, .875rem); line-height: var(--wiki-leading-body, 1.625); color: var(--wiki-text-muted, rgb(var(--v-theme-on-surface))); margin: var(--wiki-space-6, 1.5rem) 0 0; }
 .wiki-source-preview__state { padding: var(--wiki-space-12, 3rem) var(--wiki-space-4, 1rem); text-align: center; line-height: var(--wiki-leading-body, 1.625); overflow-wrap: anywhere; }
 .wiki-source-preview__state p { margin: var(--wiki-space-4, 1rem) 0; }

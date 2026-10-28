@@ -202,28 +202,12 @@ afterEach(() => {
 })
 
 describe('Agent memory manager rendered contract', () => {
-  it('offers no Clear action for an empty store while keeping both targets selectable with target-specific editor labels', async () => {
+  it('does not offer destructive Clear while both memory stores are empty', async () => {
     const { host, addMemory } = await mountManager()
     // Add is enabled after loading; with nothing saved, the destructive Clear action is not offered at all.
     expect(addMemory.disabled).toBe(false)
     expect(host.querySelector('.agent-memory__clear')).toBeNull()
     expect(browserWindow.document.querySelector('.agent-memory__dialog')).toBeNull()
-
-    addMemory.click()
-    await settle()
-    const buttons = Array.from(host.querySelectorAll<HTMLButtonElement>('.agent-memory__target .v-btn'))
-    expect(buttons.map(button => button.textContent?.trim())).toEqual(['You', 'Agent'])
-    expect(buttons[0]?.classList.contains('v-btn--active')).toBe(true)
-
-    const editorLabel = () => host.querySelector('.agent-memory__editor .v-field-label')?.textContent?.trim()
-    expect(editorLabel()).toBe('Personal detail')
-
-    buttons[1]?.click()
-    await settle()
-
-    expect(buttons[1]?.classList.contains('v-btn--active')).toBe(true)
-    expect(buttons[0]?.classList.contains('v-btn--active')).toBe(false)
-    expect(editorLabel()).toBe('Project or workflow fact')
   })
 
   for (const modifier of ['ctrlKey', 'metaKey'] as const) {

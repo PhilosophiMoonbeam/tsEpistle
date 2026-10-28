@@ -1,9 +1,14 @@
 <template>
-  <v-card class="agent-memory" elevation="0" rounded="xl" :aria-busy="loading || Boolean(actionBusy)">
-    <AgentPanelHeader ref="memoryHeading" :title="$t('common:agentMemoryManager.agentMemory')" icon="mdi-brain" :close-label="$t('common:agentMemoryManager.closeAgentMemory')" :heading-id="headingId" :description-id="descriptionId" :busy="Boolean(actionBusy)" :busy-reason="$t('common:agentWorkspace.waitForMemory')" @close="requestClose">
+  <v-card ref="memoryCard" :id="contentId" :role="compactHeader ? 'tabpanel' : undefined" :aria-labelledby="headingId" class="agent-memory" elevation="0" rounded="xl" :aria-busy="loading || Boolean(actionBusy)">
+    <AgentPanelHeader v-if="!compactHeader" ref="memoryHeading" :title="$t('common:agentMemoryManager.agentMemory')" icon="mdi-brain" :close-label="$t('common:agentMemoryManager.closeAgentMemory')" :heading-id="headingId" :description-id="descriptionId" :busy="Boolean(actionBusy)" :busy-reason="$t('common:agentWorkspace.waitForMemory')" @close="requestClose">
       <p class="agent-memory__intro">{{ $t('common:agentMemoryManager.preferencesFactsCarriedInto') }}</p>
       <span v-if="loaded" class="agent-memory__count" role="status" aria-live="polite" aria-atomic="true">{{ memoryCountLabel }}</span>
     </AgentPanelHeader>
+    <div v-else class="sr-only">
+      <h2 :id="headingId">{{ $t('common:agentMemoryManager.agentMemory') }}</h2>
+      <p :id="descriptionId">{{ $t('common:agentMemoryManager.preferencesFactsCarriedInto') }}</p>
+      <span v-if="loaded" role="status" aria-live="polite" aria-atomic="true">{{ memoryCountLabel }}</span>
+    </div>
     <div v-if="loaded && memoryCount > 0" class="agent-memory__search">
       <v-text-field v-model="searchQuery" :label="$t('common:agentMemoryManager.findMemory')" :aria-label="$t('common:agentMemoryManager.searchAgentMemory')" prepend-inner-icon="mdi-magnify" variant="outlined" density="compact" clearable hide-details>
         <template #clear="{ props: clearProps }"><v-icon v-bind="clearProps" icon="mdi-close-circle" :aria-label="$t('common:agentMemoryManager.clearSearch')" /></template>
@@ -211,7 +216,7 @@ const t = useTranslate()
 const agents = useAgentsStore()
 
 // biome-ignore lint/correctness/noVueDuplicateKeys: Script-setup prop aliases and the normalized computed binding are not duplicate Options API keys.
-const props = defineProps<{ csrfToken: string; headingId: string; descriptionId: string; networkBlocked?: boolean }>()
+const props = defineProps<{ csrfToken: string; headingId: string; descriptionId: string; networkBlocked?: boolean; compactHeader?: boolean; contentId?: string }>()
 const { csrfToken, headingId, descriptionId } = props
 const open = defineModel<boolean>({ required: true })
 const networkBlocked = computed(() => props.networkBlocked === true)
@@ -248,6 +253,7 @@ const memoryEditor = useTemplateRef<{ focus: () => void; $el: HTMLElement }>('me
 type MemoryStore = AgentMemoryView[AgentMemoryTarget]
 type ComponentRoot = ComponentPublicInstance | HTMLElement
 const memoryHeading = useTemplateRef<ComponentRoot>('memoryHeading')
+const memoryCard = useTemplateRef<ComponentRoot>('memoryCard')
 const removeDialogCard = useTemplateRef<ComponentRoot>('removeDialogCard')
 const clearDialogCard = useTemplateRef<ComponentRoot>('clearDialogCard')
 const destructiveRestoreTarget = shallowRef<HTMLElement | null>(null)
@@ -638,7 +644,13 @@ watch([open, removing, clearing], async ([managerOpen, entry, clearOpen]) => {
   destructiveFocusScope?.deactivate({ restoreFocus: false })
   destructiveFocusScope = createModalFocusScope({
     root,
-    restoreTarget: () => destructiveRestoreTarget.value,
+    restoreTarget: () => {
+      const panel = componentElement(memoryCard.value)?.closest('.inline-agent__side')
+      return destructiveRestoreTarget.value
+        ?? panel?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')
+        ?? panel?.querySelector<HTMLElement>('.inline-agent__panel-navigation button')
+        ?? null
+    },
     onEscape: () => {
       if (!open.value || actionBusy.value) return
       if (removing.value) cancelRemove()

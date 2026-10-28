@@ -10,13 +10,13 @@ import { resolveTagName } from '../helpers/tag-aliases.ts'
 import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import { tagNames } from '../helpers/taxonomy-plan.ts'
 import _ from 'lodash'
-import { matchingSearchExcerpt, searchExcerpt } from '../helpers/search-excerpt.ts'
+import { matchingSearchExcerpt, searchExcerpt, structuredSearchExcerpt } from '../helpers/search-excerpt.ts'
 import { isStructuredSearchQuery } from '../helpers/search-query.ts'
 import { withSearchContract } from '../helpers/search-contract.ts'
 import { PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
 import type { KnowledgeDiscoveryFilter } from '../knowledge/lifecycle.ts'
 import type { KnowledgeProjectionView } from '../knowledge/projection.ts'
-import type { WikiSource } from '../../shared/wiki-source.ts'
+import { wikiSourceHref, type WikiSourcePreview } from '../../shared/wiki-source.ts'
 import type { Knex } from 'knex'
 import type { SearchOptions, SearchResult as ProviderSearchResult } from '../modules/types.ts'
 import { buildOfflinePageSnapshot, canonicalOfflineOrigin, OfflinePageAuthorityError, OfflinePageProjectionError } from '../helpers/offline-page.ts'
@@ -1727,7 +1727,7 @@ const canAccessCurrentPageSource = (requester: Express.User | undefined, page: P
     ? canReadPage(requester, page, authority)
     : canWritePage(requester, page, authority)
 
-const preview = async (input: OperationInput): Promise<WikiSource> => {
+const preview = async (input: OperationInput): Promise<WikiSourcePreview> => {
   // Both readers enforce current ownership, page rules, publication, and password unlock.
   const authority = await authorityFor(input)
   const page = input.id === undefined ? await getByPath(input, authority) : await get(input, authority)
@@ -1748,7 +1748,8 @@ const preview = async (input: OperationInput): Promise<WikiSource> => {
     visibility: page.visibility,
     updatedAt: new Date(page.updatedAt).toISOString(),
     sourceRevision,
-    ...searchExcerpt(rendered, query)
+    ...searchExcerpt(rendered, query),
+    structuredExcerpt: structuredSearchExcerpt(rendered, query, wikiSourceHref({ locale: page.localeCode, path: page.path, visibility: page.visibility }))
   }
 }
 const getSource = async (

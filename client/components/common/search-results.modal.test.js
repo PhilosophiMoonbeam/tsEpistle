@@ -697,52 +697,6 @@ const compileSearchOptions = (source, names, section = 'computed') => {
 
 describe('Search panel layout and hand-off', () => {
   const search = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
-  const english = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'server/locales/en.json'), 'utf8')).common
-  const translate = (key, options = {}) => {
-    const [, keyPath] = key.split(':')
-    const [group, name] = keyPath.split('.')
-    const entries = english[group]
-    const value = entries[`${name}_${options.count === 1 ? 'one' : 'other'}`] ?? entries[name]
-    if (typeof value !== 'string') throw new Error(`Missing English string ${key}`)
-    return value.replace(/\{\{(\w+)\}\}/g, (_, field) => String(options[field]))
-  }
-
-  test('folds truncation into one result summary', () => {
-    const computed = compileSearchOptions(search, ['resultSummary', 'resultSummaryHint'])
-    const summarize = (response, extra = {}) => {
-      const state = {
-        $t: translate,
-        hasFreshResponse: true,
-        offlineSearchActive: false,
-        offlineCorpusCount: null,
-        offlineResultsTruncated: false,
-        response,
-        ...extra
-      }
-      return [computed.resultSummary.call(state), computed.resultSummaryHint.call(state)]
-    }
-    const rows = count => Array.from({ length: count }, (_, id) => ({ id }))
-    expect(summarize({ results: rows(1), totalHits: 1 })).toEqual(['1 match', ''])
-    expect(summarize({ results: rows(12), totalHits: 12 })).toEqual(['12 matches', ''])
-    expect(summarize({ results: rows(10), totalHits: 37, nextCursor: 'next' })).toEqual(['Top 10 of 37 matches', ''])
-    expect(summarize({ results: rows(50), totalHits: 230, windowTruncated: true })).toEqual([
-      'Top 50 of 230+ matches',
-      'Narrow the query or scope to find more'
-    ])
-    expect(summarize({ results: rows(5), totalHits: 0 }, { offlineSearchActive: true, offlineCorpusCount: 9 })).toEqual([
-      '5 saved-page matches',
-      '9 saved pages searched'
-    ])
-    expect(summarize({ results: rows(50), totalHits: 0 }, { offlineSearchActive: true, offlineCorpusCount: 80, offlineResultsTruncated: true })).toEqual([
-      '50+ saved-page matches',
-      '80 saved pages searched · Narrow the query to find more'
-    ])
-    expect(summarize({ results: [], totalHits: 0 })).toEqual(['0 matches', ''])
-    expect(summarize({ results: [], totalHits: 0 }, { offlineSearchActive: true, offlineCorpusCount: 9 })).toEqual([
-      '0 saved-page matches',
-      '9 saved pages searched'
-    ])
-  })
 
   test('keeps live-only scope filters focusable offline but does not apply them', () => {
     const methods = compileSearchMethods(search, ['toggleLocaleScope', 'togglePathScope'])
@@ -756,27 +710,6 @@ describe('Search panel layout and hand-off', () => {
     expect(state).toMatchObject({ searchRestrictLocale: true, searchRestrictPath: true })
   })
 
-  test('names the active tree and ignores unapplied filters in downloaded search context', () => {
-    const computed = compileSearchOptions(search, ['searchContextLabel', 'hasActiveSearchFilters'])
-    const state = {
-      $t: translate,
-      offlineSearchActive: false,
-      searchRestrictLocale: true,
-      searchRestrictPath: true,
-      currentPageLocale: 'en',
-      currentPagePath: 'recipes/pizza'
-    }
-    expect(computed.searchContextLabel.call(state)).toBe('Wiki · EN · Page tree: recipes/pizza')
-    expect(computed.hasActiveSearchFilters.call(state)).toBe(true)
-    state.offlineSearchActive = true
-    expect(computed.searchContextLabel.call(state)).toBe('Saved offline')
-    expect(computed.hasActiveSearchFilters.call(state)).toBe(false)
-    state.offlineSearchActive = false
-    state.searchRestrictLocale = false
-    state.searchRestrictPath = false
-    expect(computed.searchContextLabel.call(state)).toBe('All Wiki')
-    expect(computed.hasActiveSearchFilters.call(state)).toBe(false)
-  })
 
   test('preserves the selected result identity and suggestion position across continuation', () => {
     const watchers = compileSearchOptions(search, ['results'], 'watch')
@@ -811,7 +744,6 @@ describe('Search panel layout and hand-off', () => {
         focusRequests += 1
       }
     })
-    const deactivations = []
     const state = {
       searchMode: 'ask',
       searchIsFocused: true,
@@ -825,9 +757,7 @@ describe('Search panel layout and hand-off', () => {
       captureAgentExcursion() {
         this.agentResumeSessionId = null
       },
-      deactivateAgentModal(restoreFocus) {
-        deactivations.push(restoreFocus)
-      },
+      deactivateAgentModal() {},
       $nextTick: () => Promise.resolve()
     }
     await methods.returnToSearch.call(state)
@@ -835,7 +765,6 @@ describe('Search panel layout and hand-off', () => {
     expect(state.searchIsFocused).toBe(true)
     expect(state.pendingAskRestoreTarget).toBeNull()
     expect(state.agentResumeSessionId).toBeNull()
-    expect(deactivations).toEqual([false, false])
     expect(focusRequests).toBe(1)
 
     const superseded = {

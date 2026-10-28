@@ -41,7 +41,7 @@
       .search-results-search(v-if='!isAgentOpen' @click.stop)
         h2#wiki-search-title.sr-only {{ $t('common:searchPanel.title') }}
         .search-results-instructions.sr-only#wiki-search-instructions {{ $t(searchScope === 'glossary' ? 'common:glossary.searchInstructions' : 'common:searchPanel.instructions') }}
-        .search-results-scope
+        .search-results-scope(role='region' :aria-label='$t(`common:searchPanel.compactToolbar`)' tabindex='0')
           .search-results-scope-actions(role='group' :aria-label='$t(`common:searchPanel.scopeLabel`)')
             v-btn(
               v-for='scope of searchScopes'
@@ -53,6 +53,22 @@
               :aria-pressed='activeSearchScope === scope.id'
               @click='selectSearchScope(scope.id)'
             ) {{ $t(`common:searchPanel.${scope.label}`) }}
+          .search-results-filter-actions(v-if='searchScope !== `glossary` && searchScopeFilters.length' role='group' :aria-label='$t(`common:searchPanel.filtersLabel`)')
+            v-btn.search-results-scope-filter(
+              v-for='filter of searchScopeFilters'
+              :key='filter.key'
+              size='small'
+              :prepend-icon='filter.icon'
+              :variant='!offlineSearchActive && filter.pressed ? `tonal` : `text`'
+              :color='!offlineSearchActive && filter.pressed ? `primary` : undefined'
+              :aria-pressed='!offlineSearchActive && filter.pressed'
+              :aria-disabled='offlineSearchActive ? `true` : undefined'
+              :aria-label='filter.ariaLabel'
+              :aria-describedby='offlineSearchActive ? `wiki-search-filter-reason` : undefined'
+              :title='filter.key === `path` ? currentPagePath : currentPageLocale'
+              @click='filter.toggle'
+            ) {{ filter.label }}
+            v-btn(v-if='hasActiveSearchFilters' size='small' variant='text' prepend-icon='mdi-filter-remove-outline' @click='clearSearchScope') {{ $t('common:searchPanel.clearFilters') }}
           v-btn.search-results-close(
             size='small'
             variant='text'
@@ -73,27 +89,8 @@
           @locale='glossary.changeLocale'
           @changed='glossary.refresh'
         )
-        .search-results-filters(v-if='searchScope !== `glossary` && searchScopeFilters.length')
-          .search-results-filter-context
-            span {{ $t('common:searchPanel.filterContext') }}
-            span.search-results-filter-path {{ currentPageLocale.toLocaleUpperCase() }}{{ currentPagePath ? ` / ${currentPagePath}` : '' }}
-          .search-results-filter-actions(role='group' :aria-label='$t(`common:searchPanel.filtersLabel`)')
-            v-btn.search-results-scope-filter(
-              v-for='filter of searchScopeFilters'
-              :key='filter.key'
-              size='small'
-              :prepend-icon='filter.icon'
-              :variant='!offlineSearchActive && filter.pressed ? `tonal` : `text`'
-              :color='!offlineSearchActive && filter.pressed ? `primary` : undefined'
-              :aria-pressed='!offlineSearchActive && filter.pressed'
-              :aria-disabled='offlineSearchActive ? `true` : undefined'
-              :aria-label='filter.ariaLabel'
-              :aria-describedby='offlineSearchActive ? `wiki-search-filter-reason` : undefined'
-              @click='filter.toggle'
-            ) {{ filter.label }}
-            v-btn(v-if='hasActiveSearchFilters' size='small' variant='text' prepend-icon='mdi-filter-remove-outline' @click='clearSearchScope') {{ $t('common:searchPanel.clearFilters') }}
-          p.search-results-reason#wiki-search-filter-reason(v-if='offlineSearchActive') {{ $t('common:searchPanel.scopeNeedsServer') }}
         .search-results-content(v-if='searchScope !== `glossary`')
+          p.search-results-reason#wiki-search-filter-reason(v-if='offlineSearchActive && searchScopeFilters.length') {{ $t('common:searchPanel.scopeNeedsServer') }}
           .search-results-capability-note(v-if='offlineSearchActive || serverUnavailable' role='status' aria-live='polite')
             .search-results-capability-note-title {{ serverUnavailable ? $t('common:searchPanel.serverUnavailableTitle') : $t('common:searchPanel.scopeDownloaded') }}
             p {{ serverUnavailable ? offlineSearchUnavailableDescription : offlineSearchScopeDescription }}
@@ -105,7 +102,7 @@
               :loading='serverRetryPending'
               @click='retrySearch'
             ) {{ $t('common:searchPanel.retryConnection') }}
-          .search-results-query-context(v-if='normalizedSearch.length >= 2')
+          .search-results-query-context.sr-only(v-if='normalizedSearch.length >= 2')
             h3 {{ $t('common:searchPanel.resultsFor', { query: normalizedSearch }) }}
             p {{ searchContextLabel }}
           .search-results-help(v-if='normalizedSearch.length < 2')
@@ -153,8 +150,8 @@
                 data-modal-focus-key='search-ask-query'
               )
                 | {{ $t('common:searchPanel.askAbout') }}
-                v-tooltip(activator='parent' location='bottom' :disabled='canAsk' :text='askUnavailableReason')
-            p.search-results-reason.search-results-draft-note#wiki-search-draft-hint(v-if='hasFreshResponse && results.length > 0 && canAsk') {{ $t('common:searchPanel.draftOnlyHint', { defaultValue: 'Ask prepares a draft. Nothing is sent.' }) }}
+                v-tooltip(activator='parent' location='bottom' :text='canAsk ? $t(`common:searchPanel.draftOnlyHint`) : askUnavailableReason')
+            span.sr-only#wiki-search-draft-hint(v-if='hasFreshResponse && results.length > 0 && canAsk') {{ $t('common:searchPanel.draftOnlyHint') }}
             .search-results-none(v-if='hasFreshResponse && results.length < 1')
               async-state(
                 state='empty'
@@ -174,8 +171,10 @@
                   :aria-describedby='canAsk ? `wiki-search-draft-hint` : `wiki-search-ask-reason`'
                   @click='askCurrentQuery'
                   data-modal-focus-key='search-ask-empty'
-                ) {{ $t('common:searchPanel.askWikiAbout', { query: normalizedSearch }) }}
-              p.search-results-reason#wiki-search-draft-hint(v-if='canAsk') {{ $t('common:searchPanel.draftOnlyHint', { defaultValue: 'Ask prepares a draft. Nothing is sent.' }) }}
+                )
+                  | {{ $t('common:searchPanel.askWikiAbout', { query: normalizedSearch }) }}
+                  v-tooltip(activator='parent' location='bottom' :text='canAsk ? $t(`common:searchPanel.draftOnlyHint`) : askUnavailableReason')
+              span.sr-only#wiki-search-draft-hint(v-if='canAsk') {{ $t('common:searchPanel.draftOnlyHint') }}
               p.search-results-reason#wiki-search-ask-reason(v-if='!canAsk && serverUnavailable') {{ askUnavailableReason }}
               p.search-results-reason {{ $t('common:searchPanel.browseKeepsSearch', { defaultValue: 'Your search stays here while you browse this view. Reopen Search to return.' }) }}
               p.search-results-recovery(v-if='!offlineSearchActive') {{ $t('common:searchPanel.missingInformationHelp', { defaultValue: 'Still missing information? Use a relevant page discussion if you have access and posting is available, or contact your wiki administrator through an existing contact method. Search does not send a request or notify anyone.' }) }}
@@ -206,11 +205,10 @@
                           template(v-for='(segment, segmentIndex) of resultHighlights[idx].title' :key='segmentIndex')
                             mark.search-results-text-match(v-if='segment.matched') {{ segment.text }}
                             template(v-else) {{ segment.text }}
-                        v-list-item-subtitle
-                          template(v-for='(segment, segmentIndex) of resultHighlights[idx].description' :key='segmentIndex')
+                        v-list-item-subtitle(v-if='item.excerpt !== null' :title='item.excerpt')
+                          template(v-for='(segment, segmentIndex) of resultHighlights[idx].excerpt' :key='segmentIndex')
                             mark.search-results-text-match(v-if='segment.matched') {{ segment.text }}
                             template(v-else) {{ segment.text }}
-                        .search-results-match(v-if='matchSummary(item)') {{ matchSummary(item) }}
                         .search-results-path
                           v-icon(icon='mdi-source-branch' size='14' aria-hidden='true')
                           span
@@ -240,7 +238,9 @@
                               | {{ $t('common:searchPanel.private') }}
                             v-chip(size='x-small' label variant='outlined') {{ item.locale.toLocaleUpperCase() }}
                             v-icon.search-results-item-chevron(icon='mdi-chevron-right' size='19' aria-hidden='true')
-                    .search-results-preview-cell(role='gridcell')
+                    .search-results-action-cell(v-if='$slots["result-actions"]' role='gridcell')
+                      slot(name='result-actions' :item='item' :fresh='hasFreshResponse')
+                    .search-results-preview-cell(v-if='!offlineSearchActive' role='gridcell')
                       button.search-results-preview(
                         type='button'
                         :aria-label='$t(`common:searchPanel.previewLabel`, { title: item.title })'
@@ -252,7 +252,7 @@
                         span {{ $t('common:searchPanel.preview') }}
                         v-tooltip(activator='parent' location='start' :disabled='previewAvailable' :text='previewUnavailableReason')
                   v-divider(v-if='idx < results.length - 1' aria-hidden='true')
-            p.search-results-reason#wiki-search-preview-reason(v-if='results.length && !previewAvailable') {{ previewUnavailableReason }}
+            p.search-results-reason#wiki-search-preview-reason(v-if='results.length && !offlineSearchActive && !previewAvailable') {{ previewUnavailableReason }}
             .search-results-continuation(v-if='!offlineSearchActive && hasFreshResponse && (response.nextCursor || moreError)')
               v-btn(v-if='response.nextCursor' variant='tonal' :loading='loadingMore' prepend-icon='mdi-chevron-down' @click='loadMoreResults') {{ $t('common:searchPanel.moreResults') }}
               p(v-if='moreError' role='alert') {{ moreError }}
@@ -516,7 +516,7 @@ export default defineComponent({
           visible: !!this.currentPagePath,
           icon: 'mdi-file-tree-outline',
           label: this.$t('common:searchPanel.scopeTree'),
-          ariaLabel: undefined,
+          ariaLabel: this.$t('common:searchPanel.scopeTree') + (this.currentPagePath ? ` / ${this.currentPagePath}` : ''),
           pressed: this.searchRestrictPath,
           toggle: this.togglePathScope
         }
@@ -633,11 +633,11 @@ export default defineComponent({
     results(): SearchResultRow[] {
       return this.response.results
     },
-    resultHighlights(): { title: SearchTextSegment[], description: SearchTextSegment[], path: SearchTextSegment[] }[] {
+    resultHighlights(): { title: SearchTextSegment[], excerpt: SearchTextSegment[], path: SearchTextSegment[] }[] {
       const highlight = createSearchHighlighter(this.hasFreshResponse ? this.normalizedSearch : '', !this.offlineSearchActive)
       return this.results.map(item => ({
         title: highlight(item.title),
-        description: highlight(item.description),
+        excerpt: highlight(item.excerpt ?? ''),
         path: highlight(item.path)
       }))
     },
@@ -884,19 +884,6 @@ export default defineComponent({
       this.approvalId = approvalId
       this.searchMode = 'ask'
       this.searchIsFocused = true
-    },
-    matchSummary(item: PageSearchRow): string {
-      const labels = {
-        title: 'common:searchPanel.matchTitle',
-        tag: 'common:searchPanel.matchTag',
-        path: 'common:searchPanel.matchPath',
-        description: 'common:searchPanel.matchDescription',
-        content: 'common:searchPanel.matchContent',
-        graph: 'common:searchPanel.matchGraph',
-        knowledge: 'common:searchPanel.matchKnowledge'
-      }
-      const fields = [...new Set(item.matchedFields ?? [])].map(field => labels[field]).filter(Boolean)
-      return fields.length ? this.$t('common:searchPanel.matchedPrefix', { fields: fields.slice(0, 3).map(key => this.$t(key)).join(' · ') }) : ''
     },
     currentPageHint(): AgentCurrentPageHint | null {
       const id = this.currentPageId
@@ -1979,49 +1966,33 @@ export default defineComponent({
   &-scope {
     display: flex;
     flex: 0 0 auto;
-    flex-wrap: wrap;
     align-items: center;
-    justify-content: flex-start;
-    gap: var(--wiki-space-5);
-    padding: var(--wiki-space-3) var(--wiki-space-5);
+    gap: var(--wiki-space-2);
+    box-sizing: border-box;
+    min-height: 40px;
+    padding: 3px var(--wiki-space-3);
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
     border-bottom: 1px solid var(--wiki-surface-border);
     border-radius: var(--wiki-hero-radius) var(--wiki-hero-radius) 0 0;
     background: var(--wiki-surface-sunken);
+    &:focus-visible { outline: none; box-shadow: inset var(--wiki-focus-ring); }
+    .v-btn { flex: 0 0 auto; min-height: 32px; height: auto; padding-block: 4px; letter-spacing: 0; text-transform: none; }
   }
 
   &-scope-actions {
     align-items: center;
     display: flex;
-    flex: 1 1 auto;
-    min-width: 0;
-    flex-wrap: wrap;
-    gap: .35rem;
-    justify-content: flex-start;
+    flex: 0 0 auto;
+    gap: .2rem;
   }
 
   &-close {
     flex: 0 0 auto;
     margin-inline-start: auto;
   }
-  &-filters {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--wiki-space-2) var(--wiki-space-4);
-    padding: var(--wiki-space-2) var(--wiki-space-5);
-    border-bottom: 1px solid var(--wiki-surface-border);
-  }
-  &-filter-context {
-    flex: 1 1 14rem;
-    min-width: 0;
-    color: var(--wiki-text-muted);
-    font-size: .75rem;
-    line-height: 1.4;
-  }
-  &-filter-path { display: block; overflow-wrap: anywhere; color: rgb(var(--v-theme-on-surface)); }
-  &-filter-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--wiki-space-1); }
-  &-filters > .search-results-reason { flex-basis: 100%; margin: 0; }
+  &-filter-actions { display: flex; flex: 0 0 auto; align-items: center; gap: .2rem; padding-inline-start: var(--wiki-space-2); border-inline-start: 1px solid var(--wiki-surface-border); }
   &-query-context { padding: var(--wiki-space-1) var(--wiki-space-1) var(--wiki-space-3); }
   &-query-context h3 { margin: 0; font-size: clamp(1.05rem, 2vw, 1.3rem); font-weight: 650; line-height: 1.4; letter-spacing: -.015em; overflow-wrap: anywhere; }
   &-query-context p { margin: var(--wiki-space-1) 0 0; color: var(--wiki-text-muted); font-size: .78rem; overflow-wrap: anywhere; }
@@ -2056,16 +2027,16 @@ export default defineComponent({
     min-width: 0;
     min-height: 0;
     overflow: visible;
-    padding: var(--wiki-space-4);
+    padding: var(--wiki-space-2) var(--wiki-space-3) var(--wiki-space-3);
   }
   &-summary {
     display: flex;
     min-width: 0;
-    min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
+    min-height: 40px;
     align-items: center;
     justify-content: space-between;
     gap: var(--wiki-space-4);
-    padding: 0 var(--wiki-space-1) var(--wiki-space-3);
+    padding: 0 var(--wiki-space-1) var(--wiki-space-2);
   }
 
   &-summary > div { min-width: 0; }
@@ -2086,7 +2057,7 @@ export default defineComponent({
     font-size: .78rem;
     line-height: 1.4;
   }
-  &-ask { min-height: var(--wiki-control-height); flex: 0 0 auto; letter-spacing: 0; text-transform: none; }
+  &-ask { min-height: 32px; height: auto; padding-block: 4px; flex: 0 0 auto; letter-spacing: 0; text-transform: none; }
   &-empty-actions {
     display: flex;
     flex-wrap: wrap;
@@ -2273,20 +2244,13 @@ export default defineComponent({
     overflow: hidden;
   }
   &-text-match {
-    background: color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent);
+    background: #ffc04a;
     border-radius: .15em;
-    color: inherit;
+    color: #302008;
     padding: 0;
   }
   &-item .v-list-item__content { min-width: 0; }
 
-  &-match {
-    margin-top: .4rem;
-    color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
-    font-size: .72rem;
-    line-height: 1.4;
-    overflow-wrap: anywhere;
-  }
 
   &-path {
     align-items: center;
@@ -2363,19 +2327,16 @@ export default defineComponent({
     &-container { padding-inline: var(--wiki-space-2); }
     &-container--ask { padding: 0; }
     &-scope { gap: var(--wiki-space-2); padding-inline: var(--wiki-space-3); }
-    &-scope-actions { flex: 1 1 12rem; justify-content: flex-start; }
     &-scope-actions .v-btn,
     &-filter-actions .v-btn,
     &-close { min-height: 2.75rem; }
-    &-filters { padding-inline: var(--wiki-space-3); }
     &-content { padding: var(--wiki-space-3); }
   }
 
   @media (max-width: 599.98px) {
     &-search { border-radius: var(--wiki-panel-radius); }
     &-scope { border-radius: var(--wiki-panel-radius) var(--wiki-panel-radius) 0 0; }
-    &-scope-actions { flex-basis: 100%; }
-    &-scope-actions .v-btn { max-width: 100%; padding-inline: var(--wiki-space-2); }
+    &-scope-actions .v-btn { padding-inline: var(--wiki-space-2); }
     &-summary { align-items: flex-start; flex-wrap: wrap; }
     &-ask .v-btn__content { font-size: .78rem; }
     &-item { padding-inline: var(--wiki-space-1); }
@@ -2454,8 +2415,7 @@ export default defineComponent({
 </style>
 
 <style scoped>
-.search-results-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
-.search-results-draft-note { margin: 0 0 var(--wiki-space-3); text-align: end; }
+.search-results-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; }
 .search-results-main-cell { min-width: 0; }
 .search-results-preview-cell { padding: var(--wiki-space-2) var(--wiki-space-3); }
 .search-results-preview { display: flex; align-items: center; justify-content: center; gap: var(--wiki-space-1); min-height: var(--wiki-control-height); padding: var(--wiki-space-2) var(--wiki-space-3); border-radius: var(--wiki-radius-sm); color: var(--wiki-accent-ink, rgb(var(--v-theme-on-surface))); font-size: .75rem; background: rgb(var(--v-theme-primary) / .08); }
