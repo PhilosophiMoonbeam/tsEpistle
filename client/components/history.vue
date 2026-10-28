@@ -1646,6 +1646,11 @@ export default {
     width: 100%;
   }
 
+  // The absolute number gutter must not reserve a second fixed-table column.
+  .d2h-file-diff .d2h-diff-table tr > td:last-child {
+    width: 100%;
+  }
+
   .d2h-file-diff,
   .d2h-file-side-diff {
     min-width: 0;

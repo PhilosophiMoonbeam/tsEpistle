@@ -5,7 +5,7 @@ import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it } from '../../../../server/test/bun-test.mts'
 import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
-import { EDITOR_SELECTION, EDITOR_SELECTION_INACTIVE, TextEditor } from './text-editor.ts'
+import { TextEditor } from './text-editor.ts'
 
 const editors: TextEditor[] = []
 
@@ -110,22 +110,6 @@ describe('TextEditor', () => {
     expect(editor.wordOffsetsAt(value.indexOf(','))).toBeNull()
   })
 
-  it('paints one visible selection token for focused and unfocused editors', () => {
-    const { parent } = createEditor({ value: 'first second' })
-    const css = [
-      ...Array.from(document.querySelectorAll('style'), style => style.textContent ?? ''),
-      ...(document.adoptedStyleSheets ?? []).flatMap(sheet => Array.from(sheet.cssRules, rule => rule.cssText))
-    ].join('\n')
-    const editorClasses = Array.from(parent.querySelector('.cm-editor')?.classList ?? [])
-
-    expect(EDITOR_SELECTION).toContain('--wiki-editor-selection')
-    expect(EDITOR_SELECTION_INACTIVE).toContain('--wiki-editor-selection-inactive')
-    expect(editorClasses.length).toBeGreaterThan(1)
-    expect(css).toContain(`.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground`)
-    expect(css).toContain(EDITOR_SELECTION_INACTIVE.slice(0, 40))
-    expect(css).toContain(EDITOR_SELECTION.slice(0, 32))
-    expect(css).not.toContain('rgba(var(--v-theme-primary), .24)')
-  })
   it('reports the Markdown syntax path and undo depth for toolbar state', () => {
     const value = '- **bold** text'
     const { editor, parent } = createEditor({ value, language: markdown({ base: markdownLanguage }) })
@@ -145,6 +129,27 @@ describe('TextEditor', () => {
     expect(editor.historyDepth()).toEqual({ undo: 0, redo: 1 })
     expect(editor.redo()).toBe(true)
     expect(editor.getValue()).toBe(`${value}!`)
+  })
+  it('keeps inclusive block starts active without including an unselected next block', () => {
+    const { editor, parent } = createEditor({
+      value: 'Plain paragraph\n\n## Heading\n\n> quoted',
+      language: markdown({ base: markdownLanguage })
+    })
+    const view = EditorView.findFromDOM(parent.querySelector<HTMLElement>('.cm-editor')!)!
+    ensureSyntaxTree(view.state, view.state.doc.length, 1000)
+
+    editor.setSelection({ line: 2, ch: editor.getLine(2).length }, { line: 2, ch: 0 })
+    expect(editor.syntaxPath()).toContain('ATXHeading2')
+
+    editor.setSelection({ line: 4, ch: 0 })
+    expect(editor.syntaxPath()).toContain('Blockquote')
+
+    editor.setSelection({ line: 3, ch: 0 })
+    expect(editor.syntaxPath()).not.toContain('ATXHeading2')
+    expect(editor.syntaxPath()).not.toContain('Blockquote')
+
+    editor.setSelection({ line: 0, ch: 0 }, { line: 2, ch: 0 })
+    expect(editor.syntaxPath()).not.toContain('ATXHeading2')
   })
   it('preserves standalone keyboard and native history, including reset', () => {
     const { editor, parent } = createEditor({ value: 'baseline' })

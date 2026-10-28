@@ -474,13 +474,16 @@ export class TextEditor implements TextEditorHandle {
 
   /** Syntax node names around the main cursor, innermost first. */
   syntaxPath(): string[] {
-    const head = this.view.state.selection.main.head
+    const selection = this.view.state.selection.main
+    const tree = syntaxTree(this.view.state)
+    let node: ReturnType<ReturnType<typeof syntaxTree>['resolveInner']> | null = tree.resolveInner(selection.head, -1)
+    if (node.type === tree.type && selection.head <= selection.anchor) {
+      // A caret or reversed selection includes the block beginning here.
+      // A forward selection's end remains exclusive.
+      node = tree.resolveInner(selection.head, 1)
+    }
     const names: string[] = []
-    for (
-      let node: ReturnType<ReturnType<typeof syntaxTree>['resolveInner']> | null = syntaxTree(this.view.state).resolveInner(head, -1);
-      node;
-      node = node.parent
-    ) {
+    for (; node; node = node.parent) {
       names.push(node.name)
     }
     return names
