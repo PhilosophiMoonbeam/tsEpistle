@@ -1,11 +1,12 @@
 import { parse, compileTemplate } from '@vue/compiler-sfc'
+import type { Component } from 'vue'
 import path from 'node:path'
 import fs from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
 import type { AgentDraft } from '../../helpers/agent-draft.ts'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
-import { searchPages as requestPageSearch, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api.ts'
+import { fetchRecentPages as requestRecentPages, searchPages as requestPageSearch, type PageSearchResult, type PageSearchRow, type RecentPageRow } from '../../helpers/pages-api.ts'
 import type { WikiSource } from '../../../shared/wiki-source.ts'
 
 const componentPath = path.join(process.cwd(), 'client/components/agents/agent-context-picker.vue')
@@ -116,6 +117,7 @@ const evaluatePicker = new Function(
   'defineProps',
   'defineEmits',
   'searchPages',
+  'fetchRecentPages',
   'fetchWikiSource',
   'AgentKnowledgeContextSchema',
   'useTranslate',
@@ -148,6 +150,10 @@ const source = (id: number): WikiSource => ({
   excerpt: '',
   excerptTruncated: false
 })
+const recent = (id: number): RecentPageRow => {
+  const { locale, path, title, updatedAt, visibility } = source(id)
+  return { id, locale, path, title, updatedAt, visibility }
+}
 const row = (id: string | number): PageSearchRow => ({
   id,
   title: `Topic ${id}`,
@@ -176,6 +182,7 @@ interface MountedPicker {
   changes: Partial<AgentDraft>[]
   host: HTMLElement
   sourcesAdded: { value: number }
+  updateProps: (patch: Partial<{ draft: AgentDraft; disabled: boolean; connectionBlocked: boolean }>) => void
 }
 
 const mountedPickers: MountedPicker[] = []
@@ -191,7 +198,8 @@ const mountPicker = (
   fetchWikiSourceImpl: (selector: { id: number }, query: string, signal: AbortSignal) => Promise<WikiSource>,
   draft = emptyDraft(),
   currentPage: AgentCurrentPageHint | null = null,
-  extraProps: { connectionBlocked?: boolean; currentPageTitle?: string } = {}
+  extraProps: { connectionBlocked?: boolean; currentPageTitle?: string } = {},
+  fetchRecentPagesImpl: (fetchImpl: Parameters<typeof requestRecentPages>[0]) => Promise<RecentPageRow[]> = async () => []
 ): MountedPicker => {
   const host = document.createElement('div')
   document.body.append(host)
@@ -222,6 +230,7 @@ const mountPicker = (
           if (event === 'sourcesAdded') sourcesAdded.value += 1
         },
         searchPagesImpl,
+        fetchRecentPagesImpl,
         fetchWikiSourceImpl,
         AgentKnowledgeContextSchema,
         () => translateWithDefaultEscaping
@@ -229,7 +238,9 @@ const mountPicker = (
     },
     render: renderPicker
   })
-  const app = Vue.createApp(picker, { draft, currentPage, disabled: false, connectionBlocked: false, connectionRetrying: false, ...extraProps })
+  const rootProps = Vue.reactive({ draft, currentPage, disabled: false, connectionBlocked: false, connectionRetrying: false, ...extraProps })
+  // Runtime-compiled setup bindings have unknown keys; use Vue's public renderable contract.
+  const app = Vue.createApp({ setup: () => () => Vue.h(picker as Component, rootProps) })
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.config.globalProperties.$t = translateWithDefaultEscaping
   app.component(
@@ -246,7 +257,7 @@ const mountPicker = (
     })
   )
   app.mount(host)
-  const mounted = { app, changes, host, sourcesAdded }
+  const mounted = { app, changes, host, sourcesAdded, updateProps: (patch: Partial<typeof rootProps>) => Object.assign(rootProps, patch) }
   mountedPickers.push(mounted)
   return mounted
 }
@@ -292,6 +303,127 @@ afterEach(() => {
   restoreVisualViewport()
 })
 
+describe('Agent context recent suggestions', () => {
+  it('offers eight distinct real recents without typing and keeps only pending additions in Apply', async () => {
+    const recents = [recent(1), { ...recent(2), locale: 'fr' }, { ...recent(2), locale: 'fr' }, ...Array.from({ length: 7 }, (_, index) => recent(index + 3))]
+    const fetchRecentPagesImpl = vi.fn(async () => recents)
+    const searchPagesImpl = vi.fn(async () => result([{ ...row('2'), locale: 'fr' }, row(10)]))
+    const draft = { ...emptyDraft([source(1)]), scope: { kind: 'all' } as const }
+    const mounted = mountPicker(searchPagesImpl, vi.fn(async (selector: { id: number }) => source(selector.id)), draft, null, {}, fetchRecentPagesImpl)
+    await openPicker(mounted)
+
+    expect(fetchRecentPagesImpl).toHaveBeenCalledTimes(1)
+    expect(searchPagesImpl).not.toHaveBeenCalled()
+    expect(Array.from(resultCheckboxes(), input => input.getAttribute('aria-label'))).toEqual(
+      recents.filter((item, index) => index !== 0 && index !== 2).map(item => `${item.title}, ${item.locale}, ${item.path}`)
+    )
+    expect(addButton().textContent).toBe('Apply (0)')
+    expect(addButton().disabled).toBe(true)
+    await selectResult()
+    expect(addButton().textContent).toBe('Apply (1)')
+    expect(resultCheckboxes()[0]?.getAttribute('aria-label')).toContain('Pending addition')
+
+    await search(mounted, 'x')
+    expect(resultCheckboxes()).toHaveLength(0)
+    expect(document.body.querySelector('.agent-context__results-state')?.textContent).toContain('at least two characters')
+    expect(addButton().textContent).toBe('Apply (1)')
+    await search(mounted, 'topics')
+    expect(resultCheckboxes()[0]?.checked).toBe(true)
+    await selectResult(1)
+    expect(addButton().textContent).toBe('Apply (2)')
+    await search(mounted, '')
+    expect(resultCheckboxes()).toHaveLength(8)
+    expect(resultCheckboxes()[0]?.checked).toBe(true)
+    resultCheckboxes()[0]?.click()
+    await settle()
+    expect(addButton().textContent).toBe('Apply (1)')
+    expect(mounted.changes).toEqual([])
+    expect(mounted.sourcesAdded.value).toBe(0)
+
+    document.body.querySelector<HTMLButtonElement>('.agent-context__dialog-close')?.click()
+    await settle()
+    await openPicker(mounted)
+    expect(addButton().textContent).toBe('Apply (0)')
+    expect(addButton().disabled).toBe(true)
+    expect(document.body.querySelector('.agent-context__pending')).toBeNull()
+    expect(mounted.changes).toEqual([])
+  })
+
+  for (const scope of [{ kind: 'locale', locale: 'en' }, { kind: 'section', locale: 'en', path: 'handbook' }, { kind: 'selected' }] as const) {
+    it(`preserves ${scope.kind} discovery semantics through recents and paginated search`, async () => {
+      const candidates = [recent(91), { ...recent(92), locale: 'fr' }, { ...recent(93), path: 'handbookish/topic-93' }]
+      const expectedIds = scope.kind === 'section' ? [91] : scope.kind === 'locale' ? [91, 93] : [91, 92, 93]
+      const expectedOptions = scope.kind === 'section' ? { locale: 'en', path: 'handbook' } : scope.kind === 'locale' ? { locale: 'en' } : {}
+      const searchPagesImpl = vi.fn(async (_fetchImpl: unknown, _query: string, options: Record<string, unknown>) =>
+        options.cursor ? result([row(94)]) : result(candidates.map(item => ({ ...row(item.id), ...item })), 'next-page')
+      )
+      const mounted = mountPicker(
+        searchPagesImpl,
+        vi.fn(async (selector: { id: number }) => source(selector.id)),
+        { ...emptyDraft([source(99)]), scope },
+        null,
+        {},
+        vi.fn(async () => candidates)
+      )
+      await openPicker(mounted)
+      expect(Array.from(document.body.querySelectorAll('.agent-context__result strong'), item => item.textContent)).toEqual(expectedIds.map(id => `Topic ${id}`))
+      expect(document.body.querySelector('.agent-context__recent-title')?.textContent).toContain(scope.kind === 'section' ? 'en/handbook' : scope.kind === 'locale' ? 'EN pages' : 'All Wiki')
+      await selectResult()
+      await search(mounted, 'topics')
+      expect(searchPagesImpl.mock.calls[0]?.[2]).toEqual({ ...expectedOptions, paginated: true })
+      expect(resultCheckboxes()[0]?.checked).toBe(true)
+      document.body.querySelector<HTMLButtonElement>('.agent-context__more')?.click()
+      await settle()
+      expect(searchPagesImpl.mock.calls[1]?.[2]).toEqual({ ...expectedOptions, paginated: true, cursor: 'next-page' })
+      expect(addButton().textContent).toBe('Apply (1)')
+      expect(mounted.changes).toEqual([])
+      expect(mounted.sourcesAdded.value).toBe(0)
+    })
+  }
+
+  it('reports recent failure safely, retries the existing endpoint, and distinguishes an empty recent list from short-query guidance', async () => {
+    let attempts = 0
+    const fetchRecentPagesImpl = vi.fn(async () => requestRecentPages(async url => {
+      expect(url).toBe('/_api/pages/recent')
+      attempts += 1
+      return new Response(JSON.stringify(attempts === 1 ? { message: 'sensitive server detail' } : []), {
+        status: attempts === 1 ? 500 : 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    }))
+    const mounted = mountPicker(vi.fn(async () => result([])), vi.fn(async (selector: { id: number }) => source(selector.id)), emptyDraft(), null, {}, fetchRecentPagesImpl)
+    await openPicker(mounted)
+    const error = document.body.querySelector('.agent-context__search-error')
+    expect(error?.textContent).toContain('Recent pages could not be loaded.')
+    expect(error?.textContent).not.toContain('sensitive server detail')
+    error?.querySelector<HTMLButtonElement>('button')?.click()
+    await settle()
+    expect(fetchRecentPagesImpl).toHaveBeenCalledTimes(2)
+    expect(resultCheckboxes()).toHaveLength(0)
+    expect(document.body.querySelector('.agent-context__results-state')?.textContent).toContain('No new eligible pages in the recent list')
+    expect(document.body.querySelector('.agent-context__results-state')?.textContent).not.toContain('two characters')
+    expect(mounted.changes).toEqual([])
+  })
+
+  it('ignores recent suggestions that finish after a query replaces them', async () => {
+    const stale = deferred<RecentPageRow[]>()
+    const mounted = mountPicker(
+      vi.fn(async () => result([row(96)])),
+      vi.fn(async (selector: { id: number }) => source(selector.id)),
+      emptyDraft(),
+      null,
+      {},
+      vi.fn(() => stale.promise)
+    )
+    await openPicker(mounted)
+    await search(mounted, 'fresh')
+    stale.resolve([recent(95)])
+    await settle()
+    expect(Array.from(document.body.querySelectorAll('.agent-context__result strong'), item => item.textContent)).toEqual(['Topic 96'])
+    expect(mounted.changes).toEqual([])
+  })
+})
+
 describe('Agent context source transaction', () => {
   it('keeps selections across queries and commits both hydrated pages in one change', async () => {
     const searchPagesImpl = vi.fn(async (_fetchImpl: unknown, query: string, _options: Record<string, unknown>) =>
@@ -310,7 +442,7 @@ describe('Agent context source transaction', () => {
     await settle()
 
     expect(document.body.querySelectorAll('.agent-context__pending-list .v-chip')).toHaveLength(2)
-    expect(addButton().getAttribute('aria-label')).toMatch(/\badd\b.*\b2\b.*\bsources?\b/i)
+    expect(addButton().textContent).toBe('Apply (2)')
     expect(addButton().disabled).toBe(false)
     addButton().click()
     await settle()
@@ -380,7 +512,7 @@ describe('Agent context source transaction', () => {
       query === 'eight' ? result([row('8')]) : query === 'same' ? result([row(8)]) : result([row(9)])
     )
     const fetchWikiSourceImpl = vi.fn(async (selector: { id: number }) => source(selector.id))
-    const mounted = mountPicker(searchPagesImpl, fetchWikiSourceImpl, emptyDraft(existing))
+    const mounted = mountPicker(searchPagesImpl, fetchWikiSourceImpl, emptyDraft(existing), { id: 99, locale: 'en', path: 'handbook/current', observedUpdatedAt: '2026-09-16T00:00:00.000Z' })
     await openPicker(mounted)
     await search(mounted, 'eight')
     await selectResult()
@@ -389,14 +521,113 @@ describe('Agent context source transaction', () => {
     expect(resultCheckboxes()[0]?.checked).toBe(true)
     await search(mounted, 'nine')
     const ninth = resultCheckboxes()[0]
-    expect(ninth?.disabled).toBe(true)
+    expect(ninth?.getAttribute('aria-disabled')).toBe('true')
+    expect(ninth?.getAttribute('aria-label')).toContain('eight-source limit')
+    expect(ninth?.disabled).toBe(false)
+    ninth?.focus()
+    ninth?.click()
+    await settle()
+    expect(ninth?.checked).toBe(false)
     expect(document.body.querySelectorAll('.agent-context__pending-list .v-chip')).toHaveLength(1)
-    expect(addButton().getAttribute('aria-label')).toMatch(/\badd\b.*\b1\b.*\bsources?\b/i)
+    expect(addButton().textContent).toBe('Apply (1)')
     addButton().click()
     await settle()
 
     expect(mounted.changes).toHaveLength(1)
     expect((mounted.changes[0].sources as WikiSource[]).map(item => item.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+  })
+})
+
+describe('Agent context authoritative source admission', () => {
+  for (const invalid of [
+    { id: 122 },
+    { locale: 'fr' },
+    { path: 'handbook/moved' },
+    { sourceRevision: '0' }
+  ]) {
+    it(`rejects authoritative ${Object.keys(invalid)[0]} mismatch without a partial commit`, async () => {
+      const mounted = mountPicker(vi.fn(async () => result([row(121)])), vi.fn(async () => ({ ...source(121), ...invalid })))
+      await openPicker(mounted)
+      await search(mounted, 'identity')
+      await selectResult()
+      addButton().click()
+      await settle()
+      expect(mounted.changes).toEqual([])
+      expect(mounted.sourcesAdded.value).toBe(0)
+      expect(document.body.querySelectorAll('.agent-context__pending-list .v-chip')).toHaveLength(1)
+      expect(addButton().textContent).toBe('Apply (1)')
+      expect(addButton().disabled).toBe(false)
+    })
+  }
+
+  it('rejects the whole attachment set when valid multibyte identities exceed the 24000-byte context budget', async () => {
+    const candidates = Array.from({ length: 8 }, (_, index) => ({
+      ...row(index + 130),
+      title: '界'.repeat(490),
+      path: `handbook/${'界'.repeat(1000)}${index}`
+    }))
+    const mounted = mountPicker(
+      vi.fn(async () => result(candidates)),
+      vi.fn(async (selector: { id: number }) => ({ ...source(selector.id), title: candidates[selector.id - 130].title, path: candidates[selector.id - 130].path }))
+    )
+    await openPicker(mounted)
+    await search(mounted, 'budget')
+    for (let index = 0; index < candidates.length; index += 1) await selectResult(index)
+    expect(addButton().textContent).toBe('Apply (8)')
+    addButton().click()
+    await settle()
+    expect(mounted.changes).toEqual([])
+    expect(mounted.sourcesAdded.value).toBe(0)
+    expect(document.body.querySelectorAll('.agent-context__pending-list .v-chip')).toHaveLength(8)
+    expect(addButton().disabled).toBe(false)
+  })
+
+  it('aborts an in-flight Apply on disconnection, retains pending picks, and resumes discovery only after reconnecting', async () => {
+    const hydration = deferred<WikiSource>()
+    let signal: AbortSignal | undefined
+    const mounted = mountPicker(
+      vi.fn(async () => result([row(141)])),
+      vi.fn((_selector: { id: number }, _query: string, nextSignal: AbortSignal) => {
+        signal = nextSignal
+        return hydration.promise
+      })
+    )
+    await openPicker(mounted)
+    await search(mounted, 'offline')
+    await selectResult()
+    addButton().click()
+    await settle()
+    expect(addButton().disabled).toBe(true)
+    mounted.updateProps({ connectionBlocked: true })
+    await settle()
+    expect(signal?.aborted).toBe(true)
+    hydration.resolve(source(141))
+    await settle()
+    expect(mounted.changes).toEqual([])
+    expect(mounted.sourcesAdded.value).toBe(0)
+    expect(resultCheckboxes()).toHaveLength(0)
+    expect(document.body.querySelector('.agent-context__results-state')?.textContent).toContain('Connection required')
+    expect(addButton().textContent).toBe('Apply (1)')
+    expect(addButton().disabled).toBe(true)
+    mounted.updateProps({ connectionBlocked: false })
+    await settle()
+    expect(resultCheckboxes()[0]?.checked).toBe(true)
+    expect(addButton().disabled).toBe(false)
+  })
+
+  it('removes externally attached identities from the actual pending count without emitting another commit', async () => {
+    const mounted = mountPicker(vi.fn(async () => result([row(151)])), vi.fn(async (selector: { id: number }) => source(selector.id)))
+    await openPicker(mounted)
+    await search(mounted, 'dedupe')
+    await selectResult()
+    expect(addButton().textContent).toBe('Apply (1)')
+    mounted.updateProps({ draft: emptyDraft([source(151)]) })
+    await settle()
+    expect(addButton().textContent).toBe('Apply (0)')
+    expect(addButton().disabled).toBe(true)
+    expect(resultCheckboxes()[0]?.getAttribute('aria-label')).toContain('Attached')
+    expect(mounted.changes).toEqual([])
+    expect(mounted.sourcesAdded.value).toBe(0)
   })
 })
 
@@ -567,7 +798,7 @@ describe('Agent context source search recovery', () => {
         await settle()
         expect(Array.from(document.body.querySelectorAll('.agent-context__dialog [role="alert"]')).filter(alert => alert.textContent?.trim())).toHaveLength(0)
         expect(resultCheckboxes()).toHaveLength(recoveredRows.length)
-        if (recoveredRows.length) expect(resultCheckboxes()[0]?.disabled).toBe(true)
+        if (recoveredRows.length) expect(resultCheckboxes()[0]?.getAttribute('aria-disabled')).toBe('true')
         else
           expect(document.body.querySelector('.agent-context__results-state')?.textContent).toBe(
             translateEnglish('common:agentContextPicker.noAccessiblePagesMatched')
@@ -625,7 +856,7 @@ describe('Agent context final source continuation focus', () => {
       'Topic 73',
       'Topic 74'
     ])
-    expect(resultCheckboxes()[1]?.disabled).toBe(true)
+    expect(resultCheckboxes()[1]?.getAttribute('aria-disabled')).toBe('true')
     expect(resultCheckboxes()[2]?.disabled).toBe(false)
     expect(document.activeElement).toBe(resultCheckboxes()[2])
     expect(mounted.changes).toHaveLength(0)
@@ -763,6 +994,53 @@ describe('Agent context source debounce', () => {
 })
 
 describe('Agent context source cancellation', () => {
+  it('resumes interrupted discovery after Apply fails instead of reporting an unsearched query as empty', async () => {
+    const results = deferred<PageSearchResult>()
+    const searchPagesImpl = vi.fn(async (_fetchImpl: unknown, query: string) => query === 'selected' ? result([row(171)]) : results.promise)
+    const mounted = mountPicker(searchPagesImpl, vi.fn(async () => { throw new Error('This source is no longer available to you.') }))
+    await openPicker(mounted)
+    await search(mounted, 'selected')
+    await selectResult()
+    await search(mounted, 'loading')
+    addButton().click()
+    await settle()
+    expect(document.body.querySelector('.agent-context__results-state[role="status"]')?.textContent).toContain('Searching pages')
+    expect(document.body.querySelector('.agent-context__results-state')?.textContent).not.toContain('No accessible pages')
+    results.resolve(result([row(172)]))
+    await settle()
+    expect(resultCheckboxes()).toHaveLength(1)
+    expect(resultCheckboxes()[0]?.getAttribute('aria-label')).toContain('Topic 172')
+    expect(document.body.querySelectorAll('.agent-context__pending-list .v-chip')).toHaveLength(1)
+    expect(addButton().textContent).toBe('Apply (1)')
+    expect(mounted.changes).toEqual([])
+  })
+
+  for (const cancellation of ['cancel', 'unmount'] as const) {
+    it(`discards late recent suggestions after ${cancellation}`, async () => {
+      const stale = deferred<RecentPageRow[]>()
+      const mounted = mountPicker(
+        vi.fn(async () => result([])),
+        vi.fn(async (selector: { id: number }) => source(selector.id)),
+        emptyDraft(),
+        null,
+        {},
+        vi.fn(() => stale.promise)
+      )
+      await openPicker(mounted)
+      if (cancellation === 'cancel') document.body.querySelector<HTMLButtonElement>('.agent-context__dialog-close')?.click()
+      else {
+        mounted.app.unmount()
+        mounted.host.remove()
+        mountedPickers.splice(mountedPickers.indexOf(mounted), 1)
+      }
+      stale.resolve([recent(161)])
+      await settle()
+      expect(document.body.querySelector('.agent-context__result')).toBeNull()
+      expect(mounted.changes).toEqual([])
+      expect(mounted.sourcesAdded.value).toBe(0)
+    })
+  }
+
   it('keeps fresh results after reopening when a cancelled search completes late', async () => {
     const stale = deferred<PageSearchResult>()
     const fresh = deferred<PageSearchResult>()

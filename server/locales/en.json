@@ -2405,7 +2405,11 @@
       "downloadedSearchCorpusUnavailable": "Downloaded search corpus is unavailable."
     },
     "agentContextPicker": {
-      "searchScopeHelp": "Scope limits the Wiki pages the Agent can search for your next message; it does not filter Add sources.",
+      "searchScopeHelp": "Scope limits the Wiki pages the Agent can search for your next message. Add sources also respects locale and page-tree scopes; Selected pages discovers new sources across All Wiki.",
+      "sourceDiscoveryScope": "Source discovery: {{scopeLabel}}.",
+      "recentSources": "Recently updated accessible pages · {{scopeLabel}}",
+      "noRecentSources": "No new eligible pages in the recent list for {{scopeLabel}}.",
+      "recentSourcesCouldNot": "Recent pages could not be loaded.",
       "attachSourcesFirst": "Use Sources to attach pages first.",
       "selectedPages": "Selected pages",
       "within": "Within {{path}}",

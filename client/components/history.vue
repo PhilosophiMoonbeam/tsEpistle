@@ -70,7 +70,8 @@
                         span.history-revision-badge.history-revision-badge--current(v-if='row.item.versionId === 0') {{ $t('history:current') }}
                         span.history-revision-badge.history-revision-badge--newer(v-if='diffTarget === row.item.versionId') {{ $t('history:newer') }}
                         span.history-revision-badge(v-if='diffSource === row.item.versionId') {{ $t('history:older') }}
-                      .history-revision-action
+                      .history-revision-reason(v-if='row.reason', dir='auto') {{ row.reason }}
+                      .history-revision-action(:class='{ "history-revision-action--secondary": row.reason }')
                         template(v-for='(part, partIndex) in row.parts', :key='partIndex')
                           bdi.history-revision-value(v-if='part.value', :class='{ "history-path-fragment": part.value !== `author` }') {{ part.text }}
                           template(v-else) {{ part.text }}
@@ -148,7 +149,7 @@
                     @click='setViewMode(`side-by-side`)'
                   ) {{ $t('history:comparison.sideBySide') }}
               .history-comparison-details(v-if='targetReady')
-                h3.history-comparison-title {{ target.title }}
+                h3.history-comparison-title(v-if='target.title.trim() && target.title !== title') {{ target.title }}
                 .history-comparison-description(v-if='target.description') {{ target.description }}
                 .history-revision-meta
                   span(v-for='item in targetMetadata', :key='item') {{ item }}
@@ -248,6 +249,7 @@ type HistoryRow = {
   readonly index: number
   readonly name: string
   readonly time: RevisionTime | null
+  readonly reason: string
   readonly parts: TranslatedPart[]
   readonly selectable: boolean
   readonly canCompare: boolean
@@ -432,6 +434,8 @@ export default {
         valueAfter: null,
         versionDate: this.updatedAt
       }
+      const reason = this.changeReason?.trim()
+      if (reason) liveTrailItem.changeReason = reason
       const prevPage = this.cache.find(page => page.versionId === (this.trail[0]?.versionId ?? -1))
       if (prevPage && this.path !== prevPage.path) {
         liveTrailItem.actionType = 'move'
@@ -448,15 +452,17 @@ export default {
     trailRows (): HistoryRow[] {
       return this.fullTrail.map((item, index) => {
         const selectable = this.canSelectVersion(index)
+        const reason = item.changeReason?.trim() ?? ''
         return {
           item,
           index,
           name: this.revisionName(item.versionId),
           time: formatRevisionTime(item.versionDate),
+          reason,
           parts: this.revisionActionParts(item),
           selectable,
           canCompare: this.diffSource !== item.versionId && this.canSetDiffSource(item.versionId),
-          label: this.revisionAriaLabel(item, index)
+          label: [reason, this.revisionAriaLabel(item, index)].filter(Boolean).join('. ')
         }
       })
     },
@@ -1411,12 +1417,31 @@ export default {
   color: rgb(var(--v-theme-on-surface));
 }
 
+.history-revision-reason {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .8125rem;
+  font-weight: 650;
+  line-height: 1.45;
+  text-align: start;
+}
+
 .history-revision-action {
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--wiki-text-muted);
   font-size: .8125rem;
   line-height: 1.45;
+
+  &--secondary {
+    font-size: .75rem;
+
+    .history-revision-value {
+      color: inherit;
+      font-weight: 500;
+    }
+  }
 }
 
 .history-revision-value {

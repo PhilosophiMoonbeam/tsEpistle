@@ -12,6 +12,7 @@ import { restorePageVersion as restoreVersionRequest, waitForPageRender as waitF
 import { afterEach, beforeEach } from '../../server/test/bun-test.mts'
 
 import { translateEnglish } from '../test/english-translate.mts'
+import { renderTemplate } from '../test/render-template.mts'
 globalThis.translate = translateEnglish
 const fixtureSiteConfig = {
   company: '', contentLicense: '', footerOverride: '', banner: {},
@@ -421,6 +422,95 @@ describe('history revision list and comparison behavior', () => {
     expect(oldest.selectable).toBe(false)
     expect(oldest.label).toContain('Load older revisions to compare it')
   })
+
+  test('renders each revision reason as escaped primary copy without losing its provenance', async () => {
+    const reasonA = 'Clarify <img src=x onerror=alert(1)> & examples'
+    const reasonB = `مراجعة ${'المحتوى'.repeat(20)}`
+    const { instance } = createHistoryInstance({
+      title: 'Current title',
+      trailLoaded: true,
+      trailLoading: false,
+      total: 4,
+      trail: [
+        { ...trailItem(4), authorName: 'Ada', changeReason: reasonA },
+        { ...trailItem(3, 'move'), valueBefore: 'old/path', valueAfter: 'home', changeReason: reasonB },
+        { ...trailItem(2), changeReason: '   ' },
+        trailItem(1, 'initial')
+      ]
+    })
+    const { document } = await renderTemplate('client/components/history.vue', instance)
+    const rows = [...document.querySelectorAll('.history-revision-row')]
+    expect(rows).toHaveLength(5)
+    expect(rows.map(row => row.querySelector('.history-revision-reason')?.textContent ?? null))
+      .toEqual([null, reasonA, reasonB, null, null])
+    expect(rows[1].querySelector('.history-revision-reason').getAttribute('dir')).toBe('auto')
+    expect(rows[1].querySelector('.history-revision-reason').querySelector('img')).toBeNull()
+    expect(rows[1].querySelector('.history-revision-main').getAttribute('aria-label')).toContain(reasonA)
+    expect(rows[1].querySelector('.history-revision-action--secondary').textContent).toBe('Edited by Ada')
+    expect(rows[2].querySelector('.history-revision-action--secondary').textContent)
+      .toBe('Moved from /old/path to /home by TestAuthor')
+    expect(rows[3].querySelector('.history-revision-action').textContent).toBe('Edited by TestAuthor')
+    expect(rows[4].querySelector('.history-revision-action').textContent).toBe('Created by TestAuthor')
+    expect(rows[3].querySelector('.history-revision-action--secondary')).toBeNull()
+    for (const row of rows) {
+      expect(row.querySelector('time')?.getAttribute('datetime')).toBeTruthy()
+      expect(row.querySelector('.history-more-button')).not.toBeNull()
+    }
+  })
+
+  test.each([undefined, null, '', '   ', 'Current revision reason'])(
+    'uses only the genuine current prop for the live reason (%s)',
+    async changeReason => {
+      const { instance } = createHistoryInstance({
+        title: 'Current title',
+        changeReason,
+        trailLoaded: true,
+        trailLoading: false,
+        trail: [
+          { ...trailItem(2), changeReason: 'Archived revision reason' },
+          trailItem(1, 'initial')
+        ]
+      })
+      const { document } = await renderTemplate('client/components/history.vue', instance)
+      const rows = [...document.querySelectorAll('.history-revision-row')]
+      expect(rows[0].querySelector('.history-revision-reason')?.textContent ?? null)
+        .toBe(changeReason?.trim() || null)
+      expect(rows[0].querySelector('.history-revision-action').textContent).toBe('Last edited by TestAuthor')
+      expect(rows[1].querySelector('.history-revision-reason')?.textContent).toBe('Archived revision reason')
+      expect(rows[2].querySelector('.history-revision-reason')).toBeNull()
+    }
+  )
+
+  test.each(['Current title', 'Historical rename', '', '   '])(
+    'keeps meaningful comparison headings and revision details for target title %s',
+    async historicalTitle => {
+      const { instance } = createHistoryInstance({
+        title: 'Current title',
+        trailLoaded: true,
+        trailLoading: false,
+        target: { ...page(2), title: historicalTitle, description: 'Historical description' },
+        targetReady: true,
+        diffTarget: 2
+      })
+      const { document } = await renderTemplate('client/components/history.vue', instance)
+      expect([...document.querySelectorAll('h1')].map(heading => heading.textContent)).toEqual(['Current title'])
+      const section = document.querySelector('.history-comparison-surface')
+      const headingId = section.getAttribute('aria-labelledby')
+      const heading = document.getElementById(headingId)
+      expect(heading?.tagName).toBe('H2')
+      expect(heading?.textContent).toBe(translate('history:comparison.heading'))
+      const ids = [...document.querySelectorAll('[id]')].map(element => element.id)
+      expect(new Set(ids).size).toBe(ids.length)
+      expect([...document.querySelectorAll('h1, h2, h3')].every(element => element.textContent.trim())).toBe(true)
+      const distinctTitle = historicalTitle.trim() && historicalTitle !== instance.title
+      expect(section.querySelector('.history-comparison-title')?.textContent ?? null)
+        .toBe(distinctTitle ? historicalTitle : null)
+      expect(section.querySelector('.history-comparison-description').textContent).toBe('Historical description')
+      expect(section.querySelector('.history-revision-meta').textContent).toContain('Revision 2')
+      expect(section.querySelector('.history-revision-meta').textContent)
+        .toContain(formatRevisionTime(instance.target.versionDate).short)
+    }
+  )
 
   test('shows friendly target metadata without raw formats or unknown values', () => {
     const { instance } = createHistoryInstance({

@@ -13,7 +13,7 @@ import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-co
 import { type AgentDraft, emptyAgentDraft } from '../../helpers/agent-draft.ts'
 import { agentAttachmentMimeTypes, agentToolAcceptsImages } from '../../helpers/agent-media.ts'
 import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
-import { searchPages } from '../../helpers/pages-api.ts'
+import { fetchRecentPages, searchPages } from '../../helpers/pages-api.ts'
 import { resolveUserPicture } from '../../helpers/user-picture.ts'
 import { fetchWikiSource } from '../../helpers/wiki-source.ts'
 import { fallbackLocalizationLabel } from '../../modules/localization.ts'
@@ -133,7 +133,7 @@ const renderPicker = new Function('Vue', pickerTemplate.code)(Vue) as () => unkn
 const pickerScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(pickerDescriptor.scriptSetup.content.replace(/^import .*$/gm, ''))
 const pickerBindings = Array.from(pickerDescriptor.scriptSetup.content.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
 const evaluatePicker = new Function(
-  '{ computed, mergeProps, nextTick, onBeforeUnmount, ref, useId, watch, defineProps, defineEmits, searchPages, fetchWikiSource, AgentKnowledgeContextSchema, useTranslate }',
+  '{ computed, mergeProps, nextTick, onBeforeUnmount, ref, useId, watch, defineProps, defineEmits, fetchRecentPages, searchPages, fetchWikiSource, AgentKnowledgeContextSchema, useTranslate }',
   `${pickerScript}\nreturn { mergeProps, ${pickerBindings.join(', ')} }`
 ) as (dependencies: Record<string, unknown>) => Record<string, unknown>
 const contextPickerComponent = Vue.defineComponent({
@@ -158,6 +158,7 @@ const contextPickerComponent = Vue.defineComponent({
       defineProps: () => props,
       defineEmits: () => emit,
       searchPages,
+      fetchRecentPages,
       fetchWikiSource,
       AgentKnowledgeContextSchema,
       useTranslate

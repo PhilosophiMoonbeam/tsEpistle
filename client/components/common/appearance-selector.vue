@@ -114,6 +114,7 @@ function onSegmentKeydown (event: KeyboardEvent, index: number): void {
       return
   }
   event.preventDefault()
+  event.stopPropagation()
   if (selectionDisabled.value) return
   const next = appearanceOptions[nextIndex]
   if (!next) return

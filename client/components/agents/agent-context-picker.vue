@@ -100,37 +100,21 @@
             <h2 :id="`${sourceDialogId}-title`">{{ $t('common:agentContextPicker.addSources') }}</h2>
           </div>
           <div class="agent-context__dialog-corner">
-            <v-tooltip location="bottom" content-class="agent-owned-overlay">
-              <template #activator="{ props: confirmTip }">
-                <v-btn
-                  v-bind="confirmTip"
-                  class="agent-context__dialog-confirm"
-                  icon="mdi-check"
-                  variant="text"
-                  color="success"
-                  :aria-label="selectedRows.length ? $t('common:agentContextPicker.addSelectedSource', { count: selectedRows.length, interpolation: { escapeValue: false } }) : $t('common:agentContextPicker.noPagesSelectedYet')"
-                  :loading="addingSources"
-                  :disabled="!selectedRows.length || addingSources || disabled || connectionBlocked"
-                  type="button"
-                  @click="addSources"
-                />
-              </template>
-              <span>{{ $t('common:agentContextPicker.addSelectedPages') }}</span>
-            </v-tooltip>
-            <v-tooltip location="bottom" content-class="agent-owned-overlay">
-              <template #activator="{ props: closeTip }">
-                <v-btn
-                  v-bind="closeTip"
-                  class="agent-context__dialog-close"
-                  icon="mdi-close"
-                  variant="text"
-                  :aria-label="$t('common:agentContextPicker.cancelAddingSources')"
-                  type="button"
-                  @click="cancelSources"
-                />
-              </template>
-              <span>{{ $t('common:actions.cancel') }}</span>
-            </v-tooltip>
+            <v-btn
+              class="agent-context__dialog-confirm"
+              variant="flat"
+              color="primary"
+              :loading="addingSources"
+              :disabled="!selectedRows.length || addingSources || disabled || connectionBlocked"
+              type="button"
+              @click="addSources"
+            >{{ $t('common:actions.apply') }} ({{ selectedRows.length }})</v-btn>
+            <v-btn
+              class="agent-context__dialog-close"
+              variant="text"
+              type="button"
+              @click="cancelSources"
+            >{{ $t('common:actions.cancel') }}</v-btn>
           </div>
         </header>
         <v-card-text class="agent-context__dialog-body">
@@ -153,7 +137,7 @@
             :disabled="addingSources || disabled || connectionBlocked"
             @keydown.enter.prevent="queueSourceSearch(true)"
           />
-          <p class="agent-context__search-scope" role="note"><v-icon icon="mdi-earth" size="15" aria-hidden="true" /> {{ $t('common:agentContextPicker.attachmentsDiscoveredAcrossAll', { scopeLabel, interpolation: { escapeValue: false } }) }}</p>
+          <p class="agent-context__search-scope" role="note"><v-icon icon="mdi-text-search" size="15" aria-hidden="true" /> {{ discoveryDescription }}</p>
           <p v-if="!searchError" class="agent-context__status" role="status" aria-live="polite" aria-atomic="true">{{ sourceStatus }}</p>
           <v-alert v-if="attachmentError" class="agent-context__error" type="error" variant="tonal" density="compact" role="alert">
             {{ attachmentError }}
@@ -171,23 +155,27 @@
             </div>
           </section>
 
+          <h3 v-if="!sourceQuery.trim()" class="agent-context__recent-title">{{ $t('common:agentContextPicker.recentSources', { scopeLabel: discoveryScopeLabel, interpolation: { escapeValue: false } }) }}</h3>
           <div class="agent-context__results" :aria-label="$t('common:agentContextPicker.pageSearchResults')">
-            <div v-if="searchLoading" class="agent-context__results-state" role="status"><v-progress-circular indeterminate size="20" width="2" aria-hidden="true" /> {{ $t('common:agentContextPicker.searchingPages') }}</div>
+            <div v-if="connectionBlocked" class="agent-context__results-state">{{ $t('common:agentContextPicker.connectionRequiredSearchAttach') }}</div>
+            <div v-else-if="addingSources || searchLoading" class="agent-context__results-state" role="status"><v-progress-circular indeterminate size="20" width="2" aria-hidden="true" /> {{ addingSources ? $t('common:agentContextPicker.addingSource', { count: selectedRows.length, interpolation: { escapeValue: false } }) : $t('common:agentContextPicker.searchingPages') }}</div>
             <v-alert v-else-if="searchError" class="agent-context__error agent-context__search-error" type="error" variant="tonal" density="compact" role="alert">
               <p>{{ searchError }}</p>
               <v-btn variant="text" :disabled="addingSources || disabled || connectionBlocked" type="button" @click="queueSourceSearch(true)">{{ $t('common:agentContextPicker.retrySearch') }}</v-btn>
             </v-alert>
-            <div v-else-if="!sourceQuery.trim() || sourceQuery.trim().length < 2" class="agent-context__results-state">{{ $t('common:agentContextPicker.enterLeastTwoCharacters') }}</div>
-            <div v-else-if="!sourceResult.results.length" class="agent-context__results-state">{{ $t('common:agentContextPicker.noAccessiblePagesMatched') }}</div>
+            <div v-else-if="sourceQuery.trim().length === 1" class="agent-context__results-state">{{ $t('common:agentContextPicker.enterLeastTwoCharacters') }}</div>
+            <div v-else-if="!visibleRows.length" class="agent-context__results-state">{{ sourceQuery.trim() ? $t('common:agentContextPicker.noAccessiblePagesMatched') : $t('common:agentContextPicker.noRecentSources', { scopeLabel: discoveryScopeLabel, interpolation: { escapeValue: false } }) }}</div>
             <ul v-else class="agent-context__result-list">
-              <li v-for="row in sourceResult.results" :key="rowIdentity(row)" class="agent-context__result">
+              <li v-for="row in visibleRows" :key="rowIdentity(row)" class="agent-context__result">
                 <label class="agent-context__result-label" :class="{ 'agent-context__result-label--disabled': !canToggle(row) }" :title="toggleReason(row)">
                   <input
                     type="checkbox"
                     :checked="isAttached(row) || isPending(row)"
-                    :disabled="!canToggle(row)"
+                    :disabled="addingSources || disabled || connectionBlocked"
+                    :aria-disabled="!canToggle(row) ? 'true' : undefined"
                     :aria-label="rowAriaLabel(row)"
                     :aria-describedby="rowDomId(row)"
+                    @click="guardSourceToggle(row, $event)"
                     @change="toggleSource(row, $event)"
                   />
                   <span class="agent-context__checkbox" aria-hidden="true" />
@@ -222,7 +210,7 @@
 <script setup lang="ts">
 import { computed, mergeProps, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import type { AgentDraft, AgentSearchScope } from '../../helpers/agent-draft.ts'
-import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api.ts'
+import { fetchRecentPages, searchPages, type PageSearchResult, type PageSearchRow, type RecentPageRow } from '../../helpers/pages-api.ts'
 import { fetchWikiSource } from '../../helpers/wiki-source.ts'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
@@ -232,6 +220,7 @@ import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
 const emptySearchResult = (): PageSearchResult => ({ results: [], suggestions: [], totalHits: 0, nextCursor: null })
+type SourceRow = Pick<PageSearchRow, 'id' | 'title' | 'locale' | 'path' | 'visibility'>
 const sourceDialogId = useId()
 
 const props = defineProps<{
@@ -253,7 +242,8 @@ const previewSelector = ref<WikiSourceSelector | null>(null)
 const sourcesOpen = ref(false)
 const sourceQuery = ref('')
 const sourceResult = ref<PageSearchResult>(emptySearchResult())
-const selectedRows = ref<PageSearchRow[]>([])
+const recentRows = ref<RecentPageRow[]>([])
+const selectedRows = ref<SourceRow[]>([])
 const searchLoading = ref(false)
 const loadingMore = ref(false)
 const addingSources = ref(false)
@@ -276,15 +266,31 @@ const toggleCurrentPage = (): void => {
   emit('change', { includeCurrentPage: !props.draft.includeCurrentPage })
 }
 
-const scopeLabel = computed(() => props.draft.scope.kind === 'selected' ? t('common:agentContextPicker.selectedPages') : props.draft.scope.kind === 'section' ? t('common:agentContextPicker.within', { path: props.draft.scope.path, interpolation: { escapeValue: false } }) : props.draft.scope.kind === 'locale' ? t('common:agentContextPicker.pages', { locale: props.draft.scope.locale.toUpperCase(), interpolation: { escapeValue: false } }) : t('common:agentContextPicker.allWiki'))
+const scopeLabel = computed(() => props.draft.scope.kind === 'selected' ? t('common:agentContextPicker.selectedPages') : props.draft.scope.kind === 'section' ? t('common:agentContextPicker.within', { path: `${props.draft.scope.locale}/${props.draft.scope.path}`, interpolation: { escapeValue: false } }) : props.draft.scope.kind === 'locale' ? t('common:agentContextPicker.pages', { locale: props.draft.scope.locale.toUpperCase(), interpolation: { escapeValue: false } }) : t('common:agentContextPicker.allWiki'))
+const discoveryScope = computed(() => {
+  const scope = props.draft.scope
+  return scope.kind === 'section' ? { locale: scope.locale, path: scope.path } : scope.kind === 'locale' ? { locale: scope.locale } : {}
+})
+const discoveryScopeLabel = computed(() => props.draft.scope.kind === 'selected' ? t('common:agentContextPicker.allWiki') : scopeLabel.value)
+const discoveryDescription = computed(() => props.draft.scope.kind === 'selected'
+  ? t('common:agentContextPicker.attachmentsDiscoveredAcrossAll', { scopeLabel: scopeLabel.value, interpolation: { escapeValue: false } })
+  : t('common:agentContextPicker.sourceDiscoveryScope', { scopeLabel: discoveryScopeLabel.value, interpolation: { escapeValue: false } }))
 const attachedIds = computed(() => new Set(props.draft.sources.map(source => source.id)))
-const atCapacity = computed(() => props.draft.sources.length + selectedRows.value.length >= 8)
+const atCapacity = computed(() => attachedIds.value.size + selectedRows.value.length >= 8)
+const matchesDiscoveryScope = (row: SourceRow): boolean => {
+  const scope = discoveryScope.value
+  return (!scope.locale || row.locale === scope.locale) && (!scope.path || row.path === scope.path || row.path.startsWith(`${scope.path}/`))
+}
+const visibleRows = computed<SourceRow[]>(() => sourceQuery.value.trim()
+  ? sourceResult.value.results
+  : dedupeRows(recentRows.value).filter(row => matchesDiscoveryScope(row) && !isAttached(row)).slice(0, 8))
 const sourceStatus = computed(() => {
+  if (props.connectionBlocked) return t('common:agentContextPicker.connectionRequiredSearchAttach')
   if (addingSources.value) return t('common:agentContextPicker.addingSource', { count: selectedRows.value.length, interpolation: { escapeValue: false } })
   if (searchLoading.value) return t('common:agentContextPicker.searchingPages')
-  if (loadingMore.value) return t('common:agentContextPicker.loadingMoreResultsShown', { count: sourceResult.value.results.length, interpolation: { escapeValue: false } })
-  if (selectedRows.value.length) return t('common:agentContextPicker.sourcePendingResultShown', { count: selectedRows.value.length, resultSummary: t('common:agentContextPicker.resultShown', { count: sourceResult.value.results.length }), interpolation: { escapeValue: false } })
-  if (sourceQuery.value.trim().length >= 2) return t('common:agentContextPicker.resultShown', { count: sourceResult.value.results.length, interpolation: { escapeValue: false } })
+  if (loadingMore.value) return t('common:agentContextPicker.loadingMoreResultsShown', { count: visibleRows.value.length, interpolation: { escapeValue: false } })
+  if (selectedRows.value.length) return t('common:agentContextPicker.sourcePendingResultShown', { count: selectedRows.value.length, resultSummary: t('common:agentContextPicker.resultShown', { count: visibleRows.value.length }), interpolation: { escapeValue: false } })
+  if (!sourceQuery.value.trim() || sourceQuery.value.trim().length >= 2) return t('common:agentContextPicker.resultShown', { count: visibleRows.value.length, interpolation: { escapeValue: false } })
   return t('common:agentContextPicker.noSourcesSelected')
 })
 
@@ -292,17 +298,17 @@ const normalizeSourceId = (value: string | number): number | null => {
   const id = typeof value === 'number' ? value : Number(value.trim())
   return Number.isSafeInteger(id) && id > 0 ? id : null
 }
-const rowIdentity = (row: PageSearchRow): string => {
+const rowIdentity = (row: SourceRow): string => {
   const id = normalizeSourceId(row.id)
   return id === null ? `invalid:${String(row.id)}:${row.locale}:${row.path}` : `id:${id}`
 }
-const rowId = (row: PageSearchRow): number | null => normalizeSourceId(row.id)
-const rowDomId = (row: PageSearchRow): string => `agent-source-row-${rowIdentity(row).replace(/[^A-Za-z0-9_-]/g, '-')}`
-const isAttached = (row: PageSearchRow): boolean => {
+const rowId = (row: SourceRow): number | null => normalizeSourceId(row.id)
+const rowDomId = (row: SourceRow): string => `${sourceDialogId}-row-${rowIdentity(row).replace(/[^A-Za-z0-9_-]/g, '-')}`
+const isAttached = (row: SourceRow): boolean => {
   const id = rowId(row)
   return id !== null && attachedIds.value.has(id)
 }
-const dedupeRows = (rows: readonly PageSearchRow[]): PageSearchRow[] => {
+const dedupeRows = <Row extends SourceRow>(rows: readonly Row[]): Row[] => {
   const known = new Set<number>()
   return rows.filter(row => {
     const id = rowId(row)
@@ -311,19 +317,19 @@ const dedupeRows = (rows: readonly PageSearchRow[]): PageSearchRow[] => {
     return true
   })
 }
-const isPending = (row: PageSearchRow): boolean => {
+const isPending = (row: SourceRow): boolean => {
   const id = rowId(row)
   return id !== null && selectedRows.value.some(selected => rowId(selected) === id)
 }
-const toggleReason = (row: PageSearchRow): string => {
+const toggleReason = (row: SourceRow): string => {
   if (isAttached(row)) return t('common:agentContextPicker.alreadyAttachedConversation')
   if (isPending(row)) return t('common:agentContextPicker.selectedUncheckRemovePending')
   if (rowId(row) === null) return t('common:agentContextPicker.resultHasInvalidPage')
   if (atCapacity.value) return t('common:agentContextPicker.eightSourcesMaximumRemove')
   return ''
 }
-const canToggle = (row: PageSearchRow): boolean => !addingSources.value && !interactionBlocked.value && !isAttached(row) && (isPending(row) || (!atCapacity.value && rowId(row) !== null))
-const rowAriaLabel = (row: PageSearchRow): string => {
+const canToggle = (row: SourceRow): boolean => !addingSources.value && !interactionBlocked.value && !isAttached(row) && (isPending(row) || (!atCapacity.value && rowId(row) !== null))
+const rowAriaLabel = (row: SourceRow): string => {
   const state = isAttached(row) ? t('common:agentContextPicker.attached') : isPending(row) ? t('common:agentContextPicker.pendingAddition') : atCapacity.value ? t('common:agentContextPicker.unavailableEightSourceLimit') : ''
   return `${row.title}, ${row.locale}, ${row.path}${state ? `, ${state}` : ''}`
 }
@@ -365,6 +371,7 @@ const invalidateAll = (): void => {
 const resetTransient = (): void => {
   sourceQuery.value = ''
   sourceResult.value = emptySearchResult()
+  recentRows.value = []
   selectedRows.value = []
   searchError.value = ''
   moreError.value = ''
@@ -382,7 +389,9 @@ const focusElement = (target: { focus?: () => void; $el?: HTMLElement } | HTMLEl
   target?.$el?.querySelector<HTMLElement>('input,button')?.focus({ preventScroll: true })
 }
 const focusSourceSearch = (): void => {
-  void nextTick(() => focusElement(sourceSearchInput.value))
+  void nextTick(() => {
+    if (!disposed && sourcesOpen.value) focusElement(sourceSearchInput.value)
+  })
 }
 const openSources = (): void => {
   if (interactionBlocked.value) return
@@ -390,6 +399,7 @@ const openSources = (): void => {
   resetTransient()
   successfulClose.value = false
   sourcesOpen.value = true
+  queueSourceSearch(true)
 }
 const cancelSources = (): void => {
   successfulClose.value = false
@@ -406,6 +416,7 @@ const handleSourcesModel = (open: boolean): void => {
   else sourcesOpen.value = false
 }
 const onSourcesAfterLeave = (): void => {
+  if (disposed || sourcesOpen.value) return
   const completed = successfulClose.value
   successfulClose.value = false
   if (completed) {
@@ -414,7 +425,9 @@ const onSourcesAfterLeave = (): void => {
     emit('sourcesAdded')
     return
   }
-  void nextTick(() => focusElement(sourcesActivator.value))
+  void nextTick(() => {
+    if (!disposed && !sourcesOpen.value) focusElement(sourcesActivator.value)
+  })
 }
 const queueSourceSearch = (immediate = false): void => {
   if (!sourcesOpen.value || interactionBlocked.value || addingSources.value) return
@@ -426,9 +439,10 @@ const queueSourceSearch = (immediate = false): void => {
   sourceResult.value = emptySearchResult()
   searchError.value = ''
   moreError.value = ''
-  searchLoading.value = query.length >= 2
+  recentRows.value = []
+  searchLoading.value = query.length !== 1
   loadingMore.value = false
-  if (query.length < 2) return
+  if (query.length === 1) return
   if (immediate) {
     void runSearch(query, generation)
     return
@@ -439,21 +453,24 @@ const queueSourceSearch = (immediate = false): void => {
   }, 300)
 }
 const runSearch = async (query: string, generation: number): Promise<void> => {
-  if (disposed || !sourcesOpen.value || interactionBlocked.value || generation !== requestGeneration || query.length < 2) return
+  if (disposed || !sourcesOpen.value || interactionBlocked.value || generation !== requestGeneration || query.length === 1) return
   const controller = new AbortController()
   searchController = controller
   searchLoading.value = true
   try {
-    const response = await searchPages(
-      (url, init) => window.fetch(url, { ...init, signal: controller.signal }),
-      query,
-      { paginated: true }
-    )
-    if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value) return
-    sourceResult.value = { ...response, results: dedupeRows(response.results) }
+    const fetchImpl = (url: RequestInfo | URL, init?: RequestInit) => window.fetch(url, { ...init, signal: controller.signal })
+    if (!query) {
+      const response = await fetchRecentPages(fetchImpl)
+      if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value) return
+      recentRows.value = response
+    } else {
+      const response = await searchPages(fetchImpl, query, { ...discoveryScope.value, paginated: true })
+      if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value) return
+      sourceResult.value = { ...response, results: dedupeRows(response.results).filter(matchesDiscoveryScope) }
+    }
   } catch {
     if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value) return
-    searchError.value = t('common:agentContextPicker.pageSearchCouldNot')
+    searchError.value = t(query ? 'common:agentContextPicker.pageSearchCouldNot' : 'common:agentContextPicker.recentSourcesCouldNot')
   } finally {
     if (searchController === controller) searchController = null
     if (generation === requestGeneration) searchLoading.value = false
@@ -480,12 +497,12 @@ const loadMoreSources = async (): Promise<void> => {
     const next = await searchPages(
       (url, init) => window.fetch(url, { ...init, signal: controller.signal }),
       query,
-      { paginated: true, cursor }
+      { ...discoveryScope.value, paginated: true, cursor }
     )
     if (disposed || controller.signal.aborted || interactionBlocked.value || generation !== requestGeneration || !sourcesOpen.value || query !== sourceQuery.value.trim()) return
     const existingResults = dedupeRows(sourceResult.value.results)
     const existingIds = new Set(existingResults.map(row => rowId(row)))
-    const added = dedupeRows(next.results).filter(row => {
+    const added = dedupeRows(next.results).filter(matchesDiscoveryScope).filter(row => {
       const id = rowId(row)
       return id !== null && !existingIds.has(id)
     })
@@ -496,7 +513,7 @@ const loadMoreSources = async (): Promise<void> => {
       if (document.activeElement !== continuation && document.activeElement !== document.body) return
       let firstEnabled: HTMLInputElement | null | undefined
       for (const row of added) {
-        firstEnabled = dialog?.querySelector<HTMLInputElement>(`input[aria-describedby="${rowDomId(row)}"]:not(:disabled)`)
+        firstEnabled = dialog?.querySelector<HTMLInputElement>(`input[aria-describedby="${rowDomId(row)}"]:not(:disabled):not([aria-disabled="true"])`)
         if (firstEnabled) break
       }
       if (firstEnabled) {
@@ -521,39 +538,52 @@ const loadMoreSources = async (): Promise<void> => {
     if (generation === requestGeneration) loadingMore.value = false
   }
 }
-const removePending = (row: PageSearchRow): void => {
+const removePending = (row: SourceRow): void => {
   const id = rowId(row)
   if (interactionBlocked.value || id === null || addingSources.value) return
+  const active = document.activeElement instanceof HTMLElement ? document.activeElement : null
   selectedRows.value = selectedRows.value.filter(selected => rowId(selected) !== id)
   attachmentError.value = ''
+  void nextTick(() => {
+    if (active && !active.isConnected && document.activeElement === document.body) focusSourceSearch()
+  })
 }
-const toggleSource = (row: PageSearchRow, event: Event): void => {
+const guardSourceToggle = (row: SourceRow, event: Event): void => {
+  if (!canToggle(row)) event.preventDefault()
+}
+const toggleSource = (row: SourceRow, event: Event): void => {
   const checked = (event.target as HTMLInputElement | null)?.checked ?? false
   const id = rowId(row)
-  if (id === null || addingSources.value || interactionBlocked.value || isAttached(row)) return
+  if (!canToggle(row) || id === null) {
+    const checkbox = event.target as HTMLInputElement | null
+    if (checkbox) checkbox.checked = isAttached(row) || isPending(row)
+    return
+  }
   if (checked) {
     if (isPending(row)) return
-    if (props.draft.sources.length + selectedRows.value.length >= 8) {
-      attachmentError.value = t('common:agentContextPicker.eightSourcesMaximumRemove2')
-      return
-    }
     selectedRows.value = [...selectedRows.value, row]
   } else {
     selectedRows.value = selectedRows.value.filter(selected => rowId(selected) !== id)
   }
   attachmentError.value = ''
 }
-const transactionError = (row: PageSearchRow, value: unknown): Error => {
+const transactionError = (row: SourceRow, value: unknown): Error => {
   const message = value instanceof Error && value.message ? value.message : t('common:agentContextPicker.sourceCouldNotLoaded')
   return new Error(`${row.title}: ${message}`)
 }
 const addSources = async (): Promise<void> => {
   if (disposed || !sourcesOpen.value || interactionBlocked.value || addingSources.value || !selectedRows.value.length) return
-  const pending = [...selectedRows.value]
+  const pending = dedupeRows(selectedRows.value).filter(row => !isAttached(row))
+  if (!pending.length) return
+  const discoveryWasLoading = searchLoading.value
+  clearSearchTimer()
+  const generation = ++requestGeneration
   const query = sourceQuery.value.trim()
   const controller = new AbortController()
   resolveController = controller
   abortDiscovery()
+  searchLoading.value = false
+  loadingMore.value = false
   addingSources.value = true
   attachmentError.value = ''
   try {
@@ -562,17 +592,21 @@ const addSources = async (): Promise<void> => {
       if (id === null) throw transactionError(row, new Error(t('common:agentContextPicker.pageIdentityInvalid')))
       try {
         const source = await fetchWikiSource({ id }, query, controller.signal)
-        if (source.id !== id) throw new Error(t('common:agentContextPicker.returnedPageIdentityDid'))
+        if (source.id !== id || source.locale !== row.locale || source.path !== row.path) throw new Error(t('common:agentContextPicker.returnedPageIdentityDid'))
         return source
       } catch (value) {
         if (controller.signal.aborted) throw value
         throw transactionError(row, value)
       }
     }))
-    if (disposed || controller.signal.aborted || resolveController !== controller || interactionBlocked.value || !sourcesOpen.value) return
-    const currentSources = [...props.draft.sources]
+    if (disposed || controller.signal.aborted || resolveController !== controller || generation !== requestGeneration || interactionBlocked.value || !sourcesOpen.value) return
+    const currentSources = dedupeRows(props.draft.sources)
     const currentIds = new Set(currentSources.map(source => source.id))
-    const additions = hydrated.filter(source => !currentIds.has(source.id))
+    const additions = dedupeRows(hydrated).filter(source => !currentIds.has(source.id))
+    if (!additions.length) {
+      cancelSources()
+      return
+    }
     if (currentSources.length + additions.length > 8) {
       throw new Error(t('common:agentContextPicker.conversationAlreadyHasEight'))
     }
@@ -588,29 +622,45 @@ const addSources = async (): Promise<void> => {
         sourceRevision: source.sourceRevision
       }))
     })
-    if (!context.success) throw new Error(context.error.issues[0]?.message || t('common:agentContextPicker.selectedSourcesDoNot'))
-    if (disposed || controller.signal.aborted || resolveController !== controller || interactionBlocked.value || !sourcesOpen.value) return
+    if (!context.success) throw new Error(t('common:agentContextPicker.selectedSourcesDoNot'))
+    if (disposed || controller.signal.aborted || resolveController !== controller || generation !== requestGeneration || interactionBlocked.value || !sourcesOpen.value) return
     emit('change', { sources: mergedSources })
     successfulClose.value = true
     sourcesOpen.value = false
   } catch (value) {
-    if (disposed || controller.signal.aborted || resolveController !== controller || interactionBlocked.value || !sourcesOpen.value) return
+    if (disposed || controller.signal.aborted || resolveController !== controller || generation !== requestGeneration || interactionBlocked.value || !sourcesOpen.value) return
     attachmentError.value = value instanceof Error ? value.message : t('common:agentContextPicker.selectedSourcesCouldNot')
+    controller.abort()
   } finally {
     if (resolveController === controller) {
       resolveController = null
-      if (sourcesOpen.value) addingSources.value = false
+      if (sourcesOpen.value) {
+        addingSources.value = false
+        if (discoveryWasLoading) queueSourceSearch(true)
+      }
     }
   }
 }
-watch(() => sourceQuery.value, () => queueSourceSearch())
+watch(() => sourceQuery.value, () => queueSourceSearch(), { flush: 'sync' })
+watch(() => props.draft.scope, () => {
+  if (!sourcesOpen.value) return
+  invalidateAll()
+  queueSourceSearch(true)
+}, { deep: true, flush: 'sync' })
+watch(attachedIds, () => {
+  selectedRows.value = dedupeRows(selectedRows.value).filter(row => !isAttached(row))
+}, { flush: 'sync' })
 watch([() => props.disabled, () => props.connectionBlocked], ([disabled, blocked], [previousDisabled, previousBlocked]) => {
   if (disabled || blocked) {
     invalidateAll()
+    sourceResult.value = emptySearchResult()
+    recentRows.value = []
+    searchError.value = ''
+    moreError.value = ''
     return
   }
-  if ((previousDisabled || previousBlocked) && sourcesOpen.value && sourceQuery.value.trim().length >= 2) queueSourceSearch(true)
-})
+  if ((previousDisabled || previousBlocked) && sourcesOpen.value) queueSourceSearch(true)
+}, { flush: 'sync' })
 onBeforeUnmount(() => {
   disposed = true
   invalidateAll()
@@ -748,14 +798,14 @@ onBeforeUnmount(() => {
   line-height: 1.3;
 }
 .agent-context__dialog { overflow: hidden; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius) !important; background: var(--wiki-surface-raised); }
-.agent-context__dialog-header { display: flex; align-items: flex-start; gap: var(--wiki-space-3); padding: var(--wiki-space-5) var(--wiki-space-5) var(--wiki-space-3); border-bottom: 1px solid var(--wiki-surface-border); }
+.agent-context__dialog-header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--wiki-space-3); padding: var(--wiki-space-5) var(--wiki-space-5) var(--wiki-space-3); border-bottom: 1px solid var(--wiki-surface-border); }
 .agent-context__dialog-mark { display: grid; flex: 0 0 auto; width: 2.25rem; height: 2.25rem; place-items: center; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-control-radius); background: var(--wiki-surface-sunken); color: var(--wiki-accent-ink, rgb(var(--v-theme-primary))); }
 .agent-context__dialog-header h2 { margin: 0; color: rgb(var(--v-theme-on-surface)); font-family: var(--wiki-font-display); font-size: 1.45rem; font-weight: 500; letter-spacing: -.025em; line-height: 1.15; }
-.agent-context__dialog-corner { display: flex; flex: 0 0 auto; margin-inline-start: auto; align-items: center; gap: .1rem; }
-.agent-context__dialog-corner .v-btn--icon { align-self: center; }
+.agent-context__dialog-corner { display: flex; flex: 0 1 auto; flex-wrap: wrap; margin-inline-start: auto; align-items: center; gap: var(--wiki-space-1); }
 .agent-context__dialog-corner .v-btn--loading { flex: 0 0 auto; }
 .agent-context__dialog-body { max-height: min(68vh, 38rem); padding: var(--wiki-space-4) var(--wiki-space-5) var(--wiki-space-2); }
 .agent-context__dialog-guidance { margin: 0 0 var(--wiki-space-3); color: var(--wiki-text-muted); font-size: .82rem; line-height: 1.5; }
+.agent-context__recent-title { margin: var(--wiki-space-3) 0 var(--wiki-space-2); color: var(--wiki-text-muted); font-size: .78rem; font-weight: 600; overflow-wrap: anywhere; }
 .agent-context__search { margin-bottom: .15rem; }
 .agent-context__search :deep(.v-field) { touch-action: pan-y; }
 .agent-context__search-scope { display: flex; align-items: center; gap: .35rem; margin: .25rem 0 0; color: var(--wiki-text-muted); font-size: .72rem; line-height: 1.4; }
