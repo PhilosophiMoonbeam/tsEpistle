@@ -38,7 +38,7 @@
               strong {{latest.authorName}}
             template(#date)
               span(:title='String($helpers.formatMoment(latest.updatedAt, `LLL`))') {{ $helpers.formatMoment(latest.updatedAt, 'from') }}.
-          v-btn.mt-2(variant="outlined", color='indigo', size="small", :href='`/` + latest.locale + `/` + latest.path', target='_blank', rel='noopener', :disabled='!hasLatestVersion')
+          v-btn.mt-2(variant="outlined", color='indigo', size="small", :href='pageHref(latest)', target='_blank', rel='noopener', :disabled='!hasLatestVersion')
             v-icon(start) mdi-open-in-new
             span {{$t('editor:conflict.viewLatestVersion')}}
           .text-body-medium.mt-5: strong {{$t('editor:conflict.whatToDo')}}
@@ -84,6 +84,7 @@ import { wikiStore } from '@/store/index.ts'
 
 import { emitEditorConflictReset, emitEditorConflictResolved } from '../../../helpers/editor-conflict-events'
 import { fetchPageConflictLatest, type PageConflictLatest } from '../../../helpers/pages-api'
+import { pageHref } from '../../../helpers/admin-pages'
 import LocalizedRichText from '../../common/localized-rich-text'
 
 export default defineComponent({
@@ -121,6 +122,7 @@ export default defineComponent({
     }
   },
   methods: {
+    pageHref,
     close () {
       this.isShown = false
     },

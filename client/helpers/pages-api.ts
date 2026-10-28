@@ -1117,6 +1117,7 @@ export type PageConflictLatest = {
   content: string
   locale: string
   path: string
+  visibility: 'public' | 'private'
   title: string
   description: string
   sourceRevision: string
@@ -1568,6 +1569,7 @@ export async function fetchPageConflictLatest(
       typeof payload.content !== 'string' ||
       typeof payload.locale !== 'string' ||
       typeof payload.path !== 'string' ||
+      (payload.visibility !== 'public' && payload.visibility !== 'private') ||
       typeof payload.title !== 'string' ||
       typeof payload.description !== 'string' ||
       (typeof payload.sourceRevision !== 'string' && typeof payload.sourceRevision !== 'number')
@@ -1582,6 +1584,7 @@ export async function fetchPageConflictLatest(
       content: payload.content,
       locale: payload.locale,
       path: payload.path,
+      visibility: payload.visibility,
       title: payload.title,
       description: payload.description,
       sourceRevision

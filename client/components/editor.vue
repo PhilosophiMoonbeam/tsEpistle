@@ -2019,6 +2019,7 @@ export default defineComponent({
       if (this.mode === 'create' || this.isSaving || !this.isDirty || this.conflictCheckPending) return
       const lifecycleGeneration = this.lifecycleGeneration
       const expectedPageId = wikiStore.page.id
+      const expectedSourceRevision = wikiStore.page.sourceRevision
       const expectedAccountId = this.accountId
       const expectedAuthenticated = this.isAuthenticated
       const expectedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
@@ -2032,10 +2033,12 @@ export default defineComponent({
           this.lifecycleGeneration === lifecycleGeneration &&
           this.offlineDraftCoordinator === coordinator &&
           wikiStore.page.id === expectedPageId &&
+          wikiStore.page.sourceRevision === expectedSourceRevision &&
+          this.checkoutDateActive === checkoutDate &&
           this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration) &&
           !this.isSaving
         )
-          this.isConflict = conflict
+          this.isConflict = this.isConflict || conflict
       } catch (err) {
         if (this.lifecycleGeneration === lifecycleGeneration && this.isCurrentActorSession(expectedAuthenticated, expectedAccountId, expectedOfflineIdentityEpoch, lifecycleGeneration)) console.warn(err)
       } finally {

@@ -4,6 +4,7 @@ import { compileTemplate, parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, test } from '../../../server/test/bun-test.mts'
 import { browserWindow, document, resetBody } from '../../test/browser-dom.mts'
 import { fetchPageConflictLatest as fetchConflictLatest } from '../../helpers/pages-api.ts'
+import { pageHref } from '../../helpers/admin-pages.ts'
 import { TextEditor } from './common/text-editor.ts'
 import { EditorView } from '@codemirror/view'
 import { getOriginalDoc, unifiedMergeView } from '@codemirror/merge'
@@ -140,7 +141,7 @@ const loadTiptapConflictComponent = dependencies => {
     .replace(/^import[^\n]*(?:\n|$)/gm, '')
     .replace('export default defineComponent(', 'const component = defineComponent(')
   const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script)
-  return new Function('LocalizedRichText', ...Object.keys(dependencies), `${executable}\nreturn component`)(LocalizedRichText, ...Object.values(dependencies))
+  return new Function('LocalizedRichText', 'pageHref', ...Object.keys(dependencies), `${executable}\nreturn component`)(LocalizedRichText, pageHref, ...Object.values(dependencies))
 }
 
 const createDeferred = () => {
@@ -214,6 +215,7 @@ const createLatestConflict = (overrides = {}) => ({
   content: '# Remote draft',
   locale: 'en',
   path: 'remote-page',
+  visibility: 'public',
   title: 'Remote title',
   description: 'Remote description',
   sourceRevision: '17',
@@ -331,6 +333,21 @@ describe('Tiptap conflict component behavior', () => {
     expect(harness.wikiStore.page.sourceRevision).toBe(latest.sourceRevision)
     expect(harness.resolutionEvents).toEqual(['resolved'])
     expect(harness.emitted).toEqual([['update:modelValue', false]])
+  })
+
+  test('rejects latest-version data without an authoritative page visibility', async () => {
+    const harness = createTiptapConflictHarness({
+      fetchImplementation: async () => Response.json(createLatestConflict({ visibility: undefined }))
+    })
+    await harness.component.mounted.call(harness.context)
+
+    expect(harness.context.loadState).toBe('error')
+    expect(harness.context.hasLatestVersion).toBe(false)
+    harness.context.useLocal()
+    harness.context.useRemote()
+    expect(harness.wikiStore.editor.content).toBe('local draft')
+    expect(harness.wikiStore.page.sourceRevision).toBe('16')
+    expect(harness.resolutionEvents).toEqual([])
   })
   test('Tiptap conflict ignores local and remote resolutions until latest data loads', async () => {
     const failedFetch = createDeferred()
@@ -456,7 +473,8 @@ describe('Tiptap conflict component behavior', () => {
   test('renders state-gated accessible conflict actions and a safe latest-version link', async () => {
     const failedFetch = createDeferred()
     const retriedFetch = createDeferred()
-    const attempts = [failedFetch, retriedFetch]
+    const privateFetch = createDeferred()
+    const attempts = [failedFetch, retriedFetch, privateFetch]
     const context = mountTiptapConflict(() => attempts.shift().promise)
     await settle()
     const localAction = () => document.querySelector('button[title="Use content in the left panel"]')
@@ -501,6 +519,12 @@ describe('Tiptap conflict component behavior', () => {
     expect(latestLink).not.toBeNull()
     expect(new URL(latestLink.href).pathname).toBe('/en/remote-page')
     expect(latestLink.relList.contains('noopener')).toBe(true)
+    const privateLoad = context.loadLatestVersion()
+    privateFetch.resolve(Response.json(createLatestConflict({ visibility: 'private', path: 'team notes/β', sourceRevision: '18' })))
+    await privateLoad
+    await settle()
+    const privateLink = document.querySelector('a[target="_blank"]')
+    expect(new URL(privateLink.href).pathname).toBe('/_private/en/team%20notes/%CE%B2')
     context.hasLatestVersion = false
     await settle()
     expectActionsUnavailable()

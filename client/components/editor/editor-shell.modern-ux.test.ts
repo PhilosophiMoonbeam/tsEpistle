@@ -118,6 +118,7 @@ type OfflineCoordinatorHarness = {
   discardCurrentDraft: () => Promise<boolean>
   prepareSubmission: (options?: { editVersion?: number }) => Promise<unknown>
   completeSubmission: (prepared: unknown, outcome: unknown) => Promise<boolean>
+  scheduleCapture: (editVersion?: number) => void
   captureNow: (options?: { force?: boolean; state?: string; editVersion?: number }) => Promise<boolean>
   readonly captureStates: string[]
   readonly hasCommittedCurrentValues: boolean
@@ -748,6 +749,9 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
       coordinatorState.hasInFlightWork = false
       return prepared
     },
+    // This shell harness explicitly flushes recovery through captureNow;
+    // debounced persistence is exercised with the real coordinator separately.
+    scheduleCapture: () => undefined,
     captureNow: async options => {
       coordinatorState.captureStates.push(options?.state ?? 'local')
       coordinatorState.hasCommittedCurrentValues = true
@@ -1590,6 +1594,7 @@ describe('modern editor shell interaction contract', () => {
     const testWindow = createTestWindow()
     let readinessCalls = 0
     const mounted = mountSaveActions(store, testWindow, {
+      checkPageConflict: async () => false,
       updatePage: async () => {
         throw Object.assign(new Error('The page changed on the server.'), { status: 409 })
       },
@@ -1601,6 +1606,9 @@ describe('modern editor shell interaction contract', () => {
     expect(await mounted.click()).toBe(false)
     await flushSaveUi()
     expect(readinessCalls).toBe(0)
+    expect(mounted.context.isConflict).toBe(true)
+    await mounted.context.refreshConflict()
+    await flushSaveUi()
     expect(mounted.context.isConflict).toBe(true)
     expect(mounted.context.isDirty).toBe(true)
     expect(mounted.context.saveFeedback).toBe('failed')
@@ -2747,24 +2755,24 @@ describe('modern editor shell interaction contract', () => {
     })
   }
 
-  test('ignores a conflict result for a replaced current store page even if the original prop is unchanged', async () => {
-    const store = createStore()
-    const testWindow = createTestWindow()
-    let release!: (conflict: boolean) => void
-    const pendingConflict = new Promise<boolean>(resolve => {
-      release = resolve
+  for (const boundary of ['page', 'source revision', 'checkout date'] as const) {
+    test(`ignores a conflict result after the current ${boundary} is replaced`, async () => {
+      const store = createStore()
+      const testWindow = createTestWindow()
+      const { promise: pendingConflict, resolve: release } = Promise.withResolvers<boolean>()
+      const context = createShellHarness(store, testWindow, {
+        checkPageConflict: async () => pendingConflict
+      })
+      context.editorAdapter.replaceText('dirty content')
+      const refresh = context.refreshConflict()
+      if (boundary === 'page') store.page.id = 99
+      if (boundary === 'source revision') store.page.sourceRevision = '2'
+      if (boundary === 'checkout date') context.checkoutDateActive = '2026-09-03T12:00:00.000Z'
+      release(true)
+      await refresh
+      expect(context.isConflict).toBe(false)
     })
-    const context = createShellHarness(store, testWindow, {
-      checkPageConflict: async () => pendingConflict
-    })
-    context.editorAdapter.replaceText('dirty content')
-    const refresh = context.refreshConflict()
-    store.page.id = 99
-    release(true)
-    await refresh
-    expect(context.pageId).toBe(12)
-    expect(context.isConflict).toBe(false)
-  })
+  }
 
   test('prompts only for a genuinely dirty unconfirmed unload', () => {
     const store = createStore()
