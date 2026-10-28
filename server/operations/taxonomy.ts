@@ -120,7 +120,7 @@ export const createTaxonomyService = (deps: TaxonomyDependencies) => ({
           // Explicit revision also covers tag-only edits when the author/metadata
           // would otherwise leave the core-field database trigger unchanged.
           const sourceRevision = (BigInt(page.sourceRevision) + 1n).toString()
-          await tx('pages').where({ id }).update({ authorId, updatedAt: now, extra: JSON.stringify(extra), sourceRevision })
+          await tx('pages').where({ id }).update({ authorId, updatedAt: now, extra: JSON.stringify(extra), sourceRevision, changeReason: null })
           await enqueuePageMutationEffects(tx, { pageId: id, sourceRevision, desiredState: 'present', action: 'update', source: page.content,
             location: { locale: page.localeCode, path: page.path, visibility: page.visibility, ownerId: page.ownerId } })
           await writeOutboxEvent(tx, { type: 'page.updated', version: 1, aggregateType: 'page', aggregateId: id,

@@ -36,6 +36,7 @@ interface PageVersionOptions {
   publishStartDate?: string | null
   title: string
   action?: string
+  changeReason?: string | null
   versionDate: string
   sourceRevision?: string | number | bigint
   /** Authoritative canonical relation IDs captured under the page lock before a tag mutation. */
@@ -68,6 +69,7 @@ interface HistoryTrailEntry {
   sourceRevision: string | number
   isSearchable: boolean
   versionDate: string
+  changeReason?: string
 }
 
 type HistoricalTagMap = Map<number, unknown[]>
@@ -179,6 +181,7 @@ export default class PageHistory extends Model {
   declare action: string
   declare versionDate: string
   declare sourceRevision: string | number
+  declare changeReason: string | null
   declare createdAt: string
   static override get tableName() {
     return 'pageHistory'
@@ -194,6 +197,7 @@ export default class PageHistory extends Model {
         hash: { type: 'string' },
         title: { type: 'string' },
         description: { type: 'string' },
+        changeReason: { type: ['string', 'null'], maxLength: 200 },
         isPublished: { type: 'boolean' },
         isSearchable: { type: 'boolean' },
         visibility: { type: 'string', enum: ['public', 'private'] },
@@ -286,6 +290,7 @@ export default class PageHistory extends Model {
       title: opts.title,
       action: opts.action || 'updated',
       sourceRevision: String(opts.sourceRevision ?? 1),
+      changeReason: opts.changeReason ?? null,
       versionDate: opts.versionDate
     })
     const knex = opts.transaction ?? wiki.models.knex
@@ -338,6 +343,7 @@ export default class PageHistory extends Model {
         'pageHistory.authorId',
         'pageHistory.pageId',
         'pageHistory.sourceRevision',
+        'pageHistory.changeReason',
         'pageHistory.versionDate',
         {
           versionId: 'pageHistory.id',
@@ -358,6 +364,7 @@ export default class PageHistory extends Model {
     return {
       ...version,
       isSearchable: version.isSearchable,
+      changeReason: version.changeReason ?? undefined,
       updatedAt: version.createdAt || null,
       tags: historicalTags.filter((tag): tag is string => typeof tag === 'string')
     }
@@ -379,6 +386,7 @@ export default class PageHistory extends Model {
         'pageHistory.authorId',
         'pageHistory.action',
         'pageHistory.sourceRevision',
+        'pageHistory.changeReason',
         'pageHistory.isSearchable',
         'pageHistory.versionDate',
         {
@@ -440,7 +448,8 @@ export default class PageHistory extends Model {
             sourceRevision: ph.sourceRevision,
             isSearchable: ph.isSearchable,
             valueAfter,
-            versionDate: ph.versionDate
+            versionDate: ph.versionDate,
+            ...(ph.changeReason == null ? {} : { changeReason: ph.changeReason })
           })
 
           prevPh = ph

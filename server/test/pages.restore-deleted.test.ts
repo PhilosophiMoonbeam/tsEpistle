@@ -65,6 +65,7 @@ const installSchema = async (): Promise<void> => {
     table.text('hash').notNullable()
     table.text('title').notNullable()
     table.text('description').notNullable()
+    table.string('changeReason', 200).nullable()
     table.text('visibility').notNullable()
     table.integer('ownerId').nullable()
     table.boolean('isPublished').notNullable()
@@ -94,6 +95,7 @@ const installSchema = async (): Promise<void> => {
     table.text('hash').notNullable()
     table.text('title').notNullable()
     table.text('description').notNullable()
+    table.string('changeReason', 200).nullable()
     table.text('visibility').notNullable()
     table.integer('ownerId').nullable()
     table.boolean('isPublished').notNullable()
@@ -205,6 +207,7 @@ const insertDeletedSnapshot = async (
   options: {
     readonly visibility?: 'public' | 'private'
     readonly ownerId?: number | null
+    readonly changeReason?: string
     readonly securityContext?: unknown
     readonly withRecoveryRow?: boolean
   } = {}
@@ -219,6 +222,7 @@ const insertDeletedSnapshot = async (
     hash: 'deleted-page-hash',
     title: 'Historical identity guide',
     description: 'Saved before deletion',
+    changeReason: options.changeReason ?? null,
     visibility,
     ownerId,
     isPublished: true,
@@ -477,7 +481,7 @@ describe('deleted page restore writer', () => {
   })
 
   it('restores the original ID and history, fences projections above prior effects, and restores only the protected verifier', async () => {
-    await insertDeletedSnapshot()
+    await insertDeletedSnapshot({ changeReason: 'Reason for the deleted source revision' })
     await seedPreviousEffect()
     await db('users').insert([
       { id: admin.id, email: admin.email, isActive: true, isSystem: false },
@@ -510,14 +514,15 @@ describe('deleted page restore writer', () => {
       visibility: 'private',
       ownerId: formerOwner.id,
       isPublished: 0,
+      changeReason: null,
       sourceRevision: 9
     })
     const restoredExtra = typeof restoredPage.extra === 'string' ? JSON.parse(restoredPage.extra) : restoredPage.extra
     expect(restoredExtra.pageFeatures).toEqual(pageFeatures)
     const history = await db('pageHistory').where({ pageId: 41 }).orderBy('id')
     expect(history).toHaveLength(2)
-    expect(history[0]).toMatchObject({ id: 700, action: 'deleted', sourceRevision: 6 })
-    expect(history[1]).toMatchObject({ pageId: 41, action: 'restored', sourceRevision: 9, path: 'restored/identity' })
+    expect(history[0]).toMatchObject({ id: 700, action: 'deleted', sourceRevision: 6, changeReason: 'Reason for the deleted source revision' })
+    expect(history[1]).toMatchObject({ pageId: 41, action: 'restored', sourceRevision: 9, path: 'restored/identity', changeReason: null })
     expect(await db('pageAccessPasswords').where({ pageId: 41 }).first()).toMatchObject({
       passwordHash: protectedVerifier.passwordHash,
       version: 4,

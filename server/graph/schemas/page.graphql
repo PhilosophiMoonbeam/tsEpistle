@@ -193,6 +193,7 @@ type Page {
   createdAt: Date!
   updatedAt: Date!
   sourceRevision: String!
+  changeReason: String
   editor: String! @auth(requires: ["write:pages", "manage:system"])
   locale: String!
   scriptCss: String
@@ -220,6 +221,7 @@ type PageHistory {
   authorName: String!
   actionType: String!
   isSearchable: Boolean!
+  changeReason: String
   valueBefore: String
   valueAfter: String
 }
@@ -238,6 +240,7 @@ type PageVersion {
   ownerId: Int
   isPublished: Boolean!
   isSearchable: Boolean!
+  changeReason: String
   locale: String!
   pageId: Int!
   path: String!

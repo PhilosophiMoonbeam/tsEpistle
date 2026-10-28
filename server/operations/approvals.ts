@@ -311,7 +311,7 @@ const publishPage = async (transaction: Knex.Transaction, page: ApprovalPage, ac
   await snapshotRevision(transaction, page, 'approval-published')
   const changedRows = await wiki.models.pages
     .query(transaction)
-    .patch({ isPublished: true, authorId: actor })
+    .patch({ isPublished: true, authorId: actor, changeReason: null })
     .where({ id: page.id, sourceRevision: page.sourceRevision })
   if (changedRows !== 1) throw new ApplicationError('The approved revision is stale', { status: 409, code: 'APPROVAL_STALE' })
 

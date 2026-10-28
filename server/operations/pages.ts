@@ -541,6 +541,7 @@ interface PageRecord extends Record<string, unknown> {
   description?: string | null
   updatedAt: Date
   sourceRevision?: string | number
+  changeReason?: string | null
   editorKey: string
   extra: Record<string, unknown>
   visibility: PageVisibility
@@ -586,6 +587,7 @@ interface PageVersionRecord extends Record<string, unknown> {
   editor: string
   title: string
   extra: unknown
+  changeReason?: string | null
 }
 interface PageVersionProjection extends PageVersionRecord {
   extra: Record<string, unknown>
@@ -1762,6 +1764,7 @@ const getSource = async (
   title: string
   isSearchable: boolean
   pageFeatures: PageFeatures
+  changeReason?: string
   brandingAssignment?: PageBrandingAssignment | null
 }> => {
   const authority = await authorityForInput(input, suppliedAuthority)
@@ -1773,6 +1776,7 @@ const getSource = async (
     editor: page.editorKey,
     isSearchable: page.isSearchable,
     title: page.title,
+    ...(page.changeReason == null ? {} : { changeReason: page.changeReason }),
     pageFeatures: normalizePageFeatures(page.extra.pageFeatures),
     ...(brandingAssignment === undefined ? {} : { brandingAssignment })
   }

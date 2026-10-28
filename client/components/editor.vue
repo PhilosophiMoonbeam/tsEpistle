@@ -61,6 +61,22 @@
           span.text-medium-emphasis(v-if='$vuetify.display.lgAndUp && mode !== `create` && !isDirty') {{ $t('editor:save.saved') }}
           span(v-else-if='$vuetify.display.lgAndUp') {{ mode === 'create' ? $t('common:actions.create') : $t('common:actions.save') }}
           v-tooltip(v-if='$vuetify.display.mdAndDown', activator='parent', location='bottom') {{ $t(`editor:editor.ctrlS`, { saveActionLabel, interpolation: { escapeValue: false } }) }}
+        v-btn.editor-change-reason-action(
+          ref='changeReasonDesktopTrigger'
+          v-if='$vuetify.display.mdAndUp'
+          type='button'
+          :variant='changeReason.trim() || changeReasonErrors.length ? `tonal` : `text`'
+          :color='changeReasonErrors.length ? `error` : changeReason.trim() ? `primary` : undefined'
+          :class='{ "is-icon": $vuetify.display.mdAndDown }'
+          :aria-label='$t(`editor:save.changeReason`)'
+          aria-haspopup='dialog'
+          :aria-expanded='changeReasonOpen ? `true` : `false`'
+          :aria-controls='`${changeReasonId}-popover`'
+          @click='toggleChangeReason($event)'
+        )
+          v-icon(:start='$vuetify.display.lgAndUp') {{ changeReasonErrors.length ? 'mdi-alert-circle-outline' : changeReason.trim() ? 'mdi-comment-check-outline' : 'mdi-comment-text-outline' }}
+          span(v-if='$vuetify.display.lgAndUp') {{ $t('editor:save.reasonAction') }}
+          v-tooltip(activator='parent', location='bottom') {{ $t('editor:save.changeReason') }}
         v-btn.editor-save-close-action(
           v-if='$vuetify.display.mdAndUp'
           variant='tonal'
@@ -96,22 +112,49 @@
           span(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.close') }}
           v-tooltip(v-if='$vuetify.display.mdAndDown', activator='parent', location='bottom') {{ $t('common:actions.close') }}
         v-divider.editor-actions-divider.ml-3(v-if='$vuetify.display.mdAndUp', vertical)
+    v-menu.editor-change-reason-popover(
+      ref='changeReasonPopover'
+      v-model='changeReasonOpen'
+      :id='`${changeReasonId}-popover`'
+      :activator='changeReasonActivator ?? undefined'
+      :activator-props='{ "aria-haspopup": "dialog" }'
+      :open-on-click='false'
+      :open-on-arrow='false'
+      :close-on-content-click='false'
+      :location='$vuetify.display.smAndDown ? `top end` : `bottom end`'
+      :offset='8'
+      :max-width='360'
+      role='dialog'
+      :aria-label='$t(`editor:save.changeReason`)'
+      @after-enter='focusChangeReason'
+    )
+      v-card.editor-change-reason-panel
+        v-text-field(
+          ref='changeReasonField'
+          :id='changeReasonId'
+          v-model='changeReason'
+          :label='$t(`editor:save.changeReason`)'
+          :hint='$t(`editor:save.changeReasonHelp`)'
+          :maxlength='changeReasonLimit'
+          :counter='changeReasonLimit'
+          :error-messages='changeReasonErrors'
+          :aria-invalid='changeReasonErrors.length ? `true` : undefined'
+          :readonly='isSaving || collaborationDiscarded || serverSaveDisabled || offlineMutationBlocked'
+          density='compact'
+          variant='outlined'
+          persistent-hint
+          persistent-counter
+          autocomplete='off'
+        )
+        .editor-change-reason-panel-actions
+          v-btn(
+            type='button'
+            variant='text'
+            color='primary'
+            @click='dismissChangeReason'
+          ) {{ $t('common:actions.done') }}
     v-main
       .editor-main-surface
-        .editor-change-reason
-          v-text-field(
-            v-model='changeReason'
-            :label='$t(`editor:save.changeReason`, { defaultValue: `Change reason (optional)` })'
-            :hint='$t(`editor:save.changeReasonHint`, { defaultValue: `Used only as the Git commit message for this save.` })'
-            :maxlength='changeReasonLimit'
-            :counter='changeReasonLimit'
-            :error-messages='changeReasonErrors'
-            :disabled='isSaving || collaborationDiscarded || serverSaveDisabled || offlineMutationBlocked'
-            density='compact'
-            variant='outlined'
-            hide-details='auto'
-            autocomplete='off'
-          )
         .editor-notices(v-if='bootstrapNotice || serverSaveDisabled || hasOfflineDraftNotice')
           v-alert.editor-bootstrap-notice.editor-notice(
             v-if='bootstrapNotice'
@@ -308,6 +351,18 @@
       )
         v-icon {{ mode !== 'create' && !isDirty ? 'mdi-check-circle-outline' : 'mdi-check' }}
         span {{ mobileSaveLabel }}
+      v-btn.editor-mobile-reason(
+        ref='changeReasonMobileTrigger'
+        type='button'
+        :color='changeReasonErrors.length ? `error` : changeReason.trim() ? `primary` : undefined'
+        :aria-label='$t(`editor:save.changeReason`)'
+        aria-haspopup='dialog'
+        :aria-expanded='changeReasonOpen ? `true` : `false`'
+        :aria-controls='`${changeReasonId}-popover`'
+        @click='toggleChangeReason($event)'
+      )
+        v-icon {{ changeReasonErrors.length ? 'mdi-alert-circle-outline' : changeReason.trim() ? 'mdi-comment-check-outline' : 'mdi-comment-text-outline' }}
+        span {{ $t('editor:save.reasonAction') }}
       v-btn(color='primary', @click='openPropsModal', :aria-label='$t(`common:actions.page`)')
         v-icon mdi-tag-text-outline
         span {{ $t('common:actions.page') }}
@@ -336,7 +391,7 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent, markRaw, shallowRef, type PropType } from 'vue'
+import { defineComponent, markRaw, shallowRef, useId, type PropType } from 'vue'
 import moment from 'moment-timezone'
 import { useHotkey } from 'vuetify'
 import { createAsyncComponent } from './common/async-component.ts'
@@ -674,6 +729,7 @@ export default defineComponent({
       saveHandler?.()
     })
     return {
+      changeReasonId: `editor-change-reason-${useId()}`,
       offlineStorage: shallowRef<OfflineStorage | null>(null),
       offlineStoragePromise: shallowRef<Promise<OfflineStorage> | null>(null),
       setSaveHotkeyHandler (handler: (() => void) | null) {
@@ -699,6 +755,8 @@ export default defineComponent({
       isSaving: false,
       changeReason: '',
       changeReasonLimit: MAX_PAGE_CHANGE_REASON_LENGTH,
+      changeReasonOpen: false,
+      changeReasonActivator: null as HTMLElement | null,
       renderWaitController: null as AbortController | null,
       editorAdapter: null as EditorAdapter | null,
       editorAdapterUnsubscribe: null as (() => void) | null,
@@ -1017,6 +1075,14 @@ export default defineComponent({
       flush: 'sync',
       handler() { this.closeImageProperties() }
     },
+    '$vuetify.display.smAndDown'() {
+      if (!this.changeReasonOpen) return
+      void this.$nextTick(() => {
+        if (!this.changeReasonOpen) return
+        const trigger = (this.$refs.changeReasonMobileTrigger ?? this.$refs.changeReasonDesktopTrigger) as { $el?: HTMLElement } | undefined
+        if (trigger?.$el) this.changeReasonActivator = markRaw(trigger.$el)
+      })
+    },
     currentEditor(newValue: string) {
       if (newValue !== '' && this.mode === 'create') {
         if (this.modalTimer !== null) window.clearTimeout(this.modalTimer)
@@ -1045,12 +1111,16 @@ export default defineComponent({
       if (newValue) void this.initializeOfflineDrafts()
       else {
         this.changeReason = ''
+        this.changeReasonOpen = false
+        this.changeReasonActivator = null
         this.offlineDraftCoordinator?.lock()
       }
     },
     accountId(newValue: number, oldValue: number) {
       if (newValue !== oldValue) {
         this.changeReason = ''
+        this.changeReasonOpen = false
+        this.changeReasonActivator = null
         void this.initializeOfflineDrafts()
       }
     }
@@ -1796,6 +1866,8 @@ export default defineComponent({
       }
       wikiStore.editor.content = ''
       this.changeReason = ''
+      this.changeReasonOpen = false
+      this.changeReasonActivator = null
       wikiStore.editor.id = 0
       wikiStore.editor.mode = 'create'
       wikiStore.editor.activeModal = ''
@@ -1900,6 +1972,39 @@ export default defineComponent({
         return
       }
       this.saveFeedback = outcome
+    },
+    toggleChangeReason(event: Event) {
+      const target = event.currentTarget
+      if (!(target instanceof HTMLElement)) return
+      if (this.changeReasonOpen && this.changeReasonActivator === target) {
+        this.changeReasonOpen = false
+        return
+      }
+      this.changeReasonActivator = markRaw(target)
+      this.changeReasonOpen = true
+    },
+    dismissChangeReason() {
+      const activator = this.changeReasonActivator
+      this.changeReasonOpen = false
+      void this.$nextTick(() => {
+        if (!this.changeReasonOpen && this.changeReasonActivator === activator && activator?.isConnected) {
+          activator.focus({ preventScroll: true })
+        }
+      })
+    },
+    revealChangeReason() {
+      this.dialogUnsaved = false
+      const trigger = (this.$refs.changeReasonMobileTrigger ?? this.$refs.changeReasonDesktopTrigger) as { $el?: HTMLElement } | undefined
+      if (!this.changeReasonActivator?.isConnected && trigger?.$el) this.changeReasonActivator = markRaw(trigger.$el)
+      this.changeReasonOpen = true
+      void this.$nextTick(this.focusChangeReason)
+    },
+    focusChangeReason() {
+      if (!this.changeReasonOpen) return
+      const popover = this.$refs.changeReasonPopover as { globalTop?: boolean } | undefined
+      if (popover?.globalTop === false) return
+      const field = this.$refs.changeReasonField as { $el?: HTMLElement } | undefined
+      field?.$el?.querySelector<HTMLInputElement>('input:not(:disabled)')?.focus({ preventScroll: true })
     },
     saveFromMobile() {
       if (this.mode !== 'create' && !this.isDirty) {
@@ -2046,6 +2151,7 @@ export default defineComponent({
       }
     },
     openConflict() {
+      this.changeReasonOpen = false
       emitEditorSaveConflict()
     },
     async save({ rethrow = false, overwrite = false, closeAfterSave = false }: { rethrow?: boolean, overwrite?: boolean, closeAfterSave?: boolean } = {}): Promise<boolean> {
@@ -2429,6 +2535,7 @@ export default defineComponent({
         }
         if (status === 409) {
           this.isConflict = true
+          this.changeReasonOpen = false
           emitEditorSaveConflict()
         }
         if (collaborationGenerationAtSave !== undefined && message === 'This collaboration draft was discarded. Reload the page before saving.') {
@@ -2563,7 +2670,8 @@ export default defineComponent({
       try {
         saved = await this.saveAndClose()
       } finally {
-        this.dialogUnsaved = saved && !this.isDirty ? false : dialogWasUnsaved
+        const correctingReason = this.changeReasonOpen && this.changeReasonErrors.length > 0
+        this.dialogUnsaved = correctingReason || (saved && !this.isDirty) ? false : dialogWasUnsaved
       }
     },
     async exit() {
@@ -2674,6 +2782,7 @@ export default defineComponent({
     },
     captureSaveSnapshot(): EditorSaveCapture {
       if (!PageChangeReasonSchema.safeParse(this.changeReason).success) {
+        this.revealChangeReason()
         throw new Error(this.$t('editor:save.changeReasonInvalid', { defaultValue: 'Use a single line of at most 200 characters without controls or bidi formatting.' }))
       }
       const editorCapture = this.captureEditorState()
@@ -2894,10 +3003,6 @@ export default defineComponent({
     min-height: 0;
   }
 
-  .editor-change-reason {
-    flex: none;
-    padding: var(--wiki-space-3) clamp(var(--wiki-space-4), 4vw, var(--wiki-space-8)) var(--wiki-space-2);
-  }
 
   .editor-active-editor {
     display: flex;
@@ -3045,6 +3150,7 @@ export default defineComponent({
 
 .editor-save-action,
 .editor-save-close-action,
+.editor-change-reason-action,
 .editor-page-action,
 .editor-close-action,
 .editor-conflict-action {
@@ -3114,6 +3220,27 @@ export default defineComponent({
   box-shadow: var(--wiki-shadow-md);
 }
 
+.editor-change-reason-panel {
+  width: min(22.5rem, calc(100vw - var(--wiki-space-8)));
+  max-height: calc(100dvh - var(--wiki-space-8));
+  overflow-y: auto;
+  padding: var(--wiki-space-4);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-md);
+
+  .v-field--focused {
+    box-shadow: var(--wiki-focus-ring);
+  }
+}
+
+.editor-change-reason-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-block-start: var(--wiki-space-2);
+}
+
 .atom-spinner.is-inline {
   display: inline-block;
 }
@@ -3170,7 +3297,8 @@ export default defineComponent({
 
   .editor .nav-header,
   .editor-mobile-actions,
-  .editor-mobile-menu {
+  .editor-mobile-menu,
+  .editor-change-reason-panel {
     border-color: CanvasText !important;
   }
 }

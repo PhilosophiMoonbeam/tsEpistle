@@ -58,6 +58,7 @@ const createMutationSchema = async db => {
     table.string('hash').notNullable()
     table.string('title').notNullable()
     table.text('description').notNullable()
+    table.string('changeReason', 200).nullable()
     table.string('visibility').notNullable()
     table.integer('ownerId').nullable()
     table.integer('authorId').notNullable()
@@ -656,7 +657,8 @@ describe('private page mutation existence isolation', () => {
         const committed = await db('pages').where({ id }).first()
         expect(committed.content).toBe('# The reasoned save')
         expect(String(committed.sourceRevision)).toBe('3')
-        await db('pages').where({ id }).update({ content: '# A later writer', sourceRevision: db.raw('"sourceRevision" + 1') })
+        expect(committed.changeReason).toBe('Explain only revision three')
+        await db('pages').where({ id }).update({ content: '# A later writer', changeReason: null, sourceRevision: db.raw('"sourceRevision" + 1') })
         return Page.query().findById(id)
       })
 
@@ -673,8 +675,70 @@ describe('private page mutation existence isolation', () => {
       expect(hydrated.content).toBe('# A later writer')
       expect(String(hydrated.sourceRevision)).toBe('4')
       expect(jobs[0].payload).not.toContain('# The reasoned save')
-      expect(JSON.stringify(await db('pages'))).not.toContain('Explain only revision three')
-      expect(JSON.stringify(await db('pageHistory'))).not.toContain('Explain only revision three')
+      expect((await db('pages').where({ id: 17 }).first()).changeReason).toBeNull()
+      expect((await db('pageHistory').where({ pageId: 17 }).first()).changeReason).toBeNull()
+    } finally {
+      await db.destroy()
+    }
+  })
+
+  it('keeps sequential reasons with their own canonical revisions across blank saves, restore and stale retries', async () => {
+    const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    const user = { id: 7, name: 'Author', email: 'author@example.test', permissions: [] }
+    try {
+      await createMutationSchema(db)
+      await db('users').insert({ id: user.id, name: user.name, email: user.email })
+      await db('storage').insert({ key: 'git', isEnabled: true, mode: 'push', syncInterval: 'P0D', config: '{}' })
+      const { PageHistory } = await bindMutationModels(db)
+      global.WIKI.auth.checkPageAccess.mockReturnValue(true)
+      vi.spyOn(Page, 'deletePageFromCache').mockResolvedValue(undefined)
+      vi.spyOn(Page, 'rebuildTree').mockResolvedValue(undefined)
+      vi.spyOn(Page, 'reconnectLinks').mockResolvedValue(undefined)
+      const created = await Page.createPage({
+        path: 'reason-sequence', locale: 'en', user, content: '# A', editor: 'markdown', description: '',
+        visibility: 'public', isPublished: true, title: 'Reason sequence', tags: [], changeReason: '  Reason A  '
+      })
+      const id = created.id
+      expect(await db('pages').where({ id }).first()).toMatchObject({ content: '# A', changeReason: 'Reason A', sourceRevision: 1 })
+
+      // Tag changes advance revisions in this SQLite fixture; PostgreSQL also has its source trigger.
+      await Page.updatePage({ id, user, content: '# B', tags: ['b'], expectedSourceRevision: '1', changeReason: 'Reason B' })
+      const beforeFailure = await db('pages').where({ id }).first()
+      const beforeJobs = await db('durableJobs')
+      const beforeEvents = await db('outboxEvents')
+      const beforeProjections = await db('pageMutationOutbox')
+      await db.raw("CREATE TRIGGER reject_reason_admission BEFORE INSERT ON durableJobs BEGIN SELECT RAISE(FAIL, 'controlled reason admission failure'); END")
+      await expect(Page.updatePage({ id, user, content: '# Failed', tags: ['failed'], expectedSourceRevision: '2', changeReason: 'Must roll back' })).rejects.toThrow('controlled reason admission failure')
+      expect(await db('pages').where({ id }).first()).toEqual(beforeFailure)
+      expect(await db('pageHistory').where({ pageId: id }).select('content', 'changeReason')).toEqual([{ content: '# A', changeReason: 'Reason A' }])
+      expect(await db('durableJobs')).toEqual(beforeJobs)
+      expect(await db('outboxEvents')).toEqual(beforeEvents)
+      expect(await db('pageMutationOutbox')).toEqual(beforeProjections)
+      await db.raw('DROP TRIGGER reject_reason_admission')
+
+      await Page.updatePage({ id, user, content: '# C', tags: ['c'], expectedSourceRevision: '2', changeReason: '   ' })
+      await expect(Page.updatePage({ id, user, content: '# Stale B', expectedSourceRevision: '2', changeReason: 'Stale reason' })).rejects.toMatchObject({ status: 409 })
+      expect(await db('pages').where({ id }).first()).toMatchObject({ content: '# C', changeReason: null, sourceRevision: 3 })
+      expect(await db('pageHistory').where({ pageId: id }).orderBy('id').select('content', 'sourceRevision', 'changeReason')).toEqual([
+        { content: '# A', sourceRevision: 1, changeReason: 'Reason A' },
+        { content: '# B', sourceRevision: 2, changeReason: 'Reason B' }
+      ])
+      const history = await PageHistory.getHistory({ pageId: id, requester: user })
+      expect(history.trail.map(({ sourceRevision, changeReason }) => ({ sourceRevision, changeReason }))).toEqual([
+        { sourceRevision: 2, changeReason: 'Reason B' },
+        { sourceRevision: 1, changeReason: 'Reason A' }
+      ])
+      const original = await PageHistory.getVersion({ pageId: id, versionId: history.trail[1].versionId, requester: user })
+      await Page.updatePage({ id, user, content: original.content, tags: ['restored'], action: 'restored', expectedSourceRevision: '3' })
+      expect(await db('pages').where({ id }).first()).toMatchObject({ content: '# A', changeReason: null, sourceRevision: 4 })
+      expect(await db('pageHistory').where({ pageId: id }).orderBy('id').select('content', 'sourceRevision', 'changeReason')).toEqual([
+        { content: '# A', sourceRevision: 1, changeReason: 'Reason A' },
+        { content: '# B', sourceRevision: 2, changeReason: 'Reason B' },
+        { content: '# C', sourceRevision: 3, changeReason: null }
+      ])
+      const reasons = (await db('durableJobs')).map(job => JSON.parse(job.payload))
+        .sort((left, right) => Number(left.sourceRevision) - Number(right.sourceRevision)).map(job => job.changeReason)
+      expect(reasons).toEqual(['Reason A', 'Reason B', undefined, undefined])
     } finally {
       await db.destroy()
     }

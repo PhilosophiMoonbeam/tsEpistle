@@ -141,6 +141,7 @@ nativeSuite('PostgreSQL content extension durable render lifecycle', () => {
         id integer PRIMARY KEY,
         "sourceRevision" bigint NOT NULL,
         "renderedSourceRevision" bigint,
+        "changeReason" varchar(200),
         path text NOT NULL,
         hash text NOT NULL,
         "localeCode" varchar(35) NOT NULL,

@@ -386,6 +386,7 @@ export type PageDetails = {
   createdAt: string
   updatedAt: string
   sourceRevision: string
+  changeReason?: string
   editor?: string
   authorId?: number
   authorName?: string
@@ -564,6 +565,13 @@ function normalizePageTagRow(row: unknown, fallbackMessage: string): PageTagRow 
   }
 }
 
+function normalizeRevisionChangeReason(value: unknown, fallbackMessage: string): string | undefined {
+  if (value === null) return undefined
+  const parsed = PageChangeReasonSchema.safeParse(value)
+  if (!parsed.success) throw new Error(fallbackMessage)
+  return parsed.data
+}
+
 function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetails {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
@@ -652,6 +660,7 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
     throw new Error(fallbackMessage)
   }
   const pageFeatures = normalizePageFeatures(rawRow.pageFeatures)
+  const changeReason = normalizeRevisionChangeReason(rawRow.changeReason, fallbackMessage)
   return {
     id: page.id!,
     locale: page.locale,
@@ -669,6 +678,7 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
     createdAt: page.createdAt,
     updatedAt: page.updatedAt,
     sourceRevision: normalizedSourceRevision,
+    ...(changeReason === undefined ? {} : { changeReason }),
     ...(hasEditor ? { editor: rawRow.editor as string } : {}),
     ...(hasAuthorId ? { authorId: rawRow.authorId as number } : {}),
     ...(hasAuthorName ? { authorName: rawRow.authorName as string } : {}),
@@ -1735,6 +1745,7 @@ export type PageHistoryTrailItem = {
   valueBefore: string | null
   valueAfter: string | null
   versionDate: string
+  changeReason?: string
 }
 
 export type PageVersion = Record<string, unknown> & {
@@ -1750,6 +1761,7 @@ export type PageVersion = Record<string, unknown> & {
   versionDate: string
   visibility: 'public' | 'private'
   isSearchable?: boolean
+  changeReason?: string
 }
 
 export async function fetchPages(
@@ -1811,7 +1823,9 @@ export async function fetchPageHistory(
         typeof row.versionDate !== 'string'
       )
         throw new Error(fallbackMessage)
-      return row as PageHistoryTrailItem
+      const changeReason = normalizeRevisionChangeReason(row.changeReason, fallbackMessage)
+      const { changeReason: _storedReason, ...revision } = row
+      return { ...revision, ...(changeReason === undefined ? {} : { changeReason }) } as PageHistoryTrailItem
     })
     return { trail, total: payload.total }
   })
@@ -1847,7 +1861,9 @@ export async function fetchPageVersion(
       (payload.visibility !== 'public' && payload.visibility !== 'private')
     )
       throw new Error(fallbackMessage)
-    return payload as PageVersion
+    const changeReason = normalizeRevisionChangeReason(payload.changeReason, fallbackMessage)
+    const { changeReason: _storedReason, ...revision } = payload
+    return { ...revision, ...(changeReason === undefined ? {} : { changeReason }) } as PageVersion
   })
 }
 

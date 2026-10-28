@@ -49,6 +49,7 @@ beforeEach(async () => {
     table.integer('authorId').notNullable()
     table.bigInteger('sourceRevision').notNullable()
     table.text('content').notNullable()
+    table.string('changeReason', 200).nullable()
     table.text('toc').notNullable().defaultTo('[]')
     table.bigInteger('renderedSourceRevision').nullable()
     table.boolean('isSearchable').notNullable().defaultTo(true)
@@ -334,6 +335,7 @@ describe('page approval workflow', () => {
 
   it('refuses a stale revision, then resubmits, approves, and publishes atomically', async () => {
     const operations = await vi.importFresh('../../operations/approvals.ts', import.meta.url)
+    await knex('pages').where({ id: 42 }).update({ changeReason: 'Submitted source reason' })
     const submitted = await operations.submitPageApproval({
       requester: user(7, ['read:pages', 'write:pages']),
       pageId: 42,
@@ -383,7 +385,7 @@ describe('page approval workflow', () => {
       sessionId: 'approval-session'
     })
     expect(published.status).toBe('published')
-    expect(await knex('pages').where({ id: 42 }).first()).toMatchObject({ isPublished: 1, authorId: 8, sourceRevision: 2 })
+    expect(await knex('pages').where({ id: 42 }).first()).toMatchObject({ isPublished: 1, authorId: 8, sourceRevision: 2, changeReason: null })
     expect(await knex('pageApprovalTransitions').where({ requestId: submitted.id }).pluck('toStatus')).toEqual([
       'submitted',
       'changes-requested',

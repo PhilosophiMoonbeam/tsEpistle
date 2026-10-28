@@ -39,6 +39,7 @@ const createSchema = async (): Promise<void> => {
     table.string('hash').notNullable()
     table.string('title').notNullable()
     table.string('description').notNullable()
+    table.string('changeReason', 200).nullable()
     table.string('visibility').notNullable()
     table.integer('ownerId').nullable()
     table.boolean('isPublished').notNullable()
@@ -308,6 +309,7 @@ describe('page history restore metadata contract', () => {
       localeCode: 'fr',
       title: 'Hidden',
       content: '# Hidden\n',
+      changeReason: 'Restricted revision reason',
       versionDate: '2026-08-15T00:00:01.000Z'
     })
     await addHistoryTags(hiddenId, [3])
@@ -331,6 +333,7 @@ describe('page history restore metadata contract', () => {
       path: 'new/path',
       title: 'New',
       content: '# New\n',
+      changeReason: 'Reason for the latest authorized revision',
       versionDate: '2026-08-15T00:00:02.000Z'
     })
     await addHistoryTags(latestId, [2])
@@ -348,7 +351,8 @@ describe('page history restore metadata contract', () => {
           sourceRevision: 1,
           isSearchable: true,
           valueAfter: 'new/path',
-          versionDate: '2026-08-15T00:00:02.000Z'
+          versionDate: '2026-08-15T00:00:02.000Z',
+          changeReason: 'Reason for the latest authorized revision'
         }
       ]
     })
@@ -367,7 +371,8 @@ describe('page history restore metadata contract', () => {
       content: '# New\n',
       path: 'new/path',
       locale: 'en',
-      tags: ['release']
+      tags: ['release'],
+      changeReason: 'Reason for the latest authorized revision'
     })
   })
 
@@ -388,20 +393,27 @@ describe('page history restore metadata contract', () => {
       path: 'private/history',
       visibility: 'private',
       ownerId: 7,
-      content: '# Private\n'
+      content: '# Private\n',
+      changeReason: 'Owner-only reason'
     })
     await addHistoryTags(privateId, [2])
 
     expect(await PageHistory.getVersion({ pageId: 42, versionId: privateId, requester: owner, authority: ownerAuthority })).toMatchObject({
       content: '# Private\n',
       visibility: 'private',
-      ownerId: 7
+      ownerId: 7,
+      changeReason: 'Owner-only reason'
     })
     expect(await PageHistory.getVersion({ pageId: 42, versionId: privateId, requester: stranger, authority: strangerAuthority })).toBeNull()
     expect(await PageHistory.getVersion({ pageId: 42, versionId: privateId, requester: system, authority: systemAuthority })).toMatchObject({
       content: '# Private\n',
       visibility: 'private',
-      ownerId: 7
+      ownerId: 7,
+      changeReason: 'Owner-only reason'
+    })
+    expect(await PageHistory.getHistory({ pageId: 42, requester: stranger, authority: strangerAuthority })).toEqual({ trail: [], total: 0 })
+    expect((await PageHistory.getHistory({ pageId: 42, requester: owner, authority: ownerAuthority })).trail[0]).toMatchObject({
+      versionId: privateId, changeReason: 'Owner-only reason'
     })
   })
 })

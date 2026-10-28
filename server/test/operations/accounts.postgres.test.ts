@@ -83,11 +83,16 @@ suite('PostgreSQL account administration', () => {
     })
     for (const table of ['pages', 'pageHistory'])
       await db.schema.createTable(table, t => {
-        t.integer('id')
+        if (table === 'pageHistory') t.increments('id')
+        else t.integer('id')
         t.integer('ownerId')
         t.integer('authorId')
         t.integer('creatorId')
         t.string('visibility')
+        t.bigInteger('sourceRevision').notNullable().defaultTo(1)
+        t.string('changeReason', 200).nullable()
+        if (table === 'pages') t.timestamp('updatedAt').notNullable().defaultTo(db.fn.now())
+        else t.integer('pageId')
       })
     for (const table of ['comments', 'assets'])
       await db.schema.createTable(table, t => {
@@ -120,7 +125,13 @@ suite('PostgreSQL account administration', () => {
         { key: 'local', useForm: true },
         { key: 'oidc', useForm: false }
       ],
-      enforceTwoFactor: () => enforce
+      enforceTwoFactor: () => enforce,
+      snapshotPage: async input => {
+        await input.transaction!('pageHistory').insert({
+          pageId: input.id, ownerId: input.ownerId, authorId: input.authorId, visibility: input.visibility,
+          sourceRevision: input.sourceRevision, changeReason: input.changeReason ?? null
+        })
+      }
     })
   })
   beforeEach(async () => {

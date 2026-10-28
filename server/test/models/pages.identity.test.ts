@@ -117,6 +117,7 @@ const installSchema = async () => {
     table.text('hash').notNullable()
     table.text('title').notNullable()
     table.text('description').notNullable()
+    table.string('changeReason', 200).nullable()
     table.text('visibility').notNullable()
     table.integer('ownerId').nullable()
     table.boolean('isPublished').notNullable()

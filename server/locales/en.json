@@ -823,6 +823,7 @@
     },
     "actions": {
       "ok": "OK",
+      "done": "Done",
       "add": "Add",
       "copy": "Copy",
       "edit": "Edit",
@@ -9505,7 +9506,8 @@
       "saveAndClose": "Save and close",
       "noChanges": "No changes to save.",
       "changeReason": "Change reason (optional)",
-      "changeReasonHint": "Used only as the Git commit message for this save.",
+      "reasonAction": "Reason",
+      "changeReasonHelp": "Optional context for this save. Leave blank to save without a reason.",
       "changeReasonInvalid": "Use a single line of at most 200 characters without controls or bidi formatting."
     },
     "contents": {

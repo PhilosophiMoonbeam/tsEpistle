@@ -1081,6 +1081,39 @@ describe('pages api helper', () => {
     await expect(Promise.resolve(deletePage(fetchImpl, 7, '8', 'Bad page delete response'))).rejects.toThrow('Bad page delete response')
   })
 
+  test('normalizes only genuine optional reasons on current, trail and exact-version reads', async () => {
+    const row = {
+      versionId: 9, authorId: 7, authorName: 'Owner', actionType: 'edit', valueBefore: null, valueAfter: null,
+      versionDate: '2026-08-15T00:00:00.000Z'
+    }
+    const version = {
+      versionId: 9, content: '# Before', contentType: 'markdown', title: 'Before', description: '', editor: 'markdown',
+      locale: 'en', path: 'docs/before', tags: [], versionDate: row.versionDate, visibility: 'private'
+    }
+    for (const changeReason of [undefined, null, '', '   ', 'Reason for this exact revision', 'x'.repeat(200)]) {
+      const fetchImpl = vi.fn()
+        .mockResolvedValueOnce(createJsonResponse({ ...pagePayload(), changeReason }))
+        .mockResolvedValueOnce(createJsonResponse({ total: 1, trail: [{ ...row, changeReason }] }))
+        .mockResolvedValueOnce(createJsonResponse({ ...version, changeReason }))
+      const current = await fetchPage(fetchImpl, 7)
+      const history = await fetchPageHistory(fetchImpl, 42, 0, 25)
+      const exact = await fetchPageVersion(fetchImpl, 42, 9)
+      for (const revision of [current, history.trail[0], exact]) {
+        if (typeof changeReason === 'string' && changeReason.trim()) expect(revision.changeReason).toBe(changeReason)
+        else expect(revision).not.toHaveProperty('changeReason')
+      }
+    }
+    for (const changeReason of [42, {}, 'x'.repeat(201), 'line\nbreak', '\u202ebidi']) {
+      const fetchImpl = vi.fn()
+        .mockResolvedValueOnce(createJsonResponse({ ...pagePayload(), changeReason }))
+        .mockResolvedValueOnce(createJsonResponse({ total: 1, trail: [{ ...row, changeReason }] }))
+        .mockResolvedValueOnce(createJsonResponse({ ...version, changeReason }))
+      await expect(fetchPage(fetchImpl, 7)).rejects.toThrow('Page response is invalid')
+      await expect(fetchPageHistory(fetchImpl, 42, 0, 25)).rejects.toThrow('Page history fetch failed')
+      await expect(fetchPageVersion(fetchImpl, 42, 9)).rejects.toThrow('Page version fetch failed')
+    }
+  })
+
   test('validates complete immutable revision metadata', async () => {
     const version = {
       versionId: 9,

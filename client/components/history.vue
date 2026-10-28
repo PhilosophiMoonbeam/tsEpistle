@@ -319,6 +319,9 @@ export default {
       type: String,
       default: ''
     },
+    changeReason: {
+      type: String
+    },
     editor: {
       type: String,
       default: 'markdown'

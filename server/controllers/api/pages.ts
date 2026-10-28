@@ -1448,6 +1448,7 @@ router.get('/:id', async (req, res, next) => {
       createdAt: pageResult.createdAt,
       updatedAt: pageResult.updatedAt,
       sourceRevision: String(pageResult.sourceRevision),
+      ...(typeof pageResult.changeReason === 'string' ? { changeReason: pageResult.changeReason } : {}),
       locale: pageResult.locale,
       branding: pageBrandingView(pageResult),
       pageFeatures: pageResult.pageFeatures,

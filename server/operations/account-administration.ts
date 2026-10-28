@@ -5,6 +5,7 @@ import { newPasswordIssue } from '../../shared/security-policy.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import bcrypt from 'bcryptjs-then'
 import type { Knex } from 'knex'
+import type PageHistory from '../models/pageHistory.ts'
 import {
   accountProfileIssues,
   type AccountAction,
@@ -55,10 +56,16 @@ interface ProviderRow {
   strategyKey: string
   isEnabled: boolean
 }
+type AttributionPage = Omit<Parameters<typeof PageHistory.addVersion>[0], 'transaction' | 'versionDate'> & {
+  creatorId: number
+  updatedAt: string | Date
+  sourceRevision: string | number
+}
 interface Dependencies {
   db: Knex
   definitions: () => Array<{ key: string; useForm?: boolean }>
   enforceTwoFactor: () => boolean
+  snapshotPage(input: Parameters<typeof PageHistory.addVersion>[0]): Promise<unknown>
   onCommitted?: (id: number) => void
 }
 interface Authority {
@@ -101,7 +108,7 @@ const profileValue = (value: unknown, allowUnsetTimezone = false): AccountProfil
   return { ...profile, groups: [...profile.groups].sort((a, b) => a - b) }
 }
 
-export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFactor, onCommitted }: Dependencies) => {
+export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFactor, snapshotPage, onCommitted }: Dependencies) => {
   const providers = async (tx: Database): Promise<AccountProvider[]> => {
     const query = tx<ProviderRow>('authentication').select('key', 'displayName', 'strategyKey', 'isEnabled').orderBy('order').orderBy('key')
     return (await (tx.isTransaction ? query.forShare() : query)).map(row => {
@@ -549,8 +556,20 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
           return fail('The replacement account is outside your administrative scope.', 403)
         // The subject lock excludes new FK-referenced contributions. Private
         // ownership/history is checked while that same lock is held.
-        for (const table of ['assets', 'comments', 'pageHistory', 'pages']) await tx(table).where('authorId', id).update({ authorId: replaceId })
-        await tx('pages').where('creatorId', id).update({ creatorId: replaceId })
+        const pages = await tx<AttributionPage>('pages')
+          .where(builder => builder.where('authorId', id).orWhere('creatorId', id))
+          .orderBy('id')
+          .forUpdate()
+        for (const page of pages) {
+          await snapshotPage({ ...page, action: 'updated', versionDate: date(page.updatedAt), transaction: tx })
+          const changed = await tx('pages').where({ id: page.id, sourceRevision: page.sourceRevision }).update({
+            ...(page.authorId === id ? { authorId: replaceId } : {}),
+            ...(page.creatorId === id ? { creatorId: replaceId } : {}),
+            changeReason: null
+          })
+          if (changed !== 1) return fail('A contribution changed during account deletion. Reload it before retrying.', 409)
+        }
+        for (const table of ['assets', 'comments', 'pageHistory']) await tx(table).where('authorId', id).update({ authorId: replaceId })
         await tx('userKeys').where('userId', id).delete()
         await tx('users').where('id', id).delete()
         return { action: 'account-deleted', details: { replacementId: replaceId }, deleted: true }
@@ -662,7 +681,7 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
 
 export const accountAdministration = () => {
   const wiki = WIKI as unknown as {
-    models: { knex: Knex }
+    models: { knex: Knex; pageHistory: typeof PageHistory }
     data: { authentication: Array<{ key: string; useForm?: boolean }> }
     config: { auth: { enforce2FA?: boolean } }
     auth: { revokeUserTokens(input: { id: number; kind: 'u' }): void }
@@ -673,6 +692,7 @@ export const accountAdministration = () => {
     db: wiki.models.knex,
     definitions: () => wiki.data.authentication,
     enforceTwoFactor: () => wiki.config.auth.enforce2FA === true,
+    snapshotPage: input => wiki.models.pageHistory.addVersion(input),
     onCommitted(id) {
       try {
         wiki.auth.revokeUserTokens({ id, kind: 'u' })

@@ -353,6 +353,7 @@ interface PageVersionOptions {
   publishEndDate?: string | null
   publishStartDate?: string | null
   title: string
+  changeReason?: string | null
   action?: string
   versionDate: string
   isSearchable?: boolean | number
@@ -714,7 +715,7 @@ const saveCanonicalPageRevision = async (input: CanonicalPageCommitInput): Promi
     versionDate: input.page.updatedAt,
     transaction: input.transaction
   } as PageVersionOptions)
-  let query = wiki.models.pages.query(input.transaction).patch(input.patch).where({ id: input.page.id })
+  let query = wiki.models.pages.query(input.transaction).patch({ ...input.patch, changeReason: input.changeReason ?? null }).where({ id: input.page.id })
   if (input.expectedUpdatedAt) query = query.where('updatedAt', input.page.updatedAt)
   if (input.page.sourceRevision !== undefined) query = query.where('sourceRevision', input.page.sourceRevision)
   const changedRows = await query
@@ -879,6 +880,7 @@ export default class Page extends Model {
   declare createdAt: string
   declare updatedAt: string
   declare sourceRevision: string | number
+  declare changeReason: string | null
   declare renderedSourceRevision: string | number | null
   declare editorKey: string
 
@@ -907,6 +909,7 @@ export default class Page extends Model {
         hash: { type: 'string' },
         title: { type: 'string' },
         description: { type: 'string' },
+        changeReason: { type: ['string', 'null'], maxLength: 200 },
         isPublished: { type: 'boolean' },
         isSearchable: { type: 'boolean' },
         visibility: { type: 'string', enum: ['public', 'private'] },
@@ -1209,6 +1212,7 @@ export default class Page extends Model {
       const inserted = await wiki.models.pages.query(transaction).insert({
         authorId: opts.user.id,
         content: opts.content,
+        changeReason: changeReason ?? null,
         creatorId: opts.user.id,
         contentType: wiki.data.editors.find(editor => editor.key === opts.editor)?.contentType ?? 'text',
         description: opts.description,
@@ -1441,6 +1445,7 @@ export default class Page extends Model {
       opts.scriptCss === undefined &&
       opts.scriptJs === undefined &&
       opts.okfRestoreRevision === undefined &&
+      changeReason === pageChangeReason(ogPage.changeReason ?? undefined) &&
       !pageFeaturesChanged
     const metadataOnlyNoOp = opts.okfMetadata !== undefined && !okfAuthorityChanged && noNonBrandingMutation && !brandingChanged
     const brandingOnlyNoOp = hasBrandingMutation && !brandingChanged && opts.okfMetadata === undefined && noNonBrandingMutation
@@ -1745,6 +1750,7 @@ export default class Page extends Model {
           visibility: opts.visibility,
           ownerId,
           hash,
+          changeReason: null,
           renderedSourceRevision: null
         })
         .where({ id: page.id, sourceRevision: page.sourceRevision })
@@ -1818,7 +1824,7 @@ export default class Page extends Model {
       })
       const changedRows = await wiki.models.pages
         .query(transaction)
-        .patch({ ownerId: opts.ownerId, hash, renderedSourceRevision: null })
+        .patch({ ownerId: opts.ownerId, hash, changeReason: null, renderedSourceRevision: null })
         .where({ id: page.id, sourceRevision: page.sourceRevision })
       if (changedRows !== 1) throw pageUpdateConflict()
       await wiki.models.knex('pageHistory').transacting(transaction).where({ pageId: page.id, visibility: 'private' }).update({ ownerId: opts.ownerId })
@@ -2017,19 +2023,18 @@ export default class Page extends Model {
         isPublished: ogPage.isPublished === true || ogPage.isPublished === 1,
         isSearchable: ogPage.isSearchable !== false && ogPage.isSearchable !== 0
       }
-      if (shouldConvert) {
-        await wiki.models.pageHistory.addVersion({
-          ...historyPage,
-          action: 'updated',
-          versionDate: ogPage.updatedAt,
-          transaction
-        })
-      }
+      await wiki.models.pageHistory.addVersion({
+        ...historyPage,
+        action: 'updated',
+        versionDate: ogPage.updatedAt,
+        transaction
+      })
       const changedRows = await wiki.models.pages
         .query(transaction)
         .patch({
           contentType: targetContentType,
           editorKey: opts.editor,
+          changeReason: null,
           ...(convertedContent ? { content: convertedContent } : {}),
           ...(shouldConvert
             ? {
@@ -2181,6 +2186,7 @@ export default class Page extends Model {
           localeCode: opts.destinationLocale,
           title: destinationTitle,
           hash: destinationHash,
+          changeReason: null,
           ...localeRelationPatch,
           extra: {
             ...pageExtra,
@@ -2547,6 +2553,7 @@ export default class Page extends Model {
           id: opts.pageId,
           authorId: opts.recoveringAdminId,
           content: history.content,
+          changeReason: null,
           creatorId: opts.recoveringAdminId,
           contentType: history.contentType,
           description: history.description,
@@ -2707,6 +2714,7 @@ export default class Page extends Model {
           'pages.path',
           'pages.hash',
           'pages.sourceRevision',
+          'pages.changeReason',
           'pages.renderedSourceRevision',
           'pages.title',
           'pages.description',
@@ -2923,6 +2931,7 @@ export default class Page extends Model {
           .patch({
             localeCode: targetLocale,
             hash: destinationHash,
+            changeReason: null,
             ...localeRelationPatch,
             renderedSourceRevision: null
           })

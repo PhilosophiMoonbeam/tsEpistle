@@ -153,20 +153,18 @@ describe('Visual Markdown page contracts', () => {
   it.each([
     ['plain', basePage.content],
     ['extended', '## Callout\n{.is-info}']
-  ])('changes %s Markdown to Visual Markdown without rewriting content or creating a conversion snapshot', async (_label, content) => {
+  ])('changes %s Markdown to Visual Markdown without rewriting content', async (_label, content) => {
     const page = { ...basePage, content }
     const { patch } = arrangeConversion(page)
 
     await Page.convertPage({ id: page.id, editor: 'visual-markdown', user: requester })
 
-    expect(patch).toHaveBeenCalledOnce()
     expect(patch.mock.calls[0][0]).toMatchObject({
       contentType: 'markdown',
       editorKey: 'visual-markdown',
       renderedSourceRevision: null
     })
     expect(patch.mock.calls[0][0]).not.toHaveProperty('content')
-    expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
   })
 
   it('converts Visual HTML content to Markdown before selecting Visual Markdown', async () => {

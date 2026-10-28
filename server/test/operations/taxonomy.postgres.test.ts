@@ -55,6 +55,7 @@ suite('PostgreSQL taxonomy transactions', () => {
     await db.schema.createTable('pages', t => {
       t.increments('id'); t.string('title'); t.string('path'); t.string('localeCode'); t.string('visibility'); t.integer('ownerId'); t.bigInteger('sourceRevision').notNullable().defaultTo(1)
       t.string('hash'); t.integer('authorId'); t.text('content'); t.string('contentType'); t.string('description'); t.string('editorKey'); t.boolean('isPublished'); t.jsonb('extra'); t.timestamp('updatedAt')
+      t.string('changeReason', 200).nullable()
     })
     await db.schema.createTable('pageTags', t => { t.integer('pageId').references('id').inTable('pages').onDelete('CASCADE'); t.integer('tagId').references('id').inTable('tags'); t.primary(['pageId', 'tagId']) })
     await db.schema.createTable('groups', t => { t.increments('id'); t.string('name'); t.jsonb('permissions'); t.jsonb('pageRules') })
@@ -97,6 +98,7 @@ suite('PostgreSQL taxonomy transactions', () => {
     globalThis.WIKI = originalWiki
   })
   it('persists rename aliases, exact historical assignments and durable projections while preserving visibility and ownership', async () => {
+    await db('pages').update({ changeReason: 'Reason before taxonomy edit' })
     const preview = await service.preview(actor, { action: 'edit', tagId: 1, tag: 'Renamed', title: 'New label' })
     expect(preview.accessChanges).toBe(false)
     const result = await service.apply(actor, { change: preview.change, fingerprint: preview.fingerprint })
@@ -108,6 +110,9 @@ suite('PostgreSQL taxonomy transactions', () => {
     expect(await db('pageMutationOutbox')).toHaveLength(8)
     expect(await db('outboxEvents').where('type', 'page.updated')).toHaveLength(2)
     expect(await db('pages').where('id', 3).first()).toMatchObject({ sourceRevision: '10', visibility: 'private', ownerId: 7, content: '# Page 3', isPublished: false })
+    expect(await db('pages').orderBy('id').select('id', 'changeReason')).toEqual([
+      { id: 1, changeReason: null }, { id: 2, changeReason: 'Reason before taxonomy edit' }, { id: 3, changeReason: null }
+    ])
     expect(await db('groups').where('id', 1).first()).toMatchObject({ pageRules: [{ match: 'TAG', path: 'source', deny: false, roles: ['read:pages'] }] })
     const savedTags = await db('tags').orderBy('id')
     await expect(rollbackTaxonomy(db)).rejects.toBeInstanceOf(Error)

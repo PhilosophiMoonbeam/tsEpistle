@@ -67,7 +67,7 @@ const cardTemplate = compileTemplate({
 if (cardTemplate.errors.length) throw cardTemplate.errors[0]
 const cardRender = new Function('Vue', cardTemplate.code)(Vue)
 // Compile the owner's invocation unchanged, rather than supplying dialog props in the test.
-const shellMarkup = cheerio.load(pug.render(shellSfc.descriptor.template?.content ?? ''))
+const shellMarkup = cheerio.load(pug.render(shellSfc.descriptor.template?.content ?? '', { doctype: 'html' }))
 const ownerUnsavedInvocation = shellMarkup('editor-modal-unsaved')
 if (ownerUnsavedInvocation.length !== 1) throw new Error('Editor unsaved dialog invocation is missing or ambiguous')
 const ownerUnsavedTemplate = compileTemplate({
@@ -79,16 +79,22 @@ const ownerUnsavedTemplate = compileTemplate({
 if (ownerUnsavedTemplate.errors.length) throw ownerUnsavedTemplate.errors[0]
 const ownerUnsavedRender = new Function('Vue', ownerUnsavedTemplate.code)(Vue)
 const ownerSaveTemplate = compileTemplate({
-  source: `<div>${shellMarkup('.editor-save-status, .editor-save-action, .editor-save-close-action, .editor-close-action, .editor-change-reason').toString()}</div>`,
+  source: `<v-app><div v-if="$vuetify.display.mdAndUp">${shellMarkup('.editor-save-status, .editor-save-action, .editor-save-close-action, .editor-close-action, .editor-change-reason-action').toString()}</div>${shellMarkup('.editor-change-reason-popover, .editor-mobile-actions').toString()}${ownerUnsavedInvocation.toString()}</v-app>`,
   filename: shellPath,
   id: 'editor-owner-save-test',
   compilerOptions: { mode: 'function' }
 })
 if (ownerSaveTemplate.errors.length) throw ownerSaveTemplate.errors[0]
 const ownerSaveRender = new Function('Vue', ownerSaveTemplate.code)(Vue)
+const initialViewportWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth')
+const setViewportWidth = (width: number) => {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width, writable: true })
+}
 const modalUnmounts: Array<() => void> = []
 afterEach(() => {
   for (const unmount of modalUnmounts.splice(0)) unmount()
+  if (initialViewportWidth) Object.defineProperty(window, 'innerWidth', initialViewportWidth)
+  else Reflect.deleteProperty(window, 'innerWidth')
   vi.useRealTimers()
 })
 type OkfState = {
@@ -235,6 +241,13 @@ type ShellContext = {
   offlineConnectionState: string
   isSaving: boolean
   changeReason: string
+  changeReasonErrors: string[]
+  changeReasonId: string
+  changeReasonOpen: boolean
+  changeReasonActivator: HTMLElement | null
+  serverSaveDisabled: boolean
+  $refs: Record<string, unknown>
+  $nextTick: typeof Vue.nextTick
   renderWaitController: AbortController | null
   discardPending: boolean
   discardError: string
@@ -292,6 +305,7 @@ type ShellContext = {
   refreshConflict: () => Promise<void>
   hydratePage: () => Promise<void>
   captureSaveSnapshot: () => SaveCapture
+  openConflict: () => void
   refreshOkfAfterSave: (capture: SaveCapture) => Promise<HydratedPage | undefined>
 }
 type ShellBehavior = {
@@ -304,6 +318,7 @@ type ShellBehavior = {
     saveStatusText: (this: ShellContext) => string
     saveStatusIcon: (this: ShellContext) => string
     saveActionLabel: (this: ShellContext) => string
+    mobileSaveLabel: (this: ShellContext) => string
     renderWaitOwnerKey: (this: ShellContext) => string
     changeReasonErrors: (this: ShellContext) => string[]
     sourceEditorReady: (this: { currentEditor: string; warmAuthenticatedActor: boolean }) => boolean
@@ -311,6 +326,7 @@ type ShellBehavior = {
   }
   watch: {
     renderWaitOwnerKey: { flush: 'sync'; handler: (this: ShellContext) => void }
+    '$vuetify.display.smAndDown': (this: ShellContext) => void
   }
   methods: Record<string, (this: ShellContext, ...args: never[]) => unknown>
 }
@@ -632,6 +648,9 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
     isSaving: false,
     changeReason: '',
     changeReasonLimit: MAX_PAGE_CHANGE_REASON_LENGTH,
+    changeReasonId: 'editor-change-reason-test',
+    changeReasonOpen: false,
+    changeReasonActivator: null,
     renderWaitController: null,
     discardError: '',
     discardPending: false,
@@ -665,6 +684,10 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
     progressHidden: 0,
     $t: translateEnglish
   }) as unknown as ShellContext
+  Object.defineProperties(context, {
+    $refs: { value: {}, writable: true, configurable: true },
+    $nextTick: { value: Vue.nextTick }
+  })
 
   const adapterListeners = new Set<(safety: EditorAdapterSafety) => void>()
   const syncAdapterSafety = () => {
@@ -826,10 +849,19 @@ const flushSaveUi = async (): Promise<void> => {
   await Vue.nextTick()
 }
 
-const mountSaveActions = (store: EditorStore, testWindow: TestWindow, overrides: Partial<ApiDependencies> = {}) => {
+const settleReasonPopover = async (): Promise<void> => {
+  await flushSaveUi()
+  for (let frame = 0; frame < 3; frame++) {
+    const nextFrame = Promise.withResolvers<void>()
+    requestAnimationFrame(() => nextFrame.resolve())
+    await nextFrame.promise
+  }
+}
+
+const mountSaveActions = (store: EditorStore, testWindow: TestWindow, overrides: Partial<ApiDependencies> = {}, width = 1440) => {
   const context = createShellHarness(store, testWindow, overrides)
   const behavior = loadShellBehavior(store, testWindow, overrides)
-  for (const name of ['saveStatusText', 'saveStatusIcon', 'saveActionLabel', 'renderWaitOwnerKey', 'changeReasonErrors'] as const) {
+  for (const name of ['saveStatusText', 'saveStatusIcon', 'saveActionLabel', 'mobileSaveLabel', 'renderWaitOwnerKey', 'changeReasonErrors'] as const) {
     const compute: (this: ShellContext) => string | string[] = behavior.computed[name]
     Object.defineProperty(context, name, { get: () => compute.call(context) })
   }
@@ -848,7 +880,10 @@ const mountSaveActions = (store: EditorStore, testWindow: TestWindow, overrides:
   document.body.append(host)
   const app = Vue.createApp({
     setup: () => context,
-    watch: { renderWaitOwnerKey: behavior.watch.renderWaitOwnerKey },
+    watch: {
+      renderWaitOwnerKey: behavior.watch.renderWaitOwnerKey,
+      '$vuetify.display.smAndDown': behavior.watch['$vuetify.display.smAndDown']
+    },
     beforeUnmount() {
       context.lifecycleGeneration++
       context.cancelRenderWait()
@@ -856,8 +891,13 @@ const mountSaveActions = (store: EditorStore, testWindow: TestWindow, overrides:
     render: ownerSaveRender
   })
   app.config.globalProperties.$t = translateEnglish
-  app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
-  app.mount(host)
+  setViewportWidth(width)
+  const vuetify = createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives })
+  app.use(vuetify)
+  app.component('VCardChin', { render: cardRender })
+  app.component('EditorModalUnsaved', { ...modalOptions, render: modalRender })
+  const instance = app.mount(host)
+  context.$refs = instance.$refs
   let mounted = true
   const unmount = () => {
     if (!mounted) return
@@ -870,6 +910,33 @@ const mountSaveActions = (store: EditorStore, testWindow: TestWindow, overrides:
     context,
     host,
     unmount,
+    setWidth(width: number) {
+      setViewportWidth(width)
+      vuetify.display.update()
+    },
+    async openReason(): Promise<HTMLInputElement> {
+      await Vue.nextTick()
+      const trigger = host.querySelector<HTMLButtonElement>('.editor-change-reason-action, .editor-mobile-reason')
+      if (!trigger) throw new Error('The reason disclosure is not mounted')
+      trigger.focus()
+      trigger.click()
+      await settleReasonPopover()
+      const field = document.getElementById(context.changeReasonId)
+      if (!(field instanceof HTMLInputElement)) throw new Error('The reason disclosure did not open its input')
+      return field
+    },
+    async closeFromMobile(): Promise<boolean> {
+      const more = host.querySelector<HTMLButtonElement>('.editor-mobile-actions [aria-haspopup="menu"]')
+      if (!more) throw new Error('The mobile editor actions are not mounted')
+      more.click()
+      await settleReasonPopover()
+      const close = Array.from(document.querySelectorAll<HTMLElement>('.editor-mobile-menu .v-list-item'))
+        .find(item => item.textContent?.trim() === translateEnglish('editor:save.saveAndClose'))
+      if (!close) throw new Error('Mobile Save and close is not reachable')
+      close.click()
+      if (!action) throw new Error('Mobile Save and close did not run')
+      return action
+    },
     click(actionName: 'save' | 'close' = 'close'): Promise<boolean> {
       const button = host.querySelector<HTMLButtonElement>(actionName === 'save' ? '.editor-save-action' : '.editor-save-close-action')
       if (!button) throw new Error('The editor save action is not mounted')
@@ -979,6 +1046,196 @@ const applyEveryEdit = (store: EditorStore) => {
 }
 
 describe('modern editor shell interaction contract', () => {
+  test('reason disclosure focuses one optional field and dismisses without saving or losing its value', async () => {
+    const store = Vue.reactive(createStore())
+    const testWindow = createTestWindow()
+    const writes: PageInput[] = []
+    const mounted = mountSaveActions(store, testWindow, {
+      updatePage: async (_fetch, _id, input) => {
+        writes.push(input)
+        return { sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }
+      }
+    })
+    expect(document.getElementById(mounted.context.changeReasonId)).toBeNull()
+    const field = await mounted.openReason()
+    const trigger = mounted.host.querySelector<HTMLButtonElement>('.editor-change-reason-action')
+    expect(trigger?.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(trigger?.getAttribute('aria-expanded')).toBe('true')
+    const popup = document.getElementById(trigger?.getAttribute('aria-controls') ?? '')
+    expect(popup?.getAttribute('role')).toBe('dialog')
+    expect(document.activeElement).toBe(field)
+    field.value = 'Pending explanation'
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await Vue.nextTick()
+    expect(mounted.context.changeReason).toBe('Pending explanation')
+    const done = popup?.querySelector<HTMLButtonElement>('.editor-change-reason-panel-actions button')
+    if (!done) throw new Error('The reason disclosure needs a dismiss control')
+    done.click()
+    await settleReasonPopover()
+    expect(trigger?.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(trigger)
+    expect(mounted.context.changeReason).toBe('Pending explanation')
+    const reopened = await mounted.openReason()
+    expect(reopened.value).toBe('Pending explanation')
+    expect(document.querySelectorAll(`#${mounted.context.changeReasonId}`)).toHaveLength(1)
+    reopened.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await settleReasonPopover()
+    expect(mounted.context.changeReasonOpen).toBe(false)
+    expect(document.activeElement).toBe(trigger)
+    expect(mounted.context.changeReason).toBe('Pending explanation')
+    expect(writes).toEqual([])
+    expect(testWindow.location.assigned).toEqual([])
+  })
+
+  for (const action of ['save', 'close'] as const) {
+    test(`${action} accepts a blank reason without first opening a prompt`, async () => {
+      const store = Vue.reactive(createStore())
+      const testWindow = createTestWindow()
+      const writes: PageInput[] = []
+      const mounted = mountSaveActions(store, testWindow, {
+        updatePage: async (_fetch, _id, input) => {
+          writes.push(input)
+          return { sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }
+        }
+      })
+      mounted.context.editorAdapter.replaceText('A reasonless edit')
+      if (action === 'close') mounted.context.changeReason = '   '
+      expect(await mounted.click(action)).toBe(true)
+      expect(writes).toHaveLength(1)
+      expect(mounted.context.changeReasonOpen).toBe(false)
+      expect(document.getElementById(mounted.context.changeReasonId)).toBeNull()
+      expect(testWindow.location.assigned).toHaveLength(action === 'close' ? 1 : 0)
+    })
+
+    test(`${action} reveals and focuses a hidden invalid reason before any write or navigation`, async () => {
+      const store = Vue.reactive(createStore())
+      const testWindow = createTestWindow()
+      const writes: PageInput[] = []
+      const mounted = mountSaveActions(store, testWindow, {
+        updatePage: async (_fetch, _id, input) => {
+          writes.push(input)
+          return { sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }
+        }
+      })
+      const field = await mounted.openReason()
+      field.value = 'Invalid\u202Econtext'
+      field.dispatchEvent(new Event('input', { bubbles: true }))
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await settleReasonPopover()
+      expect(mounted.context.changeReasonOpen).toBe(false)
+      expect(await mounted.click(action)).toBe(false)
+      await settleReasonPopover()
+      const invalid = document.getElementById(mounted.context.changeReasonId) as HTMLInputElement
+      expect(mounted.context.changeReasonOpen).toBe(true)
+      expect(document.activeElement).toBe(invalid)
+      expect(invalid.getAttribute('aria-invalid')).toBe('true')
+      const descriptions = invalid.getAttribute('aria-describedby')?.split(/\s+/) ?? []
+      expect(descriptions).toContain(`${invalid.id}-messages`)
+      expect(document.getElementById(`${invalid.id}-messages`)?.textContent).toContain(mounted.context.changeReasonErrors[0])
+      expect(writes).toEqual([])
+      expect(testWindow.location.assigned).toEqual([])
+      expect(mounted.context.changeReason).toBe('Invalid\u202Econtext')
+      invalid.value = 'Corrected explanation'
+      invalid.dispatchEvent(new Event('input', { bubbles: true }))
+      await Vue.nextTick()
+      expect(invalid.getAttribute('aria-invalid')).not.toBe('true')
+      expect(await mounted.click(action)).toBe(true)
+      expect(writes).toHaveLength(1)
+      expect(writes[0]?.changeReason).toBe('Corrected explanation')
+      expect(testWindow.location.assigned).toHaveLength(action === 'close' ? 1 : 0)
+    })
+  }
+
+  test('mobile reason and Save and close share the desktop pending value across breakpoints', async () => {
+    const store = Vue.reactive(createStore())
+    const testWindow = createTestWindow()
+    const writes: PageInput[] = []
+    const mounted = mountSaveActions(store, testWindow, {
+      updatePage: async (_fetch, _id, input) => {
+        writes.push(input)
+        return { sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }
+      }
+    }, 390)
+    const mobileField = await mounted.openReason()
+    expect(mounted.host.querySelector('.editor-change-reason-action')).toBeNull()
+    mobileField.value = 'One reason across screen sizes'
+    mobileField.dispatchEvent(new Event('input', { bubbles: true }))
+    await Vue.nextTick()
+    mounted.setWidth(1440)
+    await settleReasonPopover()
+    const desktopField = document.getElementById(mounted.context.changeReasonId) as HTMLInputElement
+    expect(desktopField).toBe(mobileField)
+    expect(desktopField.value).toBe('One reason across screen sizes')
+    expect(document.querySelectorAll(`#${mounted.context.changeReasonId}`)).toHaveLength(1)
+    desktopField.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await settleReasonPopover()
+    expect(document.activeElement).toBe(mounted.host.querySelector('.editor-change-reason-action'))
+    mounted.setWidth(390)
+    await Vue.nextTick()
+    expect(await mounted.closeFromMobile()).toBe(true)
+    expect(writes).toHaveLength(1)
+    expect(writes[0]?.changeReason).toBe('One reason across screen sizes')
+    expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
+  })
+
+  test('invalid reason leaves the unsaved confirmation and focuses its correction instead of reopening the modal', async () => {
+    const store = Vue.reactive(createStore())
+    const testWindow = createTestWindow()
+    const writes: PageInput[] = []
+    const mounted = mountSaveActions(store, testWindow, {
+      updatePage: async (_fetch, _id, input) => {
+        writes.push(input)
+        return { sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }
+      }
+    })
+    mounted.context.changeReason = 'Invalid\u202Econtext'
+    await mounted.context.exit()
+    await settleReasonPopover()
+    const saveAndClose = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button'))
+      .find(button => button.textContent?.trim() === translateEnglish('editor:save.saveAndClose'))
+    if (!saveAndClose) throw new Error('The unsaved confirmation is not mounted')
+    saveAndClose.click()
+    await settleReasonPopover()
+    expect(mounted.context.dialogUnsaved).toBe(false)
+    expect(mounted.context.changeReasonOpen).toBe(true)
+    const field = document.getElementById(mounted.context.changeReasonId)
+    expect(document.activeElement).toBe(field)
+    expect(field?.getAttribute('aria-invalid')).toBe('true')
+    expect(mounted.context.changeReason).toBe('Invalid\u202Econtext')
+    expect(writes).toEqual([])
+    expect(testWindow.location.assigned).toEqual([])
+  })
+
+  test('conflict and offline transitions retain the pending reason and keep blocked saves inert', async () => {
+    const mounted = mountSaveActions(Vue.reactive(createStore()), createTestWindow())
+    const field = await mounted.openReason()
+    field.value = 'Retain this explanation'
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    await Vue.nextTick()
+    mounted.context.isConflict = true
+    mounted.context.openConflict()
+    await settleReasonPopover()
+    expect(mounted.context.changeReason).toBe('Retain this explanation')
+    expect(mounted.context.changeReasonOpen).toBe(false)
+    mounted.context.serverSaveDisabled = true
+    mounted.context.offlineConnectionState = 'offline'
+    const offlineField = await mounted.openReason()
+    expect(offlineField.value).toBe('Retain this explanation')
+    expect(offlineField.readOnly).toBe(true)
+    expect(document.activeElement).toBe(offlineField)
+    expect(mounted.host.querySelector<HTMLButtonElement>('.editor-save-action')?.disabled).toBe(true)
+    expect(mounted.host.querySelector<HTMLButtonElement>('.editor-save-close-action')?.disabled).toBe(true)
+    offlineField.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await settleReasonPopover()
+    mounted.context.serverSaveDisabled = false
+    mounted.context.offlineConnectionState = 'online'
+    const onlineField = await mounted.openReason()
+    expect(onlineField.value).toBe('Retain this explanation')
+    expect(onlineField.readOnly).toBe(false)
+    expect(mounted.context.isConflict).toBe(true)
+  })
+
   for (const outcome of ['success', 'rejected', 'unknown', 'post-write'] as const) {
     test(`mounted save reason follows the captured save and ${outcome === 'success' ? 'clears only after confirmation' : `survives ${outcome} outcome without retry`}`, async () => {
       const store = Vue.reactive(createStore())
@@ -1001,8 +1258,7 @@ describe('modern editor shell interaction contract', () => {
         }
       })
       mounted.context.editorAdapter.replaceText('The captured source')
-      const field = mounted.host.querySelector<HTMLInputElement>('.editor-change-reason input')
-      if (!field) throw new Error('Save reason field is not mounted')
+      const field = await mounted.openReason()
       expect(field.maxLength).toBe(MAX_PAGE_CHANGE_REASON_LENGTH)
       field.value = 'Explain this exact source'
       field.dispatchEvent(new Event('input', { bubbles: true }))
@@ -2823,6 +3079,9 @@ describe('modern editor shell interaction contract', () => {
     context.activeModal = 'editorModalConflict'
     context.dialogUnsaved = true
     context.navigationTimer = 77
+    context.changeReason = 'Private pending explanation'
+    context.changeReasonOpen = true
+    context.changeReasonActivator = document.createElement('button')
     store.offlineIdentityEpoch = 1
 
     context.handleOfflineSessionInvalidated()
@@ -2838,6 +3097,9 @@ describe('modern editor shell interaction contract', () => {
     expect(context.savedState.title).toBe('')
     expect(context.activeModal).toBe('')
     expect(context.dialogUnsaved).toBe(false)
+    expect(context.changeReason).toBe('')
+    expect(context.changeReasonOpen).toBe(false)
+    expect(context.changeReasonActivator).toBeNull()
     expect(context.offlineDraftStatus).toBe('locked')
     expect(context.collaborationActive).toBe(false)
     expect(context.collaborationGeneration).toBeNull()

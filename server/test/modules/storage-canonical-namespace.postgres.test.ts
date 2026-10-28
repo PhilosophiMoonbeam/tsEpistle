@@ -10,6 +10,9 @@ import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
 import { up as addLeaseToken } from '../../db/migrations/2.5.158.ts'
 import { up as installPageRevisionTrigger } from '../../db/migrations/tsepistle-000035-page-search-inclusion.ts'
+import { up as addRevisionReasons } from '../../db/migrations/tsepistle-000069-page-history-reasons.ts'
+import { up as addAccountAdministration } from '../../db/migrations/tsepistle-000017-account-administration.ts'
+import { createAccountAdministrationStore } from '../../operations/account-administration.ts'
 import { enqueuePageStorageMutation } from '../../jobs/storage-mutations.ts'
 import { lockSearchIndex } from '../../helpers/search-contract.ts'
 import { evaluateGroupAccess } from '../../helpers/group-access.ts'
@@ -21,11 +24,14 @@ import type PageModel from '../../models/pages.ts'
 import type AssetModel from '../../models/assets.ts'
 import type PageHistoryModel from '../../models/pageHistory.ts'
 import type AssetFolderModel from '../../models/assetFolders.ts'
+import type pageOperations from '../../operations/pages.ts'
+import type { OkfMetadata } from '../../okf/format.ts'
 
 const connection = getPostgresTestConnection('_canonical_namespace_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const author = { id: 1, name: 'Page Administrator', email: 'pages@example.test', permissions: ['manage:system'] }
 const assetWriter = { id: 7, name: 'Asset Writer', email: 'assets@example.test', permissions: ['write:assets'] }
+const departingAuthor = { id: 9, name: 'Departing Author', email: 'departing@example.test', permissions: ['read:pages', 'write:pages'] }
 const protectedTitle = 'Restricted owner title must not be disclosed'
 const protectedContent = '<p>Restricted owner source must not be disclosed</p>'
 const verifier = '$argon2id$restricted-page-verifier'
@@ -42,7 +48,10 @@ const tables = [
   ['pageAccessPasswords', 'pageId'],
   ['pageUnlockGrants', 'id'],
   ['deletedPageRecovery', 'pageId'],
-  ['assetRelocationEffects', 'id']
+  ['assetRelocationEffects', 'id'],
+  ['userAdministrationEvents', 'id'],
+  ['userKeys', 'id'],
+  ['comments', 'id']
 ] as const
 
 suite('PostgreSQL canonical page and asset physical namespace admission', () => {
@@ -59,8 +68,8 @@ suite('PostgreSQL canonical page and asset physical namespace admission', () => 
 
   const authorityFor = (requester: unknown): PageRuleAuthority => ({
     requester,
-    permissions: requester === author ? author.permissions : requester === assetWriter ? assetWriter.permissions : [],
-    groups: [{ id: 1, pageRules: [{ match: 'START', path: '', deny: false, roles: ['write:assets'], locales: [] }] }],
+    permissions: requester === author ? author.permissions : requester === assetWriter ? assetWriter.permissions : requester === departingAuthor ? departingAuthor.permissions : [],
+    groups: [{ id: 1, pageRules: [{ match: 'START', path: '', deny: false, roles: requester === departingAuthor ? ['read:pages', 'write:pages'] : ['write:assets'], locales: [] }] }],
     tagAliases: {}
   })
   const snapshot = async () => Object.fromEntries(await Promise.all(tables.map(async ([table, key]) => [table, await db(table).orderBy(key)])))
@@ -159,7 +168,15 @@ suite('PostgreSQL canonical page and asset physical namespace admission', () => 
     await addLeaseToken(db)
     await db.raw(`
       CREATE TABLE storage (key text PRIMARY KEY, "isEnabled" boolean NOT NULL, mode text NOT NULL, "syncInterval" text NOT NULL, config jsonb NOT NULL);
-      CREATE TABLE users (id integer PRIMARY KEY, name text NOT NULL, email text NOT NULL, "isActive" boolean NOT NULL DEFAULT true, "isSystem" boolean NOT NULL DEFAULT false);
+      CREATE TABLE users (id integer PRIMARY KEY, name text NOT NULL, email text NOT NULL, "isActive" boolean NOT NULL DEFAULT true, "isSystem" boolean NOT NULL DEFAULT false,
+        "providerKey" text NOT NULL DEFAULT 'local', "isVerified" boolean NOT NULL DEFAULT true, "tfaIsActive" boolean NOT NULL DEFAULT false,
+        "tfaSecret" text, "mustChangePwd" boolean NOT NULL DEFAULT false, location text NOT NULL DEFAULT '', "jobTitle" text NOT NULL DEFAULT '', timezone text NOT NULL DEFAULT 'UTC',
+        "createdAt" timestamptz NOT NULL DEFAULT now(), "updatedAt" timestamptz NOT NULL DEFAULT now());
+      CREATE TABLE groups (id integer PRIMARY KEY, name text NOT NULL, permissions jsonb NOT NULL, "isSystem" boolean NOT NULL);
+      CREATE TABLE "userGroups" ("userId" integer NOT NULL REFERENCES users(id), "groupId" integer NOT NULL REFERENCES groups(id));
+      CREATE TABLE authentication (key text PRIMARY KEY, "displayName" text NOT NULL, "strategyKey" text NOT NULL, "isEnabled" boolean NOT NULL, "order" integer NOT NULL);
+      CREATE TABLE "userKeys" (id serial PRIMARY KEY, "userId" integer NOT NULL REFERENCES users(id));
+      CREATE TABLE comments (id serial PRIMARY KEY, "authorId" integer NOT NULL REFERENCES users(id));
       CREATE TABLE locales (code text PRIMARY KEY);
       CREATE TABLE pages (
         id serial PRIMARY KEY, path text NOT NULL, hash text NOT NULL, "localeCode" text NOT NULL,
@@ -209,13 +226,18 @@ suite('PostgreSQL canonical page and asset physical namespace admission', () => 
       CREATE TABLE "assetRelocationEffects" (id serial PRIMARY KEY, "assetId" integer, status text, "sourcePath" text, "destinationPath" text);
     `)
     await installPageRevisionTrigger(db)
+    await addRevisionReasons(db)
+    await addAccountAdministration(db)
     await db('users').insert([author, assetWriter].map(({ id, name, email }) => ({ id, name, email })))
+    await db('groups').insert({ id: 1, name: 'Administrators', permissions: JSON.stringify(['manage:system']), isSystem: true })
+    await db('userGroups').insert({ userId: author.id, groupId: 1 })
+    await db('authentication').insert({ key: 'local', displayName: 'Local', strategyKey: 'local', isEnabled: true, order: 0 })
     await db('locales').insert([{ code: 'en' }, { code: 'fr' }])
     const wiki = {
       ROOTPATH: '',
       SERVERPATH: path.resolve(import.meta.dir, '../..'),
       config: { db: { type: 'postgres' }, dataPath: 'data', lang, uploads: { maxFileSize: 1_048_576, scanSVG: false, forceDownload: false } },
-      data: { reservedPaths: [], editors: ['html', 'markdown', 'asciidoc', 'text', 'json'].map(contentType => ({ key: contentType, contentType })) },
+      data: { reservedPaths: [], editors: [...['html', 'markdown', 'asciidoc', 'text', 'json'].map(contentType => ({ key: contentType, contentType })), { key: 'visual-markdown', contentType: 'markdown' }] },
       logger: console,
       events: { inbound: new EventEmitter(), outbound: new EventEmitter() },
       Error: {
@@ -552,6 +574,164 @@ suite('PostgreSQL canonical page and asset physical namespace admission', () => 
         .rejects.toMatchObject({ name: 'OKF_DOCUMENT_TOO_LARGE', status: 413 })
       expect(await snapshot()).toEqual(before)
     }
+  })
+
+  it('retains a removed account contribution revision without carrying its reason into replacement attribution or a later save', async () => {
+    await db('users').insert({ id: departingAuthor.id, name: departingAuthor.name, email: departingAuthor.email })
+    const content = '# Source authored before account removal\n'
+    const page = await Page.createPage({
+      path: 'account-revision-reason', locale: 'en', user: departingAuthor, content,
+      editor: 'markdown', description: '', visibility: 'public', isPublished: true, title: 'Account revision reason', changeReason: 'Reason A'
+    })
+    const accounts = createAccountAdministrationStore({
+      db, definitions: () => [{ key: 'local', useForm: true }], enforceTwoFactor: () => false,
+      snapshotPage: input => History.addVersion(input)
+    })
+    const input = {
+      fingerprint: (await accounts.inspect(author, departingAuthor.id)).fingerprint,
+      reason: 'Replace departing contributor attribution', replaceId: author.id
+    }
+    const beforeFailure = await snapshot()
+    await db.raw(`
+      CREATE FUNCTION reject_contributor_removal() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'controlled contributor removal failure'; END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER reject_contributor_removal BEFORE DELETE ON users
+      FOR EACH ROW WHEN (OLD.id = 9) EXECUTE FUNCTION reject_contributor_removal();
+    `)
+    try {
+      await expect(accounts.remove(author, departingAuthor.id, input)).rejects.toThrow('controlled contributor removal failure')
+      expect(await snapshot()).toEqual(beforeFailure)
+      expect(await observer('users').where({ id: departingAuthor.id }).first('id')).toEqual({ id: departingAuthor.id })
+    } finally {
+      await db.raw('DROP TRIGGER reject_contributor_removal ON users; DROP FUNCTION reject_contributor_removal()')
+    }
+    await accounts.remove(author, departingAuthor.id, input)
+    expect(await observer('users').where({ id: departingAuthor.id }).first('id')).toBeUndefined()
+    expect(await Page.getPageFromDb(page.id)).toMatchObject({
+      content, sourceRevision: '2', authorId: author.id, creatorId: author.id, changeReason: null, visibility: 'public', ownerId: null
+    })
+    const history = await History.getHistory({ pageId: page.id, requester: author })
+    expect(history.trail).toMatchObject([{ sourceRevision: '1', changeReason: 'Reason A', authorId: author.id }])
+    expect(await History.getVersion({ pageId: page.id, versionId: history.trail[0]!.versionId, requester: author })).toMatchObject({
+      versionId: history.trail[0]!.versionId, content, sourceRevision: '1', changeReason: 'Reason A', authorId: author.id
+    })
+    await Page.updatePage({ id: page.id, user: author, content: '# A later ordinary save', expectedSourceRevision: '2' })
+    expect(await Page.getPageFromDb(page.id)).toMatchObject({ sourceRevision: '3', changeReason: null, content: '# A later ordinary save' })
+    expect(await observer('pageHistory').where({ pageId: page.id }).orderBy('sourceRevision').select('sourceRevision', 'changeReason', 'content')).toEqual([
+      { sourceRevision: '1', changeReason: 'Reason A', content }, { sourceRevision: '2', changeReason: null, content }
+    ])
+    const laterJob = (await db('durableJobs')).map(job => JSON.parse(job.payload)).find(job => job.sourceRevision === '3')
+    expect(laterJob).toMatchObject({ entityId: page.id, sourceRevision: '3' })
+    expect(laterJob).not.toHaveProperty('changeReason')
+  })
+
+  it.each(['page features', 'branding', 'authoritative OKF'])('commits changed and cleared reasons despite unchanged %s', async kind => {
+    const features = { schemaVersion: 1 as const, linksVisible: true, ratingsAllowed: false, lastEditorVisible: true }
+    const content = '# Source retained through metadata-only reason saves\n'
+    const page = await Page.createPage({
+      path: 'metadata-reasons', locale: 'en', user: author, content,
+      editor: 'markdown', description: '', visibility: 'public', isPublished: true, title: 'Metadata reasons',
+      pageFeatures: features, okfMetadata: { type: 'Reference', status: 'stable' }, changeReason: 'Reason A'
+    })
+    const unchanged = kind === 'page features' ? { pageFeatures: features }
+      : kind === 'branding' ? { branding: null }
+        : { okfMetadata: page.extra.okf as OkfMetadata, replaceOkfMetadata: true }
+    await Page.updatePage({ id: page.id, user: author, ...unchanged, expectedSourceRevision: '1', changeReason: '  Reason B  ' })
+    expect(await Page.getPageFromDb(page.id)).toMatchObject({ content, sourceRevision: '2', changeReason: 'Reason B' })
+    await Page.updatePage({ id: page.id, user: author, ...unchanged, expectedSourceRevision: '2', changeReason: '   ' })
+    expect(await Page.getPageFromDb(page.id)).toMatchObject({ content, sourceRevision: '3', changeReason: null })
+    const history = await History.getHistory({ pageId: page.id, requester: author })
+    expect(history.trail).toMatchObject([
+      { sourceRevision: '2', changeReason: 'Reason B' },
+      { sourceRevision: '1', changeReason: 'Reason A' }
+    ])
+    for (const revision of history.trail) {
+      expect(await History.getVersion({ pageId: page.id, versionId: revision.versionId, requester: author })).toMatchObject({
+        versionId: revision.versionId, content, sourceRevision: revision.sourceRevision, changeReason: revision.changeReason
+      })
+    }
+    const jobs = (await db('durableJobs')).map(job => JSON.parse(job.payload)).sort((left, right) => Number(left.sourceRevision) - Number(right.sourceRevision))
+    expect(jobs.map(job => [job.sourceRevision, job.changeReason])).toEqual([['1', 'Reason A'], ['2', 'Reason B'], ['3', undefined]])
+    const beforeNoOp = await snapshot()
+    await Page.updatePage({ id: page.id, user: author, ...unchanged, expectedSourceRevision: '3', changeReason: '   ' })
+    await Page.updatePage({ id: page.id, user: author, ...unchanged, expectedSourceRevision: '3' })
+    expect(await snapshot()).toEqual(beforeNoOp)
+  })
+
+  it('archives a reasoned revision even when an editor conversion preserves the source format and bytes', async () => {
+    const content = '# Exact Markdown\n\nPreserve these source bytes.\n'
+    const page = await Page.createPage({
+      path: 'same-format-conversion', locale: 'en', user: author, content,
+      editor: 'markdown', description: '', visibility: 'public', isPublished: true, title: 'Same-format conversion', changeReason: 'Original editor reason'
+    })
+    await Page.convertPage({ id: page.id, user: author, editor: 'visual-markdown', expectedSourceRevision: '1' })
+    expect(await observer('pages').where({ id: page.id }).first('content', 'sourceRevision', 'changeReason', 'editorKey')).toEqual({
+      content, sourceRevision: '2', changeReason: null, editorKey: 'visual-markdown'
+    })
+    const archived = await observer('pageHistory').where({ pageId: page.id, sourceRevision: '1' }).first('id')
+    const trail = await History.getHistory({ pageId: page.id, requester: author })
+    expect(trail).toMatchObject({
+      total: 1, trail: [{ versionId: archived.id, sourceRevision: '1', changeReason: 'Original editor reason' }]
+    })
+    expect(await History.getVersion({ pageId: page.id, versionId: archived.id, requester: author })).toMatchObject({
+      versionId: archived.id, content, sourceRevision: '1', changeReason: 'Original editor reason', editor: 'markdown'
+    })
+  })
+
+  it('keeps reason-only saves, concurrent CAS, failed admission and restore bound to their committed revisions', async () => {
+    const page = await Page.createPage({
+      path: 'revision-reasons', locale: 'en', user: author, content: '# Original',
+      editor: 'markdown', description: '', visibility: 'public', isPublished: true, title: 'Revision reasons', changeReason: 'Original reason'
+    })
+    await Page.updatePage({ id: page.id, user: author, expectedSourceRevision: '1', changeReason: 'Reason-only correction' })
+    expect(await observer('pages').where({ id: page.id }).first('content', 'sourceRevision', 'changeReason')).toEqual({
+      content: '# Original', sourceRevision: '2', changeReason: 'Reason-only correction'
+    })
+    const competing = await Promise.allSettled([
+      Page.updatePage({ id: page.id, user: author, content: '# Left', expectedSourceRevision: '2', changeReason: 'Left reason' }),
+      Page.updatePage({ id: page.id, user: author, content: '# Right', expectedSourceRevision: '2', changeReason: 'Right reason' })
+    ])
+    expect(competing.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+    const rejected = competing.find(result => result.status === 'rejected')
+    if (rejected?.status !== 'rejected') throw new Error('Expected exactly one stale canonical writer')
+    expect(rejected.reason).toMatchObject({ status: 409 })
+    const winner = await observer('pages').where({ id: page.id }).first()
+    expect(winner.sourceRevision).toBe('3')
+    expect(winner.changeReason).toBe(winner.content === '# Left' ? 'Left reason' : 'Right reason')
+    const beforeFailure = await snapshot()
+    await db.raw(`
+      CREATE FUNCTION reject_reason_admission() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'controlled reason admission failure'; END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER reject_reason_admission BEFORE INSERT ON "durableJobs"
+      FOR EACH ROW EXECUTE FUNCTION reject_reason_admission();
+    `)
+    try {
+      await expect(Page.updatePage({
+        id: page.id, user: author, content: '# Failed', expectedSourceRevision: '3', changeReason: 'Must roll back'
+      })).rejects.toThrow('controlled reason admission failure')
+      expect(await snapshot()).toEqual(beforeFailure)
+    } finally {
+      await db.raw('DROP TRIGGER reject_reason_admission ON "durableJobs"; DROP FUNCTION reject_reason_admission()')
+    }
+    await Page.updatePage({ id: page.id, user: author, content: '# Retry', expectedSourceRevision: '3', changeReason: 'Retry reason' })
+    const firstVersion = await db('pageHistory').where({ pageId: page.id, sourceRevision: '1' }).first('id')
+    const { default: operations } = await vi.importFresh<{ default: typeof pageOperations }>('../../operations/pages.ts', import.meta.url)
+    await operations.restore({ requester: author, pageId: page.id, versionId: firstVersion.id, expectedSourceRevision: '4' })
+    expect(await observer('pages').where({ id: page.id }).first('content', 'sourceRevision', 'changeReason')).toEqual({
+      content: '# Original', sourceRevision: '5', changeReason: null
+    })
+    expect(await db('pageHistory').where({ pageId: page.id }).orderBy('sourceRevision').select('sourceRevision', 'changeReason')).toEqual([
+      { sourceRevision: '1', changeReason: 'Original reason' },
+      { sourceRevision: '2', changeReason: 'Reason-only correction' },
+      { sourceRevision: '3', changeReason: winner.changeReason },
+      { sourceRevision: '4', changeReason: 'Retry reason' }
+    ])
+    const jobs = (await db('durableJobs')).map(job => JSON.parse(job.payload)).sort((left, right) => Number(left.sourceRevision) - Number(right.sourceRevision))
+    expect(jobs.map(job => [job.sourceRevision, job.changeReason])).toEqual([
+      ['1', 'Original reason'], ['2', 'Reason-only correction'], ['3', winner.changeReason], ['4', 'Retry reason'], ['5', undefined]
+    ])
   })
 
   it('keeps oversized private Markdown repairable but rejects making it public before it is exportable', async () => {

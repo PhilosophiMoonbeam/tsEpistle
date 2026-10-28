@@ -72,6 +72,7 @@ describe('page creation editor availability', () => {
       table.string('hash').notNullable()
       table.string('title').notNullable()
       table.text('description').notNullable()
+      table.string('changeReason', 200).nullable()
       table.string('visibility').notNullable()
       table.integer('ownerId').nullable()
       table.integer('authorId').notNullable()
@@ -203,7 +204,7 @@ describe('page creation editor availability', () => {
     expect(work).toHaveLength(1)
     expect(JSON.parse(work[0].payload)).toMatchObject({ entityType: 'page', entityId: result.id, sourceRevision: String(row.sourceRevision), changeReason: 'Explain the example' })
     expect(row.content).toBe('Page content')
-    expect(JSON.stringify(row)).not.toContain('Explain the example')
+    expect(row.changeReason).toBe('Explain the example')
   })
 
   it('rejects invalid reasons at both operation and direct model admission without creating durable work', async () => {

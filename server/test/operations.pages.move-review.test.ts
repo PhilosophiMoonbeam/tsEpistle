@@ -120,6 +120,7 @@ suite('PostgreSQL reviewed page move authorization', () => {
         id integer PRIMARY KEY, path text NOT NULL, hash text NOT NULL, "localeCode" text NOT NULL,
         title text NOT NULL, description text, content text NOT NULL, render text, toc text,
         "sourceRevision" integer NOT NULL, "renderedSourceRevision" integer,
+        "changeReason" varchar(200),
         "isPublished" boolean NOT NULL, "isSearchable" boolean NOT NULL,
         "publishStartDate" timestamptz, "publishEndDate" timestamptz,
         visibility text NOT NULL, "ownerId" integer, "authorId" integer NOT NULL,

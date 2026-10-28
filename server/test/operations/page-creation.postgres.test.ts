@@ -22,6 +22,7 @@ import { up as addJobLease } from '../../db/migrations/2.5.158.ts'
 import { up as installRevisionTrigger } from '../../db/migrations/tsepistle-000035-page-search-inclusion.ts'
 import { up as createNotes } from '../../db/migrations/tsepistle-000067-live-notes.ts'
 import { up as createReceipts } from '../../db/migrations/tsepistle-000068-page-creation-receipts.ts'
+import { up as addRevisionReasons } from '../../db/migrations/tsepistle-000069-page-history-reasons.ts'
 import type PageModel from '../../models/pages.ts'
 import type pageOperations from '../../operations/pages.ts'
 import type { LiveNotesOperations } from '../../operations/live-notes.ts'
@@ -166,7 +167,8 @@ suite('native page creation receipts and authorized recovery', () => {
       addJobLease,
       installRevisionTrigger,
       createNotes,
-      createReceipts
+      createReceipts,
+      addRevisionReasons
     ])
       await migrate(db)
     const wiki = {
