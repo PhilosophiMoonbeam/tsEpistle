@@ -45,9 +45,7 @@
             )
             .nav-header-logo-fallback(v-else, aria-hidden='true') {{ logoFallback }}
           v-toolbar-title.nav-header-title(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp')
-            span.nav-header-title-single {{title}}
-            span.nav-header-title-stacked(ref='navHeaderTitleStacked', :style='navHeaderTitleStackedStyle')
-              span.nav-header-title-line(v-for='(titleLine, titleLineIndex) in titleLines', :key='titleLineIndex') {{ titleLine }}
+            span.nav-header-title-single(dir='auto', :title='title') {{title}}
       v-col.nav-header-search-col(md='4', v-if='$vuetify.display.mdAndUp')
         .nav-header-inner.nav-header-command
           v-btn.nav-header-browse(
@@ -346,25 +344,25 @@
                 :aria-label='accountButtonLabel'
                 :aria-description='connectionLabel'
               )
-                template(v-if='isAuthenticated')
-                  v-avatar(v-if='avatar.kind === `initials`', :size='32', color='primary')
-                    span.account-menu__initials {{ avatar.initials }}
-                  v-avatar(v-else-if='avatar.kind === `image`', :size='32')
-                    v-img(:src='avatar.url', alt='', @error='avatarFailed(avatar.url)')
+                .account-menu__avatar(aria-hidden='true')
+                  template(v-if='isAuthenticated')
+                    v-avatar(v-if='avatar.kind === `initials`', :size='32', color='primary')
+                      span.account-menu__initials {{ avatar.initials }}
+                    v-avatar(v-else-if='avatar.kind === `image`', :size='32')
+                      v-img(:src='avatar.url', alt='', @error='avatarFailed(avatar.url)')
+                    v-icon(v-else) mdi-account-circle
                   v-icon(v-else) mdi-account-circle
-                v-icon(v-else) mdi-account-circle
+                  span.account-menu__connectivity-indicator(
+                    :class='`account-menu__connectivity-indicator--${connectionPresentation.tone}`'
+                    :data-connection='connectionPresentation.key'
+                    data-connectivity-indicator
+                  )
+                    v-icon(v-if='connectionPresentation.key !== `connected`', :icon='connectionPresentation.icon', size='13')
                 span.account-menu__notification-indicator(
                   v-if='isAuthenticated && notificationState !== `clear`'
                   :class='`account-menu__notification-indicator--${notificationState}`'
                   aria-hidden='true'
                 )
-                span.account-menu__connectivity-indicator(
-                  :class='`account-menu__connectivity-indicator--${connectionPresentation.tone}`'
-                  :data-connection='connectionPresentation.key'
-                  data-connectivity-indicator
-                  aria-hidden='true'
-                )
-                  v-icon(:icon='connectionPresentation.icon', size='13')
                 v-tooltip(activator='parent', location='bottom', :model-value='accountTooltipOpen', @update:model-value='setAccountTooltip', :text='`${accountButtonLabel} · ${connectionLabel}`')
             v-list.nav-header-menu.account-menu(:aria-label='accountMenuLabel')
               template(v-if='isAuthenticated')
@@ -615,9 +613,6 @@ export default defineComponent({
       searchFocusGeneration: 0,
       searchIsComposing: false,
       logoutPending: false,
-      navHeaderTitleFitScale: 1 as number,
-      navHeaderTitleResizeObserver: null as ResizeObserver | null,
-      navHeaderTitleFitKey: '',
       duplicateOpts: {
         locale: 'en',
         path: 'new-page',
@@ -656,28 +651,6 @@ export default defineComponent({
       return pwa.pwaConnectionPresentation(pwa.pwaState)
     },
     title(): string { return wikiStore.site.title },
-    titleWords(): string[] { return this.title.trim().split(/\s+/u).filter(Boolean) },
-    // Balanced two-line split for small screens: pick the word boundary that
-    // minimizes the longest resulting line so both halves read evenly.
-    titleLines(): string[] {
-      const words = this.titleWords
-      if (words.length <= 1) return words
-      let bestSplit = 1
-      let bestWidest = Number.POSITIVE_INFINITY
-      for (let split = 1; split < words.length; split += 1) {
-        const first = words.slice(0, split).join(' ')
-        const second = words.slice(split).join(' ')
-        const widest = Math.max(first.length, second.length)
-        if (widest < bestWidest) {
-          bestWidest = widest
-          bestSplit = split
-        }
-      }
-      return [words.slice(0, bestSplit).join(' '), words.slice(bestSplit).join(' ')]
-    },
-    navHeaderTitleStackedStyle(): Record<string, string> {
-      return { '--nav-header-title-fit': this.navHeaderTitleFitScale.toFixed(3) }
-    },
     logoUrl(): string { return wikiStore.site.logoUrl },
     logoImageFailed (): boolean { return this.failedLogoUrl === this.logoUrl },
     logoFallback (): string {
@@ -844,9 +817,6 @@ export default defineComponent({
     approvalsTabVisible(visible: boolean): void {
       if (!visible && this.accountMenuTab === 'approvals') this.accountMenuTab = 'notifications'
     },
-    title(): void {
-      void this.$nextTick().then(() => this.applyNavHeaderTitleFit())
-    },
     transportVerified(connected: boolean, previous: boolean): void {
       if (connected && previous === false && !wikiStore.authRefreshPending) void wikiStore.refreshAuth()
     },
@@ -908,20 +878,6 @@ export default defineComponent({
     onSearchFocus(this.handleSearchFocusCommand)
     onPageDelete(this.pageDelete)
     this.isDevMode = siteConfig.devMode === true
-    if (typeof ResizeObserver !== 'undefined') {
-      const titleBox = this.$refs.navHeaderTitleStacked as HTMLElement | undefined
-      if (titleBox) {
-        this.navHeaderTitleResizeObserver = markRaw(new ResizeObserver(() => this.applyNavHeaderTitleFit()))
-        this.navHeaderTitleResizeObserver.observe(titleBox)
-      }
-    }
-    if (typeof document !== 'undefined' && typeof document.fonts !== 'undefined') {
-      document.fonts.addEventListener('loading', this.invalidateNavHeaderTitleFit)
-      document.fonts.addEventListener('loadingdone', this.applyNavHeaderTitleFit)
-    }
-    if (typeof document !== 'undefined' && typeof document.fonts !== 'undefined' && document.fonts.ready) {
-      void document.fonts.ready.then(() => this.applyNavHeaderTitleFit()).catch(() => {})
-    }
     window.addEventListener('keydown', this.handleSearchShortcut)
     window.addEventListener(OFFLINE_SESSION_INVALIDATED_EVENT, this.invalidateNotificationSession)
     document.addEventListener('visibilitychange', this.handleNotificationVisibility)
@@ -950,12 +906,6 @@ export default defineComponent({
       window.cancelAnimationFrame(this.pageActionsFocusFrame)
       this.pageActionsFocusFrame = null
     }
-    this.navHeaderTitleResizeObserver?.disconnect()
-    this.navHeaderTitleResizeObserver = null
-    if (typeof document !== 'undefined' && typeof document.fonts !== 'undefined') {
-      document.fonts.removeEventListener('loading', this.invalidateNavHeaderTitleFit)
-      document.fonts.removeEventListener('loadingdone', this.applyNavHeaderTitleFit)
-    }
   },
   methods: {
     invalidateNotificationSession(): void {
@@ -969,62 +919,6 @@ export default defineComponent({
         return
       }
       this[handler]()
-    },
-    invalidateNavHeaderTitleFit(): void {
-      this.navHeaderTitleFitKey = ''
-    },
-    getNavHeaderTitleFitKey(box: HTMLElement): string {
-      const rect = box.getBoundingClientRect()
-      const style = window.getComputedStyle(box)
-      return JSON.stringify([
-        this.title, rect.width, rect.height,
-        style.fontFamily, style.fontSize, style.fontWeight, style.fontStyle,
-        style.fontStretch, style.fontVariationSettings, style.fontFeatureSettings,
-        style.letterSpacing, style.lineHeight, style.maxHeight,
-        style.paddingTop, style.paddingBottom,
-        document.fonts?.status
-      ])
-    },
-    // Keeps the workspace title whole on narrow screens. The stacked variant
-    // starts from a balanced two-word-group split and lets each group wrap
-    // (balanced) onto more lines. If a word or the line count still does not
-    // fit the header, the text steps down in size. Changed constraints always
-    // start again at full size, so the result cannot oscillate. At the smallest
-    // step an over-long word breaks instead of being cut off. Cache the final
-    // geometry and typography: fitting itself can resize this observed box.
-    applyNavHeaderTitleFit (): void {
-      if (typeof window === 'undefined' || typeof document === 'undefined') return
-      const box = this.$refs.navHeaderTitleStacked as HTMLElement | undefined
-      if (!box) return
-      if (box.clientWidth <= 0 || box.getBoundingClientRect().width <= 0) {
-        // Hidden on this breakpoint (the single desktop line owns wide screens).
-        this.navHeaderTitleFitScale = 1
-        this.navHeaderTitleFitKey = ''
-        return
-      }
-      if (this.getNavHeaderTitleFitKey(box) === this.navHeaderTitleFitKey) return
-      const lines = Array.from(box.querySelectorAll<HTMLElement>('.nav-header-title-line'))
-      // Flex-shrunk, overflow-hidden lines can clip even when the box fits.
-      const fits = (): boolean =>
-        box.scrollHeight <= box.clientHeight + 1 && lines.every(line =>
-          line.scrollWidth <= line.clientWidth + 1 && line.scrollHeight <= line.clientHeight + 1
-        )
-      const steps = [1, 0.92, 0.84, 0.76, 0.7]
-      let next = steps[steps.length - 1]!
-      box.classList.add('is-measuring')
-      for (const scale of steps) {
-        box.style.setProperty('--nav-header-title-fit', scale.toFixed(3))
-        if (fits()) {
-          next = scale
-          break
-        }
-      }
-      box.classList.remove('is-measuring')
-      box.style.setProperty('--nav-header-title-fit', next.toFixed(3))
-      this.navHeaderTitleFitScale = next
-      // Read after restoring word breaking, not with the measuring class still
-      // applied. Otherwise its height change can trigger another identical walk.
-      this.navHeaderTitleFitKey = this.getNavHeaderTitleFitKey(box)
     },
     handleLogoError (event: Event): void {
       const image = event.currentTarget
@@ -1615,49 +1509,12 @@ export default defineComponent({
     letter-spacing: -.018em;
     line-height: var(--wiki-leading-heading);
 
-    // Wide screens: one line when it fits, otherwise balanced lines.
     .nav-header-title-single {
       display: block;
       overflow: hidden;
-      overflow-wrap: break-word;
-      text-wrap: balance;
-      white-space: normal;
-      line-height: 1.15;
-    }
-
-    // Small-screen stacked workspace title: multi-word names start from two
-    // balanced word groups, and each group may wrap (balanced) again. A title
-    // that still does not fit shrinks in steps via --nav-header-title-fit,
-    // measured by applyNavHeaderTitleFit(). Nothing is cut off with an ellipsis.
-    .nav-header-title-stacked {
-      display: none;
-      flex-direction: column;
-      align-items: flex-start;
-      justify-content: center;
-      gap: 0;
-      min-width: 0;
-      max-width: 100%;
-      max-height: 3rem;
-      overflow: hidden;
-      font-size: calc(.8125rem * var(--nav-header-title-fit, 1));
-      letter-spacing: -.012em;
-      line-height: 1.16;
-      padding-block: 2px;
-    }
-
-    .nav-header-title-line {
-      display: block;
-      max-width: 100%;
-      overflow: hidden;
-      overflow-wrap: break-word;
-      text-wrap: balance;
-      white-space: normal;
-    }
-
-    // While measuring, long words overflow instead of breaking, so the fit
-    // can prefer a smaller size over a word split mid-way.
-    .nav-header-title-stacked.is-measuring .nav-header-title-line {
-      overflow-wrap: normal;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      line-height: 1.2;
     }
   }
 
@@ -2084,6 +1941,14 @@ export default defineComponent({
 .account-menu__trigger {
   position: relative;
 }
+.account-menu__avatar {
+  position: relative;
+  display: grid;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+}
 .account-menu__profile .v-list-item-subtitle,
 .account-menu__offline .v-list-item-subtitle,
 .account-menu__unverified .v-list-item-subtitle {
@@ -2094,14 +1959,15 @@ export default defineComponent({
 
 .account-menu__connectivity-indicator {
   position: absolute;
-  inset-inline-start: .2rem;
-  bottom: .2rem;
+  right: -1px;
+  bottom: -1px;
   display: grid;
-  width: 1rem;
-  height: 1rem;
+  width: 16px;
+  height: 16px;
   place-items: center;
-  border: 0;
-  background: transparent;
+  border: 2px solid rgb(var(--v-theme-surface));
+  border-radius: 50%;
+  background: rgb(var(--v-theme-surface));
   color: rgb(var(--v-theme-on-surface-variant));
   line-height: 1;
 }
@@ -2109,6 +1975,12 @@ export default defineComponent({
 .account-menu__connectivity-indicator--success { color: rgb(var(--v-theme-success)); }
 .account-menu__connectivity-indicator--warning { color: var(--wiki-warning-ink); }
 .account-menu__connectivity-indicator--error { color: rgb(var(--v-theme-error)); }
+
+.account-menu__connectivity-indicator[data-connection='connected'] {
+  width: 8px;
+  height: 8px;
+  background: currentColor;
+}
 
 
 .account-menu__initials {
@@ -2482,14 +2354,6 @@ export default defineComponent({
 
     .nav-header-title {
       font-size: .875rem;
-
-      .nav-header-title-single {
-        display: none;
-      }
-
-      .nav-header-title-stacked {
-        display: flex;
-      }
     }
 
     .nav-header-logo {
@@ -2554,8 +2418,13 @@ export default defineComponent({
   }
 
   .account-menu__connectivity-indicator {
-    background: transparent;
+    border-color: Canvas;
+    background: Canvas;
     color: ButtonText;
+  }
+
+  .account-menu__connectivity-indicator[data-connection='connected'] {
+    background: ButtonText;
   }
 
   .nav-header::after {

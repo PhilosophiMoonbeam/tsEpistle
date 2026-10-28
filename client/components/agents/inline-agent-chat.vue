@@ -2323,9 +2323,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent--contextual .inline-agent__body {
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 36%, transparent);
-  -webkit-backdrop-filter: blur(10px) saturate(150%);
-  backdrop-filter: blur(10px) saturate(150%);
+  background: var(--wiki-agent-contextual-surface);
+  -webkit-backdrop-filter: var(--wiki-agent-contextual-filter);
+  backdrop-filter: var(--wiki-agent-contextual-filter);
   animation: none;
 }
 @keyframes agentOpaqueGlassRetire {
@@ -2664,7 +2664,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent__welcome-title em {
   font-style: italic;
   font-weight: inherit;
-  color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
+  /* Palette accent inks target 4.5:1; both welcome lines need the full
+     surface foreground for this title's stricter 7:1 contrast target. */
+  color: inherit;
 }
 
 .inline-agent__welcome-subtitle {
@@ -2705,6 +2707,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-specular-border);
   color: rgb(var(--v-theme-on-surface)) !important;
   text-align: center;
   letter-spacing: 0;
@@ -2713,14 +2716,24 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   transition: border-color .18s, background .18s;
 }
 
+/* Match the composer's raised backing without changing its independent
+   transcript-reading fade. Opaque raised fill is the accessibility default. */
+@supports ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
+  @media (prefers-reduced-transparency: no-preference) and (forced-colors: none) {
+    .inline-agent__starter {
+      background: color-mix(in oklch, var(--wiki-surface-raised) 94%, transparent);
+    }
+  }
+}
+
 .inline-agent__starter:not([aria-disabled='true']):hover {
   border-color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
   background: var(--wiki-surface-sunken);
 }
 
-/* Unavailable starters stay opaque and readable (text keeps its normal
-   contrast); a dashed border, muted icons and the visible reason below the
-   group mark the state. Opacity would also let the page show through. */
+/* Unavailable starters retain full element opacity and readable text; a dashed
+   border, muted icons and the visible reason below the group mark the state.
+   Dimming the element would also let the page show through. */
 .inline-agent__starter[aria-disabled='true'] {
   border-style: dashed;
   cursor: not-allowed;
@@ -3272,6 +3285,15 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 @media (forced-colors: active) {
   .inline-agent__welcome-title::before {
     display: none;
+  }
+  .inline-agent__welcome-title {
+    color: CanvasText;
+  }
+  .inline-agent__starter {
+    border-color: ButtonText;
+    background: Canvas;
+    box-shadow: none;
+    color: ButtonText !important;
   }
   .inline-agent__card,
   .inline-agent__side {

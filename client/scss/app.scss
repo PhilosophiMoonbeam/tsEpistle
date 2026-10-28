@@ -18,8 +18,7 @@
 
 @include meta.load-css('pages/error');
 
-// Luminous Archive foundation: editorial type, mineral surfaces and a quiet
-// coordinate field shared by every application shell.
+// Luminous Archive foundation: editorial type and a quiet mineral canvas.
 .v-application {
   color: rgb(var(--v-theme-on-surface));
 }
@@ -28,11 +27,9 @@
   background-color: rgb(var(--v-theme-background));
   background-image:
     radial-gradient(circle at 8% -6%, color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, transparent), transparent 27rem),
-    radial-gradient(circle at 94% 24%, color-mix(in srgb, rgb(var(--v-theme-secondary)) 7%, transparent), transparent 24rem),
-    linear-gradient(color-mix(in srgb, rgb(var(--v-theme-on-background)) 3.5%, transparent) 1px, transparent 1px),
-    linear-gradient(90deg, color-mix(in srgb, rgb(var(--v-theme-on-background)) 3.5%, transparent) 1px, transparent 1px);
+    radial-gradient(circle at 94% 24%, color-mix(in srgb, rgb(var(--v-theme-secondary)) 7%, transparent), transparent 24rem);
   background-position: center top;
-  background-size: auto, auto, var(--wiki-grid-size) var(--wiki-grid-size), var(--wiki-grid-size) var(--wiki-grid-size);
+  background-size: auto, auto;
 }
 
 .v-application :where(h1, h2, h3, h4, h5, h6) {

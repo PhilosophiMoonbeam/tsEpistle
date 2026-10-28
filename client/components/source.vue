@@ -13,9 +13,8 @@
           localized-rich-text#source-title.source-toolbar-title(v-else, path='common:page.viewingSource', tag='h1')
             template(#path)
               strong /{{path}}
-          .source-toolbar-meta(v-if='$vuetify.display.mdAndUp')
-            span {{$t('common:page.id', { id: pageId })}}
-            span(v-if='versionId > 0') {{$t('common:page.versionId', { id: versionId })}}
+          .source-toolbar-meta(v-if='versionId > 0 && $vuetify.display.mdAndUp')
+            span {{$t('common:page.versionId', { id: versionId })}}
         v-spacer
         .source-toolbar-actions
           v-btn(
@@ -74,9 +73,11 @@ const WRAP_PREFERENCE_KEY = 'wiki.source.wrapLines'
 
 function readWrapPreference (): boolean {
   try {
-    return window.localStorage.getItem(WRAP_PREFERENCE_KEY) === '1'
+    const savedPreference = window.localStorage.getItem(WRAP_PREFERENCE_KEY)
+    // Only absence gets the new default; malformed saved values retain the existing off convention.
+    return savedPreference === null || savedPreference === '1'
   } catch {
-    return false
+    return true
   }
 }
 
