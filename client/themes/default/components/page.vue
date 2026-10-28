@@ -2,7 +2,19 @@
   v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus && !talkActive && !linksActive, "wiki-page--full-width": readerFullWidth }]')
     a.page-skip-link(:href='linksActive ? `#page-links` : talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='linksActive ? focusLinks() : talkActive ? goToComments() : focusArticle()') {{$t('common:page.skipToContent')}}
     glossary-reader(v-if='!printView', :locale='locale', :page-key='`${pageId}:${navigationKey}:${sourceRevision}`', :content-root='readerContentRoot', v-slot='{ glossary }')
-      nav-header(reserve-actions, :before-search-exit='glossary.canLeave')
+      nav-header(reserve-actions, :before-search-exit='glossary.canLeave', :navigation-breakpoint='1280')
+        template(v-slot:navigationToggle)
+          v-btn.page-navigation-control(
+            v-if='navMode !== `NONE` && (!readerFocus || talkActive || linksActive)'
+            ref='navToggle'
+            icon
+            variant='text'
+            @click='toggleNavigation'
+            :aria-expanded='navigationOpen'
+            aria-controls='page-navigation-drawer'
+            :aria-label='navigationOpen ? $t(`common:sidebar.closeNavigation`) : $t(`common:sidebar.openNavigation`)'
+          )
+            v-icon(aria-hidden='true') {{ navigationOpen ? 'mdi-close' : 'mdi-menu' }}
       search-results(:glossary='glossary')
     //- Navigation is indeterminate; the header spinner and aria-busy own status.
     .page-navigation-progress(v-if='!printView && showPageProgress && navigationPending', aria-hidden='true')
@@ -10,7 +22,7 @@
     .page-position(v-if='!printView', aria-hidden='true', :style='{ insetInlineStart: pagePositionInsetStart }')
       .page-position-fill(:style='{ transform: $t(`common:page.scalex`, { value: readingProgress / 100, interpolation: { escapeValue: false } }) }')
     .page-reading-chrome(v-show='readerFocus && !printView && !talkActive && !linksActive', @keydown.esc.capture='readerSectionsEscape')
-      .page-reading-dock(v-if='readerFocus && !printView && !talkActive && !linksActive', role='region', :aria-label='$t(`common:page.focusReading`)')
+      .page-reading-dock(ref='readingDock', v-if='readerFocus && !printView && !talkActive && !linksActive', role='region', :aria-label='$t(`common:page.focusReading`)')
         v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
         .page-reading-dock-context
           span.page-reading-dock-title {{ readerSection ? readerSection.title : title }}
@@ -46,6 +58,14 @@
               @click='toggleReaderSections'
             ) {{$t('common:page.chooseSection')}}
           v-btn.page-reading-exit(variant='text', size='small', prepend-icon='mdi-arrow-collapse-horizontal', @click='toggleReaderFocus') {{$t('common:page.exitFocus')}}
+          v-btn.page-reading-dock-top(
+            v-if='upBtnShown'
+            variant='text'
+            size='small'
+            prepend-icon='mdi-arrow-up'
+            :aria-label='$t(`common:actions.returnToTop`)'
+            @click='returnToTop'
+          ) {{$t('common:page.top')}}
       #page-reading-sections-host.page-reading-sections(
         ref='readerSections'
         v-show='readerSectionsOpen'
@@ -78,25 +98,11 @@
           @navigate='sidebarNavigationStarted'
         )
 
-    v-fab-transition(v-if='navMode !== `NONE` && (!readerFocus || talkActive || linksActive)')
-      v-btn.page-nav-toggle(
-        ref='navToggle'
-        :class='{ "page-nav-toggle--open": navShown }'
-        icon
-        color='primary'
-        size="small"
-        @click='toggleNavigation'
-        :aria-expanded='navShown ? `true` : `false`'
-        aria-controls='page-navigation-drawer'
-        :aria-label='navShown ? $t(`common:sidebar.closeNavigation`) : $t(`common:sidebar.openNavigation`)'
-        v-if='$vuetify.display.width < 1280'
-        )
-        v-icon {{ navShown ? 'mdi-close' : 'mdi-menu' }}
 
     v-main.page-main(
       ref='content'
       :aria-busy='navigationPending ? `true` : undefined'
-      :class='{ "page-main--with-rail": tocPosition !== `off` && !printView && (!readerFocus || talkActive || linksActive) }'
+      :class='{ "page-main--with-rail": tocPosition !== `off` && !printView && (!readerFocus || talkActive || linksActive), "page-main--with-edit-fab": showEditFab }'
     )
       v-container.page-hero(
         ref='pageHero'
@@ -199,6 +205,23 @@
             cols='12'
             :class='[tocPosition === `right` ? `page-col-content--toc-right` : `page-col-content--toc-left`, { "page-col-content--with-toc": tocPosition !== `off`, "page-col-content--toc-off": tocPosition === `off` }]'
             )
+            .page-reading-toolbar(
+              v-if='isTocCompact && (!readerFocus || talkActive || linksActive) && !printView'
+              role='region'
+              :aria-label='$t(`common:page.readingControls`)'
+            )
+              bdi.page-reading-toolbar__context(:title='readerToolbarTitle') {{readerToolbarTitle}}
+              v-btn.page-reading-top(
+                :class='{ "page-reading-top--available": upBtnShown }'
+                variant='text'
+                size='small'
+                prepend-icon='mdi-arrow-up'
+                :disabled='!upBtnShown'
+                :aria-hidden='upBtnShown ? undefined : true'
+                :tabindex='upBtnShown ? 0 : -1'
+                :aria-label='$t(`common:actions.returnToTop`)'
+                @click='returnToTop'
+              ) {{$t('common:page.top')}}
             v-menu(
               v-if='showEditFab'
               location='top end'
@@ -831,7 +854,7 @@
           ) {{ $t(`common:page.unlock`) }}
     v-fab-transition
       v-btn.page-return-top(
-        v-if='upBtnShown'
+        v-if='upBtnShown && !isTocCompact && (!readerFocus || talkActive || linksActive)'
         icon
         position='fixed'
         color='primary'
@@ -1653,6 +1676,9 @@ export default defineComponent({
       searchOverrides: new Map<string, boolean>(),
       readerFocus: false,
       readerFullWidth: false,
+      readingDockObserver: null as ResizeObserver | null,
+      readingDockNode: null as HTMLElement | null,
+      readingDockHeight: 0,
       readerActionReturnPage: null as ReaderPageIdentity | null,
       pageWatchSettingsOpen: false,
       readerSectionsOpen: false,
@@ -2101,6 +2127,12 @@ export default defineComponent({
     readerSectionsAvailable (): boolean {
       return this.readerFocus && !this.printView && !this.talkActive && !this.linksActive && this.readerHasSections
     },
+    readerDockVisible (): boolean {
+      return this.readerFocus && !this.printView && !this.talkActive && !this.linksActive
+    },
+    readerToolbarTitle (): string {
+      return this.talkActive || this.linksActive ? this.title : this.readerSection?.title ?? this.title
+    },
     readerSectionIndex (): number {
       if (!this.readerHasSections) return -1
       const anchor = decodePageAnchor(this.activeAnchor)
@@ -2197,6 +2229,9 @@ export default defineComponent({
     }
   },
   watch: {
+    readerDockVisible () {
+      this.$nextTick(this.observeReadingDock)
+    },
     readerPageActionsState: {
       deep: true,
       handler () { emitReaderPageActionsChanged() }
@@ -2429,6 +2464,9 @@ export default defineComponent({
     offReaderPageActionsRequest(this.provideReaderPageActions)
     offReaderPageAction(this.runReaderPageAction)
     this.offlineDisposed = true
+    this.readingDockObserver?.disconnect()
+    this.readingDockObserver = null
+    this.readingDockNode = null
     this.readerActionReturnFocus = null
     this.readerActionReturnPage = null
     emitReaderPageActionsChanged()
@@ -2497,6 +2535,34 @@ export default defineComponent({
   },
   methods: {
     mergeProps,
+    observeReadingDock (): void {
+      if (this.offlineDisposed) return
+      const node = this.readerDockVisible ? this.$refs.readingDock : null
+      if (node === this.readingDockNode) {
+        this.updateReadingDockClearance()
+        return
+      }
+      this.readingDockObserver?.disconnect()
+      this.readingDockObserver = null
+      this.readingDockNode = null
+      this.readingDockHeight = 0
+      if (!(node instanceof HTMLElement)) {
+        (this.$el as HTMLElement).style.removeProperty('--page-reading-dock-height')
+        return
+      }
+      this.readingDockNode = node
+      this.updateReadingDockClearance()
+      this.readingDockObserver = new ResizeObserver(this.updateReadingDockClearance)
+      this.readingDockObserver.observe(node)
+    },
+    updateReadingDockClearance (): void {
+      const node = this.readingDockNode
+      if (this.offlineDisposed || !node?.isConnected) return
+      const height = Math.ceil(node.getBoundingClientRect().height)
+      if (height === this.readingDockHeight) return
+      this.readingDockHeight = height
+      ;(this.$el as HTMLElement).style.setProperty('--page-reading-dock-height', `${height}px`)
+    },
     provideReaderPageActions (request: ReaderPageActionsRequest): void {
       if (sameReaderPageIdentity(request.page, this.readerPageIdentity)) request.reply(this.readerPageActionsState)
     },
@@ -4599,8 +4665,14 @@ export default defineComponent({
   --page-metadata-rail-width: calc(8 * var(--page-shortcut-target) + 9 * var(--wiki-space-1) + 2px);
   --page-reader-column-gap: var(--wiki-space-6);
   --page-reader-copy-max: var(--wiki-reader-copy-width, 74ch);
+  --page-reader-safe-end: env(safe-area-inset-right, 0px);
+  --page-return-top-inset: max(1rem, calc((100vw - var(--wiki-shell-max)) / 2 + 1rem), var(--page-reader-safe-end));
 
   font-family: var(--wiki-font-body);
+}
+
+.wiki-page.is-rtl {
+  --page-reader-safe-end: env(safe-area-inset-left, 0px);
 }
 
 // The document identity and outline use the same quiet editorial hierarchy.
@@ -4832,7 +4904,6 @@ export default defineComponent({
 }
 
 .page-edit-fab,
-.page-nav-toggle,
 .page-return-top {
   position: fixed !important;
   z-index: 1005;
@@ -4868,32 +4939,18 @@ export default defineComponent({
   inset-inline-end: calc(var(--wiki-space-5) + var(--wiki-control-height) + var(--wiki-space-3));
 }
 
-.page-nav-toggle {
-  inset-block-start: auto !important;
-  inset-inline-end: auto !important;
-  inset-block-end: calc(max(var(--v-layout-bottom, 0px), calc(var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px))) + var(--wiki-grid-size) + 24px) !important;
-  inset-inline-start: calc(env(safe-area-inset-left) + var(--wiki-space-5)) !important;
-}
 
-.page-nav-toggle--open {
-  z-index: 1007;
-}
 
 .page-return-top {
   inset-block-start: auto !important;
   inset-inline-start: auto !important;
   inset-block-end: calc(max(var(--v-layout-bottom, 0px), calc(var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px))) + var(--wiki-grid-size) + 24px) !important;
-  inset-inline-end: calc(env(safe-area-inset-right) + var(--wiki-space-5)) !important;
+  inset-inline-end: var(--page-return-top-inset) !important;
+  inline-size: 3rem;
+  min-inline-size: 3rem;
+  block-size: 3rem;
 }
 
-.is-rtl {
-  .page-nav-toggle {
-    inset-inline-start: calc(env(safe-area-inset-right) + var(--wiki-space-5)) !important;
-  }
-  .page-return-top {
-    inset-inline-end: calc(env(safe-area-inset-left) + var(--wiki-space-5)) !important;
-  }
-}
 
 .breadcrumbs-nav {
   min-width: 0;
@@ -5343,6 +5400,51 @@ export default defineComponent({
     var(--wiki-space-4)
     var(--wiki-page-gutter)
     var(--wiki-space-12) !important;
+}
+
+// Part of the article's reserved flow, never a floating button on its prose.
+.page-reading-toolbar {
+  position: sticky;
+  inset-block-start: var(--v-layout-top, 56px);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  min-height: 44px;
+  margin-block-end: var(--wiki-space-3);
+  padding-inline: var(--wiki-space-2);
+  border-block-end: 1px solid var(--wiki-surface-border);
+  background: rgb(var(--v-theme-surface));
+
+  .page-reading-top {
+    flex: 0 0 auto;
+    min-height: 44px;
+  }
+  .page-reading-top:not(.page-reading-top--available) { visibility: hidden; }
+}
+
+.page-reading-toolbar__context {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--wiki-text-muted);
+  font-size: .8125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (min-width: 1280px) {
+  // The end gutter contains Top, and the optional edit FAB, even in Full width.
+  .wiki-page:not(.wiki-page--reading) .page-body {
+    padding-inline-end: max(var(--wiki-page-gutter), calc(var(--page-return-top-inset) + 4rem)) !important;
+  }
+  .wiki-page:not(.wiki-page--reading) .page-main--with-edit-fab .page-body {
+    padding-inline-end: max(var(--wiki-page-gutter), calc(var(--page-return-top-inset) + 4rem), calc(var(--wiki-space-5) + var(--wiki-control-height) + var(--wiki-space-3) + 4rem)) !important;
+  }
+}
+
+.wiki-page--reading .page-body {
+  padding-block-end: max(5.5rem, calc(var(--page-reading-dock-height, 0px) + var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px) + 2rem)) !important;
 }
 
 .page-col-sd {
@@ -5983,6 +6085,11 @@ export default defineComponent({
     }
   }
 
+  :not(pre) > code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
   h1,
   h2,
   h3,
@@ -5992,6 +6099,7 @@ export default defineComponent({
     position: relative;
     scroll-margin-block-start: calc(var(--v-layout-top, var(--wiki-grid-size)) + var(--wiki-space-8));
     padding-inline-end: 1.3em;
+    overflow-wrap: anywhere;
 
     .toc-anchor {
       position: absolute;
@@ -6229,11 +6337,6 @@ export default defineComponent({
 }
 
 @media (max-width: 959px) {
-  .page-nav-toggle,
-  .page-return-top {
-    inset-block-start: auto !important;
-    inset-block-end: calc(max(var(--v-layout-bottom, 0px), calc(var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px))) + 16px) !important;
-  }
 
   .page-col-sd {
     grid-template-columns: minmax(0, 1fr);
@@ -6393,41 +6496,10 @@ export default defineComponent({
     inset-inline-end: calc(var(--wiki-space-4) + var(--wiki-control-height) + var(--wiki-space-3));
   }
 
-  .page-nav-toggle,
-  .page-return-top {
-    width: 40px !important;
-    min-width: 40px !important;
-    max-width: 40px !important;
-    height: 40px !important;
-    min-height: 40px !important;
-    max-height: 40px !important;
-    inset-block-start: auto !important;
-    inset-block-end: calc(max(var(--v-layout-bottom, 0px), calc(var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px))) + 12px) !important;
-  }
-
-  .page-nav-toggle {
-    inset-inline-end: auto !important;
-    inset-inline-start: calc(env(safe-area-inset-left) + var(--wiki-space-4)) !important;
-  }
-
-  .page-return-top {
-    inset-inline-start: auto !important;
-    inset-inline-end: calc(env(safe-area-inset-right) + var(--wiki-space-4)) !important;
-  }
-
-  .is-rtl {
-    .page-nav-toggle {
-      inset-inline-start: calc(env(safe-area-inset-right) + var(--wiki-space-4)) !important;
-    }
-    .page-return-top {
-      inset-inline-end: calc(env(safe-area-inset-left) + var(--wiki-space-4)) !important;
-    }
-  }
 }
 
 @media print {
   .page-navigation,
-  .page-nav-toggle,
   .page-header-path,
   .page-edit-shortcuts,
   .page-edit-fab,
@@ -6623,7 +6695,6 @@ export default defineComponent({
 @media (prefers-reduced-motion: reduce) {
   .page-return-top,
   .page-edit-fab,
-  .page-nav-toggle,
   .page-header-section .page-edit-shortcuts .v-btn,
   .page-toc-item,
   .page-toc-item::after {
@@ -6637,7 +6708,6 @@ export default defineComponent({
 
   .page-return-top:hover,
   .page-edit-fab:hover,
-  .page-nav-toggle:hover,
   .page-header-section .page-edit-shortcuts .v-btn:hover {
     transform: none;
   }
@@ -6940,6 +7010,8 @@ export default defineComponent({
   .page-reading-dock-actions {
     display: grid;
     grid-template-columns: 44px 44px minmax(0, 1fr) minmax(0, 1fr);
+
+    .page-reading-dock-top { grid-column: 1 / -1; }
 
     &:not(:has(.page-reading-sections-toggle)) { grid-template-columns: minmax(0, 1fr); }
 
