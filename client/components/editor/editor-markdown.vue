@@ -1386,6 +1386,11 @@ export default defineComponent({
 
 @media (forced-colors: active) {
   .editor-markdown-tool-icon.v-icon { color: inherit !important; }
+  // MDI glyphs are pseudo-elements; retain their parent's resolved system ink.
+  .editor-markdown-tool-icon.v-icon::before {
+    color: inherit !important;
+    forced-color-adjust: none;
+  }
   .editor-markdown .editor-tool.v-btn:is(.is-active, [aria-pressed='true']),
   .editor-markdown-tool-menu .v-list-item--active {
     background: Highlight;
