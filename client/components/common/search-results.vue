@@ -41,7 +41,7 @@
       .search-results-search(v-if='!isAgentOpen' @click.stop)
         h2#wiki-search-title.sr-only {{ $t('common:searchPanel.title') }}
         .search-results-instructions.sr-only#wiki-search-instructions {{ $t(searchScope === 'glossary' ? 'common:glossary.searchInstructions' : 'common:searchPanel.instructions') }}
-        .search-results-scope(role='region' :aria-label='$t(`common:searchPanel.compactToolbar`)' tabindex='0')
+        .search-results-scope(role='region' :aria-label='$t(`common:searchPanel.compactToolbar`)' tabindex='0' @focusin='revealSearchControl')
           .search-results-scope-actions(role='group' :aria-label='$t(`common:searchPanel.scopeLabel`)')
             v-btn(
               v-for='scope of searchScopes'
@@ -883,6 +883,10 @@ export default defineComponent({
     this.agentResumeSessionId = null
   },
   methods: {
+    revealSearchControl(event: FocusEvent): void {
+      const control = event.target
+      if (control instanceof HTMLElement && control !== event.currentTarget) control.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    },
     openRequestedApproval(): void {
       if (!this.canAsk || this.approvalId) return
       const approvalId = new URL(window.location.href).searchParams.get('agentApproval')
