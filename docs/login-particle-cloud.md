@@ -8,6 +8,8 @@ The Workspace logo control accepts one visible static PNG, JPEG, or WebP file up
 
 Pipeline 7 is the current contract. New uploads and migration repairs create a pipeline-7 revision and durable `process-site-logo@5` work. Pipelines 1–6 are historical compatibility data; an existing historical active revision can remain readable while its pipeline-7 replacement is processed, but new work does not publish pipeline 6.
 
+First-run setup reinitializes managed-logo authority after clearing bootstrap users and groups. Before the first upload, an authorized administrator receives HTTP 200 with `{ "active": null, "candidate": null }` from `GET /_api/site/logo`, while the default static logo remains usable. This initialization does not rerun for an installed workspace or replace its active logo.
+
 The canonical `logo-png` is the validated, auto-oriented sRGB RGBA upload on its complete canvas. It preserves transparency, internal margins, and aspect ratio, never upscales, and downsamples only when its long axis exceeds 1024 pixels. Ordinary consumers use contained presentation rather than cropping or stretching. The active revision supplies the same ordinary logo identity to document head, navigation, authentication, registration, unlock, welcome, administration, error, mail, and preview surfaces.
 
 Pipeline 7 also publishes square, safely padded icon renditions: `favicon16`, `favicon32`, the two-size ICO, `app192`, and `app512` are transparent; `tile150`, `apple180`, and `maskable512` are opaque with their role-specific backdrop. The ICO contains the transparent 16 px and 32 px favicon images. Icons are not uniformly opaque, and the application manifest uses the `app192`/`app512` any-purpose icons plus the `maskable512` maskable icon.
