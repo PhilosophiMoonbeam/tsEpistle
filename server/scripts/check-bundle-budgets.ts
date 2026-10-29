@@ -85,7 +85,8 @@ const LARGEST_JAVASCRIPT_CHUNK_RAW_LIMIT = 1_565 * KiB
 // G5 committed-source/frozen-memory controls have a further approved 8 KiB allowance;
 // their first build measured 13,952.1 KiB. Every other budget remains unchanged.
 // Retain a fixed aggregate ceiling and every initial-load/lazy budget.
-const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_954 * KiB
+// Reader leading-title deduplication has a further user-approved 2 KiB aggregate allowance.
+const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_956 * KiB
 
 export function findManifestKey(manifest: Manifest, source: string): string {
   if (manifest[source]) return source
