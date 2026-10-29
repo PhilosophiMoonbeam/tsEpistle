@@ -48,7 +48,7 @@ block body
       payload=Buffer.from(JSON.stringify(wikiPagePayload)).toString('base64')
       )
       template(v-slot:contents data-wiki-page-contents)
-        div!= page.render
+        .wiki-page-rendered-contents!= page.render
       template(v-slot:comments data-wiki-page-comments)
         div!= comments.main
   if injectCode.body

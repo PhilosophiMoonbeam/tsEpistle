@@ -1009,7 +1009,7 @@ describe('leading Markdown reader title', () => {
   beforeEach(() => resetBody())
   afterEach(() => resetBody())
 
-  const fixture = (html: string, title = 'Café Guide') => {
+  const fixture = (html: string, title = 'Café Guide', navigationKey = 0) => {
     browserDocument.body.innerHTML = '<h1 class="page-title" id="shell-title"><span></span></h1><article><div class="wiki-page-rendered-contents"></div></article>'
     const hero = browserDocument.querySelector<HTMLElement>('.page-title')!
     hero.firstElementChild!.textContent = title
@@ -1017,7 +1017,7 @@ describe('leading Markdown reader title', () => {
     container.firstElementChild!.innerHTML = html
     const vm: Record<string, unknown> = {
       $refs: { container, pageTitle: hero, pageTitleText: hero.firstElementChild }, editor: 'markdown', title,
-      leadingTitle: null, tocDecoded: []
+      leadingTitle: null, tocDecoded: [], navigationKey
     }
     vm.restoreLeadingTitle = () => page.methods.restoreLeadingTitle!.call(vm)
     const sync = () => page.methods.syncLeadingTitle!.call(vm)
@@ -1048,11 +1048,25 @@ describe('leading Markdown reader title', () => {
     expect(hero.querySelector('[id]')).toBeNull()
   })
 
+  it('crosses both marked SPA transports but retains authored content below that boundary', () => {
+    const { vm, hero, container, sync } = fixture('<div class="wiki-page-rendered-contents" data-v-scope><h1 id="spa-title">Café Guide</h1></div>', 'Café Guide', 1)
+    sync()
+    expect(container.querySelector<HTMLElement>('h1')!.hidden).toBe(true)
+    expect(browserDocument.getElementById('spa-title')?.parentElement).toBe(hero)
+    page.methods.restoreLeadingTitle!.call(vm)
+    container.firstElementChild!.innerHTML = '<div class="wiki-page-rendered-contents"><div class="wiki-page-rendered-contents"><h1 id="authored">Café Guide</h1></div></div>'
+    sync()
+    expect(container.querySelector<HTMLElement>('h1')!.hidden).toBe(false)
+    expect(container.querySelector<HTMLElement>('h1')!.id).toBe('authored')
+  })
+
   it('retains nonmatching, nested, later and meaningfully different headings', () => {
     for (const html of [
       '<h1 id="other">Other Guide</h1><h1>Café Guide</h1>',
       '<blockquote><h1>Café Guide</h1></blockquote>',
       '<section><h1>Café Guide</h1></section>',
+      '<div><h1>Café Guide</h1></div>',
+      '<div class="wiki-page-rendered-contents"><h1>Café Guide</h1></div>',
       '<p>Introduction</p><h1>Café Guide</h1>',
       'Introduction<h1>Café Guide</h1>',
       '<h1>Café Guide!</h1>',

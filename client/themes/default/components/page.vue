@@ -3541,9 +3541,12 @@ export default defineComponent({
       const alias = this.$refs.pageTitleText as HTMLElement | undefined
       if (!container || !alias) return
       let heading = nextReaderContent(container.firstChild)
-      // Cross only the transport wrapper, never an authored nested section.
-      if (heading instanceof HTMLElement && !nextReaderContent(heading.nextSibling) && heading.tagName === 'DIV' &&
-        (heading.attributes.length === 0 || (heading.attributes.length === 1 && heading.className === 'wiki-page-rendered-contents'))) {
+      // Server slots have one marked transport; SPA navigation adds one more.
+      // Bound the depth so an authored nested container is never crossed.
+      for (let layers = this.navigationKey > 0 ? 2 : 1;
+        layers > 0 && heading instanceof HTMLElement && heading.tagName === 'DIV' &&
+        heading.classList.contains('wiki-page-rendered-contents') && !nextReaderContent(heading.nextSibling);
+        layers--) {
         heading = nextReaderContent(heading.firstChild)
       }
       let matches = this.editor === 'markdown' && heading instanceof HTMLElement && heading.tagName === 'H1'
