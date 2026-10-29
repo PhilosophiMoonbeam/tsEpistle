@@ -502,6 +502,21 @@
                       @update-skill-preferences="updateSkillPreferences"
                     >
                       <template #context-controls>
+                        <button
+                          ref="memoryPill"
+                          type="button"
+                          class="inline-agent__memory-pill"
+                          :class="{ 'inline-agent__memory-pill--feedback': memoryFeedbackActive }"
+                          :disabled="memoryMutationBusy || admissionBlocked || (!memoryOpen && contextMemoryDisabled)"
+                          :aria-expanded="memoryOpen"
+                          aria-controls="agent-memory-panel"
+                          :title="memoryMutationBusy ? $t('common:agentWorkspace.waitForMemory') : undefined"
+                          @click="toggleMemory"
+                        >
+                          <v-icon icon="mdi-brain" size="18" aria-hidden="true" />
+                          <span>{{ $t('common:agentWorkspace.memory') }}</span>
+                          <ControlBorderBeam v-if="memoryFeedback && memoryFeedbackActive" :key="memoryFeedback.sequence" class="inline-agent__memory-beam" />
+                        </button>
                         <AgentContextPicker
                           v-if="thread"
                           ref="contextPicker"
@@ -528,6 +543,9 @@
         </div>
       </template>
     </v-card>
+    <span ref="memoryFeedbackStatusRegion" class="sr-only" role="status" aria-live="polite" aria-atomic="true">
+      <span v-if="memoryFeedback" :key="memoryFeedback.sequence">{{ memoryFeedbackStatus }}</span>
+    </span>
 
     <!-- biome-ignore lint/a11y/noStaticElementInteractions: The responsive named dialog/complementary panel handles bubbled Escape, with modal focus owned by panelFocusScope. -->
     <div
@@ -680,9 +698,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { agentToolAcceptsImages, type AgentMediaSubmission } from '../../helpers/agent-media.ts'
-import type { AgentMediaView, AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
+import type { AgentMediaView, AgentCurrentPageHint, AgentMemoryReceiptDelivery } from '../../../shared/agents/contracts.ts'
 import { pwaState, retryServerConnection } from '../../helpers/pwa.ts'
-import { useAgentsStore } from '../../store/agents.ts'
+import { useAgentsStore, type AgentMemoryMutationCapture } from '../../store/agents.ts'
 import { wikiStore } from '../../store/index.ts'
 import { resolveUserPicture } from '../../helpers/user-picture.ts'
 import AgentComposer from './agent-composer.vue'
@@ -695,6 +713,7 @@ import AgentGoalStatus from './agent-goal-status.vue'
 import AgentThread from './agent-thread.vue'
 import AgentContextPicker from './agent-context-picker.vue'
 import AgentContextSummary from './agent-context-summary.vue'
+import ControlBorderBeam from '../common/control-border-beam.vue'
 import { emptyAgentDraft, type AgentDraft, type AgentSearchScope } from '../../helpers/agent-draft.ts'
 import type { WikiSource } from '../../../shared/wiki-source.ts'
 import { isAgentApprovalOutsideViewport, shouldFollowGoalExpansion } from './agent-thread-presentation.ts'
@@ -733,6 +752,8 @@ const memoryManager = useTemplateRef<{ focusSection: (target: 'user' | 'agent') 
 type ComponentRoot = { $el?: unknown }
 const historyTrigger = useTemplateRef<ComponentRoot | HTMLElement>('historyTrigger')
 const memoryTrigger = useTemplateRef<ComponentRoot | HTMLElement>('memoryTrigger')
+const memoryPill = useTemplateRef<HTMLElement>('memoryPill')
+const memoryFeedbackStatusRegion = useTemplateRef<HTMLElement>('memoryFeedbackStatusRegion')
 const panelMenuTrigger = useTemplateRef<ComponentRoot | HTMLElement>('panelMenuTrigger')
 const historyPanel = useTemplateRef<HTMLElement>('historyPanel')
 const memoryPanel = useTemplateRef<HTMLElement>('memoryPanel')
@@ -1024,6 +1045,91 @@ const memoryContext = computed(() => {
   const projection = agents.memoryContext
   return projection?.ownerId === props.ownerId && projection.sessionId === thread.value?.session.id ? projection : null
 })
+
+type MemoryFeedbackKind = 'included' | 'saved'
+type MemoryAcknowledgement = { kind: MemoryFeedbackKind; capture: AgentMemoryMutationCapture; delivery: AgentMemoryReceiptDelivery }
+const MEMORY_FEEDBACK_MS = 600
+const memoryFeedback = ref<{ kind: MemoryFeedbackKind; sequence: number } | null>(null)
+const memoryFeedbackActive = ref(false)
+const memoryFeedbackStatus = computed(() => memoryFeedback.value
+  ? t(memoryFeedback.value.kind === 'included' ? 'common:agentMemoryFeedback.included' : 'common:agentMemoryFeedback.saved')
+  : '')
+let memoryFeedbackSequence = 0
+let memoryFeedbackTimer: ReturnType<typeof setTimeout> | null = null
+const pendingMemoryFeedback: MemoryAcknowledgement[] = []
+let pendingMemoryFeedbackHead = 0
+let memoryFeedbackMounted = false
+// The store owns receipt identities and transport deduplication. Remember the
+// observed delivery objects only so a late mount or re-exposed getter cannot reward history.
+const observedMemoryReceipts = new WeakSet<AgentMemoryReceiptDelivery>()
+const initialMemoryReceipt = agents.memoryReceipt
+if (initialMemoryReceipt) observedMemoryReceipts.add(initialMemoryReceipt)
+const clearMemoryFeedback = (): void => {
+  if (memoryFeedbackTimer !== null) clearTimeout(memoryFeedbackTimer)
+  memoryFeedbackTimer = null
+  pendingMemoryFeedback.length = 0
+  pendingMemoryFeedbackHead = 0
+  memoryFeedbackActive.value = false
+  memoryFeedback.value = null
+}
+const showMemoryFeedback = (acknowledgement: MemoryAcknowledgement): boolean => {
+  if (!memoryFeedbackMounted || disposed || props.approvalId || document.visibilityState !== 'visible' ||
+    acknowledgement.capture.ownerId !== props.ownerId || !agents.isMemoryMutationContextCurrent(acknowledgement.capture) ||
+    !isVisibleTrigger(memoryPill.value)) return false
+  const receipt = acknowledgement.delivery.receipt
+  if (receipt.runId !== null && (receipt.runId !== thread.value?.session.currentRun?.id ||
+    receipt.attempt !== thread.value.session.currentRun.attempt ||
+    receipt.data.snapshotId !== thread.value.memoryContext.frozen.snapshotId)) return false
+  memoryFeedback.value = { kind: acknowledgement.kind, sequence: ++memoryFeedbackSequence }
+  memoryFeedbackActive.value = true
+  memoryFeedbackTimer = setTimeout(() => {
+    memoryFeedbackTimer = null
+    memoryFeedbackActive.value = false
+    while (pendingMemoryFeedbackHead < pendingMemoryFeedback.length) {
+      const pending = pendingMemoryFeedback[pendingMemoryFeedbackHead++]!
+      if (showMemoryFeedback(pending)) break
+    }
+    if (pendingMemoryFeedbackHead === pendingMemoryFeedback.length) {
+      pendingMemoryFeedback.length = 0
+      pendingMemoryFeedbackHead = 0
+    }
+  }, MEMORY_FEEDBACK_MS)
+  return true
+}
+watch(() => agents.memoryReceipt, delivery => {
+  if (!delivery || observedMemoryReceipts.has(delivery)) return
+  observedMemoryReceipts.add(delivery)
+  const capture = agents.captureMemoryMutationContext()
+  if (!capture || capture.ownerId !== props.ownerId || delivery.phase !== 'live') return
+  const receipt = delivery.receipt
+  const data = receipt.runId === null ? receipt : receipt.data
+  if (!data.targets.some(target => target.characters > 0)) return
+  const acknowledgement: MemoryAcknowledgement = {
+    kind: receipt.runId === null || receipt.type === 'memory.saved' ? 'saved' : 'included',
+    capture, delivery
+  }
+  // Store identity limits bound this queue. Preserve every distinct eligible
+  // receipt without overlapping sweeps, replay rewards or token-driven activity.
+  if (memoryFeedbackTimer !== null) pendingMemoryFeedback.push(acknowledgement)
+  else showMemoryFeedback(acknowledgement)
+}, { flush: 'sync' })
+watch([
+  () => props.ownerId,
+  () => props.approvalId,
+  () => agents.workspaceOwnerId,
+  () => agents.ownerGeneration,
+  () => agents.workspaceVersion,
+  () => agents.sessionTransitionVersion,
+  () => thread.value?.session.id,
+  () => thread.value?.session.currentRun?.id,
+  () => thread.value?.session.currentRun?.attempt,
+  workspaceDisposed,
+  networkPaused,
+  admissionBlocked
+], clearMemoryFeedback, { flush: 'sync' })
+const handleMemoryFeedbackVisibility = (): void => {
+  if (document.visibilityState !== 'visible') clearMemoryFeedback()
+}
 const contextControlsDisabled = computed(() => loading.value || sending.value || sessionMutationBusy.value || Boolean(creatingRetention.value) || !workspaceReady.value || connectionBlocked.value || !sourceContext.value)
 const openContextSources = (opener: HTMLElement): void => {
   if (props.approvalId || contextControlsDisabled.value) return
@@ -1964,7 +2070,12 @@ watch([historyOpen, memoryOpen, panelMode], async ([history, memory, mode], [pre
   panelFocusScope = createModalFocusScope({
     root,
     restoreTarget: () => isVisibleTrigger(panelOpener) ? panelOpener : triggerForPanel(kind),
-    additionalRoots: () => [...(panelScrim.value ? [panelScrim.value] : []), ...activeOwnedOverlayRoots('.agent-owned-overlay')],
+    additionalRoots: () => [
+      ...(panelScrim.value ? [panelScrim.value] : []),
+      // A read-only live region remains audible while the Memory panel isolates the composer.
+      ...(memoryFeedbackStatusRegion.value ? [memoryFeedbackStatusRegion.value] : []),
+      ...activeOwnedOverlayRoots('.agent-owned-overlay')
+    ],
     onEscape: kind === 'history' ? closeHistory : closeMemory
   })
   if (narrowPanel.value && !preserveContentFocus) root.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true })
@@ -2027,6 +2138,8 @@ watch([thread, pendingApprovalId, connection], () => {
   handleTranscriptScroll()
 }, { flush: 'post' })
 onMounted(() => {
+  memoryFeedbackMounted = true
+  document.addEventListener('visibilitychange', handleMemoryFeedbackVisibility)
   panelModeMedia = [
     window.matchMedia(widePanelQuery),
     window.matchMedia(dockedPanelQuery),
@@ -2053,6 +2166,9 @@ onMounted(() => {
   void ensureInitialized()
 })
 onBeforeUnmount(() => {
+  memoryFeedbackMounted = false
+  clearMemoryFeedback()
+  document.removeEventListener('visibilitychange', handleMemoryFeedbackVisibility)
   disposed = true
   componentGeneration += 1
   retryGeneration += 1
@@ -2338,6 +2454,43 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   transition:
     opacity var(--wiki-motion-fast) var(--wiki-motion-ease),
     visibility 0s linear 0s;
+}
+
+.inline-agent__memory-pill {
+  --wiki-control-radius: var(--wiki-radius-pill);
+  --wiki-beam-violet: var(--wiki-accent-spectral);
+  --wiki-beam-cool: var(--wiki-accent-warm);
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  min-block-size: max(44px, var(--wiki-control-height));
+  padding: var(--wiki-space-1) var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-radius-pill);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.inline-agent__memory-pill:disabled { cursor: not-allowed; opacity: .6; }
+.inline-agent__memory-pill:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
+.inline-agent__memory-pill--feedback { border-color: var(--wiki-accent-spectral); }
+.inline-agent__memory-beam :deep(.control-border-beam__trail) { animation: agent-memory-receipt-beam 600ms linear 1; }
+@keyframes agent-memory-receipt-beam {
+  0% { --wiki-beam-dash-offset: -13; opacity: 0; }
+  12%, 88% { opacity: 1; }
+  100% { --wiki-beam-dash-offset: -513; opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .inline-agent__memory-beam { display: none; }
+}
+@media (forced-colors: active) {
+  .inline-agent__memory-pill { border-color: ButtonText; background: Canvas; color: ButtonText; box-shadow: none; }
+  .inline-agent__memory-pill--feedback { outline: 2px solid Highlight; outline-offset: -2px; }
+  .inline-agent__memory-beam { display: none; }
 }
 
 

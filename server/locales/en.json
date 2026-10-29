@@ -1,5 +1,25 @@
 {
   "common": {
+    "glossaryPin": {
+      "pin": "Pin to my memory",
+      "saving": "Saving to my memory…",
+      "privateScope": "Saves this visible definition to your private user memory for new conversations. Current conversations keep their existing memory.",
+      "offline": "Connect to the server to pin this definition. Nothing is queued offline.",
+      "signIn": "Sign in again to pin this definition to your private memory.",
+      "session": "Wait for your account session to be verified, then try again.",
+      "unavailable": "Personal memory is unavailable. Try again when the service is available.",
+      "denied": "Your current account is not allowed to write personal memory.",
+      "unsafe": "This definition cannot be saved safely and has not been shortened or changed. Review it in the glossary or use the memory manager.",
+      "tooLong": "The complete definition and source context exceed your 1,375-character user-memory limit. Nothing was saved or shortened.",
+      "saved": "Saved to your private user memory for new conversations. Current conversations keep their existing memory.",
+      "alreadySaved": "This exact entry is already in your private user memory. No duplicate was added. Current conversations keep their existing memory.",
+      "full": "Your user memory is full. Remove or consolidate entries in the Agent memory manager, then try again.",
+      "error": "Saving could not be confirmed. Check your connection and the Agent memory manager before trying again."
+    },
+    "agentMemoryFeedback": {
+      "included": "Saved memory was included in the Agent request.",
+      "saved": "Memory changes were saved."
+    },
     "glossaryHover": {
       "termLabel": "Glossary definition: {{term}}",
       "locale": "Definition language: {{locale}}",

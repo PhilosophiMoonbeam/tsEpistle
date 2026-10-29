@@ -26,8 +26,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId,
 import type { GlossaryAccess, GlossaryAutolinkTerm } from '../../../shared/glossary.ts'
 import { fetchGlossaryAccess, fetchGlossaryAutolinks, GlossaryApiError, lookupGlossaryTerm } from '../../helpers/glossary-api.ts'
 import type { GlossarySearchContext, GlossarySearchPanel } from '../../helpers/glossary-search.ts'
-import { glossaryDefinitionText, glossaryHref, glossaryQueryLink, linkGlossaryContent, sanitizeGlossaryDefinition } from '../../helpers/glossary-runtime.ts'
-import type { GlossaryHoverDefinition, GlossaryPinRequest, GlossaryPinRequestHandler, GlossaryPinState } from '../../helpers/glossary-runtime.ts'
+import { glossaryDefinitionText, glossaryHref, glossaryQueryLink, linkGlossaryContent } from '../../helpers/glossary-runtime.ts'
+import type { GlossaryHoverDefinition, GlossaryPinRequest, GlossaryPinRequestHandler } from '../../helpers/glossary-runtime.ts'
+import { glossaryVisibleDefinitionHtml, type GlossaryMemoryPinState } from '../../helpers/glossary-memory.ts'
 import { glossaryIdentity } from '../../helpers/glossary-session.ts'
 import { currentPwaMode, pwaState } from '../../helpers/pwa.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
@@ -39,8 +40,9 @@ const props = defineProps<{
   pageKey: string
   contentRoot: HTMLElement | null
   requestPin?: GlossaryPinRequestHandler
-  pinState?: GlossaryPinState
+  pinState?: GlossaryMemoryPinState
 }>()
+const emit = defineEmits<{ 'pin-selection': [request: Readonly<GlossaryPinRequest> | null, signal?: AbortSignal] }>()
 const store = useWikiStore()
 const t = useTranslate()
 const opened = ref(false), selectedTerm = ref(''), selectedLocale = ref(props.locale), error = ref('')
@@ -58,11 +60,12 @@ const hoverAnchor = shallowRef<HTMLAnchorElement | null>(null), hoverCard = ref<
 const hoverName = ref(''), hoverKey = ref(''), definition = shallowRef<GlossaryHoverDefinition | null>(null)
 const hoverLoading = ref(false), hoverError = ref('')
 const hoverHref = computed(() => glossaryHref(window.location.href, definition.value?.term ?? hoverName.value))
-const currentPinState = computed<GlossaryPinState>(() => ({
+const currentPinState = computed<GlossaryMemoryPinState>(() => ({
   key: hoverKey.value,
   available: !!props.requestPin && props.pinState?.key === hoverKey.value && props.pinState.available && !!definition.value && !unavailable(),
   pending: props.pinState?.key === hoverKey.value && props.pinState.pending,
-  unavailableReason: props.pinState?.key === hoverKey.value ? props.pinState.unavailableReason : undefined
+  unavailableReason: props.pinState?.key === hoverKey.value ? props.pinState.unavailableReason : undefined,
+  message: props.pinState?.key === hoverKey.value ? props.pinState.message : undefined
 }))
 const hoverContext = computed(() => ({ key: hoverKey.value, definition: definition.value, pinState: currentPinState.value, requestPin, close: closeHover }))
 const context = computed<GlossarySearchContext>(() => ({
@@ -187,7 +190,7 @@ async function openHover (anchor: HTMLAnchorElement, touch = false): Promise<voi
     if (!result.enabled || !result.canRead) { revoke(); return }
     const term = await lookupGlossaryTerm(locale, name, signal)
     if (!current()) return
-    const html = sanitizeGlossaryDefinition(term.definitionHtml)
+    const html = glossaryVisibleDefinitionHtml(term.definitionHtml)
     definition.value = { id: term.id, revision: term.revision, term: term.term, expansion: term.expansion, locale: term.locale, definitionHtml: html, definitionText: glossaryDefinitionText(html) }
     hoverLoading.value = false
     const termId = term.id, termRevision = term.revision
@@ -288,17 +291,22 @@ function leaveCardFocus (backward: boolean, event: KeyboardEvent): void {
   closeHover()
   if (next) { event.preventDefault(); next.focus() }
 }
-function requestPin (): void {
-  const detail = definition.value, anchor = hoverAnchor.value, signal = hoverController?.signal, state = currentPinState.value, scope = hoverScope
-  if (!detail || !anchor || !signal || signal.aborted || !scope || !props.requestPin || !state.available || state.pending || unavailable() || hoverLoading.value || hoverError.value) return
-  if (scope.owner !== identity.value || scope.page !== props.pageKey || scope.locale !== props.locale || scope.href !== window.location.href || !anchor.isConnected) { closeHover(); return }
-  const payload: GlossaryPinRequest = {
+const pinSelection = computed<GlossaryPinRequest | null>(() => {
+  const detail = definition.value, scope = hoverScope
+  if (!detail || !scope || hoverLoading.value || hoverError.value || !hoverKey.value) return null
+  return Object.freeze({
     ...detail, key: hoverKey.value, ownerKey: scope.owner, pageKey: scope.page,
     sourceHref: new URL(glossaryHref(scope.href, null), window.location.origin).href,
     glossaryHref: new URL(hoverHref.value, window.location.origin).href
-  }
+  })
+})
+watch(pinSelection, selection => emit('pin-selection', selection, hoverController?.signal), { flush: 'sync' })
+function requestPin (): void {
+  const payload = pinSelection.value, anchor = hoverAnchor.value, signal = hoverController?.signal, state = currentPinState.value, scope = hoverScope
+  if (!payload || !anchor || !signal || signal.aborted || !scope || !props.requestPin || !state.available || state.pending || unavailable() || hoverLoading.value || hoverError.value) return
+  if (scope.owner !== identity.value || scope.page !== props.pageKey || scope.locale !== props.locale || scope.href !== window.location.href || !anchor.isConnected) { closeHover(); return }
   // An explicit activation only. The memory consumer owns authorization, CSRF, POST and truthful feedback.
-  props.requestPin(Object.freeze(payload), signal)
+  props.requestPin(payload, signal)
 }
 function bindPanel (instance: unknown): void {
   const candidate = instance as Partial<GlossarySearchPanel> | null

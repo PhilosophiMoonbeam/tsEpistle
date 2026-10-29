@@ -260,6 +260,7 @@ const destructiveRestoreTarget = shallowRef<HTMLElement | null>(null)
 let destructiveFocusScope: ModalFocusScope | null = null
 let loadController: AbortController | null = null
 let loadGeneration = 0
+let savedGenerationAtLoad = agents.memorySavedGeneration
 let disposed = false
 const pendingSection = ref<AgentMemoryTarget | null>(null)
 let sectionContext: ReturnType<typeof agents.captureMemoryMutationContext> = null
@@ -424,6 +425,7 @@ const load = async (committedMessage?: string): Promise<AgentRefreshResult> => {
   loadController = controller
   const generation = ++loadGeneration
   const draftRevisionAtStart = draftRevision.value
+  savedGenerationAtLoad = agents.memorySavedGeneration
   const context = agents.captureMemoryMutationContext()
   loading.value = true
   error.value = ''
@@ -706,6 +708,13 @@ watch([open, removing, clearing], async ([managerOpen, entry, clearOpen]) => {
   })
 })
 watch(open, value => { if (value) void load() }, { immediate: true })
+// Saved metadata changes only after a current-context commit/invalidation, never
+// a list GET or replay. Own mutations already reload while their busy lock is held.
+watch([() => agents.memorySavedGeneration, actionBusy, loading], ([generation, busy, pending]) => {
+  if (disposed || !open.value || networkBlocked.value || !loaded.value || busy || pending ||
+    generation === savedGenerationAtLoad || !agents.captureMemoryMutationContext()) return
+  void load()
+})
 watch(networkBlocked, blocked => {
   if (blocked) {
     loadGeneration += 1

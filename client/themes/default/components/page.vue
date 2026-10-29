@@ -1,7 +1,7 @@
 <template lang="pug">
   v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus && !talkActive && !linksActive, "wiki-page--full-width": readerFullWidth }]')
     a.page-skip-link(:href='linksActive ? `#page-links` : talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='linksActive ? focusLinks() : talkActive ? goToComments() : focusArticle()') {{$t('common:page.skipToContent')}}
-    glossary-reader(v-if='!printView', :locale='locale', :page-key='`${pageId}:${navigationKey}:${sourceRevision}`', :content-root='readerContentRoot', v-slot='{ glossary }')
+    glossary-reader(v-if='!printView', :locale='locale', :page-key='`${pageId}:${navigationKey}:${sourceRevision}`', :content-root='readerContentRoot', :request-pin='requestGlossaryPin', :pin-state='glossaryPinState', @pin-selection='selectGlossaryPin', v-slot='{ glossary }')
       nav-header(reserve-actions, :before-search-exit='glossary.canLeave', :navigation-breakpoint='1280')
         template(v-slot:navigationToggle)
           v-btn.page-navigation-control(
@@ -795,6 +795,7 @@ import {
   resolvePageBrandingStyle
 } from '../../../helpers/page-branding'
 import { pwaState } from '../../../helpers/pwa.ts'
+import { useGlossaryMemory } from '../../../helpers/glossary-memory.ts'
 import { canSearchReviewerDirectory, manualReviewerId, searchApprovalReviewers, type ApprovalReviewerOption } from '../../../helpers/approval-reviewer-search.ts'
 import { getErrorMessage, pushGraphError, showNotification } from '../../../helpers/root-ui-store'
 import {
@@ -1376,8 +1377,12 @@ export default defineComponent({
     PageTocTree,
   },
   emits: ['update:activeView', 'focus-thread'],
-  setup () {
+  setup (props) {
+    const glossaryMemory = useGlossaryMemory(() => `${props.pageId}:${props.navigationKey}:${props.sourceRevision}`, () => props.locale)
     return {
+      glossaryPinState: glossaryMemory.pinState,
+      selectGlossaryPin: glossaryMemory.selectPin,
+      requestGlossaryPin: glossaryMemory.requestPin,
       goTo: useGoTo(),
       readerContentRoot: shallowRef<HTMLElement | null>(null),
       readerActionReturnFocus: shallowRef<HTMLElement | null>(null),
@@ -4264,6 +4269,7 @@ export default defineComponent({
   --page-reader-shell-max: var(--page-layout-shell-max);
   --page-toc-rail-width: 220px;
   --page-reader-column-gap: var(--wiki-space-6);
+  --page-reader-inline-gutter: min(var(--wiki-page-gutter), var(--wiki-space-6));
   --page-reader-copy-max: var(--wiki-reader-copy-width, 74ch);
   --page-reader-safe-end: env(safe-area-inset-right, 0px);
   --page-return-top-inset: max(1rem, calc((100vw - var(--wiki-shell-max)) / 2 + 1rem), var(--page-reader-safe-end));
@@ -4674,7 +4680,7 @@ export default defineComponent({
     align-content: start;
     padding:
       calc(var(--wiki-space-2) + 2px)
-      var(--wiki-page-gutter) !important;
+      var(--page-reader-inline-gutter) !important;
   }
 
   > .is-page-header > :is(.page-header-headings, .page-header-summary, .page-document-provenance, .page-header-path, .page-header-unpublished, .page-edit-shortcuts, .page-hero-actions) {
@@ -4904,7 +4910,7 @@ export default defineComponent({
   // meets the first heading without a wide empty band.
   padding:
     var(--wiki-space-4)
-    var(--wiki-page-gutter)
+    var(--page-reader-inline-gutter)
     var(--wiki-space-12) !important;
 }
 
@@ -5468,7 +5474,7 @@ export default defineComponent({
 
   .page-toc-row, .page-toc-item { min-height: 2.5rem; }
   .page-toc-content .page-toc-list { max-height: 48dvh; }
-  .page-col-content > .contents { padding-block-start: var(--wiki-space-1); }
+  .page-col-content > .contents { padding-block-start: 0; }
   .page-header-section > .is-page-header { padding-block: var(--wiki-space-1) !important; }
   .page-header-section .page-document-label {
     position: absolute;
@@ -5513,13 +5519,6 @@ export default defineComponent({
   }
 
   .page-header-section {
-    > .is-page-header {
-      grid-template-columns: minmax(0, 1fr);
-      padding:
-        var(--wiki-space-3)
-        var(--wiki-page-gutter)
-        var(--wiki-space-4) !important;
-    }
 
     .page-title {
       font-size: clamp(1.5rem, 1.25rem + 1vw, 1.75rem);
@@ -5536,8 +5535,8 @@ export default defineComponent({
 
   .page-body {
     padding:
-      var(--wiki-space-3)
-      var(--wiki-page-gutter)
+      var(--wiki-space-2)
+      var(--page-reader-inline-gutter)
       var(--wiki-space-10) !important;
   }
 

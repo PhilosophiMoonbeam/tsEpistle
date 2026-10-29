@@ -31,11 +31,11 @@
             type="button"
             class="glossary-hover-card__pin"
             :aria-disabled="!canPin || pinState?.pending"
-            :aria-describedby="!canPin ? `${id}-pin-help` : undefined"
+            :aria-describedby="`${id}-pin-help`"
             :aria-busy="pinState?.key === selectionKey && pinState.pending"
             @click="requestPin"
-          >{{ t('common:glossaryHover.pin') }}</button>
-          <p v-if="!canPin" :id="`${id}-pin-help`" class="glossary-hover-card__pin-help">{{ pinState?.key === selectionKey && pinState.unavailableReason || t('common:glossaryHover.pinUnavailable') }}</p>
+          >{{ t(`common:glossaryPin.${pinState?.key === selectionKey && pinState.pending ? 'saving' : 'pin'}`) }}</button>
+          <p :id="`${id}-pin-help`" class="glossary-hover-card__pin-help" role="status" aria-live="polite" aria-atomic="true">{{ pinState?.key === selectionKey && (pinState.message || pinState.unavailableReason) || t('common:glossaryHover.pinUnavailable') }}</p>
         </template>
         <a class="glossary-hover-card__full" :href="href">{{ t('common:glossaryHover.openGlossary') }}</a>
       </footer>
@@ -46,7 +46,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { CSSProperties } from 'vue'
-import type { GlossaryHoverDefinition, GlossaryPinState } from '../../helpers/glossary-runtime.ts'
+import type { GlossaryHoverDefinition } from '../../helpers/glossary-runtime.ts'
+import type { GlossaryMemoryPinState } from '../../helpers/glossary-memory.ts'
 import { sanitizeGlossaryDefinition } from '../../helpers/glossary-runtime.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
@@ -60,7 +61,7 @@ const props = defineProps<{
   loading: boolean
   errorKey: string
   href: string
-  pinState?: GlossaryPinState
+  pinState?: GlossaryMemoryPinState
 }>()
 const emit = defineEmits<{
   dismiss: [restoreFocus: boolean]
