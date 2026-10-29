@@ -124,7 +124,8 @@
                 span.page-document-label__divider(aria-hidden='true') /
                 bdi(dir='ltr') {{ locale.toUpperCase() }}
               .page-title-row.d-flex.align-center
-                h1.page-title(ref='pageTitle', :id='pageTitleId') {{title}}
+                h1.page-title(ref='pageTitle', :id='pageTitleId')
+                  span(ref='pageTitleText') {{title}}
                 v-chip.page-visibility.ml-3(v-if="visibility === 'private'", size="small", color='warning', variant='tonal') {{$t('common:page.private')}}
               page-branding-mark(
                 v-if='pageBranding && !pageBrandingDuplicatesSiteLogo'
@@ -1673,6 +1674,8 @@ export default defineComponent({
       collapsedByUser: new Set<string>(),
       preSearchExpanded: null as Set<string> | null,
       brandingFailureIdentity: null as string | null,
+      leadingTitle: null as { heading: HTMLElement; id: string; alias: HTMLElement } | null,
+      leadingTitleObserver: null as MutationObserver | null,
       preSearchCollapsedByUser: null as Set<string> | null,
       searchOverrides: new Map<string, boolean>(),
       readerFocus: false,
@@ -2113,7 +2116,11 @@ export default defineComponent({
       return decodeBase64Json<TableOfContentsNode[]>(this.toc)
     },
     tocFlattened (): FlattenedTableOfContentsNode[] {
-      return normalizeTableOfContents(this.tocDecoded)
+      const entries = normalizeTableOfContents(this.tocDecoded)
+      const id = this.leadingTitle?.id
+      if (!id) return entries
+      const index = entries.findIndex(entry => decodePageAnchor(entry.anchor).replace(/^#/, '') === id)
+      return index < 0 ? entries : entries.filter((_, entryIndex) => entryIndex !== index)
     },
     tocTree (): OutlineNode[] {
       return buildOutlineTree(this.tocFlattened)
@@ -2230,6 +2237,11 @@ export default defineComponent({
     }
   },
   watch: {
+    title () {
+      this.$nextTick(() => {
+        if (!this.offlineDisposed) this.refreshPageContent()
+      })
+    },
     readerDockVisible () {
       this.$nextTick(this.observeReadingDock)
     },
@@ -2336,6 +2348,7 @@ export default defineComponent({
         this.resetPageRouteState()
         this.discussionMounted = this.selectedPageView === 'talk'
         await this.$nextTick()
+        if (this.offlineDisposed || value !== this.navigationKey) return
         this.setupDesktopRailObserver()
         this.refreshPageContent()
         const offlinePageId = this.pageId
@@ -2415,6 +2428,14 @@ export default defineComponent({
     this.setupTocResizeObserver()
 
     this.refreshPageContent()
+    this.leadingTitleObserver = markRaw(new MutationObserver(() => {
+      if (this.offlineDisposed || !this.syncLeadingTitle()) return
+      this.refreshPageContent()
+      if (this.leadingTitle?.id && decodePageAnchor(window.location.hash).slice(1) === this.leadingTitle.id) {
+        this.scrollToPageAnchor(window.location.hash, false)
+      }
+    }))
+    this.leadingTitleObserver.observe(this.$refs.container as HTMLElement, { childList: true, subtree: true, characterData: true })
     this.setupTocResizeObserver()
     const offlinePageId = this.pageId
     const offlineLocale = this.locale
@@ -2518,6 +2539,9 @@ export default defineComponent({
     if (this.beforePrintHandler) window.removeEventListener('beforeprint', this.beforePrintHandler)
     if (this.afterPrintHandler) window.removeEventListener('afterprint', this.afterPrintHandler)
     this.outlineCleanup?.dispose()
+    this.leadingTitleObserver?.disconnect()
+    this.leadingTitleObserver = null
+    this.restoreLeadingTitle()
     this.outlineCleanup = null
     this.tocResizeObserver?.disconnect()
     this.tocResizeObserver = null
@@ -3341,6 +3365,7 @@ export default defineComponent({
       else if (action === 'save') await this.updateOfflinePage(true)
     },
     resetPageRouteState(): void {
+      this.restoreLeadingTitle()
       this.readerActionReturnFocus = null
       this.readerActionReturnPage = null
       this.pageWatchSettingsOpen = false
@@ -3491,8 +3516,58 @@ export default defineComponent({
         }
       })
     },
+    restoreLeadingTitle(): void {
+      const previous = this.leadingTitle
+      if (!previous) return
+      previous.heading.hidden = false
+      if (previous.id) previous.heading.id = previous.id
+      previous.alias.removeAttribute('id')
+      this.leadingTitle = null
+    },
+    syncLeadingTitle(): boolean {
+      const container = this.$refs.container as HTMLElement | undefined
+      const alias = this.$refs.pageTitleText as HTMLElement | undefined
+      if (!container || !alias) return false
+      // Only cross the reader's single transport wrapper, never an authored
+      // section, blockquote, list, or other nested Markdown/HTML container.
+      const contentNodes = (element: HTMLElement): ChildNode[] =>
+        [...element.childNodes].filter(node => node.nodeType !== 8 && (node.nodeType !== 3 || Boolean(node.textContent?.trim())))
+      let nodes = contentNodes(container)
+      const wrapper = nodes[0]
+      if (nodes.length === 1 && wrapper instanceof HTMLElement && wrapper.tagName === 'DIV' &&
+        (wrapper.attributes.length === 0 || (wrapper.attributes.length === 1 && wrapper.className === 'wiki-page-rendered-contents'))) {
+        nodes = contentNodes(wrapper)
+      }
+      const heading = nodes[0]
+      const normalize = (text: string): string => text.normalize('NFC').replace(/\s+/gu, ' ').trim().toLowerCase()
+      let matches = this.editor === 'markdown' && heading instanceof HTMLElement && heading.tagName === 'H1'
+      if (matches) {
+        const element = heading as HTMLElement
+        const text = element.cloneNode(true) as HTMLElement
+        text.querySelectorAll('a.toc-anchor').forEach(anchor => anchor.remove())
+        text.querySelectorAll('br').forEach(lineBreak => lineBreak.replaceWith(' '))
+        matches = (!element.hidden || this.leadingTitle?.heading === element) &&
+          !text.querySelector('img,svg,math,video,audio,iframe,input,button,[aria-label],[aria-hidden]') &&
+          Boolean(normalize(this.title)) && normalize(text.textContent ?? '') === normalize(this.title)
+      }
+      if (matches && this.leadingTitle?.heading === heading) return false
+      const hadTitle = this.leadingTitle !== null
+      this.restoreLeadingTitle()
+      if (!matches) return hadTitle
+      const element = heading as HTMLElement
+      const id = element.id
+      // The old fragment names the hero's real title text, not an empty focus
+      // target. Keep the shell heading ID for the article's aria-labelledby.
+      if (id) alias.id = id
+      element.removeAttribute('id')
+      if (element.contains(container.ownerDocument.activeElement)) this.focusPageTitle()
+      element.hidden = true
+      this.leadingTitle = markRaw({ heading: element, id, alias })
+      return true
+    },
     refreshPageContent(): void {
       const container = this.$refs.container as HTMLElement
+      this.syncLeadingTitle()
       this.readerContentRoot = container
       this.mermaidAbortController?.abort()
       const mermaidController = markRaw(new AbortController())
@@ -3671,9 +3746,11 @@ export default defineComponent({
       }
       revealContentExtensionTarget(container, decodedAnchor)
       const id = decodedAnchor.replace(/^#/, '')
-      const destination = container.id === id
-        ? container
-        : [...container.querySelectorAll<HTMLElement>('[id]')].find(element => element.id === id) ?? null
+      const destination = this.leadingTitle?.id === id
+        ? this.$refs.pageTitle as HTMLElement
+        : container.id === id
+          ? container
+          : [...container.querySelectorAll<HTMLElement>('[id]')].find(element => element.id === id) ?? null
       for (let parent = destination?.parentElement; parent && container.contains(parent); parent = parent.parentElement) {
         if (parent.tagName === 'DETAILS') (parent as HTMLDetailsElement).open = true
       }
@@ -4682,6 +4759,12 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
+// Respect the render-only title suppression even if content heading typography
+// supplies an explicit display value. Authored nonmatching headings stay intact.
+.wiki-page .contents h1[hidden] {
+  display: none !important;
+}
+
 .wiki-page {
   --page-toc-empty-height: calc(var(--wiki-grid-size) * 2);
   --page-layout-shell-max: 132rem;

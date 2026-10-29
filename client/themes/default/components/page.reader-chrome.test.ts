@@ -8,6 +8,7 @@ import { sameReaderPageIdentity } from '../../../helpers/page-action-events.ts'
 import { UTILITY_TOOLTIP_GAP, UTILITY_TOOLTIP_MAX_WIDTH } from '../../../helpers/utility-tooltip-placement.ts'
 import { buildOutlineTree, filterOutlineTree, getInitialExpandedAnchors } from '../../../helpers/page-outline.ts'
 import { revealContentExtensionTarget } from '../../../helpers/content-extension-runtime.ts'
+import { normalizeTableOfContents } from '../../../helpers/table-of-contents.ts'
 import { browserWindow, document as browserDocument, resetBody } from '../../../test/browser-dom.mts'
 import { keyTranslator, renderTemplate as renderWithSlots } from '../../../test/render-template.mts'
 
@@ -339,6 +340,7 @@ const page = new Function(
   'revealContentExtensionTarget',
   'sameReaderPageIdentity',
   'AbortController',
+  'normalizeTableOfContents',
   executableScript
 )(
   (options: unknown) => options,
@@ -365,7 +367,8 @@ const page = new Function(
   getInitialExpandedAnchors,
   revealContentExtensionTarget,
   sameReaderPageIdentity,
-  browserWindow.AbortController
+  browserWindow.AbortController,
+  normalizeTableOfContents
 ) as Rules
 
 const call = (name: string, vm: Record<string, unknown>) => page.computed[name]!.call(vm)
@@ -1000,4 +1003,110 @@ describe('Reader native Print completion', () => {
       expect(browserDocument.activeElement).toBe(outcome === 'navigated' ? browserDocument.body : replacement)
     })
   }
+})
+
+describe('leading Markdown reader title', () => {
+  beforeEach(() => resetBody())
+  afterEach(() => resetBody())
+
+  const fixture = (html: string, title = 'Café Guide') => {
+    browserDocument.body.innerHTML = '<h1 class="page-title" id="shell-title"><span></span></h1><article><div class="wiki-page-rendered-contents"></div></article>'
+    const hero = browserDocument.querySelector<HTMLElement>('.page-title')!
+    hero.firstElementChild!.textContent = title
+    const container = browserDocument.querySelector<HTMLElement>('article')!
+    container.firstElementChild!.innerHTML = html
+    const vm: Record<string, unknown> = {
+      $refs: { container, pageTitle: hero, pageTitleText: hero.firstElementChild }, editor: 'markdown', title,
+      leadingTitle: null, tocDecoded: []
+    }
+    vm.restoreLeadingTitle = () => page.methods.restoreLeadingTitle!.call(vm)
+    const sync = () => page.methods.syncLeadingTitle!.call(vm)
+    return { vm, hero, container, sync }
+  }
+
+  it('deduplicates canonically equivalent formatted text, preserves its fragment and leaves authored markup intact', () => {
+    const { vm, hero, container, sync } = fixture('<h1 id="café guide" class="toc-header"><a class="toc-anchor" href="#café%20guide">¶</a> <em>CAFÉ</em>&nbsp; Guide</h1><h2 id="chapter">Chapter</h2><h1 id="later">Café Guide</h1>')
+    const heading = container.querySelector<HTMLElement>('h1')!
+    const authoredContents = heading.innerHTML
+    vm.tocDecoded = [
+      { anchor: '#café%20guide', title: 'Café Guide', children: [{ anchor: '#chapter', title: 'Chapter', children: [] }] },
+      { anchor: '#later', title: 'Café Guide', children: [] }
+    ]
+    expect(sync()).toBe(true)
+    expect(heading.hidden).toBe(true)
+    expect(hero.querySelector('[id]')?.id).toBe('café guide')
+    expect(hero.id).toBe('shell-title')
+    expect(heading.innerHTML).toBe(authoredContents)
+    expect(container.querySelector<HTMLElement>('#later')!.hidden).toBe(false)
+    expect((call('tocFlattened', vm) as Array<{ anchor: string }>).map(entry => entry.anchor)).toEqual(['#chapter', '#later'])
+    expect(sync()).toBe(false)
+    page.methods.restoreLeadingTitle!.call(vm)
+    expect(heading.hidden).toBe(false)
+    expect(heading.id).toBe('café guide')
+    expect(heading.innerHTML).toBe(authoredContents)
+    expect(hero.querySelector('[id]')).toBeNull()
+  })
+
+  it('retains nonmatching, nested, later and meaningfully different headings', () => {
+    for (const html of [
+      '<h1 id="other">Other Guide</h1><h1>Café Guide</h1>',
+      '<blockquote><h1>Café Guide</h1></blockquote>',
+      '<section><h1>Café Guide</h1></section>',
+      '<p>Introduction</p><h1>Café Guide</h1>',
+      'Introduction<h1>Café Guide</h1>',
+      '<h1>Café Guide!</h1>',
+      '<h1>Cafe Guide</h1>',
+      '<h1>Ｃafé Guide</h1>',
+      '<h1><img alt="Café Guide" src="/logo.png"></h1>',
+      '<h2>Café Guide</h2>'
+    ]) {
+      const { vm, container, sync } = fixture(html)
+      const before = container.innerHTML
+      expect(sync()).toBe(false)
+      expect(vm.leadingTitle).toBeNull()
+      expect(container.innerHTML).toBe(before)
+    }
+    const { vm, sync } = fixture('<h1>Café Guide</h1>')
+    vm.editor = 'code'
+    expect(sync()).toBe(false)
+  })
+
+  it('restores a changed title and replaces stale aliases when rendered content arrives later', () => {
+    const { vm, hero, container, sync } = fixture('<h1 id="old">Café Guide</h1>')
+    sync()
+    const old = container.querySelector<HTMLElement>('h1')!
+    vm.title = 'Next Guide'
+    hero.lastChild!.textContent = 'Next Guide'
+    expect(sync()).toBe(true)
+    expect(old.hidden).toBe(false)
+    expect(old.id).toBe('old')
+    container.firstElementChild!.innerHTML = '<h1 id="next"><strong>Next</strong> Guide</h1><p>Body</p>'
+    expect(sync()).toBe(true)
+    expect(browserDocument.getElementById('old')).toBeNull()
+    expect(browserDocument.getElementById('next')?.parentElement).toBe(hero)
+    expect(container.querySelector<HTMLElement>('h1')!.hidden).toBe(true)
+  })
+
+  it('resolves the encoded old fragment to the visible hero for programmatic navigation', () => {
+    const { vm, hero, sync } = fixture('<h1 id="café guide">Café Guide</h1><h2 id="chapter">Chapter</h2>')
+    sync()
+    let destination: unknown
+    Object.assign(vm, {
+      tocFlattened: [], scrollAnimationToken: 0, scrollAnimationFrame: null, outlineCleanup: null,
+      cancelScheduledScroll: () => page.methods.cancelScheduledScroll!.call(vm),
+      pageScrollTarget: () => 0,
+      animatePageScroll: (_top: number, target: HTMLElement) => { destination = target }
+    })
+    const frame = vi.spyOn(browserWindow, 'requestAnimationFrame').mockImplementation(callback => {
+      callback(0)
+      return 1
+    })
+    try {
+      page.methods.scrollToPageAnchor!.call(vm, '#café%20guide')
+      expect(destination).toBe(hero)
+      expect(browserDocument.getElementById('café guide')?.textContent).toBe('Café Guide')
+    } finally {
+      frame.mockRestore()
+    }
+  })
 })
