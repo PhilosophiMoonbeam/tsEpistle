@@ -77,7 +77,7 @@ const settle = async () => {
   }
 }
 
-const mountAdmin = async () => {
+const mountAdmin = async ({ deferInitialNavigation = false } = {}) => {
   const wikiStore = {
     page: { mode: 'view' },
     user: { permissions: ['manage:system'] },
@@ -112,9 +112,20 @@ const mountAdmin = async () => {
   app.config.globalProperties.$t = key => key
   const componentErrors = []
   app.config.errorHandler = error => componentErrors.push(error)
+  let releaseInitialNavigation
+  if (deferInitialNavigation) {
+    const initialGate = new Promise(resolve => { releaseInitialNavigation = resolve })
+    router.beforeEach(() => initialGate)
+  }
   app.use(router)
-  await router.push('/dashboard')
-  await router.isReady()
+  const firstNavigation = router.push('/dashboard')
+  const finishInitialNavigation = async () => {
+    releaseInitialNavigation?.()
+    await firstNavigation
+    await router.isReady()
+    await Vue.nextTick()
+  }
+  if (!deferInitialNavigation) await finishInitialNavigation()
   const host = document.createElement('div')
   document.body.append(host)
   const control = document.createElement('button')
@@ -122,8 +133,9 @@ const mountAdmin = async () => {
   document.body.append(control)
   control.focus()
   app.mount(host)
-  await settle()
-  return { host, router, wikiStore, control, componentErrors }
+  if (deferInitialNavigation) await Vue.nextTick()
+  else await settle()
+  return { host, router, wikiStore, control, componentErrors, finishInitialNavigation }
 }
 
 describe('admin shell route focus', () => {
@@ -136,18 +148,25 @@ describe('admin shell route focus', () => {
     expect(componentErrors).toEqual([])
   })
 
-  it('names the dashboard once in the breadcrumb and links back to it from other pages', async () => {
-    const { host, router } = await mountAdmin()
+  it('withholds nested route context until initial navigation resolves, then keeps it off Dashboard', async () => {
+    const { host, router, control, finishInitialNavigation, componentErrors } = await mountAdmin({ deferInitialNavigation: true })
     const crumbs = () => host.querySelector('nav[aria-label="admin:shell.breadcrumb"]')
 
-    expect(crumbs()?.querySelector('a')).toBeNull()
-    expect(crumbs()?.querySelector('[aria-current="page"]')?.textContent).toBe('admin:dashboard.title')
+    try {
+      expect(crumbs()).toBeNull()
+      expect(document.activeElement).toBe(control)
+    } finally {
+      await finishInitialNavigation()
+    }
+    expect(host.querySelector('main h1')?.textContent).toBe('Dashboard')
+    expect(crumbs()).toBeNull()
+    expect(document.activeElement).toBe(control)
 
     await router.push('/users')
     await settle()
-
+    expect(crumbs()?.querySelector('a')?.getAttribute('href')).toBe('/dashboard')
     expect(crumbs()?.querySelector('[aria-current="page"]')?.textContent).toBe('Members')
-    expect(crumbs()?.textContent).toContain('People')
+    expect(componentErrors).toEqual([])
   })
 
   it('focuses the incoming heading once after in-app navigation, without scrolling', async () => {

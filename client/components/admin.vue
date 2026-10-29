@@ -108,7 +108,7 @@
             span {{ $t('admin:shell.backToWiki') }}
 
     v-main.admin-main(ref='adminMain' tabindex='-1')
-      .admin-route-bar(v-if='!isDashboard')
+      .admin-route-bar(v-if='$route.matched.length > 0 && !isDashboard')
         nav.admin-route-bar__crumbs(:aria-label='$t(`admin:shell.breadcrumb`)')
           router-link.admin-route-bar__home(to='/dashboard') {{ $t('admin:dashboard.title') }}
           v-icon(size='14' aria-hidden='true') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
