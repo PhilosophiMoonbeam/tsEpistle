@@ -1508,6 +1508,29 @@ const PageTocTree = defineComponent({
   }
 })
 
+function nextReaderContent(node: ChildNode | null): ChildNode | null {
+  while (node && (node.nodeType === 8 || (node.nodeType === 3 && !node.textContent?.trim()))) node = node.nextSibling
+  return node
+}
+
+function readerHeadingText(node: Node): string | null {
+  if (node.nodeType === 3) return node.textContent ?? ''
+  if (!(node instanceof Element) || node.matches('a.toc-anchor')) return ''
+  if (node.matches('img,svg,math,video,audio,iframe,input,button,[aria-label],[aria-hidden]')) return null
+  if (node.tagName === 'BR') return ' '
+  let text = ''
+  for (const child of node.childNodes) {
+    const part = readerHeadingText(child)
+    if (part === null) return null
+    text += part
+  }
+  return text
+}
+
+function normalizeReaderTitle(text: string): string {
+  return text.normalize('NFC').replace(/\s+/gu, ' ').trim().toLowerCase()
+}
+
 export default defineComponent({
   name: 'PageView',
   components: {
@@ -1675,7 +1698,6 @@ export default defineComponent({
       preSearchExpanded: null as Set<string> | null,
       brandingFailureIdentity: null as string | null,
       leadingTitle: null as { heading: HTMLElement; id: string; alias: HTMLElement } | null,
-      leadingTitleObserver: null as MutationObserver | null,
       preSearchCollapsedByUser: null as Set<string> | null,
       searchOverrides: new Map<string, boolean>(),
       readerFocus: false,
@@ -2428,14 +2450,6 @@ export default defineComponent({
     this.setupTocResizeObserver()
 
     this.refreshPageContent()
-    this.leadingTitleObserver = markRaw(new MutationObserver(() => {
-      if (this.offlineDisposed || !this.syncLeadingTitle()) return
-      this.refreshPageContent()
-      if (this.leadingTitle?.id && decodePageAnchor(window.location.hash).slice(1) === this.leadingTitle.id) {
-        this.scrollToPageAnchor(window.location.hash, false)
-      }
-    }))
-    this.leadingTitleObserver.observe(this.$refs.container as HTMLElement, { childList: true, subtree: true, characterData: true })
     this.setupTocResizeObserver()
     const offlinePageId = this.pageId
     const offlineLocale = this.locale
@@ -2539,8 +2553,6 @@ export default defineComponent({
     if (this.beforePrintHandler) window.removeEventListener('beforeprint', this.beforePrintHandler)
     if (this.afterPrintHandler) window.removeEventListener('afterprint', this.afterPrintHandler)
     this.outlineCleanup?.dispose()
-    this.leadingTitleObserver?.disconnect()
-    this.leadingTitleObserver = null
     this.restoreLeadingTitle()
     this.outlineCleanup = null
     this.tocResizeObserver?.disconnect()
@@ -3524,46 +3536,34 @@ export default defineComponent({
       previous.alias.removeAttribute('id')
       this.leadingTitle = null
     },
-    syncLeadingTitle(): boolean {
+    syncLeadingTitle(): void {
       const container = this.$refs.container as HTMLElement | undefined
       const alias = this.$refs.pageTitleText as HTMLElement | undefined
-      if (!container || !alias) return false
-      // Only cross the reader's single transport wrapper, never an authored
-      // section, blockquote, list, or other nested Markdown/HTML container.
-      const contentNodes = (element: HTMLElement): ChildNode[] =>
-        [...element.childNodes].filter(node => node.nodeType !== 8 && (node.nodeType !== 3 || Boolean(node.textContent?.trim())))
-      let nodes = contentNodes(container)
-      const wrapper = nodes[0]
-      if (nodes.length === 1 && wrapper instanceof HTMLElement && wrapper.tagName === 'DIV' &&
-        (wrapper.attributes.length === 0 || (wrapper.attributes.length === 1 && wrapper.className === 'wiki-page-rendered-contents'))) {
-        nodes = contentNodes(wrapper)
+      if (!container || !alias) return
+      let heading = nextReaderContent(container.firstChild)
+      // Cross only the transport wrapper, never an authored nested section.
+      if (heading instanceof HTMLElement && !nextReaderContent(heading.nextSibling) && heading.tagName === 'DIV' &&
+        (heading.attributes.length === 0 || (heading.attributes.length === 1 && heading.className === 'wiki-page-rendered-contents'))) {
+        heading = nextReaderContent(heading.firstChild)
       }
-      const heading = nodes[0]
-      const normalize = (text: string): string => text.normalize('NFC').replace(/\s+/gu, ' ').trim().toLowerCase()
       let matches = this.editor === 'markdown' && heading instanceof HTMLElement && heading.tagName === 'H1'
       if (matches) {
         const element = heading as HTMLElement
-        const text = element.cloneNode(true) as HTMLElement
-        text.querySelectorAll('a.toc-anchor').forEach(anchor => anchor.remove())
-        text.querySelectorAll('br').forEach(lineBreak => lineBreak.replaceWith(' '))
-        matches = (!element.hidden || this.leadingTitle?.heading === element) &&
-          !text.querySelector('img,svg,math,video,audio,iframe,input,button,[aria-label],[aria-hidden]') &&
-          Boolean(normalize(this.title)) && normalize(text.textContent ?? '') === normalize(this.title)
+        const title = normalizeReaderTitle(this.title)
+        const text = title && (!element.hidden || this.leadingTitle?.heading === element) ? readerHeadingText(element) : null
+        matches = text !== null && normalizeReaderTitle(text) === title
       }
-      if (matches && this.leadingTitle?.heading === heading) return false
-      const hadTitle = this.leadingTitle !== null
+      if (matches && this.leadingTitle?.heading === heading) return
       this.restoreLeadingTitle()
-      if (!matches) return hadTitle
+      if (!matches) return
       const element = heading as HTMLElement
       const id = element.id
-      // The old fragment names the hero's real title text, not an empty focus
-      // target. Keep the shell heading ID for the article's aria-labelledby.
+      // Preserve the original fragment on the visible title, not an empty target.
       if (id) alias.id = id
       element.removeAttribute('id')
       if (element.contains(container.ownerDocument.activeElement)) this.focusPageTitle()
       element.hidden = true
       this.leadingTitle = markRaw({ heading: element, id, alias })
-      return true
     },
     refreshPageContent(): void {
       const container = this.$refs.container as HTMLElement

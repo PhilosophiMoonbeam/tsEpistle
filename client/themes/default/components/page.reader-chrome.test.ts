@@ -1025,21 +1025,22 @@ describe('leading Markdown reader title', () => {
   }
 
   it('deduplicates canonically equivalent formatted text, preserves its fragment and leaves authored markup intact', () => {
-    const { vm, hero, container, sync } = fixture('<h1 id="café guide" class="toc-header"><a class="toc-anchor" href="#café%20guide">¶</a> <em>CAFÉ</em>&nbsp; Guide</h1><h2 id="chapter">Chapter</h2><h1 id="later">Café Guide</h1>')
+    const { vm, hero, container, sync } = fixture('<h1 id="café guide" class="toc-header"><a class="toc-anchor" aria-label="Link to heading" href="#café%20guide">¶</a> <em>CAFÉ</em>&nbsp;<br>Guide</h1><h2 id="chapter">Chapter</h2><h1 id="later">Café Guide</h1>')
     const heading = container.querySelector<HTMLElement>('h1')!
     const authoredContents = heading.innerHTML
     vm.tocDecoded = [
       { anchor: '#café%20guide', title: 'Café Guide', children: [{ anchor: '#chapter', title: 'Chapter', children: [] }] },
       { anchor: '#later', title: 'Café Guide', children: [] }
     ]
-    expect(sync()).toBe(true)
+    sync()
     expect(heading.hidden).toBe(true)
     expect(hero.querySelector('[id]')?.id).toBe('café guide')
     expect(hero.id).toBe('shell-title')
     expect(heading.innerHTML).toBe(authoredContents)
     expect(container.querySelector<HTMLElement>('#later')!.hidden).toBe(false)
     expect((call('tocFlattened', vm) as Array<{ anchor: string }>).map(entry => entry.anchor)).toEqual(['#chapter', '#later'])
-    expect(sync()).toBe(false)
+    sync()
+    expect(browserDocument.querySelectorAll('[id="café guide"]')).toHaveLength(1)
     page.methods.restoreLeadingTitle!.call(vm)
     expect(heading.hidden).toBe(false)
     expect(heading.id).toBe('café guide')
@@ -1057,18 +1058,21 @@ describe('leading Markdown reader title', () => {
       '<h1>Café Guide!</h1>',
       '<h1>Cafe Guide</h1>',
       '<h1>Ｃafé Guide</h1>',
-      '<h1><img alt="Café Guide" src="/logo.png"></h1>',
+      '<h1>Café Guide<img alt="Logo" src="/logo.png"></h1>',
+      '<h1 aria-label="Different spoken title">Café Guide</h1>',
       '<h2>Café Guide</h2>'
     ]) {
       const { vm, container, sync } = fixture(html)
       const before = container.innerHTML
-      expect(sync()).toBe(false)
+      sync()
       expect(vm.leadingTitle).toBeNull()
       expect(container.innerHTML).toBe(before)
     }
-    const { vm, sync } = fixture('<h1>Café Guide</h1>')
+    const { vm, container, sync } = fixture('<h1>Café Guide</h1>')
     vm.editor = 'code'
-    expect(sync()).toBe(false)
+    sync()
+    expect(container.querySelector<HTMLElement>('h1')!.hidden).toBe(false)
+    expect(vm.leadingTitle).toBeNull()
   })
 
   it('restores a changed title and replaces stale aliases when rendered content arrives later', () => {
@@ -1077,11 +1081,11 @@ describe('leading Markdown reader title', () => {
     const old = container.querySelector<HTMLElement>('h1')!
     vm.title = 'Next Guide'
     hero.lastChild!.textContent = 'Next Guide'
-    expect(sync()).toBe(true)
+    sync()
     expect(old.hidden).toBe(false)
     expect(old.id).toBe('old')
     container.firstElementChild!.innerHTML = '<h1 id="next"><strong>Next</strong> Guide</h1><p>Body</p>'
-    expect(sync()).toBe(true)
+    sync()
     expect(browserDocument.getElementById('old')).toBeNull()
     expect(browserDocument.getElementById('next')?.parentElement).toBe(hero)
     expect(container.querySelector<HTMLElement>('h1')!.hidden).toBe(true)
