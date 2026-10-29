@@ -386,7 +386,9 @@ const focusElement = (target: { focus?: () => void; $el?: HTMLElement } | HTMLEl
     target.focus()
     return
   }
-  target?.$el?.querySelector<HTMLElement>('input,button')?.focus({ preventScroll: true })
+  const root = target?.$el
+  const focusTarget = root?.matches('input,button') ? root : root?.querySelector<HTMLElement>('input,button')
+  focusTarget?.focus({ preventScroll: true })
 }
 const focusSourceSearch = (): void => {
   void nextTick(() => {

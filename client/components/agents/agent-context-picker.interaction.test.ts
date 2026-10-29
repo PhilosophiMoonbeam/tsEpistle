@@ -303,6 +303,38 @@ afterEach(() => {
   restoreVisualViewport()
 })
 
+describe('Agent context source dialog focus', () => {
+  it('returns focus to Add sources after cancelling a pending selection and short query', async () => {
+    const draft = { ...emptyDraft(), scope: { kind: 'all' } as const }
+    const mounted = mountPicker(
+      vi.fn(async () => result([])),
+      vi.fn(async (selector: { id: number }) => source(selector.id)),
+      draft,
+      null,
+      {},
+      vi.fn(async () => [recent(1)])
+    )
+    const activator = mounted.host.querySelector<HTMLButtonElement>('.agent-context__scope button:last-child')
+    if (!activator) throw new Error('Add sources activator did not render')
+    await openPicker(mounted)
+    await selectResult()
+    await search(mounted, 'x')
+    const cancel = document.body.querySelector<HTMLButtonElement>('.agent-context__dialog-close')
+    if (!cancel) throw new Error('Cancel action did not render')
+    const focusReturned = new Promise<void>(resolve => {
+      activator.addEventListener('focus', () => resolve(), { once: true })
+    })
+    cancel.focus()
+    cancel.click()
+    await focusReturned
+    expect(document.activeElement).toBe(activator)
+    expect(mounted.changes).toEqual([])
+    await openPicker(mounted)
+    expect(addButton().textContent).toBe('Apply (0)')
+    expect(document.body.querySelector('.agent-context__pending-list .v-chip')).toBeNull()
+  })
+})
+
 describe('Agent context recent suggestions', () => {
   it('offers eight distinct real recents without typing and keeps only pending additions in Apply', async () => {
     const recents = [recent(1), { ...recent(2), locale: 'fr' }, { ...recent(2), locale: 'fr' }, ...Array.from({ length: 7 }, (_, index) => recent(index + 3))]
