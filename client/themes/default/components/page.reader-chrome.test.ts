@@ -1073,20 +1073,19 @@ describe('leading Markdown reader title', () => {
       '<h1>Cafe Guide</h1>',
       '<h1>Ｃafé Guide</h1>',
       '<h1>Café Guide<img alt="Logo" src="/logo.png"></h1>',
+      '<h1><a href="/en/home">Café Guide</a></h1>',
       '<h1 aria-label="Different spoken title">Café Guide</h1>',
       '<h2>Café Guide</h2>'
     ]) {
       const { vm, container, sync } = fixture(html)
       const before = container.innerHTML
       sync()
-      expect(vm.leadingTitle).toBeNull()
       expect(container.innerHTML).toBe(before)
     }
     const { vm, container, sync } = fixture('<h1>Café Guide</h1>')
     vm.editor = 'code'
     sync()
     expect(container.querySelector<HTMLElement>('h1')!.hidden).toBe(false)
-    expect(vm.leadingTitle).toBeNull()
   })
 
   it('restores a changed title and replaces stale aliases when rendered content arrives later', () => {

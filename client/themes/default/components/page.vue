@@ -1516,7 +1516,7 @@ function nextReaderContent(node: ChildNode | null): ChildNode | null {
 function readerHeadingText(node: Node): string | null {
   if (node.nodeType === 3) return node.textContent ?? ''
   if (!(node instanceof Element) || node.matches('a.toc-anchor')) return ''
-  if (node.matches('img,svg,math,video,audio,iframe,input,button,[aria-label],[aria-hidden]')) return null
+  if (node.matches('a,img,svg,math,video,audio,iframe,input,button,[aria-label],[aria-hidden]')) return null
   if (node.tagName === 'BR') return ' '
   let text = ''
   for (const child of node.childNodes) {
