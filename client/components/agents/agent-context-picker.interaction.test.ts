@@ -116,6 +116,7 @@ const evaluatePicker = new Function(
   'watch',
   'defineProps',
   'defineEmits',
+  'defineExpose',
   'searchPages',
   'fetchRecentPages',
   'fetchWikiSource',
@@ -215,7 +216,7 @@ const mountPicker = (
       connectionRetrying: { type: Boolean, default: false },
       currentPageTitle: { type: String, default: undefined }
     },
-    setup(componentProps) {
+    setup(componentProps, { expose }) {
       return evaluatePicker(
         Vue.computed,
         Vue.mergeProps,
@@ -229,6 +230,7 @@ const mountPicker = (
           if (event === 'change' && patch) changes.push(patch)
           if (event === 'sourcesAdded') sourcesAdded.value += 1
         },
+        expose,
         searchPagesImpl,
         fetchRecentPagesImpl,
         fetchWikiSourceImpl,

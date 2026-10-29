@@ -28,8 +28,7 @@
         @click="openSources"
       ><span aria-hidden="true">{{ $t('common:agentContextPicker.sources') }}</span></v-btn>
     </fieldset>
-    <!-- One compact source chip for the current page. The chip itself means the
-         page is included, so no separate Included badge is rendered. -->
+    <!-- The current-page hint is separate from the eight committed attachments. -->
     <v-tooltip v-if="currentPage" location="top" :text="connectionBlocked
         ? $t('common:agentContext.pageNeedsConnection')
         : disabled
@@ -48,6 +47,7 @@
         >
           <v-icon :icon="draft.includeCurrentPage ? 'mdi-file-check-outline' : 'mdi-file-hidden'" size="15" aria-hidden="true" />
           <span class="agent-context__page-copy">{{ currentPageLabel }}</span>
+          <span class="agent-context__page-state-label">{{ $t(draft.includeCurrentPage ? 'common:agentContextUi.included' : 'common:agentContextUi.excluded') }}</span>
           <v-icon
             class="agent-context__page-state"
             :icon="draft.includeCurrentPage ? 'mdi-check' : 'mdi-minus'"
@@ -234,7 +234,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   change: [patch: Partial<AgentDraft>]
-  sourcesAdded: []
+  sourcesAdded: [opener?: HTMLElement]
   'retry-connection': []
 }>()
 
@@ -253,6 +253,8 @@ const attachmentError = ref('')
 const successfulClose = ref(false)
 const sourceSearchInput = ref<{ focus?: () => void; $el?: HTMLElement } | null>(null)
 const sourcesActivator = ref<{ focus?: () => void; $el?: HTMLElement } | HTMLElement | null>(null)
+let sourcesOpener: HTMLElement | null = null
+let restoreExternalOpenerOnApply = false
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 let searchController: AbortController | null = null
 let disposed = false
@@ -395,8 +397,11 @@ const focusSourceSearch = (): void => {
     if (!disposed && sourcesOpen.value) focusElement(sourceSearchInput.value)
   })
 }
-const openSources = (): void => {
-  if (interactionBlocked.value) return
+// The caller owns the opener; the picker owns the one dialog and its return.
+const openSources = (opener?: HTMLElement | Event): void => {
+  if (interactionBlocked.value || sourcesOpen.value) return
+  sourcesOpener = opener instanceof HTMLElement ? opener : opener?.currentTarget instanceof HTMLElement ? opener.currentTarget : null
+  restoreExternalOpenerOnApply = opener instanceof HTMLElement
   invalidateAll()
   resetTransient()
   successfulClose.value = false
@@ -424,11 +429,18 @@ const onSourcesAfterLeave = (): void => {
   if (completed) {
     addingSources.value = false
     resetTransient()
-    emit('sourcesAdded')
+    const opener = restoreExternalOpenerOnApply && sourcesOpener?.isConnected ? sourcesOpener : undefined
+    sourcesOpener = null
+    if (opener) emit('sourcesAdded', opener)
+    else emit('sourcesAdded')
     return
   }
   void nextTick(() => {
-    if (!disposed && !sourcesOpen.value) focusElement(sourcesActivator.value)
+    if (!disposed && !sourcesOpen.value) {
+      if (sourcesOpener?.isConnected && sourcesOpener.getClientRects().length) focusElement(sourcesOpener)
+      else focusElement(sourcesActivator.value)
+      sourcesOpener = null
+    }
   })
 }
 const queueSourceSearch = (immediate = false): void => {
@@ -663,6 +675,7 @@ watch([() => props.disabled, () => props.connectionBlocked], ([disabled, blocked
   }
   if ((previousDisabled || previousBlocked) && sourcesOpen.value) queueSourceSearch(true)
 }, { flush: 'sync' })
+defineExpose({ openSources })
 onBeforeUnmount(() => {
   disposed = true
   invalidateAll()
@@ -762,6 +775,7 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.agent-context__page-state-label { flex: 0 0 auto; font-size: var(--wiki-label-size); }
 .agent-context__sources {
   display: flex;
   order: 1;

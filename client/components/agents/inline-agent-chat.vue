@@ -195,6 +195,18 @@
           </v-tooltip>
         </fieldset>
       </v-toolbar>
+      <header v-if="!approvalId" class="inline-agent__context-header">
+        <AgentContextSummary
+          :sources="sourceContext"
+          :memory="memoryContext"
+          :loading="loading"
+          :network-blocked="connectionBlocked"
+          :sources-disabled="contextControlsDisabled"
+          :memory-disabled="contextMemoryDisabled"
+          @open-sources="openContextSources"
+          @open-memory="openContextMemory"
+        />
+      </header>
 
 
       <v-progress-linear
@@ -476,6 +488,13 @@
                       :invocation-limit="invocationLimit"
                       :status-label="connectionLabel"
                       :status-tone="connectionTone"
+                      :source-context="sourceContext"
+                      :memory-context="memoryContext"
+                      :context-loading="loading"
+                      :context-sources-disabled="contextControlsDisabled"
+                      :context-memory-disabled="contextMemoryDisabled"
+                      @open-sources="openContextSources"
+                      @open-memory="openContextMemory"
                       @send="sendPrompt"
                       @stop="stopRun"
                       @manage-skills="openSkillManager"
@@ -485,15 +504,16 @@
                       <template #context-controls>
                         <AgentContextPicker
                           v-if="thread"
+                          ref="contextPicker"
                           :key="thread.session.id"
                           :draft="activeDraft"
-                          :current-page="draftPage"
-                          :current-page-title="activeDraft.currentPageOverride === undefined ? pageTitle : undefined"
+                          :current-page="draftPage ?? currentPage"
+                          :current-page-title="activeDraft.currentPageOverride == null ? pageTitle : undefined"
                           :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || !workspaceReady"
                           :connection-blocked="connectionBlocked"
                           :connection-retrying="connectionRetrying"
                           @change="patchDraft"
-                          @sources-added="focusComposer"
+                          @sources-added="handleSourcesAdded"
                           @retry-connection="retryAgentConnection"
                         />
                       </template>
@@ -535,6 +555,7 @@
         <v-btn icon="mdi-close" variant="text" :aria-label="$t('common:inlineAgentChat.closeAgentSidePanel')" :aria-disabled="memoryMutationBusy ? 'true' : undefined" :title="memoryMutationBusy ? $t('common:agentWorkspace.waitForMemory') : undefined" @click="closePanels" />
       </div>
       <AgentMemoryManager
+        ref="memoryManager"
         :content-id="`${panelIdPrefix}-memory-content`"
         :compact-header="panelMode === 'modal'"
         :model-value="memoryOpen"
@@ -673,6 +694,7 @@ import AgentMcpApproval from './agent-mcp-approval.vue'
 import AgentGoalStatus from './agent-goal-status.vue'
 import AgentThread from './agent-thread.vue'
 import AgentContextPicker from './agent-context-picker.vue'
+import AgentContextSummary from './agent-context-summary.vue'
 import { emptyAgentDraft, type AgentDraft, type AgentSearchScope } from '../../helpers/agent-draft.ts'
 import type { WikiSource } from '../../../shared/wiki-source.ts'
 import { isAgentApprovalOutsideViewport, shouldFollowGoalExpansion } from './agent-thread-presentation.ts'
@@ -706,6 +728,8 @@ const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
 const conversationDock = useTemplateRef<HTMLElement>('conversationDock')
 const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void>; reattachMedia: (media: AgentMediaView) => Promise<boolean>; hasUnsentMedia: () => boolean; hasPendingSubmission: () => boolean; isMediaBusy: () => boolean }>('composer')
+const contextPicker = useTemplateRef<{ openSources: (opener: HTMLElement) => void }>('contextPicker')
+const memoryManager = useTemplateRef<{ focusSection: (target: 'user' | 'agent') => void }>('memoryManager')
 type ComponentRoot = { $el?: unknown }
 const historyTrigger = useTemplateRef<ComponentRoot | HTMLElement>('historyTrigger')
 const memoryTrigger = useTemplateRef<ComponentRoot | HTMLElement>('memoryTrigger')
@@ -824,6 +848,7 @@ const mobilePanelQuery = '(max-width: 759.98px)'
 const narrowPanel = ref(false)
 const panelKinds = ['history', 'memory'] as const
 let panelOpener: HTMLElement | null = null
+let contextMemoryOpener: HTMLElement | null = null
 
 const pageHintFromProps = (): AgentCurrentPageHint | null => {
   if (props.pageId < 1 || !props.pageLocale || !props.pagePath || !props.pageUpdatedAt) return null
@@ -988,8 +1013,41 @@ const connectionTone = computed<'ready' | 'error' | 'busy'>(() => connectionBloc
     ? 'busy'
     : 'ready')
 const activeDraft = computed(() => thread.value ? agents.drafts[thread.value.session.id] ?? emptyAgentDraft() : emptyAgentDraft())
-const draftPage = computed(() => activeDraft.value.currentPageOverride === undefined ? currentPage.value : activeDraft.value.currentPageOverride ?? currentPage.value)
+const draftPage = computed(() => activeDraft.value.currentPageOverride === undefined ? currentPage.value : activeDraft.value.currentPageOverride)
 const includesCurrentPage = computed(() => Boolean(draftPage.value && activeDraft.value.includeCurrentPage))
+// Consume the validated owner/session-fenced projection, never the picker's pending rows.
+const sourceContext = computed(() => {
+  const projection = agents.sourceContext
+  return projection?.identity.ownerId === props.ownerId && projection.identity.sessionId === thread.value?.session.id ? projection : null
+})
+const memoryContext = computed(() => {
+  const projection = agents.memoryContext
+  return projection?.ownerId === props.ownerId && projection.sessionId === thread.value?.session.id ? projection : null
+})
+const contextControlsDisabled = computed(() => loading.value || sending.value || sessionMutationBusy.value || Boolean(creatingRetention.value) || !workspaceReady.value || connectionBlocked.value || !sourceContext.value)
+const openContextSources = (opener: HTMLElement): void => {
+  if (props.approvalId || contextControlsDisabled.value) return
+  contextPicker.value?.openSources(opener)
+}
+const handleSourcesAdded = async (opener?: HTMLElement): Promise<void> => {
+  if (!opener) { await focusComposer(); return }
+  const generation = componentGeneration
+  await nextTick()
+  if (!disposed && generation === componentGeneration && isVisibleTrigger(opener)) opener.focus({ preventScroll: true })
+}
+const contextMemoryDisabled = computed(() => loading.value || sessionMutationBusy.value || Boolean(creatingRetention.value) || memoryMutationBusy.value || !workspaceReady.value || connectionBlocked.value || admissionBlocked.value)
+const openContextMemory = async (target: 'user' | 'agent', opener: HTMLElement): Promise<void> => {
+  if (props.approvalId || contextMemoryDisabled.value || !networkActionAllowed()) return
+  const generation = componentGeneration
+  const sessionId = thread.value?.session.id
+  contextMemoryOpener = opener
+  panelOpener = opener
+  panelMenuOpen.value = false
+  updateMemoryOpen(true)
+  await nextTick()
+  if (disposed || generation !== componentGeneration || sessionId !== thread.value?.session.id || !memoryOpen.value) return
+  memoryManager.value?.focusSection(target)
+}
 const hasHadContextualGlass = ref(false)
 watch(() => includesCurrentPage.value && !props.approvalId, active => {
   if (active) hasHadContextualGlass.value = true
@@ -1767,6 +1825,7 @@ watch(() => props.ownerId, (ownerId, previousOwnerId) => {
   lastActivePanel.value = null
   pendingPanelOpenFocusKind = null
   pendingPanelFocusKind = null
+  contextMemoryOpener = null
   componentGeneration += 1
   retryGeneration += 1
   promptGeneration += 1
@@ -1915,9 +1974,12 @@ watch([historyOpen, memoryOpen], ([history, memory], [previousHistory, previousM
   pendingPanelFocusKind = null
   if (!restoreKind || (restoreKind === 'history' ? history || !previousHistory : memory || !previousMemory)) return
   if (panelMode.value === 'modal' && (history || memory)) return
-  const target = panelMode.value === 'modal' && isVisibleTrigger(panelOpener) ? panelOpener : triggerForPanel(restoreKind)
+  const target = isVisibleTrigger(contextMemoryOpener) && (restoreKind === 'memory' || (!history && !memory))
+    ? contextMemoryOpener
+    : panelMode.value === 'modal' && isVisibleTrigger(panelOpener) ? panelOpener : triggerForPanel(restoreKind)
   target?.focus({ preventScroll: true })
   panelOpener = null
+  if (!memory || panelMode.value === 'modal') contextMemoryOpener = null
 }, { flush: 'post' })
 watch(narrowPanel, async () => {
   const root = historyOpen.value ? historyPanel.value : memoryOpen.value ? memoryPanel.value : null
@@ -2083,6 +2145,14 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 .inline-agent--contextual,
 .inline-agent--contextual .inline-agent__card {
   background: transparent;
+}
+
+.inline-agent__context-header {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: var(--wiki-space-1) var(--wiki-space-3);
+  border-bottom: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-raised);
 }
 
 .inline-agent__toolbar {

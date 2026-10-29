@@ -22,7 +22,7 @@
     </v-alert>
 
     <v-card-text class="agent-memory__body">
-      <v-alert v-if="error" class="agent-memory__error" type="error" variant="tonal" :closable="!stale" role="alert" @click:close="error = ''">
+      <v-alert v-if="error" class="agent-memory__error" tabindex="-1" type="error" variant="tonal" :closable="!stale" role="alert" @click:close="error = ''">
         <div class="agent-memory__error-content">
           <span>{{ error }}</span>
           <v-btn v-if="!loading" variant="text" size="small" :disabled="networkBlocked" @click="load()">{{ $t('common:agentMemoryManager.refreshMemory') }}</v-btn>
@@ -109,7 +109,7 @@
             <div class="agent-memory__section-mark" :class="`agent-memory__section-mark--${section.target}`" aria-hidden="true">
               <v-icon :icon="section.icon" size="18" />
             </div>
-            <h3 :id="`agent-memory-${section.target}`" class="text-title-small">{{ section.title }}<span class="agent-memory__section-count">{{ section.entries.length }}</span></h3>
+            <h3 :id="`agent-memory-${section.target}`" tabindex="-1" class="text-title-small">{{ section.title }}<span class="agent-memory__section-count">{{ section.entries.length }}</span></h3>
           </header>
 
           <div v-if="section.entries.length" class="agent-memory__entries">
@@ -261,6 +261,41 @@ let destructiveFocusScope: ModalFocusScope | null = null
 let loadController: AbortController | null = null
 let loadGeneration = 0
 let disposed = false
+const pendingSection = ref<AgentMemoryTarget | null>(null)
+let sectionContext: ReturnType<typeof agents.captureMemoryMutationContext> = null
+// Navigation only: preserve editors/conflicts/preferences and reuse the open load.
+const focusSection = (target: AgentMemoryTarget): void => {
+  if (disposed || !open.value || actionBusy.value) return
+  const context = agents.captureMemoryMutationContext()
+  if (!context) return
+  sectionContext = context
+  searchQuery.value = ''
+  pendingSection.value = target
+}
+watch([pendingSection, loading, loaded, open], async ([target, busy, , visible], _, onCleanup) => {
+  let cancelled = false
+  onCleanup(() => { cancelled = true })
+  if (!visible) { pendingSection.value = null; return }
+  if (!target || busy) return
+  await nextTick()
+  if (cancelled || disposed || !open.value || actionBusy.value || pendingSection.value !== target) return
+  if (!sectionContext || !agents.isMemoryMutationContextCurrent(sectionContext)) {
+    pendingSection.value = null
+    sectionContext = null
+    return
+  }
+  const root = componentElement(memoryCard.value)
+  const heading = root?.querySelector<HTMLElement>(`#agent-memory-${target}`)
+  const destination = heading ?? root?.querySelector<HTMLElement>('.agent-memory__error')
+  if (destination) {
+    destination.scrollIntoView?.({ block: 'nearest' })
+    destination.focus({ preventScroll: true })
+  }
+  // An unavailable/failed load must not leave a delayed focus request behind.
+  pendingSection.value = null
+  sectionContext = null
+}, { flush: 'post' })
+defineExpose({ focusSection })
 
 const targetLimit = computed(() => memories.value[draftTarget.value].limit)
 const memoryCount = computed(() => memories.value.user.entries.length + memories.value.agent.entries.length)

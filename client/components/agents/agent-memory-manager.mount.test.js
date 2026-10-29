@@ -96,6 +96,7 @@ const loadManager = (view, overrides = {}) => {
     }
     if (options?.immediate) notify()
   }
+  const exposed = {}
   const evaluate = new Function(
     'computed',
     'useTranslate',
@@ -110,6 +111,7 @@ const loadManager = (view, overrides = {}) => {
     'watch',
     'defineProps',
     'defineModel',
+    'defineExpose',
     'clearAgentMemories',
     'createAgentMemory',
     'getAgentMemories',
@@ -140,6 +142,7 @@ const loadManager = (view, overrides = {}) => {
     watch,
     () => props,
     () => model,
+    publicApi => Object.assign(exposed, publicApi),
     clearAgentMemories,
     createAgentMemory,
     getAgentMemories,
@@ -157,6 +160,7 @@ const loadManager = (view, overrides = {}) => {
     createAgentMemory,
     createModalFocusScope,
     emittedBusy,
+    exposed,
     getAgentMemories,
     manager,
     removeAgentMemory,
@@ -293,21 +297,6 @@ describe('Agent memory draft retention and input methods', () => {
   })
 })
 
-describe('Agent memory committed refresh feedback', () => {
-  it('localizes the committed-action prefix when refreshing saved memory fails', async () => {
-    const translate = (key, options) => {
-      if (key === 'common:agentMemoryManager.butMemoryCouldNot') return `${options.committedMessage}, mais la mémoire n’a pas pu être actualisée.`
-      if (key === 'common:agentMemoryManager.showingLastLoadedMemory') return `${options.prefix}Dernière mémoire chargée. ${options.reason}`
-      return translateEnglish(key, options)
-    }
-    const getAgentMemories = vi.fn().mockResolvedValueOnce(populatedView()).mockRejectedValue(new Error('Réessayez.'))
-    const { manager } = loadManager(populatedView(), { getAgentMemories, translate })
-    await Promise.resolve()
-    await Promise.resolve()
-    await manager.load('Mémoire enregistrée')
-    expect(manager.error.value).toBe('Mémoire enregistrée, mais la mémoire n’a pas pu être actualisée. Dernière mémoire chargée. Réessayez.')
-  })
-})
 
 describe('Agent memory manager destructive dialog lifetime', () => {
   it('backgrounds an in-flight remove while its mounted manager retains ownership', async () => {

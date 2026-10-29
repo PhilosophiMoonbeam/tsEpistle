@@ -80,6 +80,17 @@
     >{{ liveStatusLabel }}</span>
 
     <div class="agent-composer__context-row">
+      <AgentContextSummary
+        v-if="sourceContext !== undefined || memoryContext !== undefined"
+        :sources="sourceContext ?? null"
+        :memory="memoryContext ?? null"
+        :loading="contextLoading"
+        :network-blocked="networkBlocked"
+        :sources-disabled="contextSourcesDisabled"
+        :memory-disabled="contextMemoryDisabled"
+        @open-sources="opener => emit('openSources', opener)"
+        @open-memory="(target, opener) => emit('openMemory', target, opener)"
+      />
       <slot name="context-controls" />
       <v-chip
         v-if="goalsEnabled && goalMode"
@@ -447,6 +458,9 @@ import type { Ref } from 'vue'
 import AgentComposerMedia from './agent-composer-media.vue'
 import AgentComposerSkillMenu from './agent-composer-skill-menu.vue'
 import AgentDictationWaveform from './agent-dictation-waveform.vue'
+import AgentContextSummary from './agent-context-summary.vue'
+import type { AgentMemoryContextProjection } from '../../../shared/agents/contracts.ts'
+import type { AgentSourceContextProjection } from '../../../shared/agents/knowledge-context.ts'
 import { agentAttachmentMimeTypes, type AgentMediaSubmission } from '../../helpers/agent-media.ts'
 import type { AgentMediaView, AgentMediaCapabilities, AgentThreadState, AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
 import { agentMediaContentUrl, type VisibleAgentSkill } from '../../helpers/agents-api.ts'
@@ -482,8 +496,14 @@ const props = defineProps<{
   networkBlocked?: boolean
   /** Keep the message field editable while a reply streams; sending still follows `disabled`. */
   draftEditable?: boolean
+  /** Guarded committed/frozen projections; undefined opts out for other composer hosts. */
+  sourceContext?: AgentSourceContextProjection | null
+  memoryContext?: AgentMemoryContextProjection | null
+  contextLoading?: boolean
+  contextSourcesDisabled?: boolean
+  contextMemoryDisabled?: boolean
 }>()
-const emit = defineEmits<{ draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void, media?: AgentMediaSubmission]; mediaSettled: []; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]] }>()
+const emit = defineEmits<{ openSources: [opener: HTMLElement]; openMemory: [target: 'user' | 'agent', opener: HTMLElement]; draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void, media?: AgentMediaSubmission]; mediaSettled: []; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]] }>()
 const mediaComposer = useTemplateRef<{
   clear: () => void
   addFiles: (files: readonly File[]) => Promise<unknown>

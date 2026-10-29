@@ -96,6 +96,7 @@ Bun.plugin({
 })
 const skillMenuComponent = (await import('./agent-composer-skill-menu.vue')).default
 const mediaComposerComponent = (await import('./agent-composer-media.vue')).default
+const contextSummaryComponent = (await import('./agent-context-summary.vue')).default
 // The real transcript must load after the SFC plugin; a static import bypasses that boundary.
 const threadComponent = (await import('./agent-thread.vue')).default
 // The SFC loader above must be installed before the real goal module is evaluated.
@@ -133,7 +134,7 @@ const renderPicker = new Function('Vue', pickerTemplate.code)(Vue) as () => unkn
 const pickerScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(pickerDescriptor.scriptSetup.content.replace(/^import .*$/gm, ''))
 const pickerBindings = Array.from(pickerDescriptor.scriptSetup.content.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
 const evaluatePicker = new Function(
-  '{ computed, mergeProps, nextTick, onBeforeUnmount, ref, useId, watch, defineProps, defineEmits, fetchRecentPages, searchPages, fetchWikiSource, AgentKnowledgeContextSchema, useTranslate }',
+  '{ computed, mergeProps, nextTick, onBeforeUnmount, ref, useId, watch, defineProps, defineEmits, defineExpose, fetchRecentPages, searchPages, fetchWikiSource, AgentKnowledgeContextSchema, useTranslate }',
   `${pickerScript}\nreturn { mergeProps, ${pickerBindings.join(', ')} }`
 ) as (dependencies: Record<string, unknown>) => Record<string, unknown>
 const contextPickerComponent = Vue.defineComponent({
@@ -146,7 +147,7 @@ const contextPickerComponent = Vue.defineComponent({
     connectionRetrying: Boolean
   },
   emits: ['change', 'sourcesAdded', 'retry-connection'],
-  setup(props, { emit }) {
+  setup(props, { emit, expose }) {
     return evaluatePicker({
       computed: Vue.computed,
       mergeProps: Vue.mergeProps,
@@ -157,6 +158,7 @@ const contextPickerComponent = Vue.defineComponent({
       watch: Vue.watch,
       defineProps: () => props,
       defineEmits: () => emit,
+      defineExpose: expose,
       searchPages,
       fetchRecentPages,
       fetchWikiSource,
@@ -1031,9 +1033,14 @@ const mountInlineAgent = (
       csrfToken: String,
       mediaSession: Object,
       mediaCapabilities: Object,
-      networkBlocked: Boolean
+      networkBlocked: Boolean,
+      sourceContext: Object,
+      memoryContext: Object,
+      contextLoading: Boolean,
+      contextSourcesDisabled: Boolean,
+      contextMemoryDisabled: Boolean
     },
-    emits: ['send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'draftChange', 'compositionChange', 'mediaSettled'],
+    emits: ['openSources', 'openMemory', 'send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'draftChange', 'compositionChange', 'mediaSettled'],
     setup(props, { emit, expose }) {
       const bindings = evaluateComposer(
         Vue.computed,
@@ -1094,6 +1101,7 @@ const mountInlineAgent = (
     })
   )
   app.component('AgentContextPicker', contextPickerComponent)
+  app.component('AgentContextSummary', contextSummaryComponent)
   app.component('AgentComposer', composerComponent)
   app.component('AgentComposerSkillMenu', skillMenuComponent)
   app.component('AgentComposerMedia', options.mediaComponent ?? mediaComposerComponent)
