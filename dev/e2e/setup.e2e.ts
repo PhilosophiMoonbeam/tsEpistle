@@ -234,6 +234,12 @@ test.describe('critical post-install workflows', () => {
   test('authenticates the administrator and preserves the session on reload', async ({ page }) => {
     test.setTimeout(60_000)
     await loginAsAdmin(page)
+    const logoStatus = await page.request.get('/_api/site/logo')
+    expect({ status: logoStatus.status(), ...(await logoStatus.json()) }).toEqual({
+      status: 200,
+      active: null,
+      candidate: null
+    })
 
     await page.reload()
     await expectWelcomePage(page)

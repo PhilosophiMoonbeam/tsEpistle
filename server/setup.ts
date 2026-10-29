@@ -279,6 +279,8 @@ export default function startSetup(): Promise<void> {
       await wiki.models.locales.query().where('code', '!=', 'x').del()
       await wiki.models.navigation.query().truncate()
       await wiki.models.knex.raw('TRUNCATE groups, users CASCADE')
+      // Resetting users also cascades through logo revisions into the authority singleton.
+      await wiki.models.knex('siteLogoState').insert([{ id: 1 }])
       await wiki.models.knex('contentExtensions').insert(
         BUILTIN_CONTENT_EXTENSIONS.map(extension => ({
           key: extension.key,
