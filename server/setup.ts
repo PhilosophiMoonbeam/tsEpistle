@@ -228,7 +228,7 @@ export default function startSetup(): Promise<void> {
         darkMode: false,
         colors: cloneThemeColors(DEFAULT_THEME_COLORS),
         iconset: 'mdi',
-        tocPosition: 'left',
+        tocPosition: 'auto',
         injectCSS: '',
         injectHead: '',
         injectBody: ''

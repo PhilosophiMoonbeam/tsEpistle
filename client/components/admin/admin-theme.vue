@@ -418,7 +418,7 @@
               v-if="draft.tocPosition !== 'off'"
               class="theme-specimen-adaptation"
             >
-              {{ $t(draft.tocPosition === 'right' ? 'admin:theme.narrowPreviewRight' : 'admin:theme.narrowPreviewLeft') }}
+              {{ $t('admin:theme.narrowPreview') }}
             </p>
             <div
               class="theme-specimen-body"
@@ -428,7 +428,7 @@
                 v-if="draft.tocPosition !== 'off'"
                 class="theme-specimen-toc"
               >
-                <small>{{ $t('admin:theme.page') }}</small><span>{{ $t('admin:theme.sharedUnderstanding') }}</span
+                <small>{{ $t('common:page.onThisPage') }}</small><span>{{ $t('admin:theme.sharedUnderstanding') }}</span
                 ><span>{{ $t('admin:theme.leaveUsefulTrail') }}</span>
               </div>
               <article>
@@ -864,6 +864,7 @@ const contrastChecks = computed(() =>
   })),
 );
 const tocOptions = [
+  { title: t('admin:theme.automaticContents'), value: "auto" },
   { title: t('admin:theme.leftRail'), value: "left" },
   { title: t('admin:theme.rightRail'), value: "right" },
   { title: t('admin:theme.hidden'), value: "off" },
@@ -1091,6 +1092,7 @@ async function confirm() {
       siteConfig.readerLayout = copy(published.reading);
       siteConfig.codeTheme = published.codeTheme;
       siteConfig.tocPosition = published.tocPosition;
+      wikiStore.site.tocPosition = published.tocPosition;
       rememberOfflinePresentation(wikiStore.user.appearance);
     }
     reviewing.value = false;

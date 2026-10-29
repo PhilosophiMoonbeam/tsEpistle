@@ -443,9 +443,9 @@ test.describe('responsive UI quality matrix', () => {
         await expectLocatorWithinViewport(headerPageActions, 'Header page actions')
       }
 
-      const toolsCard = page.locator('.page-tools-card').first()
+      const heroActions = page.locator('.page-hero-actions').first()
       const tocCard = page.locator('.page-toc-card').first()
-      await expect(toolsCard).toBeVisible()
+      await expect(heroActions).toBeVisible()
       if (await tocCard.count()) {
         await expect(tocCard).toBeVisible()
         const tocToggle = tocCard.locator('.page-toc-toggle')
@@ -469,70 +469,15 @@ test.describe('responsive UI quality matrix', () => {
           expect(primaryWeight, 'Top-level contents headings remain more prominent than nested entries').toBeGreaterThan(secondaryWeight)
         }
 
-        // Check initial rail geometry before TOC navigation intentionally scrolls the hero away.
         if (viewport.width >= 1280) {
-          const hero = page.locator('.page-hero').first()
-          const rail = page.locator('.page-col-sd:visible').first()
-          const [heroBounds, railBounds, toolsBounds, tocBounds] = await Promise.all([
-            hero.boundingBox(),
-            rail.boundingBox(),
-            toolsCard.boundingBox(),
-            tocCard.boundingBox()
-          ])
-          expect(heroBounds).not.toBeNull()
+          const railBounds = await page.locator('.page-col-sd:visible').first().boundingBox()
           expect(railBounds).not.toBeNull()
-          expect(toolsBounds).not.toBeNull()
-          expect(tocBounds).not.toBeNull()
-          if (heroBounds && railBounds && toolsBounds && tocBounds) {
-            expect(tocBounds.y - (toolsBounds.y + toolsBounds.height), 'Reader utilities keep a visible gap before Page Contents').toBeGreaterThan(0)
-            const heroBottom = heroBounds.y + heroBounds.height
-            expect(railBounds.y, 'Reader rail begins inside the title hero').toBeGreaterThanOrEqual(heroBounds.y)
-            expect(railBounds.y, 'Reader rail begins before the title hero ends').toBeLessThan(heroBottom)
-            expect(toolsBounds.y, 'Reader utilities overlap the title hero').toBeLessThan(heroBottom)
-            expect(tocBounds.y, 'Page Contents begins below the title hero').toBeGreaterThanOrEqual(heroBottom)
-            expect(toolsBounds.y, 'Reader utilities begin at the rail top').toBeGreaterThanOrEqual(railBounds.y - 1)
-            expect(tocBounds.y, 'Page Contents follows reader utilities').toBeGreaterThanOrEqual(toolsBounds.y + toolsBounds.height)
-            expect(tocBounds.height, 'Page Contents retains useful empty geometry').toBeGreaterThanOrEqual(128)
-
-            if (await tocCard.locator('.page-toc-empty').count()) {
-              const firstMetadataCard = page.locator('#page-desktop-rail > :is(.page-tags-card, .page-comments-card, .page-author-card)').first()
-              const metadataBounds = await firstMetadataCard.boundingBox()
-              expect(metadataBounds).not.toBeNull()
-              if (metadataBounds) {
-                expect(metadataBounds.y, 'Reader metadata follows the empty Page Contents card').toBeGreaterThanOrEqual(tocBounds.y + tocBounds.height)
-                expect(
-                  metadataBounds.y - (tocBounds.y + tocBounds.height),
-                  'Reader metadata follows the empty Page Contents card without dead space'
-                ).toBeLessThanOrEqual(24)
-              }
-            }
-          }
-
-          if (path === '/en/home') {
-            const sidebar = page.locator('.page-col-sd').first()
-            const lastMetadataCard = page.locator('#page-desktop-rail > .v-card').last()
-            const initialPageScroll = await page.evaluate(() => window.scrollY)
-            await sidebar.evaluate(element => {
-              element.scrollTop = element.scrollHeight
-            })
-            const [sidebarBounds, lastMetadataBounds, pageScrollAfterSidebar] = await Promise.all([
-              sidebar.boundingBox(),
-              lastMetadataCard.boundingBox(),
-              page.evaluate(() => window.scrollY)
-            ])
-            expect(sidebarBounds).not.toBeNull()
-            expect(lastMetadataBounds).not.toBeNull()
-            expect(pageScrollAfterSidebar, 'Metadata scrolling does not move the Markdown page').toBe(initialPageScroll)
-            if (sidebarBounds && lastMetadataBounds) {
-              expect(sidebarBounds.y + sidebarBounds.height, 'Metadata scrollbar remains inside the viewport').toBeLessThanOrEqual(viewport.height)
-              expect(lastMetadataBounds.y + lastMetadataBounds.height, 'The final metadata card is reachable inside its own scroller').toBeLessThanOrEqual(
-                sidebarBounds.y + sidebarBounds.height + 1
-              )
-            }
-            await sidebar.evaluate(element => {
-              element.scrollTop = 0
-            })
-          }
+          expect(railBounds!.width, 'The contents rail leaves room for reading').toBe(220)
+        } else {
+          const summary = tocCard.locator('.page-toc-summary')
+          const bounds = await summary.boundingBox()
+          expect(bounds).not.toBeNull()
+          expect(bounds!.height).toBe(40)
         }
         if (await headingLinks.count()) {
           const firstLink = headingLinks.first()
@@ -556,49 +501,8 @@ test.describe('responsive UI quality matrix', () => {
         }
       }
 
-      const shortcutButtons = page.locator('.page-tools-card__utilities:not(.page-tools-card__utilities--menu) .v-btn')
-      for (const shortcutButton of await shortcutButtons.all()) {
-        const bounds = await shortcutButton.boundingBox()
-        expect(bounds).not.toBeNull()
-        if (bounds) {
-          // Normalize sub-millipixel DOMRect representation error, not the 36–44 CSS-pixel limits.
-          const width = Math.round(bounds.width * 1000) / 1000
-          const height = Math.round(bounds.height * 1000) / 1000
-          expect(width, 'Reader utility targets remain compact and usable').toBeGreaterThanOrEqual(36)
-          expect(width, 'Reader utility targets remain compact and usable').toBeLessThanOrEqual(44)
-          expect(height, 'Reader utility targets remain compact and usable').toBeGreaterThanOrEqual(36)
-          expect(height, 'Reader utility targets remain compact and usable').toBeLessThanOrEqual(44)
-        }
-      }
-
-      if (path === '/en/visual-markdown-browser' && viewport.width >= 600 && viewport.width < 1280) {
-        const tabletTools = page.locator('#page-tablet-tools')
-        const tabletUtilities = tabletTools.locator(':scope > .page-tools-card')
-        const tabletProvenance = tabletUtilities.locator('.page-tools-card__provenance')
-        const tabletToc = tabletTools.locator(':scope > .page-toc-card')
-        await expect(tabletTools, 'Tablet reader utilities are rendered in their own stack').toBeVisible()
-        await expect(tabletUtilities).toBeVisible()
-        await expect(tabletProvenance, 'Tablet metadata remains within the reader utilities card').toBeVisible()
-        await expect(tabletToc).toBeVisible()
-
-        const tabletStack = await tabletTools
-          .locator(':scope > .v-card')
-          .evaluateAll(cards =>
-            cards
-              .map(
-                card =>
-                  ['page-tools-card', 'page-toc-card', 'page-tags-card', 'page-comments-card'].find(className => card.classList.contains(className)) ?? null
-              )
-              .filter((className): className is string => className !== null)
-          )
-        expect(tabletStack.slice(0, 2), 'Tablet stack keeps utilities and their metadata before Page Contents').toEqual(['page-tools-card', 'page-toc-card'])
-
-        const [toolsBounds, tocBounds] = await Promise.all([tabletUtilities.boundingBox(), tabletToc.boundingBox()])
-        expect(toolsBounds).not.toBeNull()
-        expect(tocBounds).not.toBeNull()
-        if (toolsBounds && tocBounds) {
-          expect(tocBounds.y, 'Tablet Page Contents follows reader utilities and metadata').toBeGreaterThanOrEqual(toolsBounds.y + toolsBounds.height)
-        }
+      for (const action of await heroActions.locator('.v-btn').all()) {
+        await expect(action).toHaveAccessibleName(/\S/)
       }
     }
 
@@ -850,466 +754,72 @@ test.describe('responsive UI quality matrix', () => {
     }
   })
 
-  test('uses expanded and aligned desktop reader geometry', async ({ page }) => {
+  test('preserves automatic and explicit TOC layouts across wide and collapsed reader transitions', async ({ page }) => {
     const viewport = page.viewportSize()
-    expect(viewport).not.toBeNull()
-    if (!viewport || viewport.width < 1280) return
-
-    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
-
-    const headerShell = page.locator('.page-header-section').first()
-    const bodyShell = page.locator('.page-body').first()
-    const readerHero = page.locator('.page-hero').first()
-    const toolsCard = page.locator('.page-col-sd .page-tools-card').first()
-    const tocCard = page.locator('.page-col-sd .page-toc-card').first()
-    const title = page.locator('.page-header--toc-left .page-title').first()
-    const description = page.locator('.page-header--toc-left .page-description').first()
-    const metadataRail = page.locator('.page-col-sd.page-col-sd--toc-left').first()
-    const article = page.locator('.page-col-content.page-col-content--toc-left:not(.is-page-header) > .contents').first()
-    const markdownCopy = article.locator('> div').first()
-
-    await expect(headerShell).toBeVisible()
-    await expect(bodyShell).toBeVisible()
-    await expect(readerHero).toBeVisible()
-    await expect(title).toBeVisible()
-    await expect(metadataRail).toBeVisible()
-    await expect(article).toBeVisible()
-    await expect(markdownCopy).toBeVisible()
-    await expect(toolsCard).toBeVisible()
-    await expect(tocCard).toBeVisible()
-
-    const shellSizing = await page.evaluate(() => {
-      const containingBlockWidth = (selector: string): number => {
-        const element = document.querySelector<HTMLElement>(selector)
-        const parent = element?.parentElement
-        if (!parent) return 0
-        const styles = getComputedStyle(parent)
-        return parent.clientWidth - (Number.parseFloat(styles.paddingLeft) || 0) - (Number.parseFloat(styles.paddingRight) || 0)
-      }
-      return {
-        rootFontSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
-        headerAvailableWidth: containingBlockWidth('.page-header-section'),
-        bodyAvailableWidth: containingBlockWidth('.page-body')
-      }
-    })
-
-    const [readerHeroBounds, headerShellBounds, bodyShellBounds, titleBounds, metadataBounds, articleBounds, markdownCopyBounds, toolsBounds, tocBounds] =
-      await Promise.all([
-        readerHero.boundingBox(),
-        headerShell.boundingBox(),
-        bodyShell.boundingBox(),
-        title.boundingBox(),
-        metadataRail.boundingBox(),
-        article.boundingBox(),
-        markdownCopy.boundingBox(),
-        toolsCard.boundingBox(),
-        tocCard.boundingBox()
-      ])
-    expect(readerHeroBounds).not.toBeNull()
-    expect(headerShellBounds).not.toBeNull()
-    expect(bodyShellBounds).not.toBeNull()
-    expect(titleBounds).not.toBeNull()
-    expect(metadataBounds).not.toBeNull()
-    expect(articleBounds).not.toBeNull()
-    expect(markdownCopyBounds).not.toBeNull()
-    expect(toolsBounds).not.toBeNull()
-    expect(tocBounds).not.toBeNull()
-    if (!readerHeroBounds || !headerShellBounds || !bodyShellBounds || !titleBounds || !metadataBounds || !articleBounds || !markdownCopyBounds || !toolsBounds || !tocBounds) return
-
-    for (const [name, bounds] of [
-      ['Page header shell', headerShellBounds],
-      ['Page body shell', bodyShellBounds]
-    ] as const) {
-      expect(bounds.x, `${name} stays inside the viewport`).toBeGreaterThanOrEqual(-1)
-      expect(bounds.x + bounds.width, `${name} stays inside the viewport`).toBeLessThanOrEqual(viewport.width + 1)
-    }
-    expect(Math.abs(headerShellBounds.x - bodyShellBounds.x), 'Reader header and body shells share a left edge').toBeLessThanOrEqual(2)
-    expect(Math.abs(headerShellBounds.width - bodyShellBounds.width), 'Reader header and body shells share a width').toBeLessThanOrEqual(2)
-
-    const legacyShellMax = 110 * shellSizing.rootFontSize
-    const readerShellMax = 132 * shellSizing.rootFontSize
-    for (const [name, bounds, availableWidth] of [
-      ['Page header shell', headerShellBounds, shellSizing.headerAvailableWidth],
-      ['Page body shell', bodyShellBounds, shellSizing.bodyAvailableWidth]
-    ] as const) {
-      expect(bounds.width, `${name} does not exceed the reader maximum`).toBeLessThanOrEqual(readerShellMax + 1)
-      if (availableWidth > legacyShellMax + 2) {
-        expect(bounds.width, `${name} uses the wider reader allowance`).toBeGreaterThan(legacyShellMax)
-        expect(
-          Math.abs(bounds.width - Math.min(availableWidth, readerShellMax)),
-          `${name} fills the available reader width up to its maximum`
-        ).toBeLessThanOrEqual(2)
-      }
-      if (viewport.width >= 2560) {
-        expect(Math.abs(bounds.width - readerShellMax), `${name} remains exactly 132rem on the wide project`).toBeLessThanOrEqual(2)
-      }
-    }
-
-    expect(Math.abs(titleBounds.x - articleBounds.x), 'Page title aligns with the article card outer edge').toBeLessThanOrEqual(2)
-    if (await description.isVisible()) {
-      const descriptionBounds = await description.boundingBox()
-      expect(descriptionBounds).not.toBeNull()
-      if (descriptionBounds) {
-        expect(Math.abs(descriptionBounds.x - articleBounds.x), 'Page description aligns with the article card outer edge').toBeLessThanOrEqual(2)
-      }
-    }
-    const toolsToTocGap = tocBounds.y - (toolsBounds.y + toolsBounds.height)
-    expect(toolsToTocGap, 'Reader utilities keep a visible gap before Page Contents').toBeGreaterThan(0)
-    const seamY = toolsBounds.y + toolsBounds.height + toolsToTocGap / 2
-    expect(
-      Math.abs(seamY - (readerHeroBounds.y + readerHeroBounds.height)),
-      'Left reader utilities/contents seam aligns with the hero boundary'
-    ).toBeLessThanOrEqual(4)
-    expect(metadataBounds.x, 'Reader metadata rail remains before the primary article').toBeLessThan(articleBounds.x)
-    expect(metadataBounds.x + metadataBounds.width, 'Reader metadata rail must not overlap the primary article').toBeLessThanOrEqual(articleBounds.x + 1)
-
-  })
-
-  test('keeps right-side TOC geometry ordered and aligned', async ({ page }) => {
-    const viewport = page.viewportSize()
-    expect(viewport).not.toBeNull()
-    if (!viewport || viewport.width < 1280) return
-    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
-
-    const originalClasses = await page.evaluate(() => {
-      const get = (selector: string): HTMLElement => {
-        const element = document.querySelector<HTMLElement>(selector)
-        if (!element) throw new Error(`Missing reader element: ${selector}`)
-        return element
-      }
-      return {
-        header: get('.page-header-section > .is-page-header').className,
-        rail: get('.page-col-sd').className,
-        article: get('.page-col-content:not(.is-page-header)').className
-      }
-    })
+    if (!viewport) throw new Error('Reader geometry requires a configured viewport')
+    await openAuthenticatedPage(page, '/en/home', '.page-header-section')
+    const setPosition = async (value?: 'auto' | 'left' | 'right' | 'off'): Promise<string> => page.evaluate(position => {
+      const app = (window as typeof window & { WIKI?: { config?: { globalProperties?: { $pinia?: { _s?: Map<string, { site: { tocPosition: string } }> } } } } }).WIKI
+      const store = app?.config?.globalProperties?.$pinia?._s?.get('wiki')
+      if (!store) throw new Error('Wiki store is unavailable for responsive TOC transition.')
+      const previous = store.site.tocPosition
+      if (position !== undefined) store.site.tocPosition = position
+      return previous
+    }, value)
+    const original = await setPosition()
     try {
-      await page.evaluate(() => {
-        document.querySelector('.page-header--toc-left')?.classList.replace('page-header--toc-left', 'page-header--toc-right')
-        document.querySelector('.page-col-sd--toc-left')?.classList.replace('page-col-sd--toc-left', 'page-col-sd--toc-right')
-        document
-          .querySelector('.page-col-content--toc-left:not(.is-page-header)')
-          ?.classList.replace('page-col-content--toc-left', 'page-col-content--toc-right')
-      })
-      const headerShell = page.locator('.page-header-section').first()
-      const bodyShell = page.locator('.page-body').first()
-      const title = page.locator('.page-header--toc-right .page-title').first()
-      const rail = page.locator('.page-col-sd--toc-right').first()
-      const readerHero = page.locator('.page-hero').first()
-      const toolsCard = page.locator('.page-col-sd--toc-right .page-tools-card').first()
-      const tocCard = page.locator('.page-col-sd--toc-right .page-toc-card').first()
-      const article = page.locator('.page-col-content--toc-right:not(.is-page-header) > .contents').first()
-      const [headerBounds, bodyBounds, titleBounds, railBounds, articleBounds, readerHeroBounds, toolsBounds, tocBounds] = await Promise.all([
-        headerShell.boundingBox(),
-        bodyShell.boundingBox(),
-        title.boundingBox(),
-        rail.boundingBox(),
-        article.boundingBox(),
-        readerHero.boundingBox(),
-        toolsCard.boundingBox(),
-        tocCard.boundingBox()
-      ])
-      expect(headerBounds).not.toBeNull()
-      expect(bodyBounds).not.toBeNull()
-      expect(titleBounds).not.toBeNull()
-      expect(railBounds).not.toBeNull()
-      expect(articleBounds).not.toBeNull()
-      expect(readerHeroBounds).not.toBeNull()
-      expect(toolsBounds).not.toBeNull()
-      expect(tocBounds).not.toBeNull()
-      if (!headerBounds || !bodyBounds || !titleBounds || !railBounds || !articleBounds || !readerHeroBounds || !toolsBounds || !tocBounds) return
-      expect(Math.abs(headerBounds.x - bodyBounds.x)).toBeLessThanOrEqual(2)
-      const toolsToTocGap = tocBounds.y - (toolsBounds.y + toolsBounds.height)
-      expect(toolsToTocGap, 'Right reader utilities keep a visible gap before Page Contents').toBeGreaterThan(0)
-      const seamY = toolsBounds.y + toolsBounds.height + toolsToTocGap / 2
-      expect(Math.abs(seamY - (readerHeroBounds.y + readerHeroBounds.height)), 'Right reader utilities/contents seam aligns with the hero boundary').toBeLessThanOrEqual(4)
-      expect(Math.abs(headerBounds.width - bodyBounds.width)).toBeLessThanOrEqual(2)
-      expect(articleBounds.x + articleBounds.width, 'Article remains before and clear of the right rail').toBeLessThan(railBounds.x)
-      expect(Math.abs(titleBounds.x - articleBounds.x), 'Right-mode title aligns with the article').toBeLessThanOrEqual(2)
-      expect(
-        await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
-        'Right TOC has no horizontal overflow'
-      ).toBeLessThanOrEqual(1)
-    } finally {
-      await page.evaluate(classes => {
-        const header = document.querySelector<HTMLElement>('.page-header-section > .is-page-header')
-        const rail = document.querySelector<HTMLElement>('.page-col-sd')
-        const article = document.querySelector<HTMLElement>('.page-col-content:not(.is-page-header)')
-        if (header) header.className = classes.header
-        if (rail) rail.className = classes.rail
-        if (article) article.className = classes.article
-      }, originalClasses)
-    }
-  })
-  test('tracks the reader utilities/contents seam for long, sparse, and branded headers', async ({ page }) => {
-    const viewport = page.viewportSize()
-    expect(viewport).not.toBeNull()
-    if (!viewport || viewport.width < 1280) return
-    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
-
-    const assertAligned = async (label: string): Promise<void> => {
-      await expect
-        .poll(
-          () =>
-            page.evaluate(() => {
-              const hero = document.querySelector<HTMLElement>('.page-hero')
-              const tools = document.querySelector<HTMLElement>('.page-col-sd .page-tools-card')
-              const toc = document.querySelector<HTMLElement>('.page-col-sd .page-toc-card')
-              if (!hero || !tools || !toc) return Number.POSITIVE_INFINITY
-              const heroBounds = hero.getBoundingClientRect()
-              const toolsBounds = tools.getBoundingClientRect()
-              const tocBounds = toc.getBoundingClientRect()
-              const cardGap = tocBounds.top - toolsBounds.bottom
-              return Math.abs(toolsBounds.bottom + cardGap / 2 - heroBounds.bottom)
-            }),
-          label
-        )
-        .toBeLessThanOrEqual(4)
-    }
-
-    await assertAligned('Default reader seam aligns with the hero boundary')
-    await page.evaluate(() => {
-      const title = document.querySelector<HTMLElement>('.page-title')
-      if (!title) throw new Error('Reader title is missing')
-      title.textContent = 'A deliberately long reader title that wraps across multiple lines to exercise midpoint alignment'
-    })
-    await assertAligned('Long reader title keeps the reader seam aligned with the hero boundary')
-
-    await page.evaluate(() => document.querySelector('.page-description')?.remove())
-    await assertAligned('Reader seam stays aligned when the description is absent')
-
-    await page.evaluate(() => {
-      const headings = document.querySelector<HTMLElement>('.page-header-headings')
-      if (!headings) throw new Error('Reader heading group is missing')
-      headings.classList.add('page-header-headings--branded')
-      const mark = document.createElement('div')
-      mark.className = 'page-branding-mark'
-      mark.setAttribute('aria-hidden', 'true')
-      mark.style.width = '128px'
-      mark.style.height = '128px'
-      headings.append(mark)
-    })
-    await assertAligned('Branded reader seam stays aligned with the hero boundary')
-  })
-  test('realigns a dirty rail after a scrolled title resize and eligibility transitions', async ({ page }) => {
-    const viewport = page.viewportSize()
-    expect(viewport).not.toBeNull()
-    if (!viewport || viewport.width < 1280) return
-
-    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
-
-    const title = page.locator('.page-title').first()
-    const alignment = async (): Promise<number> =>
-      page.evaluate(() => {
-        const hero = document.querySelector<HTMLElement>('.page-hero')
-        const tools = document.querySelector<HTMLElement>('.page-col-sd .page-tools-card')
-        const toc = document.querySelector<HTMLElement>('.page-col-sd .page-toc-card')
-        if (!hero || !tools || !toc) return Number.POSITIVE_INFINITY
-        const heroBounds = hero.getBoundingClientRect()
-        const toolsBounds = tools.getBoundingClientRect()
-        const tocBounds = toc.getBoundingClientRect()
-        const cardGap = tocBounds.top - toolsBounds.bottom
-        return Math.abs(toolsBounds.bottom + cardGap / 2 - heroBounds.bottom)
-      })
-    const tocPosition = async (): Promise<'left' | 'right' | 'off'> =>
-      page.evaluate(() => {
-        const app = (
-          window as typeof window & {
-            WIKI?: {
-              config?: {
-                globalProperties?: {
-                  $pinia?: {
-                    _s?: Map<string, { site: { tocPosition: string } }>
-                  }
-                }
-              }
-            }
-          }
-        ).WIKI
-        const store = app?.config?.globalProperties?.$pinia?._s?.get('wiki')
-        if (!store) throw new Error('Wiki store is unavailable for responsive TOC transition.')
-        return store.site.tocPosition as 'left' | 'right' | 'off'
-      })
-    const expectBoundedRail = async (surface: string): Promise<void> => {
-      await expect(page.locator('.page-col-sd:visible').first()).toBeVisible()
-      await expect.poll(() => page.evaluate(() => {
-        const rail = document.querySelector<HTMLElement>('.page-col-sd')
-        const footer = document.querySelector<HTMLElement>('.nav-footer')
-        if (!rail || !footer) throw new Error('Reader rail or footer is missing')
-        const bounds = rail.getBoundingClientRect()
-        return bounds.bottom - Math.min(window.innerHeight, footer.getBoundingClientRect().top)
-      }), `${surface} keeps the rail above the footer and inside the viewport`).toBeLessThanOrEqual(1)
-    }
-    const populateRail = async (): Promise<void> => {
-      await page.locator('.page-toc-list').first().evaluate(element => {
-        if (element.querySelector('[data-rail-fixture]')) return
-        const content = document.createElement('div')
-        content.dataset.railFixture = 'long-contents'
-        for (let item = 0; item < 80; item += 1) {
-          const paragraph = document.createElement('p')
-          paragraph.textContent = `Additional contents entry ${item + 1}`
-          content.append(paragraph)
+      await page.setViewportSize({ width: 1440, height: 900 })
+      for (const position of ['auto', 'left', 'right', 'off'] as const) {
+        await setPosition(position)
+        const article = page.locator('.page-col-content:not(.is-page-header) > .contents')
+        await expect(article).toBeVisible()
+        const articleBounds = await article.boundingBox()
+        if (!articleBounds) throw new Error('Reader article geometry is missing')
+        if (position === 'off') {
+          await expect(page.locator('.page-toc-card')).toHaveCount(0)
+          const row = await page.locator('.page-body > .v-row').boundingBox()
+          expect(row).not.toBeNull()
+          expect(Math.abs(articleBounds.width - row!.width)).toBeLessThanOrEqual(2)
+          continue
         }
-        element.append(content)
-      })
-    }
-    const setTocPosition = async (tocPosition: 'left' | 'right' | 'off'): Promise<void> => {
-      await page.evaluate(value => {
-        const app = (
-          window as typeof window & {
-            WIKI?: {
-              config?: {
-                globalProperties?: {
-                  $pinia?: {
-                    _s?: Map<string, { site: { tocPosition: string } }>
-                  }
-                }
-              }
-            }
-          }
-        ).WIKI
-        const store = app?.config?.globalProperties?.$pinia?._s?.get('wiki')
-        if (!store) throw new Error('Wiki store is unavailable for responsive TOC transition.')
-        store.site.tocPosition = value
-      }, tocPosition)
-    }
-
-    const initialTitle = await title.textContent()
-    const initialWidth = viewport.width
-    const resizedDesktopWidth = initialWidth === 1280 ? 1360 : Math.max(1280, initialWidth - 80)
-    const longTitle = 'A deliberately long reader title that wraps after a scrolled resize and remains aligned when the reader returns to the top'
-    const originalTocPosition = await tocPosition()
-    if (originalTocPosition === 'off') {
-      await setTocPosition('left')
-      await expect(page.locator('.page-header--toc-left')).toBeVisible()
-    }
-
-    try {
-      await populateRail()
-      await expect.poll(alignment, 'Initial desktop rail alignment').toBeLessThanOrEqual(4)
-      await expectBoundedRail('Initial desktop rail')
-
-      await page.evaluate(() => window.scrollTo(0, Math.max(1, Math.floor(document.documentElement.scrollHeight / 2))))
-      await expect.poll(() => page.evaluate(() => window.scrollY), 'Reader scrolls away from the title').toBeGreaterThan(1)
-
-      await page.evaluate(text => {
-        const title = document.querySelector<HTMLElement>('.page-title')
-        if (!title) throw new Error('Reader title is missing')
-        title.textContent = text
-        title.style.maxWidth = '18rem'
-        window.dispatchEvent(new Event('resize'))
-      }, longTitle)
-      await expect.poll(() => title.evaluate(element => element.getBoundingClientRect().height), 'Reader title wraps while scrolled').toBeGreaterThan(40)
-
-      await page.setViewportSize({ width: resizedDesktopWidth, height: viewport.height })
-      await expectBoundedRail('Resized desktop rail while scrolled')
-      await page.evaluate(() => window.scrollTo(0, 0))
-      await expect.poll(() => page.evaluate(() => window.scrollY), 'Reader returns to the top').toBeLessThan(2)
-      await expect.poll(alignment, 'Dirty reader rail realigns after returning to the top').toBeLessThanOrEqual(4)
-      await expectBoundedRail('Realigned desktop rail')
-
-      await page.setViewportSize({ width: 1279, height: viewport.height })
-      await expect(page.locator('#page-tablet-tools .page-toc-card')).toBeVisible()
-
-      await page.setViewportSize({ width: resizedDesktopWidth, height: viewport.height })
-      await expect.poll(alignment, 'Desktop rail realigns after crossing the breakpoint').toBeLessThanOrEqual(4)
-      await expectBoundedRail('Desktop rail after crossing the breakpoint')
-
-      await setTocPosition('off')
-      await expect(page.locator('.page-header--toc-off')).toBeVisible()
-
-      await setTocPosition('right')
-      await expect(page.locator('.page-header--toc-right')).toBeVisible()
-      await populateRail()
-      await expect.poll(alignment, 'Right TOC rail realigns after eligibility returns').toBeLessThanOrEqual(4)
-      await expectBoundedRail('Right TOC rail after eligibility returns')
-      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
-      await expect.poll(() => page.locator('.nav-footer').evaluate(element => element.getBoundingClientRect().top), 'Footer is visible at the document end').toBeLessThan(viewport.height)
-      await expectBoundedRail('Long rail at the document footer')
-    } finally {
-      await setTocPosition(originalTocPosition)
-      await page.locator('[data-rail-fixture="long-contents"]').evaluateAll(elements => elements.forEach(element => { element.remove() }))
-      await page.evaluate(text => {
-        const title = document.querySelector<HTMLElement>('.page-title')
-        if (!title) return
-        title.textContent = text ?? ''
-        title.style.removeProperty('max-width')
-      }, initialTitle)
-    }
-  })
-
-  test('keeps TOC-off columns full width and in reading order', async ({ page }) => {
-    const viewport = page.viewportSize()
-    expect(viewport).not.toBeNull()
-    if (!viewport || viewport.width < 1280) return
-    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
-
-    const originalClasses = await page.evaluate(() => {
-      const get = (selector: string): HTMLElement => {
-        const element = document.querySelector<HTMLElement>(selector)
-        if (!element) throw new Error(`Missing reader element: ${selector}`)
-        return element
+        const rail = page.locator('.page-col-sd')
+        await expect(rail).toBeVisible()
+        const railBounds = await rail.boundingBox()
+        if (!railBounds) throw new Error('Reader contents geometry is missing')
+        expect(railBounds.width).toBe(220)
+        if (position === 'left') expect(railBounds.x + railBounds.width).toBeLessThan(articleBounds.x)
+        else {
+          expect(articleBounds.x + articleBounds.width).toBeLessThan(railBounds.x)
+          const prose = await article.locator('p:visible, h2:visible, h3:visible').first().boundingBox()
+          expect(prose).not.toBeNull()
+          expect(prose!.x, 'Actual prose does not inherit the retired left utility rail').toBeLessThanOrEqual(300)
+        }
+        await page.setViewportSize({ width: 1279, height: 900 })
+        const toggle = page.locator('#page-inline-toc .page-toc-toggle')
+        await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+        await expect(page.locator('.page-col-sd')).toBeHidden()
+        await toggle.focus()
+        await toggle.press('Enter')
+        await expect(page.locator('#page-inline-toc #page-toc-content')).toBeVisible()
+        await page.setViewportSize({ width: 1280, height: 900 })
+        await expect(page.locator('#page-desktop-rail .page-toc-card')).toBeVisible()
+        await page.setViewportSize({ width: 1440, height: 900 })
       }
-      return {
-        header: get('.page-header-section > .is-page-header').className,
-        rail: get('.page-col-sd').className,
-        article: get('.page-col-content:not(.is-page-header)').className
+      await setPosition('auto')
+      for (const size of [{ width: 390, height: 844 }, { width: 768, height: 1024 }]) {
+        await page.setViewportSize(size)
+        await page.evaluate(() => window.scrollTo(0, 0))
+        const summary = await page.locator('.page-toc-summary').boundingBox()
+        expect(summary).not.toBeNull()
+        expect(summary!.height).toBe(40)
+        const prose = await page.locator('.contents p:visible, .contents h2:visible, .contents h3:visible').first().boundingBox()
+        expect(prose).not.toBeNull()
+        expect(prose!.y).toBeLessThan(260)
+        await expectResponsiveLayout(page, 'Collapsed reader contents')
       }
-    })
-    try {
-      await page.evaluate(() => {
-        document.querySelector('.page-header--toc-left')?.classList.replace('page-header--toc-left', 'page-header--toc-off')
-        const rail = document.querySelector('.page-col-sd')
-        rail?.classList.remove('page-col-sd--with-toc')
-        rail?.classList.add('page-col-sd--toc-off')
-        const article = document.querySelector('.page-col-content:not(.is-page-header)')
-        article?.classList.remove('page-col-content--with-toc')
-        article?.classList.add('page-col-content--toc-off')
-        const toc = document.querySelector<HTMLElement>('.page-toc-card')
-        if (toc) toc.hidden = true
-      })
-      const headerShell = page.locator('.page-header-section').first()
-      const header = page.locator('.page-header--toc-off').first()
-      const row = page.locator('.page-body > .v-row').first()
-      const rail = page.locator('.page-col-sd--toc-off').first()
-      const articleColumn = page.locator('.page-col-content--toc-off:not(.is-page-header)').first()
-      const article = articleColumn.locator('> .contents')
-      const [headerShellBounds, headerBounds, rowBounds, railBounds, articleColumnBounds, articleBounds] = await Promise.all([
-        headerShell.boundingBox(),
-        header.boundingBox(),
-        row.boundingBox(),
-        rail.boundingBox(),
-        articleColumn.boundingBox(),
-        article.boundingBox()
-      ])
-      expect(headerShellBounds).not.toBeNull()
-      expect(headerBounds).not.toBeNull()
-      expect(rowBounds).not.toBeNull()
-      expect(railBounds).not.toBeNull()
-      expect(articleColumnBounds).not.toBeNull()
-      expect(articleBounds).not.toBeNull()
-      if (!headerShellBounds || !headerBounds || !rowBounds || !railBounds || !articleColumnBounds || !articleBounds) return
-      expect(Math.abs(headerBounds.width - headerShellBounds.width), 'TOC-off header uses its full shell').toBeLessThanOrEqual(2)
-      expect(Math.abs(articleColumnBounds.width - rowBounds.width), 'TOC-off article uses the full row').toBeLessThanOrEqual(2)
-      expect(Math.abs(railBounds.width - rowBounds.width), 'TOC-off metadata uses the full row').toBeLessThanOrEqual(2)
-      expect(articleBounds.width, 'TOC-off article does not retain a collapsed rail').toBeGreaterThan(rowBounds.width * 0.9)
-      expect(Math.abs(articleColumnBounds.x - railBounds.x), 'TOC-off columns share a row edge').toBeLessThanOrEqual(2)
-      expect(articleColumnBounds.y + articleColumnBounds.height, 'TOC-off article precedes metadata').toBeLessThanOrEqual(railBounds.y + 1)
-      expect(
-        await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
-        'TOC-off has no horizontal overflow'
-      ).toBeLessThanOrEqual(1)
     } finally {
-      await page.evaluate(classes => {
-        const header = document.querySelector<HTMLElement>('.page-header-section > .is-page-header')
-        const rail = document.querySelector<HTMLElement>('.page-col-sd')
-        const article = document.querySelector<HTMLElement>('.page-col-content:not(.is-page-header)')
-        if (header) header.className = classes.header
-        if (rail) rail.className = classes.rail
-        if (article) article.className = classes.article
-        const toc = document.querySelector<HTMLElement>('.page-toc-card')
-        if (toc) toc.hidden = false
-      }, originalClasses)
+      await setPosition(original as 'auto' | 'left' | 'right' | 'off')
+      await page.setViewportSize(viewport)
     }
   })
 
@@ -3634,15 +3144,15 @@ test.describe('reader metadata rendering', () => {
   const expectReaderMetadata = async (page: Page, expected: { authorName?: string; historyHref?: string; updatedAt?: string }): Promise<void> => {
     await expect(page.locator('html')).toHaveAttribute('lang', 'en')
 
-    const provenance = page.locator('.page-tools-card__provenance')
+    const provenance = page.locator('.page-hero .page-document-provenance')
     await expect(provenance).toHaveCount(1)
     await expect(provenance).toBeVisible()
-    const date = provenance.locator('.page-document-row--date time')
+    const date = provenance.locator('time')
     await expect(date).toHaveAttribute('datetime', expected.updatedAt ?? updatedAt)
 
     const author = provenance.locator('.page-provenance-author')
     if (expected.authorName === undefined) {
-      await expect(provenance.locator('.page-document-row--author')).toHaveCount(0)
+      await expect(provenance.locator('.page-document-author')).toHaveCount(0)
       await expect(author).toHaveCount(0)
     } else {
       await expect(author).toHaveText(expected.authorName)
@@ -3650,13 +3160,13 @@ test.describe('reader metadata rendering', () => {
       await expect(author.locator('*')).toHaveCount(0)
     }
 
-    const historyLink = page.locator('.page-tools-history-link')
-    if (expected.historyHref === undefined) {
-      await expect(historyLink).toHaveCount(0)
-    } else {
-      await expect(historyLink).toBeVisible()
-      await expect(historyLink).toHaveAttribute('href', expected.historyHref)
-    }
+    const pageActions = page.locator('[data-page-actions-activator]:visible').first()
+    await pageActions.click()
+    const historyAction = page.locator('.page-actions-menu:visible').getByRole('button', { name: 'History', exact: true })
+    if (expected.historyHref === undefined) await expect(historyAction).toHaveCount(0)
+    else await expect(historyAction).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(pageActions).toBeFocused()
   }
 
   routedReaderTest('renders enabled page author metadata on initial and SPA reader loads', async ({ page }) => {
@@ -3693,79 +3203,17 @@ test.describe('reader metadata rendering', () => {
     expect(initialPage.spaNavigation, 'The live reader contract supports SPA navigation.').toBe(true)
     const historyHref = historyHrefFor(initialPage)
     await expectReaderMetadata(page, { authorName, historyHref })
-    const historyLink = page.locator('.page-tools-history-link')
-    await expect(historyLink).toHaveAccessibleName('View history')
+    const historyAction = page.locator('.page-actions-menu:visible').getByRole('button', { name: 'History', exact: true })
     const assertReaderUtilities = async (width: number): Promise<void> => {
       await page.setViewportSize({ width, height: initialViewport.height })
-      // Native viewport resize can hide the old host before Vue moves the tools card.
-      await expect(page.locator('.page-tools-card'), `Reader tools finish moving after resizing to ${width}px`).toBeVisible()
-      const geometry = await page.evaluate(() => {
-        const card = document.querySelector<HTMLElement>('.page-tools-card')
-        const utilities = card?.querySelector<HTMLElement>('.page-tools-card__utilities')
-        const date = card?.querySelector<HTMLElement>('.page-document-row--date')
-        const provenance = card?.querySelector<HTMLElement>('.page-tools-card__provenance')
-        const history = card?.querySelector<HTMLElement>('.page-tools-history-link')
-        const focus = card?.querySelector<HTMLElement>('.page-focus-control')
-        if (!card || !utilities || !date || !provenance || !history || !focus) throw new Error('Reader tools are missing the date, history link, or Focus utility.')
-        const historyIcon = history.querySelector<HTMLElement>('.v-icon')
-        const focusIcon = focus.querySelector<HTMLElement>('.v-icon')
-        const dateBounds = date.getBoundingClientRect()
-        const provenanceBounds = provenance.getBoundingClientRect()
-        const historyBounds = history.getBoundingClientRect()
-        const cardBounds = card.getBoundingClientRect()
-        const utilityBounds = utilities.getBoundingClientRect()
-        const uncontainedActions = Array.from(utilities.querySelectorAll<HTMLElement>('.v-btn')).filter(action => {
-          const bounds = action.getBoundingClientRect()
-          return bounds.width <= 0 || bounds.height <= 0 ||
-            bounds.left < Math.max(cardBounds.left, utilityBounds.left) ||
-            bounds.right > Math.min(cardBounds.right, utilityBounds.right) ||
-            bounds.top < Math.max(cardBounds.top, utilityBounds.top) ||
-            bounds.bottom > Math.min(cardBounds.bottom, utilityBounds.bottom)
-        }).map(action => action.getAttribute('aria-label') ?? action.innerText)
-        return {
-          historyInUtilities: history.closest('.page-tools-card__utilities') !== null,
-          utilitiesBottom: utilityBounds.bottom,
-          utilitiesOverflow: utilities.scrollWidth - utilities.clientWidth,
-          uncontainedActions,
-          dateTop: dateBounds.top,
-          dateCenter: dateBounds.left + dateBounds.width / 2,
-          provenanceCenter: provenanceBounds.left + provenanceBounds.width / 2,
-          historyWidth: historyBounds.width,
-          historyHeight: historyBounds.height,
-          historyText: history.innerText.trim(),
-          hasIcon: historyIcon !== null,
-          historyIconWidth: historyIcon?.getBoundingClientRect().width ?? 0,
-          historyIconHeight: historyIcon?.getBoundingClientRect().height ?? 0,
-          focusIconWidth: focusIcon?.getBoundingClientRect().width ?? 0,
-          focusIconHeight: focusIcon?.getBoundingClientRect().height ?? 0,
-          finePointer: window.matchMedia('(pointer: fine)').matches
-        }
-      })
-      expect(geometry.historyInUtilities, `History is a page utility at ${width}px`).toBe(true)
-      // Real administrator permissions expose eight fixed-size utilities. They may
-      // wrap at phone widths; containment and keyboard access, not one row, matter.
-      expect(geometry.uncontainedActions, `Every real utility fits its card at ${width}px`).toEqual([])
-      expect(geometry.utilitiesOverflow, `The utilities do not scroll horizontally at ${width}px`).toBeLessThanOrEqual(1)
-      expect(geometry.dateTop, `The update date sits below every utility at ${width}px`).toBeGreaterThanOrEqual(geometry.utilitiesBottom)
-      expect(Math.abs(geometry.dateCenter - geometry.provenanceCenter), `The update date is centered at ${width}px`).toBeLessThanOrEqual(2)
-      expect(geometry.historyText, `The history utility is icon-only at ${width}px`).toBe('')
-      expect(geometry.hasIcon, `The history utility exposes its icon at ${width}px`).toBe(true)
-      expect(geometry.historyIconWidth, `The history icon renders at ${width}px`).toBeGreaterThan(0)
-      expect(geometry.historyIconHeight, `The history icon renders at ${width}px`).toBeGreaterThan(0)
-      expect(Math.abs(geometry.historyIconWidth - geometry.focusIconWidth), `The history icon matches Focus width at ${width}px`).toBeLessThanOrEqual(1)
-      expect(Math.abs(geometry.historyIconHeight - geometry.focusIconHeight), `The history icon matches Focus height at ${width}px`).toBeLessThanOrEqual(1)
-      if (geometry.finePointer) {
-        expect(Math.abs(geometry.historyWidth - 36), `The fine-pointer history target is 36px wide at ${width}px`).toBeLessThanOrEqual(1)
-        expect(Math.abs(geometry.historyHeight - 36), `The fine-pointer history target is 36px tall at ${width}px`).toBeLessThanOrEqual(1)
+      const hero = page.locator('.page-hero')
+      await expect(hero.locator('.page-document-provenance')).toBeVisible()
+      for (const action of await hero.locator('.page-hero-actions .v-btn').all()) {
+        await expectLocatorWithinViewport(action, `Labeled reader action at ${width}px`)
+        await expect(action).toHaveAccessibleName(/\S/)
       }
-
-      const focus = page.getByRole('button', { name: 'Focus', exact: true })
+      const focus = hero.getByRole('button', { name: 'Focus', exact: true })
       await focus.focus()
-      await focus.press('Tab')
-      await expect(historyLink, `History follows Focus in keyboard order at ${width}px`).toBeFocused()
-      await expectLocatorWithinViewport(historyLink, `Keyboard history target at ${width}px`)
-      await historyLink.press('Shift+Tab')
-      await expect(focus).toBeFocused()
       await focus.press('Enter')
       const dock = page.getByRole('region', { name: 'Focus', exact: true })
       const exit = dock.getByRole('button', { name: 'Exit focus', exact: true })
@@ -3799,10 +3247,6 @@ test.describe('reader metadata rendering', () => {
 
     for (const width of [1440, 320, 375, 390]) await assertReaderUtilities(width)
 
-    await historyLink.hover()
-    const historyTooltip = page.getByRole('tooltip').filter({ hasText: /^View history$/ })
-    await expect(historyTooltip).toHaveText('View history')
-    await expect(historyTooltip).toBeVisible()
     await page.setViewportSize(initialViewport)
 
     const logo = page.locator('.nav-header-logo:visible').first()
@@ -3851,11 +3295,11 @@ test.describe('reader metadata rendering', () => {
     await expect(page.getByRole('alert'), 'Real reader actions do not report fixture-induced errors.').toHaveCount(0)
     for (const width of [320, 390]) {
       await page.setViewportSize({ width, height: initialViewport.height })
-      await expect(historyLink).toBeVisible()
-      await expect(historyLink).toHaveAttribute('href', spaHistoryHref)
-      await historyLink.focus()
-      await expect(historyLink, `The real history link is keyboard reachable at ${width}px`).toBeFocused()
-      await historyLink.press('Enter')
+      await page.locator('[data-page-actions-activator]:visible').first().click()
+      await expect(historyAction).toBeVisible()
+      await historyAction.focus()
+      await expect(historyAction, `History remains keyboard reachable at ${width}px`).toBeFocused()
+      await historyAction.press('Enter')
       await expect.poll(() => new URL(page.url()).pathname).toBe(spaHistoryHref)
       if (width === 320) {
         await page.goBack({ waitUntil: 'domcontentloaded' })
@@ -3884,50 +3328,6 @@ test.describe('reader metadata rendering', () => {
     })
   }
 
-  test('places a normal enabled author below the date in smaller type in a wide reader card', async ({ page }) => {
-    const viewport = page.viewportSize()
-    test.skip(!viewport || viewport.width < 1280, 'This assertion requires the configured wide reader layout.')
-
-    const authorName = 'Ada Lovelace'
-    await installReaderMetadataFixture(
-      page,
-      makeFixturePayload({
-        authorName,
-        authorId: 42,
-        lastEditorVisible: true,
-        historyRead: false
-      })
-    )
-
-    await page.goto('/home', { waitUntil: 'domcontentloaded' })
-    await expectReaderMetadata(page, { authorName })
-
-    const toolsCard = page.locator('.page-tools-card')
-    await expect(toolsCard).toBeVisible()
-    const geometry = await toolsCard.evaluate(card => {
-      const provenance = card.querySelector<HTMLElement>('.page-tools-card__provenance')
-      const date = provenance?.querySelector<HTMLElement>('.page-document-row--date')
-      const author = provenance?.querySelector<HTMLElement>('.page-document-row--author')
-      if (!provenance || !date || !author) {
-        throw new Error('Reader tools card is missing its date or author provenance row.')
-      }
-      const dateBounds = date.getBoundingClientRect()
-      const authorBounds = author.getBoundingClientRect()
-      return {
-        cardWidth: card.clientWidth,
-        provenanceWidth: provenance.clientWidth,
-        authorBelowDate: authorBounds.top >= dateBounds.bottom,
-        authorText: author.innerText.trim(),
-        dateFontSize: Number.parseFloat(window.getComputedStyle(date).fontSize),
-        authorFontSize: Number.parseFloat(window.getComputedStyle(author).fontSize)
-      }
-    })
-    expect(geometry.cardWidth, 'The desktop reader card has usable width').toBeGreaterThan(0)
-    expect(geometry.provenanceWidth, 'The desktop provenance region has usable width').toBeGreaterThan(0)
-    expect(geometry.authorBelowDate, 'The author is visually below the update date').toBe(true)
-    expect(geometry.authorText, 'The author line identifies its value as the last editor').toMatch(/^by\s+Ada Lovelace$/i)
-    expect(geometry.authorFontSize, 'The author line uses smaller type than the update date').toBeLessThan(geometry.dateFontSize)
-  })
 
   test('keeps a long enabled author inside the narrow reader card without exposing unauthorized history', async ({ page }) => {
     const authorName = 'VeryLongEditorName'.repeat(16)
@@ -3947,53 +3347,29 @@ test.describe('reader metadata rendering', () => {
     await page.goto('/home', { waitUntil: 'domcontentloaded' })
     await expectReaderMetadata(page, { authorName })
 
-    const toolsCard = page.locator('.page-tools-card')
-    await expect(toolsCard).toBeVisible()
-    await expect(toolsCard.locator('.page-document-row--date time')).toBeVisible()
-    const overflow = await toolsCard.evaluate(card => {
-      const provenance = card.querySelector<HTMLElement>('.page-tools-card__provenance')
-      const author = provenance?.querySelector<HTMLElement>('.page-provenance-author')
-      const authorContainer = provenance?.querySelector<HTMLElement>('.page-document-author')
-      const date = provenance?.querySelector<HTMLElement>('.page-document-row--date')
-      if (!provenance || !author || !authorContainer || !date) {
-        throw new Error('Reader tools card is missing its author or date provenance row.')
-      }
-      const authorStyle = window.getComputedStyle(authorContainer)
-      const authorBounds = authorContainer.getBoundingClientRect()
+    const hero = page.locator('.page-hero')
+    await expect(hero).toBeVisible()
+    await expect(hero.locator('.page-document-provenance time')).toBeVisible()
+    const overflow = await hero.evaluate(card => {
+      const provenance = card.querySelector<HTMLElement>('.page-document-provenance')
+      const author = provenance?.querySelector<HTMLElement>('.page-document-author')
+      const date = provenance?.querySelector<HTMLElement>('time')
+      if (!provenance || !author || !date) throw new Error('Reader hero is missing author or date metadata.')
       const provenanceBounds = provenance.getBoundingClientRect()
       const dateBounds = date.getBoundingClientRect()
       return {
         document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
         card: card.scrollWidth - card.clientWidth,
         provenance: provenance.scrollWidth - provenance.clientWidth,
-        authorHeight: authorBounds.height,
-        authorLineHeight: Number.parseFloat(authorStyle.lineHeight),
-        authorWidth: authorContainer.clientWidth,
-        authorScrollWidth: authorContainer.scrollWidth,
-        authorWhiteSpace: authorStyle.whiteSpace,
-        authorTextOverflow: authorStyle.textOverflow,
-        authorOverflowX: authorStyle.overflowX,
-        dateWidth: date.clientWidth,
-        dateScrollWidth: date.scrollWidth,
-        dateFitsProvenance: dateBounds.left >= provenanceBounds.left - 1 && dateBounds.right <= provenanceBounds.right + 1
+        authorWidth: author.clientWidth,
+        dateFits: dateBounds.left >= provenanceBounds.left - 1 && dateBounds.right <= provenanceBounds.right + 1
       }
     })
-    expect(overflow.document, 'A long author does not widen the reader document').toBeLessThanOrEqual(1)
-    expect(overflow.card, 'A long author does not overflow the reader tools card').toBeLessThanOrEqual(1)
-    expect(overflow.provenance, 'A long author does not overflow the metadata region').toBeLessThanOrEqual(1)
-    expect(overflow.authorHeight, 'The visible author ellipsis container has a rendered line box').toBeGreaterThan(0)
-    expect(
-      Math.abs(overflow.authorHeight - overflow.authorLineHeight),
-      'A long author occupies one computed line-height in the ellipsis container'
-    ).toBeLessThanOrEqual(1)
-    expect(overflow.authorWidth, 'The bounded author retains visible space for its ellipsis').toBeGreaterThan(0)
-    expect(overflow.authorScrollWidth, 'The full author text remains longer than the narrow visible line').toBeGreaterThan(overflow.authorWidth)
-    expect(overflow.authorWhiteSpace, 'A long author is kept on one line').toBe('nowrap')
-    expect(overflow.authorTextOverflow, 'A long author is visually ellipsized').toBe('ellipsis')
-    expect(['hidden', 'clip']).toContain(overflow.authorOverflowX)
-    expect(overflow.dateWidth, 'The update date remains readable at the narrow width').toBeGreaterThan(0)
-    expect(overflow.dateScrollWidth - overflow.dateWidth, 'The update date is not clipped').toBeLessThanOrEqual(1)
-    expect(overflow.dateFitsProvenance, 'The update date remains inside the metadata region').toBe(true)
+    expect(overflow.document, 'A long author does not widen the document').toBeLessThanOrEqual(1)
+    expect(overflow.card, 'A long author stays inside the unified hero').toBeLessThanOrEqual(1)
+    expect(overflow.provenance, 'A long author stays inside the metadata region').toBeLessThanOrEqual(1)
+    expect(overflow.authorWidth, 'The bounded author remains visible').toBeGreaterThan(0)
+    expect(overflow.dateFits, 'The factual update date remains readable').toBe(true)
   })
 })
 

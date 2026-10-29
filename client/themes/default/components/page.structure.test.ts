@@ -8,7 +8,6 @@ import { hydrateContentExtensions } from '../../../helpers/content-extension-run
 import { selectMermaidRenderHosts } from '../../../helpers/content-extension-runtimes/mermaid'
 import { trackPageOutline } from '../../../helpers/page-outline'
 import type { PageOutlineTracker } from '../../../helpers/page-outline'
-import { UTILITY_TOOLTIP_GAP } from '../../../helpers/utility-tooltip-placement'
 import boot from '../../../modules/boot'
 
 import Prism from '../../../libs/prism/setup'
@@ -24,7 +23,6 @@ const component = new Function(
   'defineComponent',
   'h',
   'markRaw',
-  'mergeProps',
   'useGoTo',
   'i18next',
   'AsyncState',
@@ -41,13 +39,11 @@ const component = new Function(
   'trackPageOutline',
   'boot',
   'siteLangs',
-  'UTILITY_TOOLTIP_GAP',
   executableScript
 )(
   Vue.defineComponent,
   Vue.h,
   Vue.markRaw,
-  Vue.mergeProps,
   () => () => {},
   { t: (key: string) => key },
   componentStub,
@@ -63,8 +59,7 @@ const component = new Function(
   selectMermaidRenderHosts,
   trackPageOutline,
   boot,
-  [],
-  UTILITY_TOOLTIP_GAP
+  []
 ) as {
   data: () => Record<string, unknown>
   methods: Record<string, (this: ReaderContentVm, ...args: unknown[]) => unknown>

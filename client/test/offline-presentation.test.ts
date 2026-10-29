@@ -27,6 +27,8 @@ describe('offline presentation branding allowlist', () => {
       user: { authenticated: true, privatePageTitle: 'secret page' },
       offlineDraftSiteId: 'server-installation',
       lang: 'en',
+      tocPosition: 'right',
+      readerLayout: { textSize: 19, lineHeight: 1.8, copyWidth: 101 },
       rtl: false
     })
     rememberOfflinePresentation('dark')
@@ -36,12 +38,19 @@ describe('offline presentation branding allowlist', () => {
     expect(stored).not.toMatch(/secret|authenticated|private|logoEffect/u)
     expect(offlinePresentation().config.logoUrl).toBe(logo)
     expect(offlinePresentation().config.logoEffect).toBeNull()
+    expect(offlinePresentation().config.tocPosition).toBe('right')
+    expect(offlinePresentation().config.readerLayout).toEqual({ textSize: 19, lineHeight: 1.8, copyWidth: 101 })
     expect(JSON.parse(stored)).not.toHaveProperty('offlineDraftSiteId')
     expect(offlinePresentation().config.offlineDraftSiteId).toBeNull()
   })
 
   it('revalidates local presentation data and permits the exact bundled default', () => {
     const values = presentationStorage()
+    expect(offlinePresentation().config.tocPosition).toBe('auto')
+    for (const tocPosition of ['auto', 'left', 'right', 'off']) {
+      values.set(key, JSON.stringify({ tocPosition }))
+      expect(offlinePresentation().config.tocPosition).toBe(tocPosition)
+    }
     for (const logoUrl of ['https://other.test/logo.png', '/uploads/logo.png', `${logo}?token=secret`, 'data:image/png;base64,abc']) {
       values.set(key, JSON.stringify({ logoUrl }))
       expect(offlinePresentation().config.logoUrl).toBe('')

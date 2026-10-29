@@ -5,16 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from '../../../../ser
 import { manualReviewerId } from '../../../helpers/approval-reviewer-search.ts'
 import { brandingDuplicatesSiteLogo } from '../../../helpers/page-branding.ts'
 import { sameReaderPageIdentity } from '../../../helpers/page-action-events.ts'
-import { UTILITY_TOOLTIP_GAP, UTILITY_TOOLTIP_MAX_WIDTH } from '../../../helpers/utility-tooltip-placement.ts'
 import { buildOutlineTree, filterOutlineTree, getInitialExpandedAnchors } from '../../../helpers/page-outline.ts'
 import { revealContentExtensionTarget } from '../../../helpers/content-extension-runtime.ts'
 import { normalizeTableOfContents } from '../../../helpers/table-of-contents.ts'
 import { browserWindow, document as browserDocument, resetBody } from '../../../test/browser-dom.mts'
 import { keyTranslator, renderTemplate as renderWithSlots } from '../../../test/render-template.mts'
 
-// Reader chrome: rail utilities, outline heading, state indicators and the
-// one-edit-control rule. Template checks render page.vue's Pug with stubs;
-// rule checks run the real computed/methods against a plain view model.
+// Template checks render the reader with component stubs; rule checks exercise
+// current reader behavior against a plain view model.
 
 const PAGE = 'client/themes/default/components/page.vue'
 const renderTemplate = (relativePath: string, state: Record<string, unknown>) =>
@@ -24,8 +22,6 @@ const baseState = (overrides: Record<string, unknown> = {}): Record<string, unkn
   $t: keyTranslator,
   $slots: {},
   $vuetify: { locale: { isRtl: false }, display: { smAndDown: false, mdAndUp: true, width: 1440 }, theme: { current: { dark: false } } },
-  mergeProps: Vue.mergeProps,
-  utilityTooltipProps: (key: string) => ({ id: `page-tool-tip-${key}` }),
   printView: false,
   navMode: 'NONE',
   readerFocus: false,
@@ -46,9 +42,7 @@ const baseState = (overrides: Record<string, unknown> = {}): Record<string, unkn
   tocFlattened: [],
   tocTreeVisible: [],
   isTocCompact: false,
-  isTocMobile: false,
   winWidth: 1440,
-  pageToolsHost: '#page-desktop-rail',
   tocDisclosureExpanded: true,
   isPublished: true,
   visibility: 'public',
@@ -58,8 +52,6 @@ const baseState = (overrides: Record<string, unknown> = {}): Record<string, unkn
   authorAttribution: { before: 'by ', after: '' },
   authorName: 'Ada',
   hasAuthor: true,
-  canViewHistory: true,
-  pageHistoryUrl: '/h/en/home',
   isAuthenticated: true,
   pageWatched: false,
   pageWatchBlockedReason: '',
@@ -114,7 +106,7 @@ describe('page reader chrome template', () => {
     expect(wide.querySelector('.page-toc-card')?.textContent).toContain('common:page.onThisPage')
 
     const compact = (
-      await renderTemplate(PAGE, baseState({ isTocCompact: true, winWidth: 900, pageToolsHost: '#page-tablet-tools', tocDisclosureExpanded: false }))
+      await renderTemplate(PAGE, baseState({ isTocCompact: true, winWidth: 900, tocDisclosureExpanded: false }))
     ).document
     const toggle = compact.querySelector('.page-toc-card .page-toc-toggle')
     expect(toggle?.getAttribute('aria-expanded')).toBe('false')
@@ -126,50 +118,14 @@ describe('page reader chrome template', () => {
     }
   })
 
-  it('keeps history in the utilities row and the date and author in their own metadata column', async () => {
+  it('keeps factual update and author attribution in the hero', async () => {
     const { document } = await renderTemplate(PAGE, baseState())
-    const history = document.querySelector('.page-tools-history-link')
-    expect(history?.closest('.page-tools-card__utilities')).not.toBeNull()
-    expect(history?.getAttribute('href')).toBe('/h/en/home')
-    const provenance = document.querySelector('.page-tools-card__provenance')
-    expect(provenance?.querySelector('[data-stub="v-btn"]')).toBeNull()
-    expect(provenance?.querySelector('.page-document-row--date time')?.getAttribute('datetime')).toBe('2026-01-02T03:04:05.000Z')
+    const provenance = document.querySelector('.page-hero .page-document-provenance')
+    expect(provenance?.querySelector('time')?.getAttribute('datetime')).toBe('2026-01-02T03:04:05.000Z')
+    expect(provenance?.querySelector('time')?.getAttribute('title')).toBe('Friday, January 2, 2026 3:04 AM')
     expect(provenance?.querySelector('.page-document-author')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('by Ada')
   })
 
-  it('gives every utility tooltip its own id and the shared, measured placement anchored to the whole card', async () => {
-    const placeUtilityTooltip = vi.fn()
-    const vm = {
-      utilityTooltipTarget: '#page-desktop-rail .page-tools-card',
-      utilityTooltip: { location: 'top left', offset: [6, -40], measuring: true },
-      placeUtilityTooltip
-    }
-    const props = page.methods.utilityTooltipProps!.call(vm, 'share') as Record<string, unknown>
-    expect(props).toMatchObject({
-      id: 'page-tool-tip-share',
-      target: '#page-desktop-rail .page-tools-card',
-      location: 'top left',
-      offset: [6, -40],
-      maxWidth: 320,
-      contentClass: 'page-tool-tip page-tool-tip--measuring'
-    })
-    ;(props['onUpdate:modelValue'] as (open: boolean) => void)(true)
-    expect(placeUtilityTooltip).toHaveBeenCalledWith(true, 'share')
-
-    const { document } = await renderTemplate(
-      PAGE,
-      baseState({
-        isAuthenticated: true,
-        utilityTooltipProps: (key: string) => page.methods.utilityTooltipProps!.call(vm, key)
-      })
-    )
-    const tooltips = Array.from(document.querySelectorAll('.page-tools-card__utilities [data-stub="v-tooltip"]'))
-    expect(tooltips.length).toBeGreaterThan(2)
-    const ids = tooltips.map(tooltip => tooltip.getAttribute('id'))
-    expect(new Set(ids).size).toBe(ids.length)
-    expect(ids.every(id => id?.startsWith('page-tool-tip-'))).toBe(true)
-    expect(tooltips.map(tooltip => tooltip.getAttribute('target'))).toEqual(tooltips.map(() => '#page-desktop-rail .page-tools-card'))
-  })
 
   it('renders an author placeholder in the middle of a translated sentence without moving the name', async () => {
     const { document } = await renderTemplate(PAGE, baseState({ authorAttribution: { before: 'Zuletzt von ', after: ' bearbeitet' } }))
@@ -178,25 +134,6 @@ describe('page reader chrome template', () => {
     expect(author?.querySelector('bdi')?.textContent).toBe('Ada')
   })
 
-  it('keeps blocked utilities focusable and puts the reason in their tooltip', async () => {
-    const { document } = await renderTemplate(
-      PAGE,
-      baseState({
-        pageWatchBlockedReason: 'Watch reason',
-        pageOnlineActionReady: false,
-        pageOnlineActionUnavailableReason: 'Offline reason',
-        pageProtectionBlockedReason: 'Offline reason'
-      })
-    )
-    for (const selector of ['.page-watch-control', '.page-approval-control', '.page-protection-control']) {
-      const control = document.querySelector(selector)
-      expect(control?.getAttribute('aria-disabled')).toBe('true')
-      expect(control?.hasAttribute('disabled')).toBe(false)
-      expect(control?.hasAttribute('title')).toBe(false)
-    }
-    const reasons = [...document.querySelectorAll('.page-tool-blocked-reason')].map(node => node.textContent)
-    expect(reasons).toEqual(['Watch reason', 'Offline reason', 'Offline reason'])
-  })
 
 
   it('exposes both offline toggle states and omits pressed state for non-toggle actions', async () => {
@@ -273,7 +210,7 @@ describe('page reader chrome template', () => {
       })
     )
     expect(document.querySelector('#page-view-talk-tab')?.textContent?.trim()).toBe('common:comments.title')
-    expect(document.querySelector('.page-focus-control')?.textContent).toContain('mdi-book-open-page-variant-outline')
+    expect(document.querySelector('.page-focus-control')?.getAttribute('aria-label')).toBe('common:page.focusReading')
   })
 
   it('skips a page branding mark that repeats the site logo', async () => {
@@ -318,7 +255,6 @@ const page = new Function(
   'defineComponent',
   'h',
   'markRaw',
-  'mergeProps',
   'useGoTo',
   'i18next',
   'AsyncState',
@@ -332,8 +268,6 @@ const page = new Function(
   'brandingDuplicatesSiteLogo',
   'Prism',
   'ClipboardJS',
-  'UTILITY_TOOLTIP_GAP',
-  'UTILITY_TOOLTIP_MAX_WIDTH',
   'buildOutlineTree',
   'filterOutlineTree',
   'getInitialExpandedAnchors',
@@ -346,7 +280,6 @@ const page = new Function(
   (options: unknown) => options,
   () => ({}),
   <Value>(value: Value) => value,
-  Vue.mergeProps,
   () => () => {},
   { t: (key: string) => key },
   stubComponent,
@@ -360,8 +293,6 @@ const page = new Function(
   brandingDuplicatesSiteLogo,
   { plugins: { toolbar: { registerButton: () => {} } } },
   class ClipboardJS {},
-  UTILITY_TOOLTIP_GAP,
-  UTILITY_TOOLTIP_MAX_WIDTH,
   buildOutlineTree,
   filterOutlineTree,
   getInitialExpandedAnchors,
@@ -465,16 +396,6 @@ describe('page reader chrome rules', () => {
     ])
   })
 
-  it('anchors utility tooltips to the card in the host it is teleported to', () => {
-    const target = (vm: Record<string, unknown>) => {
-      vm.pageToolsHost = call('pageToolsHost', vm)
-      vm.$t = (_key: string, options: { pageToolsHost: string }) => `${options.pageToolsHost} .page-tools-card`
-      return call('utilityTooltipTarget', vm)
-    }
-    expect(target({ isTocMobile: false, winWidth: 1440 })).toBe('#page-desktop-rail .page-tools-card')
-    expect(target({ isTocMobile: false, winWidth: 1100 })).toBe('#page-tablet-tools .page-tools-card')
-    expect(target({ isTocMobile: true, winWidth: 390 })).toBe('#page-mobile-tools .page-tools-card')
-  })
 
   it('names the browser time zone on Updated only when the account could not load and no zone is saved', () => {
     const vmFor = (known: boolean) => {
@@ -527,97 +448,6 @@ describe('page reader chrome rules', () => {
   })
 })
 
-describe('desktop reader rail measurement', () => {
-  const originalWidth = Object.getOwnPropertyDescriptor(browserWindow, 'innerWidth')!
-  const originalHeight = Object.getOwnPropertyDescriptor(browserWindow, 'innerHeight')!
-  const originalScroll = Object.getOwnPropertyDescriptor(browserWindow, 'scrollY')!
-  const frames = new Map<number, FrameRequestCallback>()
-  let nextFrame = 0
-
-  beforeEach(() => {
-    resetBody()
-    frames.clear()
-    nextFrame = 0
-    Object.defineProperty(browserWindow, 'innerWidth', { configurable: true, value: 1440 })
-    Object.defineProperty(browserWindow, 'innerHeight', { configurable: true, value: 900 })
-    Object.defineProperty(browserWindow, 'scrollY', { configurable: true, value: 0 })
-    vi.spyOn(browserWindow, 'requestAnimationFrame').mockImplementation(callback => {
-      frames.set(++nextFrame, callback)
-      return nextFrame
-    })
-    vi.spyOn(browserWindow, 'cancelAnimationFrame').mockImplementation(id => { frames.delete(id) })
-  })
-  afterEach(() => {
-    vi.restoreAllMocks()
-    Object.defineProperty(browserWindow, 'innerWidth', originalWidth)
-    Object.defineProperty(browserWindow, 'innerHeight', originalHeight)
-    Object.defineProperty(browserWindow, 'scrollY', originalScroll)
-    resetBody()
-  })
-
-  const fixture = () => {
-    browserDocument.body.innerHTML = '<header class="page-hero"></header><aside class="page-col-sd" style="top:80px;--wiki-space-2:8px"><div class="page-tools-card"></div><nav class="page-toc-card"></nav></aside><footer class="nav-footer"></footer>'
-    const rail = browserDocument.querySelector<HTMLElement>('aside')!
-    const hero = browserDocument.querySelector<HTMLElement>('header')!
-    const tools = browserDocument.querySelector<HTMLElement>('.page-tools-card')!
-    const footer = browserDocument.querySelector<HTMLElement>('footer')!
-    const operations: Array<{ target: string; alignment: string; maxHeight: string }> = []
-    const rect = (top: number, height: number): DOMRect => ({
-      top, bottom: top + height, left: 0, right: 300, width: 300, height, x: 0, y: top, toJSON: () => ({})
-    })
-    const top = () => 180 + (parseFloat(rail.style.getPropertyValue('--page-desktop-rail-align-offset')) || 0)
-    // Observe the DOM value at every geometry read, not setProperty calls on
-    // jsdom's proxied CSSStyleProperties object. A read after alignment changes
-    // would capture the new value and fail the read-before-write contract.
-    const recordRead = (target: string) => {
-      operations.push({
-        target,
-        alignment: rail.style.getPropertyValue('--page-desktop-rail-align-offset'),
-        maxHeight: rail.style.getPropertyValue('--page-desktop-rail-max-height')
-      })
-    }
-    rail.getBoundingClientRect = () => { recordRead('rail'); return rect(top(), 700) }
-    hero.getBoundingClientRect = () => { recordRead('hero'); return rect(0, 300) }
-    tools.getBoundingClientRect = () => { recordRead('tools'); return rect(top(), 100) }
-    footer.getBoundingClientRect = () => { recordRead('footer'); return rect(2000, 64) }
-    const vm: Record<string, unknown> = {
-      tocPosition: 'left', cachedRailEl: rail, navFooterEl: footer,
-      railRafId: 0, railMeasurementPending: false, railSettleRafId: 0, railSettleHandler: null,
-      railSettleFrameCount: 0, railSettleStableFrames: 0, lastSampledRailTop: -1,
-      lastRailMaxHeight: -1, lastRailAlignmentOffset: null, railAlignmentDirty: true,
-      railStickyTop: 80, railSpacingGap: 8,
-      getDesktopRailElement: () => rail, getPageHeaderElement: () => hero
-    }
-    for (const name of [
-      'markDesktopRailAlignmentDirty', 'resetDesktopRailMeasurementState',
-      'cancelDesktopRailSettling', 'startDesktopRailSettling', 'stepDesktopRailSettling',
-      'updateDesktopRailMeasurements', 'onDesktopRailScroll'
-    ]) vm[name] = (...args: unknown[]) => page.methods[name]!.call(vm, ...args)
-    const flush = () => {
-      const callbacks = [...frames.values()]
-      frames.clear()
-      for (const callback of callbacks) callback(0)
-    }
-    return { vm, rail, operations, flush }
-  }
-
-
-  it('clears desktop constraints and cancels settling when resizing to mobile or turning the outline off', () => {
-    for (const reason of ['mobile', 'off']) {
-      const { vm, rail, flush } = fixture()
-      page.methods.startDesktopRailSettling!.call(vm)
-      flush()
-      flush()
-      if (reason === 'mobile') Object.defineProperty(browserWindow, 'innerWidth', { configurable: true, value: 900 })
-      else vm.tocPosition = 'off'
-      page.methods.startDesktopRailSettling!.call(vm)
-      expect(vm.railSettleRafId).toBe(0)
-      expect(rail.style.getPropertyValue('--page-desktop-rail-max-height')).toBe('')
-      Object.defineProperty(browserWindow, 'innerWidth', { configurable: true, value: 1440 })
-      frames.clear()
-    }
-  })
-})
 
 describe('page route motion policy', () => {
   beforeEach(() => resetBody())
@@ -801,10 +631,8 @@ describe('focus reading section navigation', () => {
       activeAnchor: '#section-23',
       tocQuery: 'Section 23',
       tocDisclosureExpanded: false,
-      isTocMobile: true,
       isTocCompact: true,
-      winWidth: 320,
-      pageToolsHost: '#page-mobile-tools'
+      winWidth: 320
     })
     const open = await renderTemplate(PAGE, vm)
     const outline = open.document.querySelector<HTMLElement>('#page-toc-content')!
@@ -819,7 +647,7 @@ describe('focus reading section navigation', () => {
     page.methods.closeReaderSections!.call(vm)
     const closed = await renderTemplate(PAGE, vm)
     expect(closed.document.querySelectorAll('#page-toc-content')).toHaveLength(1)
-    expect(closed.document.querySelector('#page-toc-content')?.closest('[data-teleport="#page-mobile-tools"]')).not.toBeNull()
+    expect(closed.document.querySelector('#page-toc-content')?.closest('[data-teleport="#page-inline-toc"]')).not.toBeNull()
     expect(closed.document.querySelector('.page-toc-toggle')?.getAttribute('aria-expanded')).toBe('false')
     expect(vm.tocQuery).toBe('Section 23')
   })

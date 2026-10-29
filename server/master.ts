@@ -16,7 +16,7 @@ import { normalizeAvailableEditors } from '../shared/page-editors.ts'
 import type { ProductMetadata } from '../shared/product.ts'
 import { publicSiteBanner } from '../shared/site-banner.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
-import { normalizeCodeTheme, normalizePageTransitions, normalizeReaderLayout, normalizeShowPageProgress } from '../shared/theme-policy.ts'
+import { normalizeCodeTheme, normalizePageTransitions, normalizeReaderLayout, normalizeShowPageProgress, normalizeTocPosition } from '../shared/theme-policy.ts'
 import { BrowserWorkerClient } from './agents/browser/client.ts'
 import { parseAgentOperationalLimits } from './agents/config.ts'
 import type { AgentOperationalLimits } from './agents/config.ts'
@@ -637,7 +637,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       initialAppearance,
       themeColor: themeColors.light.primary,
       backgroundColor: themeColors.light.background,
-      tocPosition: wiki.config.theming.tocPosition || 'left',
+      tocPosition: normalizeTocPosition(wiki.config.theming.tocPosition),
       readerLayout: normalizeReaderLayout(wiki.config.theming.reading),
       codeTheme: normalizeCodeTheme(wiki.config.theming.codeTheme),
       pageTransitions: normalizePageTransitions(wiki.config.theming.pageTransitions),

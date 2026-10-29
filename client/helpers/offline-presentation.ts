@@ -1,6 +1,6 @@
 import type { SiteConfig } from '../env.d.ts'
 import { normalizeThemeColors } from '../../shared/theme-colors.ts'
-import { normalizeCodeTheme, normalizeReaderLayout } from '../../shared/theme-policy.ts'
+import { normalizeCodeTheme, normalizeReaderLayout, normalizeTocPosition } from '../../shared/theme-policy.ts'
 import { description, product, releaseDate } from '../../package.json'
 import { offlineLogoPath, rememberOfflineLogo } from './offline-branding.ts'
 import { isUserDateFormat, isUserTimeFormat, isUserTimezone, type UserPresentationDefaults } from '../../shared/user-presentation.ts'
@@ -27,6 +27,7 @@ export function rememberOfflinePresentation(appearance = ''): void {
         title: publicPresentationTitle(siteConfig.title),
         themeColors: siteConfig.themeColors,
         readerLayout: siteConfig.readerLayout,
+        tocPosition: normalizeTocPosition(siteConfig.tocPosition),
         codeTheme: normalizeCodeTheme(siteConfig.codeTheme),
         lang: siteConfig.lang,
         rtl: siteConfig.rtl,
@@ -112,7 +113,7 @@ export function offlinePresentation(): { config: SiteConfig; appearance: string 
       themeColors: normalizeThemeColors(saved.themeColors),
       readerLayout: normalizeReaderLayout(saved.readerLayout),
       codeTheme: normalizeCodeTheme(saved.codeTheme),
-      tocPosition: 'left',
+      tocPosition: normalizeTocPosition(saved.tocPosition),
       lang: typeof saved.lang === 'string' && /^[a-zA-Z0-9-]{2,35}$/.test(saved.lang) ? saved.lang : 'en',
       rtl: saved.rtl === true,
       company: '',

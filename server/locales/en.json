@@ -273,7 +273,6 @@
       "untitledPage": "Untitled Page",
       "unknown": "Unknown",
       "author": "⁣AUTHOR⁣",
-      "pageToolsCard": "{{pageToolsHost}} .page-tools-card",
       "offlinePrivatePolicyLocked": "Offline private policy is locked.",
       "privateOfflineReadingUnavailable": "Private offline reading is unavailable on this device.",
       "latestOfflineSyncAttempt": "The latest offline sync attempt could not be completed.",
@@ -4377,8 +4376,8 @@
       "statisticsViewNotConnected": "This statistics view is not connected to a data source yet."
     },
     "theme": {
-      "narrowPreviewLeft": "Narrow preview: the left rail is shown above the article. Widen the preview to see it beside the article.",
-      "narrowPreviewRight": "Narrow preview: the right rail is shown below the article. Widen the preview to see it beside the article.",
+      "narrowPreview": "Narrow screens use one collapsed outline above the article. Widen the preview to see the configured rail.",
+      "automaticContents": "Automatic · right rail on wide screens",
       "error": "Error",
       "themeDraftImpact_one": "Theme draft · {{count}} changed area",
       "themeDraftImpact_other": "Theme draft · {{count}} changed areas",

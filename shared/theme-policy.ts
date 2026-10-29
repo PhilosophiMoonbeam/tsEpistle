@@ -13,6 +13,13 @@ export const normalizeCodeTheme = (input: unknown): CodeTheme => {
 export const normalizePageTransitions = (input: unknown): boolean => (typeof input === 'boolean' ? input : true)
 export const normalizeShowPageProgress = (input: unknown): boolean => (typeof input === 'boolean' ? input : false)
 
+export const TocPositionSchema = z.enum(['auto', 'left', 'right', 'off'])
+export type TocPosition = z.infer<typeof TocPositionSchema>
+export const normalizeTocPosition = (input: unknown): TocPosition => {
+  const result = TocPositionSchema.safeParse(input)
+  return result.success ? result.data : 'auto'
+}
+
 export const ReaderLayoutSchema = z
   .object({
     textSize: z.number().int().min(14).max(24),
@@ -33,7 +40,7 @@ export const ThemePolicySchema = z
     darkMode: z.boolean(),
     palettes: ThemePalettesSchema,
     activePaletteId: z.string(),
-    tocPosition: z.enum(['left', 'right', 'off']),
+    tocPosition: TocPositionSchema.default('auto'),
     reading: ReaderLayoutSchema,
     codeTheme: CodeThemeSchema,
     pageTransitions: z.boolean().default(true),
@@ -57,7 +64,7 @@ export const themePolicyFromConfiguration = (configuration: Record<string, unkno
     darkMode: raw.darkMode === true,
     palettes,
     activePaletteId: resolveThemePaletteId(raw.activePaletteId, palettes),
-    tocPosition: (raw.tocPosition || 'left') as ThemePolicy['tocPosition'],
+    tocPosition: normalizeTocPosition(raw.tocPosition),
     reading: normalizeReaderLayout(raw.reading),
     codeTheme: normalizeCodeTheme(raw.codeTheme),
     pageTransitions: normalizePageTransitions(raw.pageTransitions),

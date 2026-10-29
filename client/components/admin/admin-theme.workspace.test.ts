@@ -8,9 +8,19 @@ describe('Theme editing policy and preview calculations', () => {
     expect(policy.injectCSS).toBe(source)
     expect(ThemePolicySchema.safeParse(policy).success).toBe(true)
   })
-  test('preserves an explicitly configured wide reading measure', () => {
+  test('preserves explicit contents positions and reading preferences while leaving unspecified layout automatic', () => {
     const reading = { textSize: 19, lineHeight: 1.8, copyWidth: 101 }
-    expect(themePolicyFromConfiguration({ theming: { reading } }).reading).toEqual(reading)
+    const unspecified = { theming: { reading } }
+    expect(themePolicyFromConfiguration(unspecified).tocPosition).toBe('auto')
+    expect(unspecified).toEqual({ theming: { reading } })
+    for (const tocPosition of ['auto', 'left', 'right', 'off'] as const) {
+      const configuration = { theming: { reading, tocPosition } }
+      const policy = themePolicyFromConfiguration(configuration)
+      expect(policy.reading).toEqual(reading)
+      expect(policy.tocPosition).toBe(tocPosition)
+      expect(themePolicyFromConfiguration({ theming: ThemePolicySchema.parse(policy) })).toEqual(policy)
+      expect(configuration).toEqual({ theming: { reading, tocPosition } })
+    }
   })
   test('requires an existing published palette and complete valid reading settings', () => {
     const policy = themePolicyFromConfiguration({})

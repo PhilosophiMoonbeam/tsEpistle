@@ -106,15 +106,13 @@
       :class='{ "page-main--with-rail": tocPosition !== `off` && !printView && (!readerFocus || talkActive || linksActive), "page-main--with-edit-fab": showEditFab }'
     )
       v-container.page-hero(
-        ref='pageHero'
         fluid
-        :class='{ "page-hero--with-toc": tocPosition !== `off`, "page-hero--accent-present": hasPageBrandingAccent }'
+        :class='{ "page-hero--accent-present": hasPageBrandingAccent }'
         :style='pageBrandingStyle'
       )
         v-row.page-header-section(:gap='0')
           v-col.page-col-content.is-page-header(
             cols='12'
-            :class='[$vuetify.locale.isRtl ? `pr-4` : `pl-4`, `page-header--toc-${tocPosition}`, { "has-edit-shortcuts": editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn) }]'
             )
             .page-header-headings(
               :class='{ "page-header-headings--branded": pageBrandingVisible }'
@@ -135,6 +133,47 @@
               )
             .page-header-summary(v-if='description')
               p.page-description {{description}}
+            .page-document-provenance(v-if='updatedAt || hasAuthor')
+              time(v-if='updatedAt', :datetime='updatedAt', :title='accessibleUpdatedAt') {{ $t('common:page.updatedAt', { date: formattedUpdatedAt, interpolation: { escapeValue: false } }) }}
+              span(v-if='updatedAt && hasAuthor', aria-hidden='true') ·
+              span.page-document-author(v-if='hasAuthor')
+                | {{ authorAttribution.before }}
+                bdi.page-provenance-author(:title='authorName') {{ authorName }}
+                | {{ authorAttribution.after }}
+            .page-hero-actions(v-if='!printView')
+              v-btn.page-focus-control(
+                v-if='!readerFocus && !talkActive && !linksActive'
+                variant='outlined'
+                size='small'
+                prepend-icon='mdi-book-open-page-variant-outline'
+                :aria-label='$t(`common:page.focusReading`)'
+                :aria-pressed='readerFocus'
+                @click='toggleReaderFocus'
+              ) {{$t('common:page.focusReading')}}
+              v-tooltip(:disabled='readerFocus', location='bottom', max-width='320')
+                template(v-slot:activator='{ props }')
+                  v-btn.page-offline-control(
+                    v-bind='props'
+                    variant='outlined'
+                    size='small'
+                    :prepend-icon='offlineControl.icon'
+                    :class='[`page-offline-control--${offlineControl.tone}`, { "page-offline-control--blocked": offlineControl.blocked }]'
+                    :loading='offlineActionLoading'
+                    :aria-disabled='offlineControl.blocked ? `true` : undefined'
+                    :aria-label='offlineControl.label'
+                    :aria-pressed='offlineControl.pressed'
+                    :aria-describedby='[props["aria-describedby"], offlineStatusId].filter(Boolean).join(" ")'
+                    :data-offline-state='offlineControl.state'
+                    @click='toggleOfflinePage'
+                  ) {{offlineControl.label}}
+                .page-offline-tooltip
+                  strong.page-offline-tooltip__title {{ offlineControl.title }}
+                  span.page-offline-tooltip__detail(v-if='offlineControl.detail') {{ offlineControl.detail }}
+              span.page-offline-status(:id='offlineStatusId', role='status') {{ offlineStatusLabel }}
+              v-menu(location='bottom end', min-width='280', max-width='360')
+                template(v-slot:activator='{ props }')
+                  v-btn(v-bind='props', variant='outlined', size='small', prepend-icon='mdi-share-variant') {{$t('common:page.share')}}
+                social-sharing(:url='pageUrl', :title='title', :description='description')
             nav.page-header-path(
               v-if='!printView && path !== `home`'
               role='navigation'
@@ -187,43 +226,20 @@
               )
                 v-icon.mr-2(size="small") {{ editShortcutsObj.editMenuExternalIcon }}
                 span.text-none {{$t(`common:page.editExternal`, { name: editShortcutsObj.editMenuExternalName })}}
-      #page-desktop-rail-anchor
       v-container.page-body(fluid)
         v-row
-          #page-mobile-tools.page-mobile-tools
-          #page-tablet-tools.page-tablet-tools
-
-          Teleport(defer, to='#page-desktop-rail-anchor', :disabled='isTocCompact || tocPosition === `off` || printView')
-            v-col.page-col-sd(
-              ref='desktopRailCol'
-              cols='12'
-              :class='[tocPosition === `right` ? `page-col-sd--toc-right` : `page-col-sd--toc-left`, { "page-col-sd--with-toc": tocPosition !== `off`, "page-col-sd--toc-off": tocPosition === `off` }]'
-              )
-              #page-desktop-rail.page-desktop-rail(ref='desktopRail')
-
-
+          v-col.page-col-sd(
+            v-if='tocPosition !== `off` && !printView'
+            cols='12'
+            :class='tocPosition === `right` ? `page-col-sd--toc-right` : `page-col-sd--toc-left`'
+          )
+            #page-desktop-rail.page-desktop-rail
 
           v-col.page-col-content(
             cols='12'
             :class='[tocPosition === `right` ? `page-col-content--toc-right` : `page-col-content--toc-left`, { "page-col-content--with-toc": tocPosition !== `off`, "page-col-content--toc-off": tocPosition === `off` }]'
             )
-            .page-reading-toolbar(
-              v-if='isTocCompact && (!readerFocus || talkActive || linksActive) && !printView'
-              role='region'
-              :aria-label='$t(`common:page.readingControls`)'
-            )
-              bdi.page-reading-toolbar__context(:title='readerToolbarTitle') {{readerToolbarTitle}}
-              v-btn.page-reading-top(
-                :class='{ "page-reading-top--available": upBtnShown }'
-                variant='text'
-                size='small'
-                prepend-icon='mdi-arrow-up'
-                :disabled='!upBtnShown'
-                :aria-hidden='upBtnShown ? undefined : true'
-                :tabindex='upBtnShown ? 0 : -1'
-                :aria-label='$t(`common:actions.returnToTop`)'
-                @click='returnToTop'
-              ) {{$t('common:page.top')}}
+            #page-inline-toc.page-inline-toc
             v-menu(
               v-if='showEditFab'
               location='top end'
@@ -286,205 +302,34 @@
                   .comments-subtitle {{$t('common:page.discussionSubtitle')}}
               .comments-main
                 slot(name='comments')
-          #page-mobile-metadata.page-mobile-metadata
-          //- No :key here: remounting on breakpoint changes makes deferred
-          //- teleports land in reverse order in the shared rail container
-          //- (Tags jumped above the utilities). `:to` moves content in order.
+          //- One outline moves without remounting its filter, branches or links.
           Teleport(
             defer
-            :to='pageToolsHost'
-            :disabled='printView'
+            :to='readerSectionsOpen ? `#page-reading-sections-host` : isTocCompact ? `#page-inline-toc` : `#page-desktop-rail`'
+            :disabled='printView || tocPosition === `off`'
           )
-            v-card.page-tools-card.mb-4(flat, role='group', :aria-label='$t(`common:page.pageTools`)')
-              //- Utility tooltips are measured when they open and placed on the
-              //- first side of the card where they cover no content (see
-              //- placeUtilityTooltip); their width is capped so long reasons wrap.
-              .page-tools-card__utilities(v-if='!printView')
-                v-menu(:location='isTocMobile ? "top end" : `bottom`', min-width='300')
-                  template(v-slot:activator='{ props: menuProps }')
-                    v-tooltip(v-bind='utilityTooltipProps(`share`)')
-                      template(v-slot:activator='{ props: tooltipProps }')
-                        v-btn(
-                          icon
-                          rounded='lg'
-                          size='small'
-                          variant='text'
-                          v-bind='mergeProps(menuProps, tooltipProps)'
-                          :aria-label='$t(`common:page.share`)'
-                        )
-                          v-icon mdi-share-variant
-                      span {{$t('common:page.share')}}
-                  social-sharing(
-                    :url='pageUrl'
-                    :title='title'
-                    :description='description'
-                  )
-                //- Blocked controls stay focusable (aria-disabled) so the tooltip
-                //- can explain why; each handler refuses the action itself.
-                //- One bell: it starts watching, and once watching it opens the
-                //- watch settings (delivery switches and Stop watching).
-                v-tooltip(v-bind='utilityTooltipProps(`watch`)', v-if='isAuthenticated && !pageWatched')
-                  template(v-slot:activator='{ props }')
-                    v-btn.page-watch-control(
-                      icon
-                      rounded='lg'
-                      size='small'
-                      variant='text'
-                      v-bind='props'
-                      :loading='pageWatchLoading'
-                      :disabled='pageWatchLoading'
-                      :aria-disabled='pageWatchBlockedReason ? `true` : undefined'
-                      aria-pressed='false'
-                      @click='togglePageWatch'
-                      :aria-label='$t(`common:page.watchPage`)'
-                    )
-                      v-icon mdi-bell-outline
-                  span {{$t('common:page.watchPage')}}
-                  span.page-tool-blocked-reason(v-if='pageWatchBlockedReason') {{ pageWatchBlockedReason }}
-                v-tooltip(v-bind='utilityTooltipProps(`watching`)', v-if='isAuthenticated && pageWatched')
-                  template(v-slot:activator='{ props }')
-                    v-btn.page-watch-control.page-watch-control--watching(
-                      icon
-                      rounded='lg'
-                      size='small'
-                      variant='text'
-                      v-bind='props'
-                      :loading='pageWatchLoading'
-                      :aria-label='$t(`common:page.watchingPage`)'
-                      @click='openPageWatchSettings'
-                    )
-                      v-icon mdi-bell-ring
-                  span {{$t('common:page.watchingPage')}}
-
-                v-tooltip(v-bind='utilityTooltipProps(`approval`)', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
-                  template(v-slot:activator='{ props }')
-                    v-btn.page-approval-control(
-                      icon
-                      rounded='lg'
-                      size='small'
-                      variant='text'
-                      v-bind='props'
-                      :aria-disabled='pageOnlineActionReady ? undefined : `true`'
-                      @click='openApprovalWorkflow'
-                      :aria-label='$t(`common:page.approvalWorkflow`)'
-                      :aria-pressed='Boolean(pageApproval)'
-                    )
-                      v-icon {{ pageApproval ? 'mdi-check-decagram' : 'mdi-check-decagram-outline' }}
-                  span {{$t('common:page.approvalWorkflow')}}
-                  span.page-tool-blocked-reason(v-if='!pageOnlineActionReady') {{ pageOnlineActionUnavailableReason }}
-                v-tooltip(v-bind='utilityTooltipProps(`protection`)', v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
-                  template(v-slot:activator='{ props }')
-                    v-btn.page-protection-control(
-                      icon
-                      rounded='lg'
-                      size='small'
-                      variant='text'
-                      v-bind='props'
-                      :aria-disabled='pageProtectionBlockedReason ? `true` : undefined'
-                      @click='openPageProtection'
-                      :aria-label='$t(`common:page.pagePasswordProtection`)'
-                      :aria-pressed='pageProtection.protected'
-                    )
-                      v-icon mdi-form-textbox-password
-                  span {{$t('common:page.pagePasswordProtection')}}
-                  span.page-tool-blocked-reason(v-if='pageProtectionBlockedReason') {{ pageProtectionBlockedReason }}
-                v-tooltip(v-bind='utilityTooltipProps(`print`)')
-                  template(v-slot:activator='{ props }')
-                    v-btn(
-                      icon
-                      rounded='lg'
-                      size='small'
-                      variant='text'
-                      v-bind='props'
-                      @click='print'
-                      :aria-label='$t(`common:page.printFormat`)'
-                    )
-                      v-icon mdi-printer
-                  span {{$t('common:page.printFormat')}}
-                v-tooltip(v-bind='utilityTooltipProps(`offline`)', :open-on-click='offlineControl.blocked')
-                  template(v-slot:activator='{ props }')
-                    v-btn.page-offline-control(
-                      v-bind='props'
-                      icon
-                      rounded='lg'
-                      size='small'
-                      variant='text'
-                      :class='[`page-offline-control--${offlineControl.tone}`, { "page-offline-control--blocked": offlineControl.blocked }]'
-                      :loading='offlineActionLoading'
-                      :aria-disabled='offlineControl.blocked ? `true` : undefined'
-                      :aria-label='offlineControl.label'
-                      :aria-pressed='offlineControl.pressed'
-                      :aria-describedby='[props["aria-describedby"], offlineStatusId].filter(Boolean).join(" ")'
-                      :data-offline-state='offlineControl.state'
-                      @click='toggleOfflinePage'
-                    )
-                      v-icon(aria-hidden='true') {{ offlineControl.icon }}
-                    span.page-offline-status(v-if='!printView', :id='offlineStatusId') {{ offlineStatusLabel }}
-                  .page-offline-tooltip
-                    strong.page-offline-tooltip__title {{ offlineControl.title }}
-                    span.page-offline-tooltip__detail(v-if='offlineControl.detail') {{ offlineControl.detail }}
-                v-tooltip(v-bind='utilityTooltipProps(`focus`)')
-                  template(v-slot:activator='{ props }')
-                    v-btn.page-focus-control(
-                      v-bind='props'
-                      icon
-                      rounded='lg'
-                      size='small'
-                      variant='text'
-                      :aria-label='$t(`common:page.focusReading`)'
-                      :aria-pressed='readerFocus'
-                      v-if='!readerFocus && !talkActive && !linksActive'
-                      @click='toggleReaderFocus'
-                    )
-                      v-icon(aria-hidden='true') mdi-book-open-page-variant-outline
-                  span {{$t('common:page.focusReading')}}
-                v-tooltip(v-bind='utilityTooltipProps(`history`)', v-if='canViewHistory')
-                  template(v-slot:activator='{ props }')
-                    v-btn.page-tools-history-link(
-                      icon
-                      rounded='lg'
-                      size='small'
-                      variant='text'
-                      v-bind='props'
-                      :href='pageHistoryUrl'
-                      @click='historyLinkClicked($event)'
-                      :aria-label='$t(`common:page.viewHistory`)'
-                    )
-                      v-icon(aria-hidden='true') mdi-history
-                  span {{$t('common:page.viewHistory')}}
-              v-divider.page-tools-card__divider(v-if='updatedAt || hasAuthor')
-              //- Centered metadata column between the utilities and the outline.
-              .page-tools-card__provenance(v-if='updatedAt || hasAuthor')
-                .page-document-provenance
-                  .page-document-row.page-document-row--date(v-if='updatedAt')
-                    time(:datetime='updatedAt', :title='accessibleUpdatedAt') {{ $t('common:page.updatedAt', { date: formattedUpdatedAt, interpolation: { escapeValue: false } }) }}
-                  .page-document-row.page-document-row--author(v-if='hasAuthor')
-                    span.page-document-author
-                      | {{ authorAttribution.before }}
-                      bdi.page-provenance-author(:title='authorName') {{ authorName }}
-                      | {{ authorAttribution.after }}
-            //- Move the same outline into the picker: filter and branch state,
-            //- focusable links, and disclosure IDs stay attached to one tree.
-            Teleport(
-              defer
-              to='#page-reading-sections-host'
-              :disabled='!readerSectionsOpen || printView'
-            )
-              v-card.page-toc-card.mb-4(v-if='tocPosition !== `off` && !talkActive', tag='nav', :aria-label='$t(`common:page.onThisPage`)')
+              v-card.page-toc-card(v-if='tocPosition !== `off` && !talkActive && !linksActive', tag='nav', :aria-label='$t(`common:page.onThisPage`)')
                 //- In the picker the outline is always disclosed.
-                v-btn.page-toc-toggle.text-none(
-                  v-if='isTocCompact && !readerSectionsOpen'
-                  variant='text'
-                  block
-                  :aria-expanded='tocDisclosureExpanded'
-                  aria-controls='page-toc-content'
-                  @click='toggleToc'
-                )
-                  span.page-toc-heading-label.text-label-small {{$t('common:page.onThisPage')}}
-                  span.page-toc-toggle-meta
-                    span.page-toc-count(aria-hidden='true') {{ tocFlattened.length }}
-                    span.d-sr-only {{ $t('common:page.sectionsCount', { count: tocFlattened.length }) }}
-                    v-icon(size='small', aria-hidden='true') {{ tocDisclosureExpanded ? `mdi-chevron-up` : `mdi-chevron-down` }}
+                .page-toc-summary(v-if='isTocCompact && !readerSectionsOpen')
+                  v-btn.page-toc-toggle.text-none(
+                    variant='text'
+                    :aria-expanded='tocDisclosureExpanded'
+                    aria-controls='page-toc-content'
+                    @click='toggleToc'
+                  )
+                    span.page-toc-heading-label.text-label-small {{$t('common:page.onThisPage')}}
+                    span.page-toc-toggle-meta
+                      span.page-toc-count(aria-hidden='true') {{ tocFlattened.length }}
+                      span.d-sr-only {{ $t('common:page.sectionsCount', { count: tocFlattened.length }) }}
+                      v-icon(size='small', aria-hidden='true') {{ tocDisclosureExpanded ? `mdi-chevron-up` : `mdi-chevron-down` }}
+                  v-btn.page-reading-top(
+                    v-if='upBtnShown'
+                    variant='text'
+                    size='small'
+                    :aria-label='$t(`common:actions.returnToTop`)'
+                    @click='returnToTop'
+                  )
+                    v-icon(aria-hidden='true') mdi-arrow-up
                 .page-toc-heading(v-else-if='!readerSectionsOpen')
                   span.page-toc-heading-label.text-label-small {{$t('common:page.onThisPage')}}
                   span.page-toc-count(aria-hidden='true') {{ tocFlattened.length }}
@@ -520,13 +365,7 @@
                     v-icon(aria-hidden='true', size='small') mdi-format-list-bulleted
                     span.text-body-small {{$t('common:page.noSections')}}
 
-          //- Keep this keyless too so both teleports move as a pair and keep
-          //- their source order (shortcuts/provenance/toc before tags/comments).
-          Teleport(
-            defer
-            :to='isTocMobile ? `#page-mobile-metadata` : winWidth < 1280 ? `#page-tablet-tools` : `#page-desktop-rail`'
-            :disabled='printView'
-          )
+          .page-metadata(v-if='!printView')
             v-card.page-tags-card.mb-5(v-if='tags.length > 0')
               .pa-5
                 .text-label-small.pb-2.text-secondary {{$t('common:page.tags')}}
@@ -856,7 +695,7 @@
           ) {{ $t(`common:page.unlock`) }}
     v-fab-transition
       v-btn.page-return-top(
-        v-if='upBtnShown && !isTocCompact && (!readerFocus || talkActive || linksActive)'
+        v-if='upBtnShown && (!isTocCompact || tocPosition === `off` || talkActive || linksActive) && (!readerFocus || talkActive || linksActive)'
         icon
         position='fixed'
         color='primary'
@@ -870,7 +709,7 @@
 import ClipboardJS from 'clipboard'
 import i18next from 'i18next'
 import type { Environment as PrismEnvironment } from 'prismjs'
-import { defineComponent, h, inject, markRaw, mergeProps, type PropType, shallowRef, type VNode } from 'vue'
+import { defineComponent, h, inject, markRaw, type PropType, shallowRef, type VNode } from 'vue'
 import { useGoTo } from 'vuetify'
 import AsyncState from '@/components/common/async-state.vue'
 import PageBrandingMark from '@/components/common/page-branding-mark.vue'
@@ -955,12 +794,6 @@ import {
   pageBrandingIdentity,
   resolvePageBrandingStyle
 } from '../../../helpers/page-branding'
-import {
-  UTILITY_TOOLTIP_GAP,
-  UTILITY_TOOLTIP_MAX_WIDTH,
-  chooseUtilityTooltipPlacement,
-  isContentAtPoint
-} from '../../../helpers/utility-tooltip-placement'
 import { pwaState } from '../../../helpers/pwa.ts'
 import { canSearchReviewerDirectory, manualReviewerId, searchApprovalReviewers, type ApprovalReviewerOption } from '../../../helpers/approval-reviewer-search.ts'
 import { getErrorMessage, pushGraphError, showNotification } from '../../../helpers/root-ui-store'
@@ -1689,7 +1522,7 @@ export default defineComponent({
       discussionMounted: false,
       annotationJumpUnsubscribe: null as (() => void) | null,
       navShown: initialWidth >= 1280,
-      tocExpanded: initialWidth >= 1280,
+      tocExpanded: false,
       tocQuery: '',
       tocUserScrollAt: 0,
       tocScrollBound: false,
@@ -1751,8 +1584,6 @@ export default defineComponent({
       approvalRequestId: 0,
       approvalMutationId: 0,
       pageApproval: null as PageApproval | null,
-      utilityTooltip: { location: 'top left', offset: UTILITY_TOOLTIP_GAP as number | [number, number], measuring: false },
-      utilityTooltipToken: 0,
       approvalComment: '',
       approvalAssigneeId: null as number | null,
       approvalReviewerQuery: '',
@@ -1791,24 +1622,7 @@ export default defineComponent({
       mermaidAbortController: null as AbortController | null,
       routeAnimationAbortController: null as AbortController | null,
       scrollAnimationFrame: null as number | null,
-      railScrollHandler: null as (() => void) | null,
-      railRafId: 0,
-      railMeasurementPending: false,
       scrollAnimationToken: 0,
-      railSettleRafId: 0,
-      railSettleFrameCount: 0,
-      railSettleStableFrames: 0,
-      lastSampledRailTop: -1,
-      railSettleHandler: null as (() => void) | null,
-      lastRailMaxHeight: -1,
-      railStickyTop: 80,
-      railSpacingGap: 8,
-      cachedRailEl: null as HTMLElement | null,
-      navFooterEl: null as HTMLElement | null,
-      navHeaderEl: null as HTMLElement | null,
-      cachedHeaderEl: null as HTMLElement | null,
-      cachedTitleEl: null as HTMLElement | null,
-      railResizeObserver: null as ResizeObserver | null
     }
   },
   computed: {
@@ -2160,9 +1974,6 @@ export default defineComponent({
     readerDockVisible (): boolean {
       return this.readerFocus && !this.printView && !this.talkActive && !this.linksActive
     },
-    readerToolbarTitle (): string {
-      return this.talkActive || this.linksActive ? this.title : this.readerSection?.title ?? this.title
-    },
     readerSectionIndex (): number {
       if (!this.readerHasSections) return -1
       const anchor = decodePageAnchor(this.activeAnchor)
@@ -2170,15 +1981,6 @@ export default defineComponent({
     },
     readerSection (): FlattenedTableOfContentsNode | null {
       return this.readerHasSections ? this.tocFlattened[this.readerSectionIndex] ?? null : null
-    },
-    // The card moves between three hosts; utility tooltips anchor to the
-    // card in its current host and open below it (see the template).
-    pageToolsHost (): string {
-      if (this.isTocMobile) return '#page-mobile-tools'
-      return this.winWidth < 1280 ? '#page-tablet-tools' : '#page-desktop-rail'
-    },
-    utilityTooltipTarget (): string {
-      return this.$t('common:page.pageToolsCard', { pageToolsHost: this.pageToolsHost, interpolation: { escapeValue: false } })
     },
     // Signed-in readers whose account could not load and who have no saved
     // time zone see the browser zone; name it so the time is not misread.
@@ -2198,15 +2000,6 @@ export default defineComponent({
     hasAuthor (): boolean {
       return this.lastEditorVisible && Boolean(this.authorName && this.authorName.trim() && this.authorName.toLowerCase() !== 'unknown')
     },
-    canViewHistory (): boolean {
-      return Boolean(this.isAuthenticated && this.hasReadHistoryPermission)
-    },
-    pageHistoryUrl (): string {
-      return (this.visibility === 'private' ? '/h/_private' : '/h') + '/' + this.locale + '/' + this.path
-    },
-    isTocMobile (): boolean {
-      return this.winWidth <= 599
-    },
     isTocCompact (): boolean {
       return this.winWidth < 1280
     },
@@ -2215,7 +2008,8 @@ export default defineComponent({
     },
 
     tocPosition () {
-      return wikiStore.site.tocPosition
+      const position = wikiStore.site.tocPosition
+      return position === 'auto' ? 'right' : position
     },
     siteBanner () {
       return wikiStore.site.banner
@@ -2354,12 +2148,11 @@ export default defineComponent({
       }
     },
     tocPosition () {
-      this.resetDesktopRailMeasurementState()
+      const restoreFocus = this.tocPosition === 'off' && document.activeElement instanceof HTMLElement && Boolean(document.activeElement.closest('.page-toc-card'))
       this.$nextTick(() => {
-        this.setupDesktopRailObserver()
         this.setupTocResizeObserver()
-        this.startDesktopRailSettling()
         this.ensureActiveTocVisible()
+        if (restoreFocus) this.focusPageTitle()
       })
     },
     navigationKey: {
@@ -2371,7 +2164,6 @@ export default defineComponent({
         this.discussionMounted = this.selectedPageView === 'talk'
         await this.$nextTick()
         if (this.offlineDisposed || value !== this.navigationKey) return
-        this.setupDesktopRailObserver()
         this.refreshPageContent()
         const offlinePageId = this.pageId
         const offlineLocale = this.locale
@@ -2385,7 +2177,6 @@ export default defineComponent({
           this.offlinePassiveRefreshPending = false
           void this.refreshOfflinePageState()
         })
-        this.startDesktopRailSettling()
         this.animatePageRoute()
         this.focusPageTitle()
         if (this.isAuthenticated) {
@@ -2438,15 +2229,10 @@ export default defineComponent({
     this.handleSideNavVisibility()
     this.resizeHandler = () => {
       this.handleSideNavVisibility()
-      this.startDesktopRailSettling()
       this.ensureActiveTocVisible()
     }
     window.addEventListener('resize', this.resizeHandler)
 
-    this.railScrollHandler = () => this.onDesktopRailScroll()
-    window.addEventListener('scroll', this.railScrollHandler, { passive: true })
-
-    this.setupDesktopRailObserver()
     this.setupTocResizeObserver()
 
     this.refreshPageContent()
@@ -2464,17 +2250,10 @@ export default defineComponent({
       void this.refreshOfflinePageState()
     })
     this.$nextTick(() => {
-      this.setupDesktopRailObserver()
       this.setupTocResizeObserver()
-      this.startDesktopRailSettling()
       this.ensureActiveTocVisible()
     })
 
-    if (typeof document !== 'undefined' && 'fonts' in document && document.fonts?.ready) {
-      document.fonts.ready.then(() => {
-        this.startDesktopRailSettling()
-      }).catch(() => {})
-    }
 
     this.beforePrintHandler = () => this.preparePrintView()
     this.afterPrintHandler = () => this.restorePrintView()
@@ -2527,28 +2306,6 @@ export default defineComponent({
     this.offlineUnlockSecret = ''
     this.offlineUnlockError = ''
     if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler)
-    if (this.railScrollHandler) window.removeEventListener('scroll', this.railScrollHandler)
-    this.railScrollHandler = null
-    if (this.railRafId) {
-      window.cancelAnimationFrame(this.railRafId)
-      this.railRafId = 0
-    }
-    this.cancelDesktopRailSettling()
-    this.railSettleHandler = null
-    if (this.cachedRailEl) {
-      this.cachedRailEl.style.removeProperty('--page-desktop-rail-max-height')
-      this.cachedRailEl.style.removeProperty('--page-rail-header-height')
-      this.cachedRailEl.closest<HTMLElement>('.page-main')?.style.removeProperty('--page-rail-header-height')
-      this.cachedRailEl = null
-    }
-    this.navFooterEl = null
-    if (this.railResizeObserver) {
-      this.railResizeObserver.disconnect()
-      this.railResizeObserver = null
-    }
-    this.navHeaderEl = null
-    this.cachedHeaderEl = null
-    this.cachedTitleEl = null
     if (this.loadHandler) window.removeEventListener('load', this.loadHandler)
     if (this.beforePrintHandler) window.removeEventListener('beforeprint', this.beforePrintHandler)
     if (this.afterPrintHandler) window.removeEventListener('afterprint', this.afterPrintHandler)
@@ -2571,7 +2328,6 @@ export default defineComponent({
     this.contentExtensionCleanup = null
   },
   methods: {
-    mergeProps,
     observeReadingDock (): void {
       if (this.offlineDisposed) return
       const node = this.readerDockVisible ? this.$refs.readingDock : null
@@ -3399,7 +3155,7 @@ export default defineComponent({
       this.outlineCleanup?.dispose()
       this.outlineCleanup = null
       this.cancelScheduledScroll()
-      this.resetDesktopRailMeasurementState()
+      this.tocExpanded = false
       this.closeReaderSections()
       this.tocQuery = ''
       this.readingProgress = 0
@@ -3681,6 +3437,7 @@ export default defineComponent({
       event.preventDefault()
       event.stopPropagation()
       this.closeReaderSections()
+      if (this.isTocCompact) this.tocExpanded = false
       this.activeAnchor = anchor
       this.scrollToPageAnchor(anchor)
     },
@@ -3691,7 +3448,10 @@ export default defineComponent({
       const layoutOffset = Number.isFinite(rawLayoutOffset) ? rawLayoutOffset : 0
       const rawOffset = Number(this.scrollOpts.offset)
       const offset = Number.isFinite(rawOffset) ? rawOffset : 0
-      const target = destination.getBoundingClientRect().top + window.scrollY - layoutOffset + offset
+      const summaryHeight = this.isTocCompact && !this.readerFocus
+        ? document.querySelector('.page-inline-toc .page-toc-summary')?.getBoundingClientRect().height ?? 0
+        : 0
+      const target = destination.getBoundingClientRect().top + window.scrollY - layoutOffset - summaryHeight + offset
       const scrollingElement = document.scrollingElement ?? document.documentElement
       const maximum = Math.max(0, scrollingElement.scrollHeight - window.innerHeight)
       return Math.min(maximum, Math.max(0, target))
@@ -4033,46 +3793,6 @@ export default defineComponent({
         ? this.$t('common:page.reviewerSearchUnavailable')
         : this.$t('common:page.reviewerSearchHint')
       return prefix ? `${prefix} ${help}` : help
-    },
-    // Shared by every utility tooltip; only one is open at a time. The key names
-    // the tooltip so placement measures that one and its own button.
-    utilityTooltipProps (key: string): Record<string, unknown> {
-      return {
-        id: `page-tool-tip-${key}`,
-        disabled: this.readerFocus,
-        target: this.utilityTooltipTarget,
-        location: this.utilityTooltip.location,
-        offset: this.utilityTooltip.offset,
-        maxWidth: UTILITY_TOOLTIP_MAX_WIDTH,
-        contentClass: this.utilityTooltip.measuring ? 'page-tool-tip page-tool-tip--measuring' : 'page-tool-tip',
-        'onUpdate:modelValue': (open: boolean) => this.placeUtilityTooltip(open, key)
-      }
-    },
-    // Measure the opening utility tooltip while hidden, then move it to the first
-    // side of the tools card where it covers no content.
-    async placeUtilityTooltip (open: boolean, key: string): Promise<void> {
-      if (!open || typeof window === 'undefined') return
-      const token = ++this.utilityTooltipToken
-      this.utilityTooltip = { ...this.utilityTooltip, measuring: true }
-      await this.$nextTick()
-      await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()))
-      if (token !== this.utilityTooltipToken) return
-      const id = `page-tool-tip-${key}`
-      const content = document.getElementById(id)?.querySelector<HTMLElement>(':scope > .page-tool-tip')
-      const card = document.querySelector(this.utilityTooltipTarget)
-      const activator = card?.querySelector(`[aria-describedby~="${id}"]`) ?? card
-      if (!content || content.offsetWidth === 0 || !activator || !card) {
-        this.utilityTooltip = { ...this.utilityTooltip, measuring: false }
-        return
-      }
-      const placement = chooseUtilityTooltipPlacement({
-        card: card.getBoundingClientRect(),
-        activator: activator.getBoundingClientRect(),
-        size: { width: content.offsetWidth, height: content.offsetHeight },
-        viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
-        isContentAt: (x, y) => isContentAtPoint(x, y)
-      })
-      this.utilityTooltip = { location: placement.location, offset: placement.offset, measuring: false }
     },
     approvalActorLabel (actorId: number, actorName?: unknown): string {
       if (wikiStore.user.authenticated && actorId === wikiStore.user.id) return this.$t('common:page.reviewerYou')
@@ -4457,11 +4177,6 @@ export default defineComponent({
     pageEdit () {
       emitPageEdit()
     },
-    historyLinkClicked (event: MouseEvent) {
-      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-      event.preventDefault()
-      this.pageHistory()
-    },
     pageHistory () {
       emitPageHistory()
     },
@@ -4484,6 +4199,9 @@ export default defineComponent({
       const previousWidth = this.winWidth
       const nextWidth = window.innerWidth
       if (nextWidth === previousWidth) { return }
+      const focused = document.activeElement instanceof HTMLElement && document.activeElement.closest('.page-toc-card')
+        ? document.activeElement
+        : null
       this.winWidth = nextWidth
       if (previousWidth >= 1280 && nextWidth < 1280) {
         this.tocExpanded = false
@@ -4493,22 +4211,15 @@ export default defineComponent({
       } else {
         this.navShown = false
       }
-    },
-    resetDesktopRailMeasurementState(): void {
-      this.cancelDesktopRailSettling()
-      if (this.railRafId) {
-        window.cancelAnimationFrame(this.railRafId)
-        this.railRafId = 0
-      }
-      this.railMeasurementPending = false
-      if (this.cachedRailEl) {
-        this.cachedRailEl.style.removeProperty('--page-desktop-rail-max-height')
-        this.cachedRailEl.style.removeProperty('--page-rail-header-height')
-        this.cachedRailEl.closest<HTMLElement>('.page-main')?.style.removeProperty('--page-rail-header-height')
-      }
-      this.cachedRailEl = null
-      this.navFooterEl = null
-      this.lastRailMaxHeight = -1
+      this.$nextTick(() => {
+        this.setupTocResizeObserver()
+        if (focused?.isConnected) {
+          const target = this.isTocCompact && !this.tocExpanded && !this.readerSectionsOpen
+            ? document.querySelector<HTMLElement>('.page-toc-toggle')
+            : focused
+          target?.focus({ preventScroll: true })
+        }
+      })
     },
     selectPageView(value: unknown): void {
       if (value === 'article' || value === 'talk' || (value === 'links' && this.linksVisible)) this.$emit('update:activeView', value)
@@ -4533,230 +4244,6 @@ export default defineComponent({
         if (focusNewComment) document.querySelector<HTMLElement>('#discussion-new')?.focus()
       })
     },
-    getPageHeaderElement(): HTMLElement | null {
-      const heroRef = this.$refs.pageHero as { $el?: HTMLElement } | HTMLElement | undefined
-      if (heroRef && '$el' in heroRef && heroRef.$el instanceof HTMLElement) {
-        return heroRef.$el
-      }
-      if (heroRef instanceof HTMLElement) {
-        return heroRef
-      }
-      if (typeof document !== 'undefined') {
-        return (document.querySelector('.page-hero') as HTMLElement | null)
-          ?? (document.querySelector('.page-header-section') as HTMLElement | null)
-      }
-      return null
-    },
-    getPageTitleElement(): HTMLElement | null {
-      const titleRef = this.$refs.pageTitle as HTMLElement | undefined
-      if (titleRef instanceof HTMLElement) return titleRef
-      if (typeof document !== 'undefined') return document.querySelector('.page-title')
-      return null
-    },
-    setupDesktopRailObserver(): void {
-      if (typeof window === 'undefined' || typeof ResizeObserver === 'undefined') return
-
-      if (!this.railResizeObserver) {
-        this.railResizeObserver = new ResizeObserver(() => {
-          this.startDesktopRailSettling()
-        })
-      }
-      const navHeaderEl = document.querySelector<HTMLElement>('.nav-header')
-      if (navHeaderEl !== this.navHeaderEl) {
-        if (this.navHeaderEl) this.railResizeObserver.unobserve(this.navHeaderEl)
-        this.navHeaderEl = navHeaderEl
-        if (navHeaderEl) this.railResizeObserver.observe(navHeaderEl)
-      }
-
-
-      const headerEl = this.getPageHeaderElement()
-      if (headerEl !== this.cachedHeaderEl) {
-        if (this.cachedHeaderEl) {
-          try {
-            this.railResizeObserver.unobserve(this.cachedHeaderEl)
-          } catch {}
-        }
-        this.cachedHeaderEl = headerEl
-        if (headerEl) this.railResizeObserver.observe(headerEl)
-      }
-
-      const titleEl = this.getPageTitleElement()
-      if (titleEl !== this.cachedTitleEl) {
-        if (this.cachedTitleEl) {
-          try {
-            this.railResizeObserver.unobserve(this.cachedTitleEl)
-          } catch {}
-        }
-        this.cachedTitleEl = titleEl
-        if (titleEl) this.railResizeObserver.observe(titleEl)
-      }
-    },
-    getDesktopRailElement(): HTMLElement | null {
-      const colRef = this.$refs.desktopRailCol as { $el?: HTMLElement } | HTMLElement | undefined
-      if (colRef && '$el' in colRef && colRef.$el instanceof HTMLElement) {
-        return colRef.$el
-      }
-      if (colRef instanceof HTMLElement) {
-        return colRef
-      }
-      const innerRef = this.$refs.desktopRail as HTMLElement | undefined
-      if (innerRef instanceof HTMLElement) {
-        return innerRef.closest('.page-col-sd') ?? innerRef.parentElement
-      }
-      if (typeof document !== 'undefined') {
-        return document.querySelector('.page-col-sd')
-      }
-      return null
-    },
-    onDesktopRailScroll(): void {
-      this.railMeasurementPending = true
-      // Settling already has a frame queued; let it consume the scroll sample.
-      if (this.railRafId || this.railSettleRafId) return
-      this.railRafId = window.requestAnimationFrame(() => {
-        this.railRafId = 0
-        this.railMeasurementPending = false
-        this.updateDesktopRailMeasurements(false)
-      })
-    },
-    cancelDesktopRailSettling(): void {
-      if (this.railSettleRafId) {
-        window.cancelAnimationFrame(this.railSettleRafId)
-        this.railSettleRafId = 0
-      }
-    },
-    startDesktopRailSettling(): void {
-      if (typeof window === 'undefined') return
-      if (window.innerWidth < 1280 || this.tocPosition === 'off') {
-        this.resetDesktopRailMeasurementState()
-        return
-      }
-
-      this.cancelDesktopRailSettling()
-      if (this.railRafId) {
-        window.cancelAnimationFrame(this.railRafId)
-        this.railRafId = 0
-      }
-      this.railMeasurementPending = true
-      this.railSettleFrameCount = 0
-      this.railSettleStableFrames = 0
-      this.lastSampledRailTop = -1
-
-      if (!this.railSettleHandler) {
-        this.railSettleHandler = () => this.stepDesktopRailSettling()
-      }
-      this.railSettleRafId = window.requestAnimationFrame(this.railSettleHandler)
-    },
-    stepDesktopRailSettling(): void {
-      this.railSettleRafId = 0
-      if (typeof window === 'undefined') return
-      if (window.innerWidth < 1280 || this.tocPosition === 'off') return
-
-      const railEl = (this.cachedRailEl && this.cachedRailEl.isConnected)
-        ? this.cachedRailEl
-        : this.getDesktopRailElement()
-      this.cachedRailEl = railEl
-      if (!railEl) {
-        this.railSettleFrameCount++
-        if (this.railSettleFrameCount < 120) {
-          this.railSettleRafId = window.requestAnimationFrame(this.railSettleHandler!)
-        }
-        return
-      }
-
-      const railRect = railEl.getBoundingClientRect()
-      const currentTop = railRect.top
-      this.railSettleFrameCount++
-
-      const topChanged = this.lastSampledRailTop === -1 || Math.abs(currentTop - this.lastSampledRailTop) >= 0.5
-      if (topChanged) {
-        this.lastSampledRailTop = currentTop
-        this.railSettleStableFrames = 0
-      } else {
-        this.railSettleStableFrames++
-      }
-
-      const MAX_SETTLE_FRAMES = 120
-      const MIN_SETTLE_FRAMES = 60
-      const STABLE_FRAMES_NEEDED = 15
-
-      const isStable = this.railSettleFrameCount >= MIN_SETTLE_FRAMES && this.railSettleStableFrames >= STABLE_FRAMES_NEEDED
-      const reachedMax = this.railSettleFrameCount >= MAX_SETTLE_FRAMES
-
-      if (!isStable && !reachedMax) {
-        this.railSettleRafId = window.requestAnimationFrame(this.railSettleHandler!)
-      }
-      if (topChanged || this.railMeasurementPending || isStable || reachedMax) {
-        this.railMeasurementPending = false
-        this.updateDesktopRailMeasurements(topChanged || isStable || reachedMax, railRect)
-      }
-    },
-    updateDesktopRailMeasurements(isResize = false, sampledRailRect?: DOMRect): void {
-      if (typeof window === 'undefined') return
-
-      const railEl = (this.cachedRailEl && this.cachedRailEl.isConnected)
-        ? this.cachedRailEl
-        : this.getDesktopRailElement()
-      this.cachedRailEl = railEl
-      if (!railEl) return
-
-      if (window.innerWidth < 1280 || this.tocPosition === 'off') {
-        this.resetDesktopRailMeasurementState()
-        return
-      }
-
-      const computed = getComputedStyle(railEl)
-      const headerBottom = document.querySelector('.nav-header')?.getBoundingClientRect().bottom ?? 56
-      const headerHeight = `${Math.max(56, headerBottom)}px`
-      if (railEl.style.getPropertyValue('--page-rail-header-height') !== headerHeight) {
-        railEl.style.setProperty('--page-rail-header-height', headerHeight)
-        railEl.closest<HTMLElement>('.page-main')?.style.setProperty('--page-rail-header-height', headerHeight)
-      }
-      const parsedTop = parseFloat(computed.top)
-      this.railStickyTop = Number.isFinite(parsedTop) ? parsedTop : Math.max(56, headerBottom) + 16
-      if (isResize || !this.navFooterEl || !this.navFooterEl.isConnected) {
-        this.navFooterEl = document.querySelector('.nav-footer')
-        const rawGap = computed.getPropertyValue('--wiki-space-2').trim()
-        let resolvedGap = 8
-        if (rawGap.endsWith('px')) {
-          const parsed = parseFloat(rawGap)
-          if (Number.isFinite(parsed) && parsed > 0) resolvedGap = parsed
-        } else if (rawGap.endsWith('rem')) {
-          const remVal = parseFloat(rawGap)
-          if (Number.isFinite(remVal) && remVal > 0) {
-            const rootFontSize = typeof document !== 'undefined'
-              ? (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16)
-              : 16
-            const derived = remVal * rootFontSize
-            if (Number.isFinite(derived) && derived > 0) resolvedGap = derived
-          }
-        }
-        this.railSpacingGap = Number.isFinite(resolvedGap) && resolvedGap > 0 ? resolvedGap : 8
-      }
-
-      // Deferred Teleport content can be appended after the outline when the
-      // rail returns from TOC-off. Restore DOM and keyboard order before measuring.
-      const toolsCard = railEl.querySelector('.page-tools-card')
-      const tocCard = railEl.querySelector('.page-toc-card')
-      if (toolsCard && tocCard && toolsCard.parentElement === tocCard.parentElement &&
-          (tocCard.compareDocumentPosition(toolsCard) & Node.DOCUMENT_POSITION_FOLLOWING)) {
-        tocCard.parentElement?.insertBefore(toolsCard, tocCard)
-        sampledRailRect = undefined
-      }
-
-      const railRect = sampledRailRect ?? railEl.getBoundingClientRect()
-
-      const footerTop = this.navFooterEl
-        ? this.navFooterEl.getBoundingClientRect().top
-        : window.innerHeight
-      const boundedBottom = Math.min(window.innerHeight, footerTop)
-      const effectiveRailTop = Math.max(railRect.top, this.railStickyTop)
-      const calculatedMaxHeight = Math.max(0, Math.floor(boundedBottom - effectiveRailTop - this.railSpacingGap))
-
-      if (this.lastRailMaxHeight !== calculatedMaxHeight) {
-        this.lastRailMaxHeight = calculatedMaxHeight
-        railEl.style.setProperty('--page-desktop-rail-max-height', `${calculatedMaxHeight}px`)
-      }
-    },
   }
 })
 </script>
@@ -4767,13 +4254,15 @@ export default defineComponent({
 .wiki-page .contents h1[hidden] {
   display: none !important;
 }
+.wiki-page .contents h1[hidden] + :is(p, h2, h3, h4, h5, h6) {
+  margin-block-start: 0;
+}
 
 .wiki-page {
   --page-toc-empty-height: calc(var(--wiki-grid-size) * 2);
   --page-layout-shell-max: 132rem;
   --page-reader-shell-max: var(--page-layout-shell-max);
-  --page-shortcut-target: 36px;
-  --page-metadata-rail-width: calc(8 * var(--page-shortcut-target) + 9 * var(--wiki-space-1) + 2px);
+  --page-toc-rail-width: 220px;
   --page-reader-column-gap: var(--wiki-space-6);
   --page-reader-copy-max: var(--wiki-reader-copy-width, 74ch);
   --page-reader-safe-end: env(safe-area-inset-right, 0px);
@@ -4816,18 +4305,6 @@ export default defineComponent({
   color: var(--wiki-text-subtle);
 }
 
-// Hidden for one frame while placeUtilityTooltip measures it.
-.page-tool-tip--measuring {
-  visibility: hidden !important;
-}
-
-// Tooltip second line: why a focusable aria-disabled utility does nothing.
-.page-tool-blocked-reason {
-  display: block;
-  margin-block-start: 2px;
-  font-size: .75rem;
-  opacity: .86;
-}
 
 .page-tool-helper {
   margin: var(--wiki-space-2) 0 0;
@@ -4839,9 +4316,13 @@ export default defineComponent({
 .page-document-provenance {
   display: flex;
   min-width: 0;
-  flex: 0 1 auto;
   flex-wrap: wrap;
+  align-items: baseline;
   gap: 2px 5px;
+  margin-block-start: var(--wiki-space-1);
+  color: var(--wiki-text-muted);
+  font-size: .75rem;
+  line-height: 1.4;
 }
 
 
@@ -4890,26 +4371,6 @@ export default defineComponent({
 
 @media (prefers-reduced-motion: reduce) {
   .page-offline-control { transition: none; }
-}
-
-.page-document-row {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 4px;
-}
-
-.page-document-row--date {
-  color: rgb(var(--v-theme-on-surface));
-  font-weight: 550;
-}
-
-.page-document-row--author {
-  min-width: 0;
-  max-width: 100%;
-  color: var(--wiki-text-muted);
-  font-size: .6875rem;
-  line-height: 1.35;
 }
 
 .page-document-author {
@@ -5151,7 +4612,9 @@ export default defineComponent({
   overflow: visible;
   min-height: 0;
   padding: 0 !important;
-  background: rgb(var(--v-theme-surface));
+  background-color: var(--wiki-surface-raised);
+  background-image: var(--wiki-surface-gradient);
+  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
   border-block-end: 1px solid var(--wiki-surface-border);
 
   &.page-hero--accent-present::before {
@@ -5174,10 +4637,6 @@ export default defineComponent({
 }
 
 
-.page-hero--with-toc,
-.page-hero--with-toc .page-header-section {
-  min-height: 0;
-}
 
 // Static state: no pulse, so the indicator does not move while people read.
 .page-header-unpublished {
@@ -5207,8 +4666,8 @@ export default defineComponent({
     overflow: visible;
     display: grid;
     min-width: 0;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: auto auto auto auto auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: auto;
     column-gap: var(--wiki-space-4);
     row-gap: 0;
     align-items: start;
@@ -5218,31 +4677,32 @@ export default defineComponent({
       var(--wiki-page-gutter) !important;
   }
 
-  > .is-page-header > .page-header-headings {
-    grid-column: 1;
-    grid-row: 1;
+  > .is-page-header > :is(.page-header-headings, .page-header-summary, .page-document-provenance, .page-header-path, .page-header-unpublished, .page-edit-shortcuts, .page-hero-actions) {
+    grid-column: 1 / -1;
+    min-width: 0;
   }
 
-  > .is-page-header > .page-header-summary {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
+  .page-hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--wiki-space-2);
+    margin-block-start: var(--wiki-space-2);
 
-  > .is-page-header > .page-header-path {
-    grid-column: 1 / -1;
-    grid-row: 3;
-  }
+    .v-btn {
+      min-width: 0;
+      border-color: var(--wiki-surface-border-strong);
+      border-radius: var(--wiki-radius-pill);
+      text-transform: none;
+      letter-spacing: 0;
+      color: rgb(var(--v-theme-on-surface));
+    }
 
-  > .is-page-header > .page-header-unpublished {
-    grid-column: 1 / -1;
-    grid-row: 4;
-    justify-self: start;
-  }
-
-  > .is-page-header > .page-edit-shortcuts {
-    grid-column: 1 / -1;
-    grid-row: 5;
-    justify-self: end;
+    .v-btn:focus-visible {
+      outline: 2px solid var(--wiki-focus-color);
+      outline-offset: 2px;
+      box-shadow: var(--wiki-specular-border), var(--wiki-focus-ring);
+    }
   }
 
 
@@ -5406,27 +4866,6 @@ export default defineComponent({
     --page-branding-mark-size: 96px;
   }
 
-  .page-header-section {
-    > .is-page-header {
-      grid-template-columns: minmax(0, 1fr) max-content;
-
-      > .page-header-headings {
-        grid-column: 1 / -1;
-      }
-
-      > .page-header-unpublished {
-        grid-column: 1;
-        grid-row: 4;
-      }
-
-      > .page-edit-shortcuts {
-        grid-column: 2;
-        grid-row: 4;
-      }
-    }
-
-    .page-edit-shortcuts { max-width: 100%; flex-wrap: wrap; }
-  }
 }
 
 @media (min-width: 1280px) {
@@ -5434,66 +4873,22 @@ export default defineComponent({
     --page-branding-mark-size: 128px;
   }
 
-  .page-header-section {
-    > .is-page-header {
-      min-height: inherit;
-      column-gap: var(--page-reader-column-gap);
-      row-gap: 0;
-      align-content: center;
-    }
+  .page-header-section > .is-page-header {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    column-gap: var(--page-reader-column-gap);
+  }
 
-    > .page-header--toc-left {
-      grid-template-columns:
-        var(--page-metadata-rail-width)
-        minmax(0, 1fr);
+  .page-header-section > .is-page-header > .page-hero-actions {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    align-self: start;
+    justify-content: end;
+    max-width: 25rem;
+    margin-block-start: 0;
+  }
 
-      .page-header-headings {
-        grid-column: 2;
-        padding-inline-start: var(--wiki-space-4);
-      }
-    }
-
-
-    > .page-header--toc-right {
-      grid-template-columns:
-        minmax(0, 1fr)
-        var(--page-metadata-rail-width);
-    }
-
-
-    > .page-header--toc-left > .page-header-summary {
-      padding-inline-start: var(--wiki-space-4);
-      grid-column: 2 / -1;
-    }
-
-    > .page-header--toc-right > .page-header-summary {
-      grid-column: 1 / -2;
-    }
-
-    > .page-header--toc-left > .page-header-path,
-    > .page-header--toc-left > .page-header-unpublished {
-      padding-inline-start: var(--wiki-space-4);
-      grid-column: 2 / -1;
-    }
-
-    > .page-header--toc-left > .page-edit-shortcuts {
-      grid-column: 2 / -1;
-    }
-
-    > .page-header--toc-right > .page-header-path,
-    > .page-header--toc-right > .page-header-unpublished,
-    > .page-header--toc-right > .page-edit-shortcuts {
-      grid-column: 1 / -2;
-    }
-    > .page-header--toc-right > .page-header-headings {
-      grid-column: 1;
-    }
-
-
-    > .is-page-header > .page-header-unpublished,
-    > .is-page-header > .page-edit-shortcuts {
-      grid-row: 4;
-    }
+  .page-header-section > .is-page-header > :is(.page-header-headings, .page-header-summary, .page-document-provenance) {
+    grid-column: 1;
   }
 }
 
@@ -5513,36 +4908,6 @@ export default defineComponent({
     var(--wiki-space-12) !important;
 }
 
-// Part of the article's reserved flow, never a floating button on its prose.
-.page-reading-toolbar {
-  position: sticky;
-  inset-block-start: calc(max(var(--v-layout-top, 56px), var(--page-rail-header-height, 56px)) + 1px);
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  gap: var(--wiki-space-2);
-  min-height: 44px;
-  margin-block-end: var(--wiki-space-3);
-  padding-inline: var(--wiki-space-2);
-  border-block-end: 1px solid var(--wiki-surface-border);
-  background: rgb(var(--v-theme-surface));
-
-  .page-reading-top {
-    flex: 0 0 auto;
-    min-height: 44px;
-  }
-  .page-reading-top:not(.page-reading-top--available) { visibility: hidden; }
-}
-
-.page-reading-toolbar__context {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--wiki-text-muted);
-  font-size: .8125rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 @media (min-width: 1280px) {
   // The end gutter contains Top, and the optional edit FAB, even in Full width.
@@ -5558,228 +4923,73 @@ export default defineComponent({
   padding-block-end: max(5.5rem, calc(var(--page-reading-dock-height, 0px) + var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px) + 2rem)) !important;
 }
 
+.page-body > .v-row {
+  --v-col-gap-x: 0px;
+  --v-col-gap-y: 0px;
+  gap: 0;
+}
+
 .page-col-sd {
-  position: sticky;
-  inset-block-start: calc(max(var(--v-layout-top, 56px), var(--page-rail-header-height, 56px)) + var(--wiki-space-4));
-  align-self: flex-start;
-  margin-block-start: 0;
-  max-height: calc(100dvh - max(var(--v-layout-top, 56px), var(--page-rail-header-height, 56px)) - var(--wiki-space-8));
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-color: color-mix(in srgb, var(--wiki-accent-warm) 54%, transparent) transparent;
-  scrollbar-width: thin;
-
-  &::-webkit-scrollbar {
-    width: var(--wiki-space-2);
-  }
-
-  &::-webkit-scrollbar-thumb {
-    border: var(--wiki-space-1) solid transparent;
-    border-radius: var(--wiki-radius-pill);
-    background: color-mix(in srgb, var(--wiki-accent-warm) 54%, transparent);
-    background-clip: padding-box;
-  }
-
-  > .v-card,
-  > .page-desktop-rail > .v-card {
-
-    overflow: hidden;
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: var(--wiki-panel-radius);
-    background: var(--wiki-surface-raised);
-    box-shadow: var(--wiki-shadow-xs);
-  }
-
-  .text-label-small {
-    color: var(--wiki-accent-ink);
-    font-weight: var(--wiki-label-weight) !important;
-    letter-spacing: .09em !important;
-    text-transform: uppercase;
-  }
-
-  .v-chip {
-    border-radius: var(--wiki-radius-xs);
-  }
-}
-
-.page-col-sd > .page-desktop-rail > :is(.page-tools-card, .page-toc-card) {
-  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
-}
-
-#page-desktop-rail-anchor {
-  display: contents;
-}
-
-.page-mobile-tools,
-.page-tablet-tools,
-.page-mobile-metadata {
   display: none;
 }
 
-.page-desktop-rail {
-  display: contents;
-}
-
-.page-desktop-rail > .wiki-page-ratings,
-.page-tablet-tools > .wiki-page-ratings,
-.page-mobile-metadata > .wiki-page-ratings {
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  flex: 0 0 auto;
-}
-
-.page-desktop-rail > .wiki-page-ratings {
-  margin-block-end: var(--wiki-space-5);
-}
-
-
-.page-col-sd--toc-off,
-.page-col-content--toc-off {
+.page-metadata {
+  order: 3;
   flex: 0 0 100%;
-  max-width: 100%;
-}
-.page-col-sd--toc-left,
-.page-col-sd--toc-right {
-  order: 2;
+  min-width: 0;
+  margin-block-start: var(--wiki-space-6);
 }
 
-.page-col-content--toc-left,
-.page-col-content--toc-right {
-  order: 1;
-}
-
+.page-inline-toc:empty { display: none; }
 
 @media (min-width: 1280px) {
-  // One grid anchors both the hero and sticky rail at the document start.
-  // The rail spans the article row, so its containing block reaches the footer.
-  .page-main--with-rail {
+  .page-main--with-rail .page-body > .v-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto 1fr;
-    align-content: start;
-    padding-block-start: max(var(--v-layout-top, 56px), var(--page-rail-header-height, 56px));
+    grid-template-columns: minmax(0, 1fr) var(--page-toc-rail-width);
+    column-gap: var(--page-reader-column-gap);
+    align-items: start;
+  }
 
-    > .page-hero {
-      grid-area: 1 / 1;
-      margin-block-start: var(--wiki-space-4);
-    }
-
-    > .page-body {
-      grid-area: 2 / 1;
-    }
-
-    .page-col-sd--with-toc {
-      grid-area: 1 / 1 / 3 / 2;
-      z-index: 4;
-      width: var(--page-metadata-rail-width);
-      margin-inline: max(var(--wiki-page-gutter), calc((100% - var(--page-reader-shell-max)) / 2 + var(--wiki-page-gutter)));
-      justify-self: start;
-    }
-
-    .page-col-sd--toc-right {
-      justify-self: end;
-    }
-
-    .page-col-content--toc-left:not(.is-page-header) {
-      margin-inline-start: auto;
-    }
+  .page-main--with-rail .page-body > .v-row:has(.page-col-sd--toc-left) {
+    grid-template-columns: var(--page-toc-rail-width) minmax(0, 1fr);
   }
 
   .page-col-sd {
-    display: flex;
-    flex-direction: column;
-    overflow-y: auto;
-    overflow-x: clip;
-    scroll-padding-block: var(--wiki-space-2);
-    max-height: min(var(--page-desktop-rail-max-height, 100dvh), calc(100dvh - max(var(--v-layout-top, 56px), var(--page-rail-header-height, 56px)) - var(--wiki-space-8)));
+    display: block;
+    position: sticky;
+    inset-block-start: calc(var(--v-layout-top, 56px) + var(--wiki-space-3));
+    width: var(--page-toc-rail-width);
+    max-width: var(--page-toc-rail-width);
+    padding: 0;
+    grid-row: 1;
+    grid-column: 2;
   }
 
-  .page-desktop-rail {
-    display: flex;
-    flex-direction: column;
-    flex: 0 0 auto;
-    min-height: 0;
-  }
-
-  .page-tools-card {
-    flex: 0 0 auto;
-  }
+  .page-col-sd--toc-left { grid-column: 1; }
+  .page-col-content--toc-left { grid-column: 2; }
+  .page-col-content--toc-right { grid-column: 1; }
+  .page-col-content--with-toc { grid-row: 1; }
+  .page-metadata { grid-column: 1 / -1; }
+  .page-inline-toc { display: none; }
 
   .page-toc-card {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    // A long outline scrolls independently; on short windows the outer rail
-    // also scrolls so utilities, tags, ratings and discussion remain reachable.
-    min-height: var(--page-toc-empty-height);
-    max-height: max(var(--page-toc-empty-height), calc(100dvh - var(--page-rail-header-height, 56px) - var(--page-toc-empty-height) - var(--wiki-space-8)));
+    max-height: calc(100dvh - var(--v-layout-top, 56px) - var(--wiki-space-6));
   }
+}
 
-  .page-toc-heading,
-  .page-toc-filter,
-  .page-toc-filter-empty {
-    flex: 0 0 auto;
-  }
+.page-toc-content,
+.page-toc-tree-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
 
-  .page-toc-content {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
-    min-width: 0;
-  }
-
-  .page-toc-tree-wrap {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
-    min-width: 0;
-  }
-
-  .page-toc-content .page-toc-list {
-    flex: 1 1 auto;
-    min-height: 0;
-    max-height: none;
-    overflow-y: auto;
-    overflow-x: clip;
-    overscroll-behavior: contain;
-  }
-
-  .page-tags-card,
-  .page-comments-card {
-    flex: 0 0 auto;
-  }
-
-  .page-col-sd--toc-left,
-  .page-col-content--toc-right {
-    order: 1;
-  }
-
-  .page-col-sd--toc-right,
-  .page-col-content--toc-left {
-    order: 2;
-  }
-
-  // When TOC is off, keep the primary article before the full-width metadata.
-  .page-col-content--toc-off {
-    order: 1;
-  }
-
-  .page-col-sd--toc-off {
-    order: 2;
-  }
-
-  .page-col-sd--with-toc {
-    flex: 0 0 var(--page-metadata-rail-width);
-    max-width: var(--page-metadata-rail-width);
-  }
-
-  .page-col-content--with-toc {
-    flex: 0 0 calc(100% - var(--page-metadata-rail-width) - var(--v-col-gap-x));
-    max-width: calc(100% - var(--page-metadata-rail-width) - var(--v-col-gap-x));
-  }
+.page-toc-content .page-toc-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 
@@ -5794,6 +5004,7 @@ export default defineComponent({
   box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
 
   > .page-toc-heading {
+    flex: 0 0 auto;
     padding:
       var(--wiki-space-4)
       var(--wiki-space-4)
@@ -6074,106 +5285,13 @@ export default defineComponent({
     border-radius: var(--wiki-control-radius);
   }
 }
-.page-tools-card {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  column-gap: var(--wiki-space-1);
-
-  border: 1px solid var(--wiki-surface-border) !important;
-  overflow: hidden !important;
-  border-radius: var(--wiki-panel-radius);
-  background-color: var(--wiki-surface-raised) !important;
-  background-image: var(--wiki-surface-gradient) !important;
-  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
-
-  &__utilities {
-    display: flex;
-    flex: 0 0 100%;
-    min-width: 0;
-    max-width: 100%;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--wiki-space-1);
-    padding: var(--wiki-space-1);
-  }
-
-  &__utilities .v-btn[aria-pressed='true']:not(.page-offline-control),
-  &__utilities .page-watch-control--watching {
-    color: var(--wiki-primary-ink);
-  }
-
-  &__divider {
-    flex: 0 0 100%;
-    opacity: 1;
-    border-color: var(--wiki-surface-border);
-  }
-  &__provenance {
-    display: flex;
-    flex: 0 0 100%;
-    min-width: 0;
-    justify-content: center;
-    padding: var(--wiki-space-2) var(--wiki-space-2);
-  }
-
-  // Neutral resting icons at a readable contrast; active toggles stay amber
-  // with a glyph change as the non-color cue.
-  .v-btn {
-    width: var(--page-shortcut-target) !important;
-    min-width: var(--page-shortcut-target) !important;
-    max-width: var(--page-shortcut-target) !important;
-    height: var(--page-shortcut-target) !important;
-    min-height: var(--page-shortcut-target) !important;
-    max-height: var(--page-shortcut-target) !important;
-    padding: 0 !important;
-    border-radius: var(--wiki-radius-xs) !important;
-    flex: 0 0 var(--page-shortcut-target) !important;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 84%, transparent);
-
-    .v-icon {
-      font-size: 20px !important;
-      width: 20px !important;
-      height: 20px !important;
-    }
-
-    &:hover:not([aria-disabled='true']) {
-      background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
-      color: var(--wiki-accent-ink);
-    }
-
-    &:focus-visible {
-      outline: 2px solid var(--wiki-focus-color, var(--wiki-accent-ink));
-      outline-offset: 2px;
-      box-shadow: var(--wiki-focus-ring);
-    }
-  }
-  // Date and author sit in one centered column under the utilities.
-  .page-document-provenance {
-    display: flex;
-    flex: 0 1 auto;
-    min-width: 0;
-    max-width: 100%;
-    flex-direction: column;
-    flex-wrap: nowrap;
-    align-items: center;
-    row-gap: 2px;
-    font-size: .75rem;
-    line-height: 1.35;
-    text-align: center;
-  }
-
-}
 
 
 .page-col-content:not(.is-page-header) {
   min-width: 0;
-  padding-inline: var(--wiki-space-4) 0;
+  padding: 0;
 }
 
-.page-col-content--toc-right:not(.is-page-header) {
-  padding-inline: 0 var(--wiki-space-4);
-}
 
 .page-col-content > .contents {
   --page-reader-surface-padding: var(--wiki-space-3);
@@ -6308,158 +5426,69 @@ export default defineComponent({
 }
 
 @media (max-width: 1279px) {
-  .page-hero--with-toc,
-  .page-hero--with-toc .page-header-section {
-    min-height: 0;
+  .page-body { padding-block-start: var(--wiki-space-2) !important; }
+  .page-inline-toc {
+    position: sticky;
+    inset-block-start: var(--v-layout-top, 56px);
+    z-index: 4;
+    margin-block-end: var(--wiki-space-1);
   }
 
-  .page-col-sd {
-    display: none;
+  .page-inline-toc > .page-toc-card {
+    min-height: 40px;
+    max-height: min(60dvh, 32rem);
+    border: 0 !important;
   }
 
-
-  .page-toc-card {
-    display: flex;
-    flex-direction: column;
-    min-height: var(--wiki-control-height);
-    max-height: calc(var(--wiki-grid-size) * 5);
-  }
-
-  .page-toc-card .page-toc-toggle {
+  .page-toc-summary {
     display: flex;
     flex: 0 0 auto;
-    min-height: var(--wiki-control-height);
-    justify-content: space-between;
-    padding-inline: var(--wiki-space-4) !important;
-    border: 1px solid transparent;
-    border-radius: var(--wiki-radius-xs);
-    background: color-mix(in srgb, var(--wiki-ambient-accent) 7%, var(--wiki-surface-raised)) !important;
+    min-width: 0;
+    min-height: 40px;
+    .page-toc-toggle { flex: 1 1 auto; min-width: 0; }
+    .page-reading-top { flex: 0 0 40px; min-width: 40px; height: 40px; }
+  }
+  .page-toc-toggle {
+    flex: 0 0 40px;
+    height: auto !important;
+    min-height: 40px !important;
+    padding-inline: var(--wiki-space-3) !important;
+    background-color: var(--wiki-surface-raised) !important;
+    background-image: var(--wiki-surface-gradient) !important;
+    box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
     color: var(--wiki-accent-ink);
-    transition:
-      border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-      background var(--wiki-motion-fast) var(--wiki-motion-ease),
-      color var(--wiki-motion-fast) var(--wiki-motion-ease),
-      box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
 
-    &:hover {
-      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 34%, var(--wiki-surface-border-strong));
-      background: color-mix(in srgb, var(--wiki-ambient-accent) 13%, var(--wiki-surface-raised)) !important;
-    }
-
+    .v-btn__content { width: 100%; justify-content: space-between; white-space: normal; }
     &:focus-visible {
       outline: 2px solid var(--wiki-focus-color);
       outline-offset: -2px;
-      box-shadow: var(--wiki-focus-ring);
-    }
-
-    &[aria-expanded='true'] {
-      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 48%, var(--wiki-surface-border-strong));
-      background:
-        linear-gradient(
-          90deg,
-          color-mix(in srgb, var(--wiki-accent-warm) 12%, var(--wiki-surface-raised)),
-          color-mix(in srgb, var(--wiki-accent-spectral) 9%, var(--wiki-surface-raised))
-        ) !important;
-      color: var(--wiki-accent-ink);
-      box-shadow: var(--wiki-shadow-inset);
-    }
-
-    .v-btn__content { width: 100%; justify-content: space-between; }
-  }
-
-  .page-toc-row,
-  .page-toc-item {
-    min-height: 2.5rem;
-  }
-
-  .page-toc-content {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
-    min-width: 0;
-  }
-
-  .page-toc-filter,
-  .page-toc-filter-empty {
-    flex: 0 0 auto;
-  }
-
-  .page-toc-tree-wrap {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
-    min-width: 0;
-  }
-
-  .page-toc-content .page-toc-list {
-    flex: 1 1 auto;
-    min-height: 0;
-    max-height: none;
-    overflow-y: auto;
-    overflow-x: clip;
-    overscroll-behavior: contain;
-  }
-  .page-col-content:not(.is-page-header),
-  .page-col-content--toc-right:not(.is-page-header) {
-    padding-inline: 0;
-  }
-  .v-theme--dark .page-toc-card .page-toc-toggle {
-    background: color-mix(in srgb, var(--wiki-surface-sunken) 90%, transparent) !important;
-
-    &[aria-expanded='true'] {
-      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 48%, var(--wiki-surface-border-strong));
-      background:
-        linear-gradient(
-          90deg,
-          color-mix(in srgb, var(--wiki-accent-warm) 14%, var(--wiki-surface-raised)),
-          color-mix(in srgb, var(--wiki-accent-spectral) 8%, var(--wiki-surface-raised))
-        ) !important;
+      box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs), var(--wiki-focus-ring);
     }
   }
 
-}
-@media (min-width: 600px) and (max-width: 1279px) {
-  .page-tablet-tools {
-    display: flex;
-    width: 100%;
-    flex: 0 0 100%;
-    flex-direction: column;
-    gap: var(--wiki-space-4);
+  .page-toc-row, .page-toc-item { min-height: 2.5rem; }
+  .page-toc-content .page-toc-list { max-height: 48dvh; }
+  .page-col-content > .contents { padding-block-start: var(--wiki-space-1); }
+  .page-header-section > .is-page-header { padding-block: var(--wiki-space-1) !important; }
+  .page-header-section .page-document-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
-
-  .page-tablet-tools > .page-tools-card,
-  .page-tablet-tools > .page-toc-card,
-  .page-tablet-tools > .page-tags-card,
-  .page-tablet-tools > .page-comments-card,
-  .page-tablet-tools > .wiki-page-ratings {
-    order: initial;
-    width: 100%;
-    max-width: 100%;
-    min-width: 0;
-    flex: 0 0 auto;
-    margin-block-end: 0 !important;
+  .page-header-section .page-title { font-size: clamp(1.5rem, 1.25rem + 1vw, 2rem); line-height: 1.05; }
+  .page-header-section .page-description { font-size: .875rem; line-height: 1.35; }
+  .page-header-section .page-document-provenance { margin-block-start: 2px; font-size: .6875rem; line-height: 1.35; }
+  .page-header-section .page-hero-actions {
+    gap: var(--wiki-space-1);
+    margin-block-start: var(--wiki-space-1);
+    .v-btn { min-height: 1.75rem; height: auto; padding: .25rem .5rem; font-size: .75rem; }
   }
-
-  .page-body > .v-row {
-    gap: var(--wiki-space-4);
-  }
-}
-
-@media (max-width: 959px) {
-
-  .page-col-sd {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .page-header-section > .is-page-header {
-    padding-inline: var(--wiki-page-gutter) !important;
-  }
-
-  .page-col-content > .contents {
-    padding: var(--wiki-space-8) 0;
-  }
+  .page-header-section .breadcrumbs-nav .v-btn { min-height: 1.25rem; height: auto; font-size: .6875rem; }
+  .page-view-tabs { margin-block-end: var(--wiki-space-1); }
 }
 
 @media (max-width: 599px) {
@@ -6493,14 +5522,14 @@ export default defineComponent({
     }
 
     .page-title {
-      font-size: clamp(1.875rem, 1.55rem + 2vw, 2.25rem);
+      font-size: clamp(1.5rem, 1.25rem + 1vw, 1.75rem);
       line-height: 1.05;
     }
 
     .page-description {
       margin-block-start: var(--wiki-space-1);
-      font-size: 1rem;
-      line-height: 1.5;
+      font-size: .875rem;
+      line-height: 1.35;
     }
   }
 
@@ -6512,63 +5541,11 @@ export default defineComponent({
       var(--wiki-space-10) !important;
   }
 
-  .page-col-sd {
-    gap: var(--wiki-space-3);
-    padding-block-end: var(--wiki-space-4);
-  }
-
-  .page-mobile-tools {
-    display: flex;
-    width: 100%;
-    flex: 0 0 100%;
-    flex-direction: column;
-    gap: var(--wiki-space-3);
-  }
-
-  .page-mobile-metadata {
-    display: flex;
-    width: 100%;
-    flex: 0 0 100%;
-    order: 2;
-    flex-direction: column;
-    gap: var(--wiki-space-3);
-  }
-
-  .page-mobile-metadata > .v-card,
-  .page-mobile-metadata > .wiki-page-ratings {
-    width: 100%;
-    max-width: 100%;
-    flex: 0 0 auto;
-    margin-block-end: 0 !important;
-  }
-
-  .page-mobile-tools > .page-tools-card,
-  .page-mobile-tools > .page-toc-card {
-    width: 100%;
-    max-width: 100%;
-    flex: 0 0 auto;
-    margin-block-end: 0 !important;
-  }
-
-  .page-toc-card .page-toc-toggle {
-    display: flex;
-    flex: 0 0 auto;
-    min-height: var(--wiki-control-height);
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--wiki-space-3) var(--wiki-space-4) !important;
-  }
-
-
-  .page-toc-card {
-    min-height: var(--wiki-control-height);
-    max-height: calc(var(--wiki-grid-size) * 5);
-  }
 
   .page-col-content > .contents {
     min-height: calc(var(--wiki-grid-size) * 2);
     padding:
-      var(--wiki-space-6)
+      var(--wiki-space-1)
       0
       var(--wiki-space-8);
     border-radius: 0;
@@ -6615,18 +5592,17 @@ export default defineComponent({
   .page-edit-shortcuts,
   .page-edit-fab,
   .page-return-top,
-  .page-mobile-tools,
-  .page-tablet-tools,
-  .page-mobile-metadata,
+  .page-metadata,
+  .page-hero-actions,
   .page-col-sd,
-  .page-tools-card__utilities,
-  .page-tools-card__divider,
-  .page-tools-history-link,
   .page-toc-card,
   .page-tags-card,
   .page-comments-card,
   .comments-container {
     display: none !important;
+  }
+  .page-main--with-rail .page-body > .v-row {
+    display: block;
   }
 
   .page-header-section > .is-page-header {
@@ -6643,37 +5619,14 @@ export default defineComponent({
     grid-column: 1;
     padding-inline-start: 0;
   }
-  .page-tools-card {
-    width: 100%;
-    min-height: 0;
-    margin: 0 0 var(--wiki-space-4) !important;
-    border: 0 !important;
-    border-block-end: 1px solid currentColor !important;
-    border-radius: 0;
-    background: transparent !important;
-    box-shadow: none !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-  }
-
-  .page-tools-card__provenance {
-    min-height: 0;
-    padding: 0 0 var(--wiki-space-2) !important;
+  .page-document-provenance,
+  .page-document-provenance time,
+  .page-document-author {
     color: CanvasText;
   }
-
-  .page-tools-card .page-document-row--date,
-  .page-tools-card .page-document-row--author,
-  .page-tools-card time {
-    color: CanvasText;
-  }
-
-  .page-tools-card .page-document-author {
-    max-width: 100%;
+  .page-document-author {
     overflow: visible;
-    text-overflow: clip;
     white-space: normal;
-    color: CanvasText;
   }
 
   .page-main,
@@ -6754,7 +5707,8 @@ export default defineComponent({
     border-color: CanvasText;
     box-shadow: none;
   }
-  .page-tools-card,
+  .page-hero,
+  .page-reading-sections,
   .page-toc-card {
     border-color: CanvasText !important;
     background: Canvas !important;
@@ -6988,8 +5942,9 @@ export default defineComponent({
   overflow: hidden;
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-md);
+  background-color: var(--wiki-surface-raised);
+  background-image: var(--wiki-surface-gradient);
+  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-md);
 
   > .page-toc-card {
     flex: 1 1 auto;
@@ -6998,8 +5953,6 @@ export default defineComponent({
     margin-bottom: 0 !important;
     border: 0 !important;
     border-radius: 0;
-    background: none !important;
-    box-shadow: none;
   }
 
   .page-toc-content,
@@ -7048,11 +6001,9 @@ export default defineComponent({
   --page-reader-copy-max: min(72ch, var(--wiki-reader-copy-width, 74ch));
 
   .page-col-sd,
-  .page-mobile-tools,
-  .page-tablet-tools,
-  .page-mobile-metadata,
-  .page-body > .v-row > .v-card,
-  .page-tools-card,
+  .page-inline-toc,
+  .page-metadata,
+  .page-hero-actions,
   .page-edit-shortcuts,
   .page-edit-fab { display: none !important; }
 
@@ -7153,7 +6104,7 @@ export default defineComponent({
 @media print {
   .page-position,
   .page-focus-control,
-  .page-reading-toolbar,
+  .page-inline-toc,
   .page-reading-chrome { display: none !important; }
 }
 

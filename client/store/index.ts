@@ -20,6 +20,7 @@ import {
 } from '../../shared/user-presentation.ts'
 import type { PageBrandingAssignment, PageBrandingView } from '../../shared/page-branding.ts'
 import { normalizePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
+import { normalizeTocPosition } from '../../shared/theme-policy.ts'
 export type Notification = {
   message: string
   style: string
@@ -417,7 +418,7 @@ export const useWikiStore = defineStore('wiki', {
       footerOverride: window.siteConfig.footerOverride,
       banner: window.siteConfig.banner,
       dark: window.siteConfig.darkMode,
-      tocPosition: window.siteConfig.tocPosition,
+      tocPosition: normalizeTocPosition(window.siteConfig.tocPosition),
       pageTransitions: window.siteConfig.pageTransitions !== false,
       showPageProgress: window.siteConfig.showPageProgress === true,
       mascot: true,
