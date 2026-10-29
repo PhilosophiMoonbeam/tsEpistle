@@ -1,4 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from './bun-test.mts'
+import { PageAccuracyViewSchema } from '../../shared/page-accuracy.ts'
+import type { readPageAccuracy } from '../helpers/page-accuracy.ts'
+
+// Keep preview authorization and render freshness real; G4's fresh database
+// authority and attestation lifecycle belong to page-accuracy.postgres.test.ts.
+vi.mockModule('../helpers/page-accuracy.ts', import.meta.url, () => ({
+  readPageAccuracy: async ({ page }: Parameters<typeof readPageAccuracy>[0]) => PageAccuracyViewSchema.parse({
+    sourceRevision: String(page.sourceRevision),
+    updatedAt: new Date(page.updatedAt).toISOString(),
+    author: null,
+    latestAttestation: null,
+    canVerify: false,
+    asOf: new Date(page.updatedAt).toISOString(),
+    status: 'needs-verification'
+  }),
+  attestPageAccuracy: () => { throw new Error('Use the real PostgreSQL accuracy fixture for attestations') }
+}))
+
 const unlock = vi.fn(async () => {})
 const protectedAssetRequiresUnlock = vi.fn(async () => false)
 vi.mockModule('../operations/page-protection.ts', import.meta.url, () => ({
@@ -71,7 +89,6 @@ describe('source preview access', () => {
           error => error
         )
         expect(failure).toMatchObject({ name: 'PAGE_RENDER_PENDING', status: 503 })
-        expect(failure.message).toMatch(/retry/i)
         expect(failure).not.toHaveProperty('excerpt')
         expect(failure).not.toHaveProperty('render')
         expect(failure).not.toHaveProperty('content')

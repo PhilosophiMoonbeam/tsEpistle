@@ -1002,6 +1002,7 @@ test.describe('responsive UI quality matrix', () => {
               title: 'Responsive Search Result',
               description: 'A deterministic result with enough copy to exercise wrapping at narrow widths.',
               excerpt: null,
+              copySource: null,
               path: 'responsive-search-result',
               locale: 'en',
               visibility: 'public',
@@ -1014,6 +1015,7 @@ test.describe('responsive UI quality matrix', () => {
               title: 'Private Responsive Result',
               description: 'A second result verifies that multiple cards remain readable.',
               excerpt: null,
+              copySource: null,
               path: 'private-responsive-result',
               locale: 'en',
               visibility: 'private',
@@ -1715,7 +1717,7 @@ test.describe('responsive UI quality matrix', () => {
     await page.route('**/_api/pages/search?**', route =>
       route.fulfill({
         json: {
-          results: sources.map(source => ({ ...source, tags: [], score: 10, matchedFields: ['title'] })),
+          results: sources.map(source => ({ ...source, copySource: null, tags: [], score: 10, matchedFields: ['title'] })),
           suggestions: [],
           totalHits: sources.length,
           nextCursor: null

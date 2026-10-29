@@ -1,4 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from './bun-test.mts'
+import { PageAccuracyViewSchema } from '../../shared/page-accuracy.ts'
+
+// listRelated authorizes its root through the detail projection. Keep its
+// traversal boundary separate from the native G4 accuracy authority lifecycle.
+vi.mockModule('../helpers/page-accuracy.ts', import.meta.url, () => ({
+  readPageAccuracy: async ({ page }) => PageAccuracyViewSchema.parse({
+    sourceRevision: String(page.sourceRevision),
+    updatedAt: new Date(page.updatedAt).toISOString(),
+    author: null,
+    latestAttestation: null,
+    canVerify: false,
+    asOf: new Date(page.updatedAt).toISOString(),
+    status: 'needs-verification'
+  }),
+  attestPageAccuracy: () => { throw new Error('Use the real PostgreSQL accuracy fixture for attestations') }
+}))
 
 const page = (id, title, path, tags = []) => ({
   id,

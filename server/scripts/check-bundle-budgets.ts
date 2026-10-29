@@ -174,8 +174,12 @@ export function findForbiddenLoginInitialFiles(manifest: Manifest, initialChunks
   for (const chunkKey of initialChunks) {
     const chunk = manifest[chunkKey]
     if (!chunk) throw new Error(`Missing Vite manifest chunk: ${chunkKey}`)
-    const identity = [chunkKey, chunk.src, chunk.name, chunk.file].filter(Boolean).join('\n')
-    if (FORBIDDEN_INITIAL_CHUNK_PATTERN.test(identity)) violations.add(chunk.file)
+    if (
+      FORBIDDEN_INITIAL_CHUNK_PATTERN.test(chunkKey) ||
+      FORBIDDEN_INITIAL_CHUNK_PATTERN.test(chunk.src ?? '') ||
+      FORBIDDEN_INITIAL_CHUNK_PATTERN.test(chunk.name ?? '') ||
+      FORBIDDEN_INITIAL_CHUNK_PATTERN.test(chunk.file)
+    ) violations.add(chunk.file)
   }
   for (const asset of initialFiles.assets) {
     if (/particle/i.test(asset) || FORBIDDEN_INITIAL_CHUNK_PATTERN.test(asset)) violations.add(asset)

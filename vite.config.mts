@@ -357,7 +357,8 @@ export default defineConfig(({ command }) => ({
       },
       output: {
         entryFileNames: 'js/[name]-[hash].js',
-        chunkFileNames: 'js/[name]-[hash].js',
+        // Hashes version shared chunks; omit redundant names from repeated import URLs.
+        chunkFileNames: 'js/[hash].js',
         assetFileNames: 'assets/[name]-[hash][extname]',
         codeSplitting: {
           groups: [

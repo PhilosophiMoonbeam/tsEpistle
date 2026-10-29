@@ -7,6 +7,7 @@ import { getPostgresTestConnection } from './postgres-test-connection.mts'
 import { knowledgeSearchText, mergeKnowledgeUtilityResult, projectPageKnowledge } from '../knowledge/projection.ts'
 import { up as createKnowledgeProjectionSchema } from '../db/migrations/2.5.152.ts'
 import { up as createKnowledgeSearchIndex } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
+import { up as createPageAccuracySchema } from '../db/migrations/tsepistle-000070-page-accuracy-attestations.ts'
 import { paginateSearch } from '../helpers/search-pagination.ts'
 import type PageModel from '../models/pages.ts'
 
@@ -78,6 +79,7 @@ suite('PostgreSQL shared search foundation', () => {
       CREATE TABLE pages (
         id integer PRIMARY KEY,
         "sourceRevision" bigint NOT NULL,
+        "changeReason" text,
         "renderedSourceRevision" bigint,
         path text NOT NULL,
         hash text NOT NULL DEFAULT '',
@@ -144,6 +146,7 @@ suite('PostgreSQL shared search foundation', () => {
     `)
     await createKnowledgeProjectionSchema(db)
     await createKnowledgeSearchIndex(db)
+    await createPageAccuracySchema(db)
 
     originalWiki = wikiRuntime.WIKI
     const checkAccess = (requester: unknown, permissions: readonly string[], context: Record<string, unknown> = {}) => {

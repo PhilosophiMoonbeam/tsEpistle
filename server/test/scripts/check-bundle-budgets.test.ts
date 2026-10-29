@@ -76,16 +76,16 @@ describe('login bundle manifest graph', () => {
     expect(staticSceneClosure.has('scene-deferred-09f4.js')).toBe(false)
   })
 
-  it('reports forbidden initial dependencies and deliberate gzip and scene budget failures', () => {
+  it('detects forbidden dependencies by semantic identity with opaque chunk URLs and enforces gzip/scene limits', () => {
     const loginChunk = manifest['login-b921.js']!
     const contaminatedManifest: Manifest = {
       ...manifest,
       'login-b921.js': {
         ...loginChunk,
-        imports: [...(loginChunk.imports ?? []), 'three-core-a550.js']
+        imports: [...(loginChunk.imports ?? []), '_a550b123.js']
       },
-      'three-core-a550.js': {
-        file: 'js/three-core-a550.js',
+      '_a550b123.js': {
+        file: 'js/a550b123.js',
         name: 'three',
         assets: ['assets/login-particle-data-d70d.bin']
       }
@@ -99,7 +99,7 @@ describe('login bundle manifest graph', () => {
       lazyScene: { rawBytes: 1_565 * 1_024 + 1, gzipBytes: 200_000 }
     }
 
-    expect(forbidden).toEqual(['assets/login-particle-data-d70d.bin', 'js/three-core-a550.js'])
+    expect(forbidden).toEqual(['assets/login-particle-data-d70d.bin', 'js/a550b123.js'])
     expect(findBudgetFailures(buildLoginBundleBudgets(measurements))).toEqual([
       'login direct JavaScript delta from 16fa062 (gzip)',
       'login initial scene/Tres/Three/shader/particle assets',

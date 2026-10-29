@@ -31,6 +31,7 @@ type TagIndexRow = {
   title: string | null
   createdAt: string
   updatedAt: string
+  pageCount: number | null
 }
 
 type TagApiOptions = {
@@ -46,24 +47,24 @@ const longTagLabel = 'Long editorial vocabulary label for containment geometry'
 const longTagCanonical = 'long-editorial-vocabulary-label-for-containment-geometry'
 
 const tagRows: TagIndexRow[] = [
-  { id: 1, tag: 'alpha', title: 'Alpha', createdAt: '2026-09-01T12:00:00.000Z', updatedAt: '2026-09-01T12:00:00.000Z' },
-  { id: 2, tag: 'beta', title: 'Beta', createdAt: '2026-09-02T12:00:00.000Z', updatedAt: '2026-09-02T12:00:00.000Z' },
-  { id: 3, tag: 'untitled-topic', title: null, createdAt: '2026-09-03T12:00:00.000Z', updatedAt: '2026-09-03T12:00:00.000Z' },
-  { id: 4, tag: 'unicode-topic', title: '東京の知識', createdAt: '2026-09-04T12:00:00.000Z', updatedAt: '2026-09-04T12:00:00.000Z' },
-  { id: 5, tag: 'ordinary-topic', title: ordinaryTagLabel, createdAt: '2026-09-05T12:00:00.000Z', updatedAt: '2026-09-05T12:00:00.000Z' },
-  { id: 6, tag: longTagCanonical, title: longTagLabel, createdAt: '2026-09-06T12:00:00.000Z', updatedAt: '2026-09-06T12:00:00.000Z' }
+  { id: 1, tag: 'alpha', title: 'Alpha', createdAt: '2026-09-01T12:00:00.000Z', updatedAt: '2026-09-01T12:00:00.000Z', pageCount: null },
+  { id: 2, tag: 'beta', title: 'Beta', createdAt: '2026-09-02T12:00:00.000Z', updatedAt: '2026-09-02T12:00:00.000Z', pageCount: null },
+  { id: 3, tag: 'untitled-topic', title: null, createdAt: '2026-09-03T12:00:00.000Z', updatedAt: '2026-09-03T12:00:00.000Z', pageCount: null },
+  { id: 4, tag: 'unicode-topic', title: '東京の知識', createdAt: '2026-09-04T12:00:00.000Z', updatedAt: '2026-09-04T12:00:00.000Z', pageCount: null },
+  { id: 5, tag: 'ordinary-topic', title: ordinaryTagLabel, createdAt: '2026-09-05T12:00:00.000Z', updatedAt: '2026-09-05T12:00:00.000Z', pageCount: null },
+  { id: 6, tag: longTagCanonical, title: longTagLabel, createdAt: '2026-09-06T12:00:00.000Z', updatedAt: '2026-09-06T12:00:00.000Z', pageCount: null }
 ]
 
 const identityTagRows: TagIndexRow[] = [
-  { id: 101, tag: 'alpha', title: 'Alpha concept', createdAt: '2026-09-07T12:00:00.000Z', updatedAt: '2026-09-07T12:00:00.000Z' },
-  { id: 102, tag: 'ALPHA', title: 'Uppercase concept', createdAt: '2026-09-08T12:00:00.000Z', updatedAt: '2026-09-08T12:00:00.000Z' },
-  { id: 103, tag: '--alpha', title: 'Punctuated concept', createdAt: '2026-09-09T12:00:00.000Z', updatedAt: '2026-09-09T12:00:00.000Z' },
-  { id: 104, tag: '東京', title: 'Unicode concept', createdAt: '2026-09-10T12:00:00.000Z', updatedAt: '2026-09-10T12:00:00.000Z' },
-  { id: 105, tag: '—東京', title: 'Punctuated Unicode concept', createdAt: '2026-09-11T12:00:00.000Z', updatedAt: '2026-09-11T12:00:00.000Z' },
-  { id: 106, tag: '123', title: 'Numeric concept', createdAt: '2026-09-12T12:00:00.000Z', updatedAt: '2026-09-12T12:00:00.000Z' },
-  { id: 107, tag: '１２３', title: 'Full-width numeric concept', createdAt: '2026-09-13T12:00:00.000Z', updatedAt: '2026-09-13T12:00:00.000Z' },
-  { id: 108, tag: '!!!', title: 'Punctuation concept', createdAt: '2026-09-14T12:00:00.000Z', updatedAt: '2026-09-14T12:00:00.000Z' },
-  { id: 109, tag: '???', title: 'Other punctuation concept', createdAt: '2026-09-15T12:00:00.000Z', updatedAt: '2026-09-15T12:00:00.000Z' }
+  { id: 101, tag: 'alpha', title: 'Alpha concept', createdAt: '2026-09-07T12:00:00.000Z', updatedAt: '2026-09-07T12:00:00.000Z', pageCount: null },
+  { id: 102, tag: 'ALPHA', title: 'Uppercase concept', createdAt: '2026-09-08T12:00:00.000Z', updatedAt: '2026-09-08T12:00:00.000Z', pageCount: null },
+  { id: 103, tag: '--alpha', title: 'Punctuated concept', createdAt: '2026-09-09T12:00:00.000Z', updatedAt: '2026-09-09T12:00:00.000Z', pageCount: null },
+  { id: 104, tag: '東京', title: 'Unicode concept', createdAt: '2026-09-10T12:00:00.000Z', updatedAt: '2026-09-10T12:00:00.000Z', pageCount: null },
+  { id: 105, tag: '—東京', title: 'Punctuated Unicode concept', createdAt: '2026-09-11T12:00:00.000Z', updatedAt: '2026-09-11T12:00:00.000Z', pageCount: null },
+  { id: 106, tag: '123', title: 'Numeric concept', createdAt: '2026-09-12T12:00:00.000Z', updatedAt: '2026-09-12T12:00:00.000Z', pageCount: null },
+  { id: 107, tag: '１２３', title: 'Full-width numeric concept', createdAt: '2026-09-13T12:00:00.000Z', updatedAt: '2026-09-13T12:00:00.000Z', pageCount: null },
+  { id: 108, tag: '!!!', title: 'Punctuation concept', createdAt: '2026-09-14T12:00:00.000Z', updatedAt: '2026-09-14T12:00:00.000Z', pageCount: null },
+  { id: 109, tag: '???', title: 'Other punctuation concept', createdAt: '2026-09-15T12:00:00.000Z', updatedAt: '2026-09-15T12:00:00.000Z', pageCount: null }
 ]
 
 function pageRow(overrides: Partial<PageApiRow> = {}): PageApiRow {

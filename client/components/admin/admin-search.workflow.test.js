@@ -74,6 +74,8 @@ const pageRow = (id, visibility = 'public') => ({
   id,
   title: `Guide ${id}`,
   description: '',
+  excerpt: null,
+  copySource: null,
   path: `guides/${id}`,
   locale: 'en',
   visibility,
