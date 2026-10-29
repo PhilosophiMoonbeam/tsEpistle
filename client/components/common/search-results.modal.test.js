@@ -3,6 +3,7 @@ import path from 'node:path'
 import * as ts from 'typescript'
 import { JSDOM } from 'jsdom'
 import { activeOwnedOverlayRoots, createModalFocusScope } from './modal-focus-scope.ts'
+import { createSearchHighlighter } from '../../helpers/search-highlight.ts'
 
 const compileSearchMethods = (source, names, dependencies = {}) => {
   const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)?.[1]
@@ -674,7 +675,7 @@ describe('Ask modal accessibility contract', () => {
   })
 })
 
-const compileSearchOptions = (source, names, section = 'computed') => {
+const compileSearchOptions = (source, names, section = 'computed', dependencies = {}) => {
   const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)?.[1]
   if (!script) throw new Error('Search component script was not found.')
   const sourceFile = ts.createSourceFile('search-results.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
@@ -692,11 +693,44 @@ const compileSearchOptions = (source, names, section = 'computed') => {
   const compiled = ts.transpileModule(`const computed = ({${declarations.map(node => node.getText(sourceFile)).join(',')}})`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
   }).outputText
-  return new Function(`${compiled}\nreturn computed`)()
+  return new Function(...Object.keys(dependencies), `${compiled}\nreturn computed`)(...Object.values(dependencies))
 }
 
 describe('Search panel layout and hand-off', () => {
   const search = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
+
+  test('starts clamped excerpts at a real match without inventing metadata or stale-query matches', () => {
+    const computed = compileSearchOptions(search, ['resultHighlights'], 'computed', { createSearchHighlighter })
+    const passage = `${'Earlier authorized context. '.repeat(3)}CONTRACT <img src=x onerror=alert(1)>`
+    const state = {
+      hasFreshResponse: true,
+      normalizedSearch: 'contract',
+      offlineSearchActive: false,
+      results: [
+        { title: 'Terms', path: 'terms', excerpt: passage },
+        { title: 'Contract metadata only', path: 'metadata', excerpt: null }
+      ]
+    }
+    expect(computed.resultHighlights.call(state)[0].excerpt).toEqual([
+      { text: '…', matched: false },
+      { text: 'CONTRACT', matched: true },
+      { text: ' <img src=x onerror=alert(1)>', matched: false }
+    ])
+    expect(computed.resultHighlights.call(state)[1].excerpt).toEqual([{ text: '', matched: false }])
+
+    state.hasFreshResponse = false
+    expect(computed.resultHighlights.call(state)[0].excerpt).toEqual([{ text: passage, matched: false }])
+
+    state.hasFreshResponse = true
+    state.offlineSearchActive = true
+    state.normalizedSearch = '-contract'
+    state.results[0].excerpt = 'Saved context before -CONTRACT text'
+    expect(computed.resultHighlights.call(state)[0].excerpt).toEqual([
+      { text: '…', matched: false },
+      { text: '-CONTRACT', matched: true },
+      { text: ' text', matched: false }
+    ])
+  })
 
   test('keeps live-only scope filters focusable offline but does not apply them', () => {
     const methods = compileSearchMethods(search, ['toggleLocaleScope', 'togglePathScope'])

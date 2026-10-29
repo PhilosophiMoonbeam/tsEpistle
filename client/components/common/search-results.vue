@@ -635,11 +635,17 @@ export default defineComponent({
     },
     resultHighlights(): { title: SearchTextSegment[], excerpt: SearchTextSegment[], path: SearchTextSegment[] }[] {
       const highlight = createSearchHighlighter(this.hasFreshResponse ? this.normalizedSearch : '', !this.offlineSearchActive)
-      return this.results.map(item => ({
-        title: highlight(item.title),
-        excerpt: highlight(item.excerpt ?? ''),
-        path: highlight(item.path)
-      }))
+      return this.results.map(item => {
+        const excerpt = highlight(item.excerpt ?? '')
+        // Leading context can consume both clamped lines at narrow widths or large text sizes.
+        // Start at the actual match; keep the full authorized passage in the subtitle's title.
+        if (excerpt.length > 1 && !excerpt[0]!.matched) excerpt[0] = { text: '…', matched: false }
+        return {
+          title: highlight(item.title),
+          excerpt,
+          path: highlight(item.path)
+        }
+      })
     },
     normalizedSearch(): string {
       return (this.search ?? '').trim()
