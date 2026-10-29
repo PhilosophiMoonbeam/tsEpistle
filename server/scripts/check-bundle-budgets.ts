@@ -82,8 +82,10 @@ const LARGEST_JAVASCRIPT_CHUNK_RAW_LIMIT = 1_565 * KiB
 // the clean Docker build measured 13,935.3 KiB. Initial/largest/lazy caps are unchanged.
 // Remaining assessment UI has an additional user-approved 8 KiB allowance;
 // the optional-reason build measured 13,939.9 KiB. Initial/largest/lazy caps are unchanged.
+// G5 committed-source/frozen-memory controls have a further approved 8 KiB allowance;
+// their first build measured 13,952.1 KiB. Every other budget remains unchanged.
 // Retain a fixed aggregate ceiling and every initial-load/lazy budget.
-const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_946 * KiB
+const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_954 * KiB
 
 export function findManifestKey(manifest: Manifest, source: string): string {
   if (manifest[source]) return source
