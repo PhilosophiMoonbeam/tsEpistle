@@ -79,7 +79,7 @@
       aria-atomic="true"
     >{{ liveStatusLabel }}</span>
 
-    <div class="agent-composer__context-row">
+    <div class="agent-composer__context-row" tabindex="0" :aria-label="$t('common:agentContextUi.context')">
       <AgentContextSummary
         v-if="sourceContext !== undefined || memoryContext !== undefined"
         :sources="sourceContext ?? null"
@@ -1665,11 +1665,19 @@ onBeforeUnmount(() => {
 .agent-composer__context-row {
   display: flex;
   min-width: 0;
-  flex: 0 0 auto;
+  min-height: 0;
+  max-height: min(14rem, 28dvh);
+  flex: 0 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--agent-composer-control-gap);
   margin: 0 0 var(--agent-composer-control-gap);
+}
+.agent-composer__context-row:focus-visible {
+  outline: 2px solid var(--wiki-focus-color);
+  outline-offset: 2px;
 }
 
 /* Collapses entirely when the context slot renders nothing and no goal chip is set. */

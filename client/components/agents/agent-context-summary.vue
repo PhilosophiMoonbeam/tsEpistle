@@ -14,8 +14,8 @@
       </span>
       <button v-for="row in memoryRows" :key="row.target" type="button" class="agent-context-summary__crystal" :class="`agent-context-summary__crystal--${row.target}`" :disabled="memoryDisabled" :aria-label="row.label" :aria-describedby="`${summaryId}-${row.target}`" aria-controls="agent-memory-panel" @click="openMemory(row.target, $event)">
         <svg width="16" height="18" viewBox="0 0 16 18" aria-hidden="true" focusable="false"><path d="M8 1 14 5 12 13 8 17 4 13 2 5Z" /><path d="m2 5 6 3 6-3M8 1v16M4 13l4-5 4 5" /></svg>
-        <span><strong>{{ row.name }}</strong> · {{ $t('common:agentContextUi.frozenShort', { state: row.active }) }}</span>
-        <span v-if="memory?.nextSession[row.target] === 'changed'" class="agent-context-summary__next">{{ $t('common:agentContextUi.nextChanged') }}</span>
+        <span><strong>{{ row.name }}</strong> · {{ row.short }}</span>
+        <v-icon v-if="memory?.nextSession[row.target] === 'changed'" class="agent-context-summary__next" icon="mdi-update" size="16" aria-hidden="true" :title="$t('common:agentContextUi.nextChanged')" />
       </button>
     </div>
     <details class="agent-context-summary__details">
@@ -27,12 +27,12 @@
         <ul v-if="sources?.attachedSources.length" class="agent-context-summary__source-list">
           <li v-for="row in sources.attachedSources" :key="agentSourceIdentityKey(row.source)">{{ row.source.title }} · {{ row.source.locale }}/{{ row.source.path }} · {{ stateLabel(row.access) }}</li>
         </ul>
-        <p v-if="sources">{{ $t('common:agentContextUi.scope', { scope: scopeLabel }) }}</p>
+        <p v-if="sources">{{ $t('common:agentContextUi.scope', { scope: scopeLabel, interpolation: { escapeValue: false } }) }}</p>
         <div v-for="row in memoryRows" :key="row.target" :id="`${summaryId}-${row.target}`">
-          <p><strong>{{ row.name }}</strong> — {{ $t('common:agentContextUi.activeFrozen', { state: row.active }) }}</p>
+          <p><strong>{{ row.name }}</strong> — {{ $t('common:agentContextUi.activeFrozen', { state: row.active, interpolation: { escapeValue: false } }) }}</p>
           <p v-if="memory?.frozen.snapshotId">{{ $t('common:agentContextUi.sessionSnapshot', { snapshot: memory.frozen.snapshotId }) }}</p>
           <p v-if="row.snapshot">{{ $t('common:agentContextUi.targetSnapshot', { snapshot: row.snapshot }) }}</p>
-          <p>{{ $t('common:agentContextUi.latestSaved', { state: row.saved }) }}</p>
+          <p>{{ $t('common:agentContextUi.latestSaved', { state: row.saved, interpolation: { escapeValue: false } }) }}</p>
           <p>{{ row.next }}</p>
         </div>
         <p>{{ $t('common:agentContextUi.memorySemantics') }}</p>
@@ -100,18 +100,21 @@ const memoryLabel = (metadata: MemoryMetadata | undefined): string => {
   if (!metadata) return absentState.value
   if (metadata.state !== 'available' && metadata.state !== 'stale') return stateLabel(metadata.state)
   const count = t(metadata.characters === 0 ? 'common:agentContextUi.emptyCount' : 'common:agentContextUi.characterCount', { count: metadata.characters, limit: metadata.limit })
-  return metadata.state === 'stale' ? t('common:agentContextUi.staleCount', { count }) : count
+  return metadata.state === 'stale' ? t('common:agentContextUi.staleCount', { count, interpolation: { escapeValue: false } }) : count
 }
 const memoryRows = computed(() => targets.map(target => {
   const frozen = props.memory?.frozen[target]
   const name = t(target === 'user' ? 'common:agentMemoryManager.you' : 'common:agentMemoryManager.agent')
   const active = memoryLabel(frozen)
+  const short = frozen && (frozen.state === 'available' || frozen.state === 'stale')
+    ? `${t('common:agentContextUi.shortCharacters', { count: frozen.characters })}${frozen.state === 'stale' ? ` · ${stateLabel('stale')}` : ''}`
+    : active
   const saved = memoryLabel(props.memory?.latestSaved[target])
   const next = t(`common:agentContextUi.next.${props.memory?.nextSession[target] ?? 'unknown'}`)
   return {
-    target, name, active, saved, next,
+    target, name, active, short, saved, next,
     snapshot: frozen && (frozen.state === 'available' || frozen.state === 'stale') ? frozen.snapshotId : null,
-    label: t('common:agentContextUi.openMemory', { name, active, saved, next })
+    label: t('common:agentContextUi.openMemory', { name, active, saved, next, interpolation: { escapeValue: false } })
   }
 }))
 const openSources = (event: MouseEvent): void => {
@@ -134,9 +137,9 @@ const openMemory = (target: 'user' | 'agent', event: MouseEvent): void => {
 .agent-context-summary__fill { stroke: var(--wiki-primary-ink); transition: stroke-dashoffset var(--wiki-motion-normal) var(--wiki-motion-ease); }
 .agent-context-summary__sources strong { font-variant-numeric: tabular-nums; }
 .agent-context-summary__page { display: inline-flex; align-items: center; gap: var(--wiki-space-1); color: var(--wiki-text-muted); }
-.agent-context-summary .agent-context-summary__crystal { --crystal-tint: var(--wiki-accent-warm); border-color: color-mix(in srgb, var(--crystal-tint) 32%, var(--wiki-surface-border)); background: linear-gradient(135deg, color-mix(in srgb, var(--crystal-tint) 12%, transparent), transparent), color-mix(in srgb, var(--wiki-surface-raised) 85%, transparent); box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs); }
+.agent-context-summary .agent-context-summary__crystal { --crystal-tint: var(--wiki-accent-warm); border-color: color-mix(in oklch, var(--crystal-tint) 32%, var(--wiki-surface-border)); background: linear-gradient(135deg, color-mix(in oklch, var(--crystal-tint) 12%, transparent), transparent), color-mix(in oklch, var(--wiki-surface-raised) 85%, transparent); box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs); }
 .agent-context-summary .agent-context-summary__crystal--agent { --crystal-tint: var(--wiki-accent-spectral); }
-.agent-context-summary__crystal svg { flex: 0 0 16px; stroke: currentColor; fill: color-mix(in srgb, var(--crystal-tint) 32%, transparent); stroke-width: 1; }
+.agent-context-summary__crystal svg { flex: 0 0 16px; stroke: currentColor; fill: color-mix(in oklch, var(--crystal-tint) 32%, transparent); stroke-width: 1; }
 .agent-context-summary__next { border-inline-start: 1px solid var(--wiki-surface-border-strong); padding-inline-start: var(--wiki-space-2); }
 .agent-context-summary__details { margin-block-start: var(--wiki-space-1); }
 .agent-context-summary__details summary { width: fit-content; min-height: 44px; align-content: center; cursor: pointer; color: var(--wiki-text-muted); }
