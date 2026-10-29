@@ -416,6 +416,17 @@
       "rollback": "fix-forward-or-restore",
       "rehearsalPostconditions": ["native-page-creation-receipts-schema"],
       "runtimePostconditions": ["native-page-creation-receipts-schema"]
+    },
+    "tsepistle-000070-page-accuracy-attestations.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": ["native-page-accuracy-attestations-schema"],
+      "runtimePostconditions": ["native-page-accuracy-attestations-schema"]
     }
   }
 }

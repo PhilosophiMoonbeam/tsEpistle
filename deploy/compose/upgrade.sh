@@ -292,6 +292,7 @@ make_plan() {
         site-logo-schema-v7|site-logo-pipeline-v7|agent-goal-budget-columns|agent-goal-budget-tier-selection|agent-google-search-grounding-columns|agent-google-search-consent-admission|agent-media-context-state-columns|native-page-ratings-and-recovery-schema|native-page-ratings-and-recovery) ;;
         agent-quota-daily-token-reset-credit-column|agent-media-table|agent-runs-media-request-column|native-gemini-profile-reconformance|historical-agent-content-retained|native-gemini-generate-content|retired-live-google-search-disabled|external-mcp-owner-isolation-and-grants|guarded-native-external-mcp-discovery-and-invocation|independent-decision-provider-configuration|native-typesafe-environment-fallback-and-validated-usage|immutable-model-task-declarations-and-routing-policy|eligible-owner-routing-and-accounted-safe-fallback|independent-draft-root-preserves-legacy-ciphertext|offline-draft-key-survives-session-protection-rotation|owner-root-bound-specialist-context-and-idempotent-invocation|delegated-context-reuse-preserves-incumbent-root-and-accounting|independent-media-provider-versions-preserve-legacy-models-prices-grants-and-credentials|authorized-current-media-version-bindings-and-retained-credentials) ;;
         native-page-creation-receipts-schema|native-live-notes-schema|native-glossary-schema|native-discussion-annotations-schema|native-discussion-notifications-schema|native-account-profile-schema|native-links-grid-registration) ;;
+        native-page-accuracy-attestations-schema) ;;
         personal-mcp-credential-kind-and-owner-schema) ;;
         external-mcp-oauth-grants-and-pending-schema|external-mcp-generic-oauth-schema|external-mcp-retired-oauth-configuration-schema) ;;
         *) die "Unsupported named migration postcondition: $probe" ;;
@@ -553,6 +554,43 @@ verify_native_page_schema() {
   [[ "$result" == 2 ]] || die "Postcondition failed: native-page-ratings-and-recovery-schema ($result/2 indexes)"
 }
 
+verify_page_accuracy_schema() {
+  local container="$1" user="$2" database="$3" result
+  result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+    WITH expected(column_name, data_type, nullable) AS (VALUES
+      ('id','uuid','NO'), ('pageId','integer','NO'), ('sourceRevision','bigint','NO'),
+      ('verifiedBy','integer','YES'), ('verifiedAt','timestamp with time zone','NO')
+    )
+    SELECT count(*) FROM expected e JOIN information_schema.columns c
+      ON c.table_schema=current_schema() AND c.table_name='pageAccuracyAttestations' AND c.column_name=e.column_name
+    WHERE c.data_type=e.data_type AND c.is_nullable=e.nullable AND c.column_default IS NULL;")"
+  [[ "$result" == 5 ]] || die "Postcondition failed: native-page-accuracy-attestations-schema ($result/5 columns)"
+  result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+    SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+      LEFT JOIN pg_attribute a ON a.attrelid=t.oid AND c.conkey=ARRAY[a.attnum]
+    WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='pageAccuracyAttestations' AND c.convalidated AND (
+      (c.contype='p' AND a.attname='id') OR
+      (c.contype='f' AND a.attname='pageId' AND c.confrelid=to_regclass('pages') AND c.confdeltype='c'
+        AND c.confkey=ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid=to_regclass('pages') AND attname='id')]) OR
+      (c.contype='f' AND a.attname='verifiedBy' AND c.confrelid=to_regclass('users') AND c.confdeltype='n'
+        AND c.confkey=ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid=to_regclass('users') AND attname='id')]) OR
+      (c.contype='c' AND c.conname='page_accuracy_source_revision_check'
+        AND regexp_replace(replace(pg_get_constraintdef(c.oid),'\"',''),'[[:space:]()]','','g')
+          IN ('CHECKsourceRevision>0','CHECKsourceRevision>0::bigint'))
+    );")"
+  [[ "$result" == 4 ]] || die "Postcondition failed: native-page-accuracy-attestations-schema ($result/4 constraints)"
+  result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+    SELECT count(*) FROM pg_class t JOIN pg_index i ON i.indrelid=t.oid
+      JOIN pg_class idx ON idx.oid=i.indexrelid
+    WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='pageAccuracyAttestations'
+      AND idx.relname='page_accuracy_current_revision_idx' AND i.indisvalid AND i.indisready AND i.indnkeyatts=4
+      AND replace(pg_get_indexdef(idx.oid,1,true),'\"','')='pageId'
+      AND replace(pg_get_indexdef(idx.oid,2,true),'\"','')='sourceRevision'
+      AND replace(pg_get_indexdef(idx.oid,3,true),'\"','')='verifiedAt'
+      AND replace(pg_get_indexdef(idx.oid,4,true),'\"','')='id';")"
+  [[ "$result" == 1 ]] || die "Postcondition failed: native-page-accuracy-attestations-schema ($result/1 indexes)"
+}
+
 verify_postconditions() {
   local phase="$1" container="$2" user="$3" database="$4" probe result
   while IFS= read -r probe; do
@@ -586,6 +624,9 @@ verify_postconditions() {
       agent-media-context-state-columns)
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='agentMedia' AND ((column_name='promptTokens' AND data_type='integer' AND is_nullable='YES') OR (column_name='detachedAt' AND data_type='timestamp with time zone' AND is_nullable='YES'));")"
         [[ "$result" == 2 ]] || die "Postcondition failed: $probe ($result/2 columns)"
+        ;;
+      native-page-accuracy-attestations-schema)
+        verify_page_accuracy_schema "$container" "$user" "$database"
         ;;
       native-page-ratings-and-recovery-schema)
         verify_native_page_schema "$container" "$user" "$database"

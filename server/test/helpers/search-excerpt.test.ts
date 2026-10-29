@@ -69,12 +69,13 @@ describe('source preview excerpts', () => {
 describe('inline matching passages', () => {
   it('returns the actual matching passage rather than the opening paragraph', () => {
     const render = `<p>Opening boilerplate ${'before '.repeat(100)}</p><p>Orbital calibration &amp; testing.</p><p>${'after '.repeat(100)}</p>`
-    const excerpt = matchingSearchExcerpt(render, '"orbital calibration"')
-    expect(excerpt).toContain('Orbital calibration & testing.')
-    expect(excerpt).not.toContain('Opening boilerplate')
-    expect(excerpt!.length).toBeLessThanOrEqual(320)
-    expect(excerpt!.startsWith('…')).toBe(true)
-    expect(excerpt!.endsWith('…')).toBe(true)
+    const result = matchingSearchExcerpt(render, '"orbital calibration"')!
+    expect(result.excerpt).toContain('Orbital calibration & testing.')
+    expect(result.excerpt).not.toContain('Opening boilerplate')
+    expect(result.excerpt.length).toBeLessThanOrEqual(320)
+    expect(result.excerpt.startsWith('…')).toBe(true)
+    expect(result.excerpt.endsWith('…')).toBe(true)
+    expect(result.excerptTruncated).toBe(true)
   })
 
   it('does not fabricate a body passage for metadata-only, excluded or hidden matches', () => {
@@ -84,12 +85,20 @@ describe('inline matching passages', () => {
     expect(matchingSearchExcerpt(render, 'metadata')).toBeNull()
   })
 
+  it('reports complete Unicode passages without mistaking authored ellipses for truncation', () => {
+    expect(matchingSearchExcerpt('<p>…İ🙂 desired[marker] …</p>', '"desired[marker]"')).toEqual({
+      excerpt: '…İ🙂 desired[marker] …',
+      excerptTruncated: false
+    })
+  })
+
   it('preserves literal punctuation and Unicode offsets without splitting surrogate pairs', () => {
     const render = `<p>${'İ🙂 '.repeat(200)}desired[marker] ${'🙂 '.repeat(200)}</p>`
-    const excerpt = matchingSearchExcerpt(render, '"desired[marker]"')!
-    expect(excerpt).toContain('desired[marker]')
-    expect(excerpt.length).toBeLessThanOrEqual(320)
-    expect(excerpt).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u)
+    const result = matchingSearchExcerpt(render, '"desired[marker]"')!
+    expect(result.excerpt).toContain('desired[marker]')
+    expect(result.excerpt.length).toBeLessThanOrEqual(320)
+    expect(result.excerpt).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u)
+    expect(result.excerptTruncated).toBe(true)
   })
 })
 

@@ -56,6 +56,7 @@ export const KNOWN_APPLICATION_TABLES: Readonly<Record<string, true>> = {
   pageWatchDeliveries: true,
   pageApprovalRequests: true,
   pageApprovalTransitions: true,
+  pageAccuracyAttestations: true,
   pageAccessPasswords: true,
   pageUnlockGrants: true,
   pageProtectedAssets: true,

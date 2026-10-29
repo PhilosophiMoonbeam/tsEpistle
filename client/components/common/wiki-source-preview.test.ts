@@ -21,7 +21,7 @@ const compiledTemplate = compileTemplate({
 })
 if (compiledTemplate.errors.length) throw compiledTemplate.errors[0]
 const renderPreview = new Function('Vue', compiledTemplate.code)(Vue)
-// Follow the existing interaction harness: execute the actual setup/template with only the network boundary replaced.
+// Execute the actual setup/template with the network and appearance providers supplied by this harness.
 const setupScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(descriptor.scriptSetup.content.replace(/^import .*$/gm, ''))
 const bindings = Array.from(descriptor.scriptSetup.content.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
 const dependencies = {
@@ -33,6 +33,7 @@ const dependencies = {
   useTemplateRef: Vue.useTemplateRef,
   watch: Vue.watch,
   useTheme: () => ({ themeClasses: Vue.ref('v-theme--light') }),
+  useRtl: () => ({ isRtl: Vue.ref(false) }),
   useTranslate: () => translateEnglish,
   renderWikiSourcePreview,
   WikiSourceLoadError,

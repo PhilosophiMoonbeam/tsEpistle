@@ -51,6 +51,7 @@ const page = (id: number, visibility: 'public' | 'private', path = 'alpha'): Pag
   title: visibility === 'private' ? 'Alpha private' : 'Alpha public',
   description: '',
   excerpt: null,
+  copySource: null,
   tags: [],
   score: 1,
   matchedFields: ['title']

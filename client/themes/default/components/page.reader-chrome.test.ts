@@ -541,6 +541,8 @@ describe('focus reading section navigation', () => {
       searchOverrides: new Map<string, boolean>(),
       $nextTick: Vue.nextTick,
       setupTocResizeObserver: () => {},
+      retirePageOutline: () => {},
+      setupPageOutline: () => {},
       ensureActiveTocVisible: () => {},
       ...overrides
     })

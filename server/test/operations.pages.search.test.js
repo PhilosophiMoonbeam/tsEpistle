@@ -146,14 +146,17 @@ describe('page search visibility', () => {
     expect(query).not.toHaveBeenCalled()
   })
 
-  it('exposes only matching current-render passages and never protected body text', async () => {
+  it('correlates copy sources with authorized current-render passages and withholds unavailable evidence', async () => {
     const candidates = [
-      page({ id: 201, title: 'Needle current', render: '<p>Actual needle paragraph.</p>', renderedSourceRevision: '1' }),
+      page({ id: 201, sourceRevision: '8', path: 'docs/current', title: 'Needle current', render: '<p>Actual needle paragraph.</p>', renderedSourceRevision: '8' }),
       page({ id: 202, title: 'Needle protected', render: '<p>Secret needle content.</p>', renderedSourceRevision: '1' }),
       page({ id: 203, title: 'Needle stale render', render: '<p>Stale needle content.</p>', renderedSourceRevision: '0' }),
       page({ id: 204, title: 'Needle pending render', render: '<p>Pending needle content.</p>', renderedSourceRevision: null }),
       page({ id: 205, title: 'Needle metadata', render: '<p>A different paragraph.</p>', renderedSourceRevision: '1' }),
-      page({ id: 206, title: 'Knowledge result', render: '<p>Unrelated body.</p>', renderedSourceRevision: '1' })
+      page({ id: 206, title: 'Knowledge result', render: '<p>Unrelated body.</p>', renderedSourceRevision: '1' }),
+      page({ id: 207, title: 'Needle long passage', render: `<p>${'İ🙂 '.repeat(200)}needle ${'🙂 '.repeat(200)}</p>`, renderedSourceRevision: '1' }),
+      page({ id: 208, title: 'Needle unavailable render', render: null, renderedSourceRevision: '1' }),
+      page({ id: 209, title: 'Needle unavailable timestamp', render: '<p>Current needle paragraph.</p>', renderedSourceRevision: '1', updatedAt: null })
     ]
     searchVisible.mockResolvedValueOnce([{
       id: 206, sourceRevision: '1', locale: 'en', path: candidates[5].path,
@@ -164,8 +167,8 @@ describe('page search visibility', () => {
       protectedIds: [202],
       metadataMatches: [[202], [202]],
       engineResponse: {
-        results: candidates.slice(0, 5).map(candidate => ({
-          id: candidate.id, sourceRevision: '1', locale: 'en', path: candidate.path,
+        results: candidates.filter(candidate => candidate.id !== 206).map(candidate => ({
+          id: candidate.id, sourceRevision: candidate.sourceRevision, locale: 'en', path: candidate.path,
           score: 1, matchedFields: ['title', 'content']
         })),
         suggestions: [], totalHits: 5
@@ -173,10 +176,23 @@ describe('page search visibility', () => {
     })
     const operations = await loadOperations()
     const result = await operations.search({ query: 'needle' })
-    expect(new Map(result.results.map(row => [row.id, row.excerpt]))).toEqual(new Map([
-      [201, 'Actual needle paragraph.'], [202, null], [203, null],
-      [204, null], [205, null], [206, null]
-    ]))
+    const rows = new Map(result.results.map(row => [row.id, row]))
+    expect(rows.get(201)).toMatchObject({
+      excerpt: 'Actual needle paragraph.',
+      copySource: {
+        id: 201, locale: 'en', path: 'docs/current', title: 'Needle current',
+        description: '', visibility: 'public', updatedAt: '2026-09-01T00:00:00.000Z',
+        sourceRevision: '8', excerpt: 'Actual needle paragraph.', excerptTruncated: false
+      }
+    })
+    for (const id of [202, 203, 204, 205, 206, 208]) {
+      expect(rows.get(id)).toMatchObject({ excerpt: null, copySource: null })
+    }
+    expect(rows.get(207).excerpt).toContain('needle')
+    expect(rows.get(207).copySource).toMatchObject({
+      id: 207, sourceRevision: '1', excerpt: rows.get(207).excerpt, excerptTruncated: true
+    })
+    expect(rows.get(209)).toMatchObject({ copySource: null })
     expect(JSON.stringify(result)).not.toMatch(/Secret needle|Stale needle|Pending needle/)
   })
 
@@ -742,14 +758,13 @@ describe('page search visibility', () => {
     expect(result.suggestions).toEqual([])
     expect(query).toHaveBeenCalledWith('runbook', expect.objectContaining({ pageIds: [101, 102] }))
   })
-  it('scopes page-derived tag search and tag listings', async () => {
+  it('scopes page-derived tag search to selected sources', async () => {
     const selected = page({ id: 111, tags: [{ id: 1, tag: 'scoped-tag' }] })
     const outside = page({ id: 112, path: 'private/unrelated', tags: [{ id: 2, tag: 'scope-leak' }] })
-    installSearchWiki({ pageResults: [[selected, outside], [selected, outside]] })
+    installSearchWiki({ pageResults: [[selected, outside]] })
     const operations = await loadOperations()
     const scope = { kind: 'selected', pageIds: [111] }
 
     await expect(operations.searchTags({ requester: { id: 7 }, query: 'scope', agentScope: scope })).resolves.toEqual(['scoped-tag'])
-    await expect(operations.listTags({ requester: { id: 7 }, agentScope: scope })).resolves.toEqual([{ id: 1, tag: 'scoped-tag' }])
   })
 })

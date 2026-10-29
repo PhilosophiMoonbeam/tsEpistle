@@ -187,7 +187,7 @@
                 :aria-label='$t(`common:searchPanel.resultsLabel`)'
               )
                 template(v-for='(item, idx) of results' :key='resultKey(item)')
-                  .search-results-row(role='row')
+                  .search-results-row.wiki-cited-copy-owner(role='row' :data-cited-copy-owner='resultKey(item)')
                     .search-results-main-cell(role='gridcell' :id='resultOptionId(idx)' :aria-selected='idx === cursor')
                       v-list-item.search-results-item(
                         lines='three'
@@ -238,7 +238,15 @@
                               | {{ $t('common:searchPanel.private') }}
                             v-chip(size='x-small' label variant='outlined') {{ item.locale.toLocaleUpperCase() }}
                             v-icon.search-results-item-chevron(icon='mdi-chevron-right' size='19' aria-hidden='true')
-                    .search-results-action-cell(v-if='$slots["result-actions"]' role='gridcell')
+                    .search-results-action-cell(role='gridcell' @keydown.stop @click.stop)
+                      cited-copy-action(
+                        :text='copySource(item)?.excerpt || ``'
+                        :source='copySource(item)'
+                        :context='citedCopyContext'
+                        :identity='copyIdentity(item)'
+                        :disabled='!copySource(item)'
+                      )
+                      span.search-results-copy-unavailable(v-if='!copySource(item)') {{ $t('common:searchCitedCopy.unavailable', { defaultValue: 'Snippet copy unavailable' }) }}
                       slot(name='result-actions' :item='item' :fresh='hasFreshResponse')
                     .search-results-preview-cell(v-if='!offlineSearchActive' role='gridcell')
                       button.search-results-preview(
@@ -313,6 +321,7 @@
 import { offlinePageHref, requestOfflineSavedPageOpen } from '../../helpers/offline-routes.ts'
 import { defineComponent, type ComponentPublicInstance, type PropType } from 'vue'
 import AsyncState from '@/components/common/async-state.vue'
+import CitedCopyAction from './cited-copy-action.vue'
 import { createAsyncComponent } from './async-component.ts'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import type { AgentSearchScope } from '../../helpers/agent-draft.ts'
@@ -438,6 +447,7 @@ const emptySearchResponse = (): SearchResponse => ({
 export default defineComponent({
   components: {
     AsyncState,
+    CitedCopyAction,
     InlineAgentChat: createAsyncComponent(() => import('../agents/inline-agent-chat.vue')),
     WikiSourcePreview: createAsyncComponent(() => import('./wiki-source-preview.vue')),
     GlossarySearch: createAsyncComponent(() => import('./glossary-search.vue'))
@@ -448,6 +458,7 @@ export default defineComponent({
   data() {
     return {
       loadingMore: false,
+      copyIdentityEpoch: 0,
       moreError: '',
       moreAbortController: null as AbortController | null,
       previewSelector: null as WikiSourceSelector | null,
@@ -493,6 +504,16 @@ export default defineComponent({
     }
   },
   computed: {
+    citedCopyContext(): { origin: string } {
+      return { origin: typeof window === 'undefined' ? '' : window.location.origin }
+    },
+    copyAuthorityKey(): string {
+      return JSON.stringify([
+        wikiStore.user.id, wikiStore.user.authenticated, wikiStore.user.permissions,
+        wikiStore.authRefreshPending, wikiStore.authRefreshSettled,
+        wikiStore.authRefreshOutcome, wikiStore.offlineIdentityReady
+      ])
+    },
     searchScopes() { return this.glossary ? SEARCH_SCOPES : SEARCH_SCOPES.filter(scope => scope.id !== 'glossary') },
     glossaryOpened(): boolean { return this.glossary?.opened === true },
     activeSearchScope(): SearchScope {
@@ -684,6 +705,7 @@ export default defineComponent({
     },
     searchRequestKey(): string {
       return JSON.stringify([
+        this.copyAuthorityKey,
         this.normalizedSearch,
         this.searchRestrictLocale ? wikiStore.page.locale : '',
         this.searchRestrictPath ? wikiStore.page.path : '',
@@ -713,6 +735,21 @@ export default defineComponent({
     }
   },
   watch: {
+    copyAuthorityKey: {
+      flush: 'sync',
+      handler() { this.copyIdentityEpoch++ }
+    },
+    searchRequestKey: {
+      flush: 'sync',
+      handler() {
+        this.copyIdentityEpoch++
+        this.queueSearch(this.search)
+      }
+    },
+    response: {
+      flush: 'sync',
+      handler() { this.copyIdentityEpoch++ }
+    },
     glossaryOpened: {
       immediate: true,
       handler(open: boolean) {
@@ -734,8 +771,9 @@ export default defineComponent({
       const query = newValue ?? ''
       if (this.searchMode === 'search' && query.trim().length >= 2) this.searchIsFocused = true
     },
-    searchRequestKey() {
-      this.queueSearch(this.search)
+    serverUnavailable: {
+      flush: 'sync',
+      handler() { this.copyIdentityEpoch++ }
     },
     offlineSearchActive(active: boolean) {
       if (active && this.previewSelector) this.previewSelector = null
@@ -1415,6 +1453,25 @@ export default defineComponent({
       if (isDownloadedSearchRow(item)) return `offline:${offlineRecordKey(item.offlineSiteId, item.offlinePageId, item.offlineLocale)}`
       return `${typeof item.id}:${item.id}`
     },
+    copyIdentity(item: SearchResultRow): string {
+      return JSON.stringify([this.copyIdentityEpoch, this.searchRequestKey, this.resultKey(item), this.cursor, this.copySource(item)?.sourceRevision])
+    },
+    copySource(item: SearchResultRow): WikiSource | null {
+      // Downloaded rows currently carry no admitted source revision. Never fetch a
+      // preview (or manufacture a current citation) to make their action available.
+      if (
+        isDownloadedSearchRow(item) || !this.hasFreshResponse || this.searchIsLoading ||
+        !this.serverCapabilitiesAvailable || !this.searchIsFocused || this.searchMode !== 'search' ||
+        (item.visibility === 'private' && !this.authAuthorityReady)
+      ) return null
+      const source = item.copySource
+      if (
+        !source || !source.sourceRevision || !source.updatedAt || !source.excerpt.trim() ||
+        source.excerpt !== item.excerpt || source.id !== Number(item.id) ||
+        source.locale !== item.locale || source.path !== item.path || source.visibility !== item.visibility
+      ) return null
+      return source
+    },
     occurrenceKey(values: readonly string[], value: string, index: number): string {
       let occurrence = 0
       for (let precedingIndex = 0; precedingIndex < index; precedingIndex += 1) {
@@ -1815,6 +1872,7 @@ export default defineComponent({
               tags: [],
               score,
               excerpt,
+              copySource: null,
               matchedFields: [],
               offline: true,
               offlineSiteId: document.siteId,
@@ -2429,8 +2487,13 @@ export default defineComponent({
 </style>
 
 <style scoped>
-.search-results-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; }
+.search-results-row { position: relative; isolation: isolate; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; }
 .search-results-main-cell { min-width: 0; }
+.search-results-action-cell { min-width: 0; max-width: 15rem; padding: var(--wiki-space-2); }
+.search-results-copy-unavailable { display: block; max-width: 10rem; font-size: .6875rem; color: rgb(var(--v-theme-on-surface) / .65); }
+@media (hover: hover) and (pointer: fine) {
+  .search-results-row:not(:hover):not(:focus-within) :deep(.cited-copy-action[data-copy-state='idle'] .cited-copy-action__button) { opacity: 0; }
+}
 .search-results-preview-cell { padding: var(--wiki-space-2) var(--wiki-space-3); }
 .search-results-preview { display: flex; align-items: center; justify-content: center; gap: var(--wiki-space-1); min-height: var(--wiki-control-height); padding: var(--wiki-space-2) var(--wiki-space-3); border-radius: var(--wiki-radius-sm); color: var(--wiki-accent-ink, rgb(var(--v-theme-on-surface))); font-size: .75rem; background: rgb(var(--v-theme-primary) / .08); }
 .search-results-preview:hover { background: rgb(var(--v-theme-primary) / .17); }
@@ -2439,6 +2502,7 @@ export default defineComponent({
 .search-results-preview[aria-disabled='true']:hover { background: rgb(var(--v-theme-primary) / .08); }
 @media (max-width: 599.98px) {
   .search-results-row { grid-template-columns: minmax(0, 1fr); }
+  .search-results-action-cell { max-width: none; display: flex; align-items: center; justify-content: flex-end; gap: .5rem; padding-block-start: 0; }
   .search-results-preview-cell { display: flex; justify-content: flex-end; padding-block-start: 0; }
   .search-results-preview { min-height: 2.75rem; }
 }

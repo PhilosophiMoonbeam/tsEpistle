@@ -39,6 +39,8 @@ const props = defineProps<{
   identity: string | number
   blockAnchor?: string
   disabled?: boolean
+  /** Required to be unique in the document when mounted in an independent render root. */
+  hintId?: string
 }>()
 const emit = defineEmits<{
   copied: [receipt: { identity: string | number; citationHref: string }]
@@ -46,7 +48,8 @@ const emit = defineEmits<{
 }>()
 const t = useTranslate('common:citedCopy')
 const root = ref<HTMLElement | null>(null)
-const hintId = `cited-copy-hint-${useId()}`
+const generatedHintId = `cited-copy-hint-${useId()}`
+const hintId = computed(() => props.hintId ?? generatedHintId)
 const state = ref<'idle' | 'copying' | 'copied' | 'failed'>('idle')
 const feedback = ref('')
 const keyHint = computed(() => t('selectedTextHint', {
@@ -55,6 +58,7 @@ const keyHint = computed(() => t('selectedTextHint', {
 let generation = 0
 let disposed = false
 let stopSweep: (() => void) | undefined
+let receiptTimer: number | undefined
 
 const clearSweep = (): void => {
   stopSweep?.()
@@ -91,6 +95,8 @@ const sweep = (): void => {
 const invalidate = (): void => {
   generation++
   clearSweep()
+  if (receiptTimer !== undefined) window.clearTimeout(receiptTimer)
+  receiptTimer = undefined
   state.value = 'idle'
   feedback.value = ''
 }
@@ -126,6 +132,7 @@ const copy = async (): Promise<void> => {
   state.value = 'copied'
   feedback.value = t('copied')
   sweep()
+  receiptTimer = window.setTimeout(invalidate, 5000)
   emit('copied', { identity, citationHref: receipt.citationHref })
 }
 onBeforeUnmount(() => { disposed = true; invalidate() })

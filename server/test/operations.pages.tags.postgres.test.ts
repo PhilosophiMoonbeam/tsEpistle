@@ -33,7 +33,11 @@ interface RecentPageEvidenceResult {
   pages: RecentPageEvidence[]
 }
 interface PageTagOperations {
-  listTags(input: { requester?: Express.User; agentScope?: { kind: 'selected'; pageIds: number[] } }): Promise<Array<{ tag: string }>>
+  listTags(input: {
+    requester?: Express.User
+    sessionId?: string
+    agentScope?: { kind: 'selected'; pageIds: number[] } | { kind: 'locale'; locale: string } | { kind: 'section'; locale: string; path: string }
+  }): Promise<Array<{ tag: string; pageCount: number | null }>>
   list(input: {
     requester?: Express.User
     tags?: string[]
@@ -208,6 +212,8 @@ suite('PostgreSQL page tag authorization candidates', () => {
 
   beforeEach(async () => {
     accessCalls.length = 0
+    await db('pageUnlockGrants').delete()
+    await db('pageAccessPasswords').delete()
     await db('pageTags').delete()
     await db('pages').delete()
     await db('tags').delete()
@@ -371,6 +377,66 @@ suite('PostgreSQL page tag authorization candidates', () => {
     expect(observedPaths).not.toContain('docs/unrelated')
   })
 
+  it('counts distinct authorized pages, canonicalizes aliases, and scopes totals to the reader and agent', async () => {
+    await db('pageTags').insert({ pageId: 2, tagId: tagIds['old-topic'] })
+    const totals = async (input: Parameters<PageTagOperations['listTags']>[0]) =>
+      Object.fromEntries((await operations.listTags(input)).map(row => [row.tag, row.pageCount]))
+    expect(await totals({ requester })).toEqual({
+      'allow-access': 9, topic: 6, 'topic-alpha': 1, 'topic-zulu': 1
+    })
+    expect(await totals({ requester: { id: 1, permissions: ['manage:system'] } as Express.User })).toEqual({
+      'allow-access': 10, topic: 7, 'topic-alpha': 1, 'topic-zulu': 1
+    })
+    expect(await totals({ requester, agentScope: { kind: 'locale', locale: 'fr' } })).toEqual({
+      'allow-access': 1, topic: 1
+    })
+    expect(await totals({ requester, agentScope: { kind: 'section', locale: 'en', path: 'docs' } })).toEqual({
+      'allow-access': 3, topic: 2, 'topic-alpha': 1, 'topic-zulu': 1
+    })
+    expect(await totals({ requester, agentScope: { kind: 'selected', pageIds: [1, 2, 6] } })).toEqual({
+      'allow-access': 1, topic: 1, 'topic-zulu': 1
+    })
+  })
+
+  it('counts password-protected pages only for a current matching session grant', async () => {
+    await db('pageAccessPasswords').insert({ pageId: 2, version: 3 })
+    await db('pageUnlockGrants').insert({
+      pageId: 2, sessionId: 'reader-session', userId: 7, passwordVersion: 3,
+      expiresAt: '2099-01-01T00:00:00.000Z'
+    })
+    const counts = async (sessionId?: string) =>
+      Object.fromEntries((await operations.listTags({ requester, sessionId })).map(row => [row.tag, row.pageCount]))
+    const locked = { 'allow-access': 8, topic: 5, 'topic-alpha': 1 }
+    expect(await counts()).toEqual(locked)
+    expect(await counts('other-session')).toEqual(locked)
+    expect(await counts('reader-session')).toEqual({
+      'allow-access': 9, topic: 6, 'topic-alpha': 1, 'topic-zulu': 1
+    })
+    for (const invalidGrant of [
+      { passwordVersion: 2 },
+      { passwordVersion: 3, userId: 8 },
+      { userId: 7, expiresAt: '2000-01-01T00:00:00.000Z' }
+    ]) {
+      await db('pageUnlockGrants').where({ pageId: 2 }).update(invalidGrant)
+      expect(await counts('reader-session')).toEqual(locked)
+    }
+  })
+
+  it('keeps exact counts and late tags beyond a page traversal batch', async () => {
+    const pages = Array.from({ length: 501 }, (_, index) => ({
+      id: 100 + index, path: `docs/bulk-${index}`, localeCode: 'en', title: `Bulk ${index}`,
+      description: '', content: '', sourceRevision: 1, isPublished: true, isSearchable: true,
+      visibility: 'public', ownerId: null, creatorId: 100, authorId: 200,
+      contentType: 'markdown', createdAt: now, updatedAt: now
+    }))
+    await db('pages').insert(pages)
+    await db('pageTags').insert(pages.map(page => ({ pageId: page.id, tagId: tagIds['allow-access'] })))
+    await assignTags(600, ['last-page-only'])
+    const totals = Object.fromEntries((await operations.listTags({ requester })).map(row => [row.tag, row.pageCount]))
+    expect(totals['allow-access']).toBe(510)
+    expect(totals['last-page-only']).toBe(1)
+  })
+
   it('returns selected-page taxonomy from real joined rows without admitting sibling or denied tags', async () => {
     const agentScope = { kind: 'selected' as const, pageIds: [2] }
     expect(await operations.searchTags({ requester, query: 'topic', limit: 20, agentScope })).toEqual(['topic', 'topic-zulu'])
@@ -414,16 +480,19 @@ suite('PostgreSQL page tag authorization candidates', () => {
     const expected = ['publication-live', 'publication-private-0', 'publication-private-1', 'publication-private-2']
     expect(await operations.searchTags({ requester, query: 'publication-', limit: 20 })).toEqual(expected)
     expect((await operations.listTags({ requester })).map(tag => tag.tag).filter(tag => tag.startsWith('publication-'))).toEqual(expected)
+    expect((await operations.listTags({ requester })).find(row => row.tag === 'allow-access')?.pageCount).toBe(13)
 
     await db('pages').where('id', 30).update({ ownerId: 8 })
     await db('pages').where('id', 31).update({ isSearchable: false })
     const current = ['publication-live', 'publication-private-2']
     expect(await operations.searchTags({ requester, query: 'publication-', limit: 20 })).toEqual(current)
     expect((await operations.listTags({ requester })).map(tag => tag.tag).filter(tag => tag.startsWith('publication-'))).toEqual(current)
+    expect((await operations.listTags({ requester })).find(row => row.tag === 'allow-access')?.pageCount).toBe(11)
     const manager = { id: 1, permissions: ['manage:system'] } as Express.User
     const managerExpected = ['publication-live', 'publication-private-0', 'publication-private-2']
     expect(await operations.searchTags({ requester: manager, query: 'publication-', limit: 20 })).toEqual(managerExpected)
     expect((await operations.listTags({ requester: manager })).map(tag => tag.tag).filter(tag => tag.startsWith('publication-'))).toEqual(managerExpected)
+    expect((await operations.listTags({ requester: manager })).find(row => row.tag === 'allow-access')?.pageCount).toBe(13)
   })
 
   it('matches backslashes, trailing backslashes, percent and underscore literally in PostgreSQL candidates', async () => {

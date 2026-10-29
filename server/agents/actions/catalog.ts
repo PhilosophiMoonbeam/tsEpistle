@@ -202,7 +202,7 @@ const DiscoveryPageSummary = PageSummary.extend({
   tags: z.array(z.string().min(1).max(255)).max(50),
   updatedAt: z.string().max(32)
 })
-const TagSummary = strict({ tag: z.string().min(1).max(255), title: BoundedTitle.nullable() })
+const TagSummary = strict({ tag: z.string().min(1).max(255), title: BoundedTitle.nullable(), pageCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable() })
 const RelatedPageSummary = PageSummary.extend({
   tags: z.array(z.string().min(1).max(255)).max(50),
   distance: z.number().int().positive(),

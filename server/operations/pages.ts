@@ -16,7 +16,7 @@ import { withSearchContract } from '../helpers/search-contract.ts'
 import { PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
 import type { KnowledgeDiscoveryFilter } from '../knowledge/lifecycle.ts'
 import type { KnowledgeProjectionView } from '../knowledge/projection.ts'
-import { wikiSourceHref, type WikiSourcePreview } from '../../shared/wiki-source.ts'
+import { wikiSourceHref, type WikiSource, type WikiSourcePreview } from '../../shared/wiki-source.ts'
 import type { Knex } from 'knex'
 import type { SearchOptions, SearchResult as ProviderSearchResult } from '../modules/types.ts'
 import { buildOfflinePageSnapshot, canonicalOfflineOrigin, OfflinePageAuthorityError, OfflinePageProjectionError } from '../helpers/offline-page.ts'
@@ -62,6 +62,8 @@ import {
 } from '../../shared/page-creation.ts'
 import { authorizePageCreationAccount, readLiveNotePublication } from './live-notes.ts'
 import { authorizeAgentAnswerCreationOrigin, lockPageCreationOwner } from '../helpers/page-creation-origin.ts'
+import { VerifyPageAccuracyInputSchema, type PageAccuracyView } from '../../shared/page-accuracy.ts'
+import { attestPageAccuracy, readPageAccuracy } from '../helpers/page-accuracy.ts'
 const MOVE_REVIEW_PAGE_SIZE = 20
 const MOVE_REVIEW_CANDIDATE_BATCH = 100
 const MOVE_REVIEW_SCAN_LIMIT = 10_000
@@ -595,6 +597,7 @@ interface PageVersionProjection extends PageVersionRecord {
   brandingAssignment?: PageBrandingAssignment | null
 }
 interface PageDetail extends PageRecord {
+  accuracy: PageAccuracyView
   pageFeatures: PageFeatures
   branding: PageBrandingView | null
   brandingAssignment?: PageBrandingAssignment | null
@@ -762,7 +765,7 @@ interface WikiPageOperations {
     knex: Knex
     users: { query(transaction?: Knex.Transaction): unknown }
     pages: {
-      query(): PageQuery
+      query(transaction?: Knex.Transaction): PageQuery
       assertCreateAccess(input: {
         path: string
         locale: string
@@ -1196,12 +1199,25 @@ const canonicalBrandingAssignmentFor = (
   return assignment.success ? assignment.data : null
 }
 
-const projectReaderPage = async <T extends PageRecord>(input: OperationInput, page: T): Promise<T & { branding: PageBrandingView | null }> => {
-  const branding = await resolveReaderBranding(input, page)
+const projectReaderPage = async <T extends PageRecord>(
+  input: OperationInput,
+  page: T
+): Promise<T & { branding: PageBrandingView | null; accuracy: PageAccuracyView }> => {
+  const [branding, accuracy] = await Promise.all([
+    resolveReaderBranding(input, page),
+    readPageAccuracy({
+      knex: wiki.models.knex,
+      requester: input.requester,
+      sessionId: typeof input.sessionId === 'string' ? input.sessionId : '',
+      delegated: input.agentScope !== undefined || input[OKF_PRODUCER_CONTEXT] !== undefined,
+      loadAuthority: (requester, transaction) => wiki.auth.loadPageRuleAuthority(requester, transaction),
+      page
+    })
+  ])
   const extra = _.isPlainObject(page.extra) ? { ...page.extra } : {}
   delete extra.branding
   extra.pageFeatures = normalizePageFeatures(extra.pageFeatures)
-  return { ...page, extra, branding }
+  return { ...page, extra, branding, accuracy }
 }
 
 const list = async (input: OperationInput) => {
@@ -1456,37 +1472,82 @@ const discover = async (input: OperationInput) => {
   }
 }
 
-const listTags = async (inputOrRequester?: OperationInput | Express.User, suppliedAuthority?: PageRuleAuthority) => {
-  const operationInput: OperationInput =
-    inputOrRequester !== undefined &&
-    typeof inputOrRequester === 'object' &&
-    ('requester' in inputOrRequester || 'authority' in inputOrRequester || 'agentScope' in inputOrRequester)
-      ? (inputOrRequester as OperationInput)
-      : {
-          ...(inputOrRequester === undefined ? {} : { requester: inputOrRequester as Express.User }),
-          ...(suppliedAuthority === undefined ? {} : { authority: suppliedAuthority })
+// Bound materialized page rows, not the visible tag inventory or its exact totals.
+const TAG_COUNT_BATCH_SIZE = 500
+const listTags = async (input: OperationInput): Promise<Array<TagRecord & { pageCount: number | null }>> =>
+  wiki.models.knex.transaction(
+    async transaction => {
+      const requester = input.requester
+      const authority = await authorityFor(input, transaction)
+      const now = new Date()
+      const sessionId = typeof input.sessionId === 'string' ? input.sessionId : ''
+      const systemManager = managesSystem(requester)
+      const counts = new Map<string, number | null>()
+      let afterId = 0
+      while (true) {
+        const pages = await wiki.models.pages
+          .query(transaction)
+          .column(['pages.id', 'path', { locale: 'localeCode' }, 'visibility', 'ownerId', 'isPublished', 'publishStartDate', 'publishEndDate', 'isSearchable'])
+          .modify(queryBuilder => {
+            scopePageQuery(queryBuilder, requester, { table: 'pages', includeAllForSystemManager: true })
+            applyAgentScope(queryBuilder, input.agentScope)
+            queryBuilder.where('pages.isSearchable', true).where('pages.id', '>', afterId)
+            if (!systemManager) {
+              // Match pageRequiresUnlock without per-page protection/grant reads.
+              queryBuilder.whereRaw(
+                `NOT EXISTS (
+                  SELECT 1 FROM "pageAccessPasswords" AS protection
+                  WHERE protection."pageId" = "pages"."id"
+                    AND NOT EXISTS (
+                      SELECT 1 FROM "pageUnlockGrants" AS unlock
+                      WHERE unlock."pageId" = protection."pageId"
+                        AND unlock."passwordVersion" = protection."version"
+                        AND unlock."sessionId" = ? AND ? <> ''
+                        AND unlock."userId" IS NOT DISTINCT FROM ?
+                        AND unlock."expiresAt" > ?
+                    )
+                )`,
+                [sessionId, sessionId, principalId(requester), now]
+              )
+            }
+          })
+          .orderBy('pages.id', 'asc')
+          .limit(TAG_COUNT_BATCH_SIZE)
+          .withGraphFetched('tags')
+        for (const candidate of pages) {
+          const page = normalizePageBooleans(candidate)
+          if (
+            !pageMatchesAgentScope(page, input.agentScope) ||
+            (page.visibility === 'public' && (!page.isPublished || !publicationWindowOpen(page, now.valueOf()))) ||
+            !canReadPage(requester, page, authority)
+          )
+            continue
+          const pageTags = new Set<string>()
+          for (const tag of page.tags) {
+            const canonical = resolveTagName(authority.tagAliases, tag.tag)
+            if (canonical !== null) pageTags.add(canonical)
+          }
+          for (const tag of pageTags) {
+            const count = counts.get(tag)
+            if (count === null) continue
+            const nextCount = (count ?? 0) + 1
+            counts.set(tag, Number.isSafeInteger(nextCount) ? nextCount : null)
+          }
         }
-  const requester = operationInput.requester
-  const authority = await authorityFor(operationInput)
-  const pages = await wiki.models.pages
-    .query()
-    .column(['pages.id', 'path', { locale: 'localeCode' }, 'visibility', 'ownerId', 'isPublished', 'publishStartDate', 'publishEndDate', 'isSearchable'])
-    .modify(queryBuilder => {
-      scopePageQuery(queryBuilder, requester, { table: 'pages', includeAllForSystemManager: true })
-      applyAgentScope(queryBuilder, operationInput.agentScope)
-      queryBuilder.where('pages.isSearchable', true)
-    })
-    .withGraphJoined('tags')
-  const tags = pages
-    .filter(
-      page =>
-        pageMatchesAgentScope(page, operationInput.agentScope) &&
-        (page.visibility !== 'public' || (page.isPublished && publicationWindowOpen(page))) &&
-        canReadPage(requester, page, authority)
-    )
-    .flatMap(page => page.tags)
-  return _.orderBy(_.uniqBy(tags, 'id'), ['tag'], ['asc'])
-}
+        if (pages.length < TAG_COUNT_BATCH_SIZE) break
+        afterId = pages[pages.length - 1]!.id
+      }
+      // Fetch metadata only for canonical tags proven visible above, never global taxonomy.
+      const names = [...counts.keys()]
+      const tags: Array<TagRecord & { pageCount: number | null }> = []
+      for (let offset = 0; offset < names.length; offset += TAG_COUNT_BATCH_SIZE) {
+        const batch = await transaction<TagRecord>('tags').whereIn('tag', names.slice(offset, offset + TAG_COUNT_BATCH_SIZE)).select('*')
+        for (const tag of batch) tags.push({ ...tag, pageCount: counts.get(tag.tag) ?? null })
+      }
+      return _.orderBy(tags, ['tag'], ['asc'])
+    },
+    { isolationLevel: 'repeatable read' }
+  )
 
 const RECENT_CONTENT_PROMPT_BYTES = 2_048
 const RECENT_CANDIDATE_BATCH_LIMIT = 50
@@ -1722,6 +1783,26 @@ const get = async (input: OperationInput, suppliedAuthority?: PageRuleAuthority)
     scriptJs: _.get(page, 'extra.js'),
     scriptCss: _.get(page, 'extra.css')
   }
+}
+
+const verifyAccuracy = async (input: OperationInput): Promise<PageAccuracyView> => {
+  const id = positiveInteger(input.id, 'id')
+  const mutation = VerifyPageAccuracyInputSchema.safeParse(input.input)
+  if (!mutation.success) {
+    throw new ApplicationError('Accuracy verification requires only expectedSourceRevision as a canonical positive bigint string.', {
+      code: 'INVALID_INPUT',
+      status: 400
+    })
+  }
+  return attestPageAccuracy({
+    knex: wiki.models.knex,
+    requester: input.requester,
+    sessionId: typeof input.sessionId === 'string' ? input.sessionId : '',
+    delegated: input.agentScope !== undefined || input[OKF_PRODUCER_CONTEXT] !== undefined,
+    loadAuthority: (requester, transaction) => wiki.auth.loadPageRuleAuthority(requester, transaction),
+    pageId: id,
+    mutation: mutation.data
+  })
 }
 
 const canAccessCurrentPageSource = (requester: Express.User | undefined, page: PageRecord, authority: PageRuleAuthority): boolean =>
@@ -2762,6 +2843,7 @@ const search = async (input: OperationInput) => {
             'pages.path',
             'pages.title',
             'pages.description',
+            'pages.updatedAt',
             'pages.visibility',
             'pages.ownerId',
             'pages.isPublished',
@@ -2967,7 +3049,7 @@ const search = async (input: OperationInput) => {
       const revision = currentSourceRevision(result.sourceRevision)
       // These rows have passed their branch's current authorization and scope filters.
       // Password-protected rows remain metadata-only even for an unlocked session.
-      const excerpt =
+      const passage =
         page !== undefined &&
         !currentProtectedPageIds.has(page.id) &&
         revision !== undefined &&
@@ -2976,7 +3058,29 @@ const search = async (input: OperationInput) => {
         typeof page.render === 'string'
           ? matchingSearchExcerpt(page.render, query)
           : null
-      return { ...result, excerpt }
+      const updatedAtValue: unknown = page?.updatedAt
+      const updatedAt =
+        updatedAtValue instanceof Date && Number.isFinite(updatedAtValue.valueOf())
+          ? updatedAtValue.toISOString()
+          : typeof updatedAtValue === 'string' && Number.isFinite(Date.parse(updatedAtValue))
+            ? updatedAtValue
+            : null
+      const copySource: WikiSource | null =
+        page !== undefined && passage !== null && revision !== undefined && updatedAt !== null
+          ? {
+              id: page.id,
+              locale: page.localeCode,
+              path: page.path,
+              title: page.title,
+              description: page.description ?? '',
+              visibility: page.visibility,
+              updatedAt,
+              sourceRevision: revision,
+              excerpt: passage.excerpt,
+              excerptTruncated: passage.excerptTruncated
+            }
+          : null
+      return { ...result, excerpt: passage?.excerpt ?? null, copySource }
     })
   const privateContributionTruncated = privateCandidates.length > PRIVATE_SEARCH_WINDOW_LIMIT
   return {
@@ -3668,6 +3772,7 @@ export default {
   setPublication,
   preview,
   authorizeMutation,
+  verifyAccuracy,
   changeVisibility,
   checkConflict,
   convert,

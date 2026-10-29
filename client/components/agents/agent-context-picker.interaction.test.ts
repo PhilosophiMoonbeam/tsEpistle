@@ -160,6 +160,7 @@ const row = (id: string | number): PageSearchRow => ({
   title: `Topic ${id}`,
   description: `Description for topic ${id}`,
   excerpt: null,
+  copySource: null,
   path: `handbook/topic-${id}`,
   locale: 'en',
   visibility: 'public',

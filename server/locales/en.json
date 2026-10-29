@@ -20,6 +20,12 @@
       "included": "Saved memory was included in the Agent request.",
       "saved": "Memory changes were saved."
     },
+    "searchCitedCopy": {
+      "unavailable": "Snippet copy unavailable"
+    },
+    "readerCitedCopy": {
+      "unavailable": "Cited copy is unavailable until this rendered revision and your access are verified."
+    },
     "glossaryHover": {
       "termLabel": "Glossary definition: {{term}}",
       "locale": "Definition language: {{locale}}",
@@ -124,6 +130,29 @@
       "requestFailed": "The glossary request failed. Please retry."
     },
     "page": {
+      "personalReadingProgress": "Personal reading progress",
+      "readingProgressSummary": "{{percent}}% read · {{completed}}/{{total}} sections completed",
+      "readingSectionProgress": "{{percent}}% read",
+      "readingSectionCompleted": "Reading completed",
+      "readingProgressMeaning": "Measured reading on this device, not certified mastery.",
+      "accuracyStatus": {
+        "verified-fresh": "Verified Fresh",
+        "review-soon": "Review Soon",
+        "needs-verification": "Needs Verification"
+      },
+      "accuracyHumanAttestation": "Accuracy verification is a human attestation for this exact revision, separate from its last update.",
+      "accuracyActorUnavailable": "Verifier unavailable",
+      "accuracyUnknown": "Current accuracy verification is unknown.",
+      "accuracyNotAuthorized": "Verification requires current editing permission and an unlocked page.",
+      "accuracyVerifying": "Verifying…",
+      "verifyAccuracy": "Verify accuracy",
+      "accuracyReloadReview": "Reload and review the current revision",
+      "accuracyRefresh": "Refresh verification details",
+      "accuracyRevisionChanged": "This page has changed. Reload and review the current revision before verifying.",
+      "accuracyReadFailed": "Could not refresh accuracy verification. Current verification is unknown.",
+      "accuracyVerifyFailed": "Accuracy verification was not confirmed. Review the refreshed details before trying again.",
+      "accuracyAgeDays_one": "{{count}} day old",
+      "accuracyAgeDays_other": "{{count}} days old",
       "id": "ID {{id}}",
       "toc": "Page Contents",
       "onThisPage": "On this page",
@@ -10810,6 +10839,13 @@
     }
   },
   "tags": {
+    "offlineFollowHelp": "Follow tags on this device; downloads depend on sync.",
+    "followOfflineTagLabel": "Follow {{tag}} for offline reading on this device",
+    "unfollowOfflineTagLabel": "Stop following {{tag}} for offline reading on this device",
+    "pageCount_one": "{{count}} page",
+    "pageCount_other": "{{count}} pages",
+    "pageCountUnavailable": "Count unavailable",
+    "tagWithPageCount": "{{tag}}: {{countLabel}}",
     "saveOffline": "Save offline",
     "savedOffline": "Saved offline",
     "saveOfflineHelp": "Save a tag offline to keep its public pages on this device.",

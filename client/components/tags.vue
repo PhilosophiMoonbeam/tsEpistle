@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-app.tags
+  v-app.tags.tags-library
     nav-header
     v-main.tags-main
       v-container.tags-shell(fluid)
@@ -78,10 +78,11 @@
               span {{indexExpanded ? $t('tags:hideTags', { defaultValue: 'Hide tags' }) : $t('tags:showTags', { defaultValue: 'Show tags' })}}
               v-icon(size='20' aria-hidden='true') {{indexExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down'}}
             .tags-follow-help#tags-follow-help
-              p {{ $t('tags:saveOfflineHelp', { defaultValue: 'Save a tag offline to keep its public pages on this device.' }) }}
+              v-icon(size='16' aria-hidden='true') mdi-information-outline
+              span {{ $t('tags:offlineFollowHelp', { defaultValue: 'Follow tags on this device; downloads depend on sync.' }) }}
               a(href='/p/offline') {{ $t(`common:tags.offlinePreferences`) }}
               a.tags-offline-recovery(v-if='offlineBrowseUnavailable && (tagsError || pagesError)' href='/p/offline#downloaded-pages-title') {{ $t(`common:tags.browseSavedPages`) }}
-            p.tags-follow-status(role='status' aria-live='polite' aria-atomic='true') {{offlinePolicyDetail}}
+            p.tags-follow-status(v-if='offlinePolicyLoading || offlinePolicyError || !offlineStorage' role='status' aria-live='polite' aria-atomic='true') {{offlinePolicyDetail}}
             .tags-index-panel#tags-index-panel(v-show='indexIsVisible')
               p.tags-index-status(role='status') {{tagIndexStatus}}
               async-state(
@@ -129,7 +130,7 @@
                       button.tags-index-item.wiki-tag-color(
                         type='button'
                         :aria-pressed='isSelected(tag.tag)'
-                        :aria-label='tagButtonLabel(tag)'
+                        :aria-label='tagSelectionButtonLabel(tag)'
                         :data-tag-color='tagColor(tag.tag)'
                         :class='{ "tags-index-item--selected": isSelected(tag.tag) }'
                         @click='toggleTag(tag.tag)'
@@ -144,11 +145,13 @@
                             bdi {{tagLabel(tag)}}
                           span.tags-index-item-canonical(v-if='tag.tag && tag.tag !== tagLabel(tag)')
                             bdi(dir='ltr') {{tag.tag}}
+                        span.tags-count-badge(aria-hidden='true' :class='{ "tags-count-badge--unavailable": tagPageCount(tag) === null }') {{tagPageCountLabel(tag)}}
                       button.tags-follow-item.wiki-tag-color(
                         type='button'
                         :aria-pressed='isFollowed(tag.tag)'
                         :aria-label='followTagButtonLabel(tag)'
                         aria-describedby='tags-follow-help'
+                        :aria-busy='offlineActionLoading || offlinePolicyLoading ? `true` : `false`'
                         :data-tag-color='tagColor(tag.tag)'
                         :class='{ "tags-follow-item--followed": isFollowed(tag.tag), "tags-follow-item--animate": offlineFollowAnimationTag === offlineTagCanonical(tag.tag) }'
                         :disabled='offlineFollowDisabled(tag.tag)'
@@ -159,8 +162,8 @@
                           aria-hidden='true'
                           :data-tag-color='tagColor(tag.tag)'
                           @animationend.self='finishFollowedTagAnimation(tag.tag, $event)'
-                        ) {{isFollowed(tag.tag) ? 'mdi-cloud-check' : 'mdi-cloud-download-outline'}}
-                        span {{ followTagVisibleLabel(tag.tag) }}
+                        ) {{isFollowed(tag.tag) ? 'mdi-pin' : 'mdi-pin-outline'}}
+                        v-tooltip(activator='parent' location='bottom' :text='followTagButtonLabel(tag)')
 
           section.tags-results(
             v-if='hasSelection'
@@ -386,6 +389,7 @@ export default {
       pages: [] as PageListRow[],
       tagsLoading: true,
       tagsError: '',
+      tagsCountsCurrent: false,
       isLoading: false,
       pagesError: '',
       tagsLoadSequence: 0,
@@ -407,6 +411,9 @@ export default {
     },
     offlineBrowseUnavailable (): boolean {
       return pwaState.connectionState === 'offline' || pwaState.connectionState === 'server-unavailable'
+    },
+    tagCountConnectionOnline (): boolean {
+      return pwaState.connectionState === 'online'
     },
     offlinePolicyDetail (): string {
       if (this.offlinePolicyLoading) return this.$t('common:tags.loadingOfflinePreferences')
@@ -479,6 +486,10 @@ export default {
     }
   },
   watch: {
+    tagCountConnectionOnline (online: boolean) {
+      if (!online) this.tagsCountsCurrent = false
+      else if (!this.tagsLoading) void this.loadTags({ preserveTags: true })
+    },
     locale () {
       if (this.routeSyncReady) this.rebuildURL()
     },
@@ -628,17 +639,12 @@ export default {
         this.offlinePolicyLoading ||
         this.offlineActionLoading
     },
-    followTagVisibleLabel (tag: string): string {
-      return this.isFollowed(tag)
-        ? this.$t('tags:savedOffline', { defaultValue: 'Saved offline' })
-        : this.$t('tags:saveOffline', { defaultValue: 'Save offline' })
-    },
     followTagButtonLabel (tag: PageTagRow): string {
-      // The accessible name starts with the visible text; aria-pressed carries the state.
-      return this.$t('tags:saveOfflineLabel', {
-        action: this.followTagVisibleLabel(tag.tag),
+      return this.$t(this.isFollowed(tag.tag) ? 'tags:unfollowOfflineTagLabel' : 'tags:followOfflineTagLabel', {
         tag: this.tagButtonLabel(tag),
-        defaultValue: '{{action}}: {{tag}}',
+        defaultValue: this.isFollowed(tag.tag)
+          ? 'Stop following {{tag}} for offline reading on this device'
+          : 'Follow {{tag}} for offline reading on this device',
         interpolation: { escapeValue: false }
       })
     },
@@ -742,6 +748,25 @@ export default {
       const label = this.tagLabel(tag)
       return label === tag.tag || !tag.tag ? label : `${label} (${tag.tag})`
     },
+    tagPageCount (tag: PageTagRow): number | null {
+      return this.tagsCountsCurrent && this.tagCountConnectionOnline && !this.tagsLoading && !this.tagsError
+        ? tag.pageCount
+        : null
+    },
+    tagPageCountLabel (tag: PageTagRow): string {
+      const count = this.tagPageCount(tag)
+      return count === null
+        ? this.$t('tags:pageCountUnavailable', { defaultValue: 'Count unavailable' })
+        : this.$t('tags:pageCount', { count, defaultValue: '{{count}} pages' })
+    },
+    tagSelectionButtonLabel (tag: PageTagRow): string {
+      return this.$t('tags:tagWithPageCount', {
+        tag: this.tagButtonLabel(tag),
+        countLabel: this.tagPageCountLabel(tag),
+        defaultValue: '{{tag}}: {{countLabel}}',
+        interpolation: { escapeValue: false }
+      })
+    },
     removeTagLabel (selected: SelectedTag): string {
       return this.$t('common:tags.remove', { label: selected.label, value: selected.canonical !== selected.label ? ` (${selected.canonical})` : '', interpolation: { escapeValue: false } })
     },
@@ -817,17 +842,19 @@ export default {
       this.routePushPendingPath = this.$router.resolve(location).fullPath
       void this.$router.push(location)
     },
-    async loadTags (): Promise<void> {
+    async loadTags (options: { preserveTags?: boolean } = {}): Promise<void> {
       const sequence = ++this.tagsLoadSequence
       const loadingKey = `tags-refresh-${sequence}`
       this.tagsLoading = true
+      this.tagsCountsCurrent = false
       this.tagsError = ''
-      this.tags = []
+      if (!options.preserveTags) this.tags = []
       setLoading(wikiStore, loadingKey, true)
       try {
         const tags = await fetchPageTags(window.fetch.bind(window))
         if (this.disposed || sequence !== this.tagsLoadSequence) return
         this.tags = markRaw(tags)
+        this.tagsCountsCurrent = this.tagCountConnectionOnline
       } catch (err) {
         if (this.disposed || sequence !== this.tagsLoadSequence) return
         this.tagsError = err instanceof Error ? err.message : this.$t('common:tags.unableLoadTags')
@@ -925,8 +952,9 @@ export default {
   font-family: var(--wiki-font-display);
   font-size: clamp(2rem, 4vw, 3rem);
   font-weight: 750;
-  letter-spacing: -.045em;
+  letter-spacing: -.02em;
   line-height: 1.12;
+  overflow-wrap: anywhere;
 }
 
 .tags-intro p {
@@ -1074,7 +1102,12 @@ export default {
   line-height: 1.5;
 }
 
-.tags-follow-help p { margin: 0 0 .3rem; }
+.tags-follow-help {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .25rem .5rem;
+}
 .tags-follow-help a { color: var(--wiki-accent-ink); text-underline-offset: .2em; }
 .tags-offline-recovery { display: inline-block; margin-inline-start: 1rem; }
 .tags-follow-status { min-height: 1.25rem; }
@@ -1168,12 +1201,12 @@ export default {
 
 .tags-follow-item {
   display: inline-flex;
-  min-width: 5.5rem;
-  min-height: var(--wiki-control-height);
+  width: max(44px, var(--wiki-control-height));
+  min-width: max(44px, var(--wiki-control-height));
+  min-height: max(44px, var(--wiki-control-height));
   align-items: center;
   justify-content: center;
-  gap: var(--wiki-space-1);
-  padding: var(--wiki-space-2) var(--wiki-space-3);
+  padding: var(--wiki-space-2);
   border: 1px solid transparent;
   border-radius: var(--wiki-control-radius);
   background: transparent;
@@ -1300,6 +1333,7 @@ export default {
 .tags-index-item-copy {
   display: block;
   min-width: 0;
+  flex: 1 1 auto;
   overflow-wrap: anywhere;
 }
 
@@ -1315,6 +1349,24 @@ export default {
   font-family: var(--wiki-font-mono);
   font-size: .8125rem;
   line-height: 1.3;
+}
+
+.tags-count-badge {
+  flex: 0 1 auto;
+  max-width: 50%;
+  padding: .2rem .45rem;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-radius-xs);
+  background: var(--wiki-surface-sunken);
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .8125rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.tags-count-badge--unavailable {
+  color: var(--wiki-text-muted);
 }
 
 .tags-index-empty {
@@ -1591,6 +1643,7 @@ export default {
   .tags-selected-token,
   .tags-index-item,
   .tags-follow-item,
+  .tags-count-badge,
   .tags-selected-remove {
     border-color: CanvasText !important;
   }

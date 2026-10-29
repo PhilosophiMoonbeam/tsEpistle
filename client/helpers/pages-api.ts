@@ -5,6 +5,14 @@ import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBranding
 import { PageFeaturesSchema, normalizePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
 import { PageChangeReasonSchema } from '../../shared/page-change-reason.ts'
 import { PAGE_CREATION_OWNER_HEADER, PageCreationFieldsSchema, type PageCreationOrigin } from '../../shared/page-creation.ts'
+import { WikiSourceSchema, type WikiSource } from '../../shared/wiki-source.ts'
+import {
+  PageAccuracyViewSchema,
+  VerifyPageAccuracyInputSchema,
+  type PageAccuracyView,
+  type VerifyPageAccuracyInput
+} from '../../shared/page-accuracy.ts'
+export type { PageAccuracyView, VerifyPageAccuracyInput } from '../../shared/page-accuracy.ts'
 import {
   offlineIneligibleReason,
   OfflinePageSnapshotV1Schema,
@@ -28,6 +36,7 @@ type FetchImpl = (
   init: {
     method?: string
     credentials: 'same-origin'
+    cache?: 'no-store'
     headers: {
       Accept: 'application/json'
       'Content-Type'?: 'application/json'
@@ -386,6 +395,7 @@ export type PageDetails = {
   createdAt: string
   updatedAt: string
   sourceRevision: string
+  accuracy: PageAccuracyView
   changeReason?: string
   editor?: string
   authorId?: number
@@ -455,6 +465,8 @@ export type PageTagRow = {
   title: string | null
   createdAt: string
   updatedAt: string
+  /** Exact readable current-page total; null means the total is explicitly unavailable. */
+  pageCount: number | null
 }
 
 const responseStatus = (response: JsonResponse): number | undefined =>
@@ -551,7 +563,8 @@ function normalizePageTagRow(row: unknown, fallbackMessage: string): PageTagRow 
     typeof tagRow.createdAt !== 'string' ||
     tagRow.createdAt.length < 1 ||
     typeof tagRow.updatedAt !== 'string' ||
-    tagRow.updatedAt.length < 1
+    tagRow.updatedAt.length < 1 ||
+    (tagRow.pageCount !== null && !isNonNegativeSafeInteger(tagRow.pageCount))
   ) {
     throw new Error(fallbackMessage)
   }
@@ -561,7 +574,8 @@ function normalizePageTagRow(row: unknown, fallbackMessage: string): PageTagRow 
     tag: tagRow.tag,
     title: tagRow.title,
     createdAt: tagRow.createdAt,
-    updatedAt: tagRow.updatedAt
+    updatedAt: tagRow.updatedAt,
+    pageCount: tagRow.pageCount
   }
 }
 
@@ -643,6 +657,19 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
     throw new Error(fallbackMessage)
   }
   const okf = rawRow.okf === undefined || rawRow.okf === null ? defaultPageOkf() : normalizePageOkf(rawRow.okf, normalizedSourceRevision, fallbackMessage)
+  const accuracy = PageAccuracyViewSchema.safeParse(rawRow.accuracy)
+  if (
+    !accuracy.success ||
+    accuracy.data.sourceRevision !== normalizedSourceRevision ||
+    Date.parse(accuracy.data.updatedAt) !== Date.parse(page.updatedAt!) ||
+    (accuracy.data.latestAttestation !== null && accuracy.data.latestAttestation.pageId !== page.id) ||
+    (!viewStewardContacts &&
+      (accuracy.data.author !== null ||
+        accuracy.data.latestAttestation?.verifiedBy != null ||
+        accuracy.data.latestAttestation?.verifiedByName != null))
+  ) {
+    throw new Error(fallbackMessage)
+  }
   const hasBranding = Object.hasOwn(rawRow, 'branding')
   const rawBranding = rawRow.branding
   const brandingResult = rawBranding === undefined || rawBranding === null ? null : PageBrandingViewSchema.safeParse(rawBranding)
@@ -678,6 +705,7 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
     createdAt: page.createdAt,
     updatedAt: page.updatedAt,
     sourceRevision: normalizedSourceRevision,
+    accuracy: accuracy.data,
     ...(changeReason === undefined ? {} : { changeReason }),
     ...(hasEditor ? { editor: rawRow.editor as string } : {}),
     ...(hasAuthorId ? { authorId: rawRow.authorId as number } : {}),
@@ -881,6 +909,36 @@ export async function fetchPage(fetchImpl: FetchImpl, id: number, fallbackMessag
   return normalizeResponse(response, fallbackMessage, payload => normalizePageDetails(payload, fallbackMessage))
 }
 
+export async function verifyPageAccuracy(
+  fetchImpl: FetchImpl,
+  id: number,
+  input: VerifyPageAccuracyInput,
+  fallbackMessage = 'Page accuracy response is invalid'
+): Promise<PageAccuracyView> {
+  const mutation = VerifyPageAccuracyInputSchema.safeParse(input)
+  if (!Number.isSafeInteger(id) || id < 1 || !mutation.success) throw new Error(fallbackMessage)
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/verify-accuracy`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(mutation.data)
+  })
+  return normalizeResponse(response, fallbackMessage, payload => {
+    if (!isRecord(payload) || !hasOnlyKeys(payload, ['accuracy'])) throw new Error(fallbackMessage)
+    const accuracy = PageAccuracyViewSchema.safeParse(payload.accuracy)
+    if (
+      !accuracy.success ||
+      accuracy.data.sourceRevision !== mutation.data.expectedSourceRevision ||
+      accuracy.data.latestAttestation === null ||
+      accuracy.data.latestAttestation.pageId !== id ||
+      !accuracy.data.canVerify
+    ) {
+      throw new Error(fallbackMessage)
+    }
+    return accuracy.data
+  })
+}
+
 export const isPageRenderPending = (error: unknown): boolean =>
   error instanceof Error && Reflect.get(error, 'status') === 503 && Reflect.get(error, 'code') === 'PAGE_RENDER_PENDING'
 
@@ -1016,6 +1074,7 @@ export async function fetchPageList(fetchImpl: FetchImpl, fallbackMessage = 'Pag
 export async function fetchPageTags(fetchImpl: FetchImpl, fallbackMessage = 'Page tags response is invalid'): Promise<PageTagRow[]> {
   const response = await sameOriginJsonFetch(fetchImpl, '/_api/pages/tags', {
     credentials: 'same-origin',
+    cache: 'no-store',
     headers: {
       Accept: 'application/json'
     }
@@ -1160,6 +1219,8 @@ export type PageSearchRow = {
   matchedFields: PageSearchMatchField[]
   /** Plain-text matching body passage, at most 320 UTF-16 units; null means unavailable. */
   excerpt: string | null
+  /** Same authorized current-body passage and revision as excerpt; null is not copyable. */
+  copySource: WikiSource | null
 }
 
 export type PageSearchResult = {
@@ -1702,6 +1763,24 @@ export async function searchPages(
       )
         throw new Error(fallbackMessage)
       const visibility: 'public' | 'private' = row.visibility
+      let copySource: WikiSource | null = null
+      if (row.copySource !== null) {
+        const source = WikiSourceSchema.safeParse(row.copySource)
+        if (
+          !source.success ||
+          String(source.data.id) !== String(row.id) ||
+          source.data.locale !== row.locale ||
+          source.data.path !== row.path ||
+          source.data.visibility !== visibility ||
+          source.data.title !== row.title ||
+          source.data.description !== row.description ||
+          source.data.excerpt !== row.excerpt ||
+          !/^[1-9][0-9]*$/.test(source.data.sourceRevision) ||
+          !Number.isFinite(Date.parse(source.data.updatedAt))
+        )
+          throw new Error(fallbackMessage)
+        copySource = source.data
+      }
       return {
         id: row.id,
         title: row.title,
@@ -1712,7 +1791,8 @@ export async function searchPages(
         tags: tags as string[],
         score: row.score,
         matchedFields: matchedFields as PageSearchMatchField[],
-        excerpt: row.excerpt as string | null
+        excerpt: row.excerpt as string | null,
+        copySource
       }
     })
     if (payload.suggestions.some(suggestion => typeof suggestion !== 'string')) throw new Error(fallbackMessage)

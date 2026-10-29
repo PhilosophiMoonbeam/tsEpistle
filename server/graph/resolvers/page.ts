@@ -66,7 +66,7 @@ export default {
       return pageOperations.getByPath({ ...operationContext(context), ...args })
     },
     tags(_obj: unknown, _args: ResolverArgs, context: ResolverContext) {
-      return pageOperations.listTags(context.req.user)
+      return pageOperations.listTags(operationContext(context))
     },
     searchTags(_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       return pageOperations.searchTags({ ...operationContext(context), query: args.query })

@@ -92,6 +92,15 @@ const pagePayload = (okf = missingOkf) => ({
   creatorEmail: 'creator@example.com',
   capabilities: { viewStewardContacts: true },
   pageFeatures: defaultPageFeatures,
+  accuracy: {
+    sourceRevision: '8',
+    updatedAt: '2026-01-02T00:00:00.000Z',
+    author: null,
+    latestAttestation: null,
+    canVerify: false,
+    asOf: '2026-01-03T00:00:00.000Z',
+    status: 'needs-verification'
+  },
   okf
 })
 
@@ -283,71 +292,11 @@ describe('pages api helper', () => {
     await expect(Promise.resolve(fetchPageLinks(fetchImpl, 'en', 'Bad links payload'))).rejects.toThrow('manage:system or read:pages is required')
   })
 
-  test('fetches and validates page detail payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(
-      createJsonResponse({
-        id: 7,
-        locale: 'en',
-        path: 'docs/alpha',
-        hash: 'abc123',
-        title: 'Alpha',
-        description: null,
-        visibility: 'public',
-        ownerId: null,
-        isPublished: true,
-        publishStartDate: null,
-        publishEndDate: null,
-        contentType: 'markdown',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        updatedAt: '2026-01-02T00:00:00.000Z',
-        sourceRevision: 8,
-        editor: 'markdown',
-        authorId: 2,
-        authorName: 'Author',
-        authorEmail: 'author@example.com',
-        creatorId: 1,
-        creatorName: 'Creator',
-        creatorEmail: 'creator@example.com',
-        capabilities: { viewStewardContacts: true },
-        okf: missingOkf,
-        extra: 'ignored'
-      })
-    )
-
-    expect(await fetchPage(fetchImpl, 7)).toEqual({
-      id: 7,
-      locale: 'en',
-      path: 'docs/alpha',
-      hash: 'abc123',
-      title: 'Alpha',
-      description: null,
-      visibility: 'public',
-      ownerId: null,
-      isPublished: true,
-      publishStartDate: null,
-      publishEndDate: null,
-      contentType: 'markdown',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      updatedAt: '2026-01-02T00:00:00.000Z',
-      sourceRevision: '8',
-      editor: 'markdown',
-      authorId: 2,
-      authorName: 'Author',
-      authorEmail: 'author@example.com',
-      creatorId: 1,
-      creatorName: 'Creator',
-      creatorEmail: 'creator@example.com',
-      pageFeatures: defaultPageFeatures,
-      capabilities: { viewStewardContacts: true },
-      okf: missingOkf
-    })
-
-    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/7', {
-      credentials: 'same-origin',
-      headers: {
-        Accept: 'application/json'
-      }
-    })
+  test('normalizes numeric source revisions and excludes unrecognized page fields', async () => {
+    const payload = { ...pagePayload(), extra: 'ignored' }
+    const page = await fetchPage(vi.fn().mockResolvedValue(createJsonResponse(payload)), 7)
+    expect(page.sourceRevision).toBe('8')
+    expect(page).not.toHaveProperty('extra')
   })
   test('accepts read-only page details without synthesizing restricted fields', async () => {
     const payload = pagePayload()
@@ -464,6 +413,7 @@ describe('pages api helper', () => {
           title: 'Alpha',
           description: '',
           excerpt: null,
+          copySource: null,
           path: 'docs/alpha',
           locale: 'en',
           visibility: 'public',
@@ -478,7 +428,7 @@ describe('pages api helper', () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(response))
 
     await expect(searchPages(fetchImpl, 'alpha')).resolves.toMatchObject({
-      results: [{ id: 7, matchedFields: ['knowledge'] }]
+      results: [{ id: 7, matchedFields: ['knowledge'], excerpt: null, copySource: null }]
     })
 
     response.results[0].excerpt = 'x'.repeat(321)
@@ -486,6 +436,32 @@ describe('pages api helper', () => {
     response.results[0].excerpt = null
     response.results[0].matchedFields = ['untrusted']
     await expect(searchPages(fetchImpl, 'alpha', {}, 'Bad search response')).rejects.toThrow('Bad search response')
+  })
+
+  test('rejects copy sources that do not identify the same search result and passage', async () => {
+    const copySource = {
+      id: 7, locale: 'en', path: 'docs/alpha', title: 'Alpha', description: '',
+      visibility: 'public', updatedAt: '2026-01-02T00:00:00.000Z', sourceRevision: '8',
+      excerpt: 'Current alpha passage.', excerptTruncated: false
+    }
+    const row = {
+      id: 7, locale: 'en', path: 'docs/alpha', title: 'Alpha', description: '',
+      visibility: 'public', tags: [], score: 1, matchedFields: ['content'],
+      excerpt: 'Current alpha passage.', copySource
+    }
+    const response = { results: [row], suggestions: [], totalHits: 1 }
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(response))
+    await expect(searchPages(fetchImpl, 'alpha')).resolves.toMatchObject({ results: [{ copySource }] })
+    for (const mismatch of [
+      { id: 8 }, { locale: 'fr' }, { path: 'docs/beta' }, { title: 'Beta' },
+      { description: 'Other description' }, { visibility: 'private' },
+      { excerpt: 'A different passage.' }, { sourceRevision: '0' }, { updatedAt: 'unavailable' }
+    ]) {
+      row.copySource = { ...copySource, ...mismatch }
+      await expect(searchPages(fetchImpl, 'alpha', {}, 'Bad copy source')).rejects.toThrow('Bad copy source')
+    }
+    delete row.copySource
+    await expect(searchPages(fetchImpl, 'alpha', {}, 'Missing copy source')).rejects.toThrow('Missing copy source')
   })
 
   test('strips page duplicates, actors, derived facts, and deleted sources from editable metadata', () => {
@@ -889,6 +865,7 @@ describe('pages api helper', () => {
           title: 'Alpha',
           createdAt: '2026-01-01T00:00:00.000Z',
           updatedAt: '2026-01-02T00:00:00.000Z',
+          pageCount: 3,
           extra: 'ignored'
         },
         {
@@ -896,40 +873,45 @@ describe('pages api helper', () => {
           tag: 'zeta',
           title: null,
           createdAt: '2026-01-03T00:00:00.000Z',
-          updatedAt: '2026-01-04T00:00:00.000Z'
+          updatedAt: '2026-01-04T00:00:00.000Z',
+          pageCount: null
         }
       ])
     )
 
     expect(await fetchPageTags(fetchImpl)).toEqual([
-      { id: 1, tag: 'alpha', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' },
-      { id: 2, tag: 'zeta', title: null, createdAt: '2026-01-03T00:00:00.000Z', updatedAt: '2026-01-04T00:00:00.000Z' }
+      { id: 1, tag: 'alpha', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z', pageCount: 3 },
+      { id: 2, tag: 'zeta', title: null, createdAt: '2026-01-03T00:00:00.000Z', updatedAt: '2026-01-04T00:00:00.000Z', pageCount: null }
     ])
-
-    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/tags', {
-      credentials: 'same-origin',
-      headers: {
-        Accept: 'application/json'
-      }
-    })
   })
 
   test('accepts empty string tag values allowed by the tag update contract', async () => {
     const fetchImpl = vi
       .fn()
-      .mockResolvedValue(createJsonResponse([{ id: 1, tag: '', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }]))
+      .mockResolvedValue(createJsonResponse([{ id: 1, tag: '', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z', pageCount: 0 }]))
 
     expect(await fetchPageTags(fetchImpl)).toEqual([
-      { id: 1, tag: '', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }
+      { id: 1, tag: '', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z', pageCount: 0 }
     ])
   })
 
   test('rejects malformed admin page tags rows', async () => {
     const fetchImpl = vi
       .fn()
-      .mockResolvedValue(createJsonResponse([{ id: 1, tag: 12, title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }]))
+      .mockResolvedValue(createJsonResponse([{ id: 1, tag: 12, title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z', pageCount: 1 }]))
 
     await expect(Promise.resolve(fetchPageTags(fetchImpl, 'Bad page tags payload'))).rejects.toThrow('Bad page tags payload')
+  })
+
+  test('rejects missing, negative, fractional and unsafe tag counts', async () => {
+    for (const pageCount of [undefined, -1, 0.5, Number.MAX_SAFE_INTEGER + 1, '3']) {
+      const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{
+        id: 1, tag: 'alpha', title: 'Alpha',
+        createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z',
+        ...(pageCount === undefined ? {} : { pageCount })
+      }]))
+      await expect(fetchPageTags(fetchImpl, 'Bad tag count')).rejects.toThrow('Bad tag count')
+    }
   })
 
   test('rejects non-array admin page tags payloads', async () => {

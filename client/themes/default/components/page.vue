@@ -23,12 +23,30 @@
       .page-position-fill(:style='{ transform: $t(`common:page.scalex`, { value: readingProgress / 100, interpolation: { escapeValue: false } }) }')
     .page-reading-chrome(v-show='readerFocus && !printView && !talkActive && !linksActive', @keydown.esc.capture='readerSectionsEscape')
       .page-reading-dock(ref='readingDock', v-if='readerFocus && !printView && !talkActive && !linksActive', role='region', :aria-label='$t(`common:page.focusReading`)')
+        .page-reading-progress(
+          v-if='readingProgressAvailable'
+          role='progressbar'
+          :aria-label='$t(`common:page.personalReadingProgress`)'
+          :aria-valuenow='measuredReading.progress'
+          :aria-valuetext='readingProgressDescription'
+          :title='readingProgressDescription'
+          aria-valuemin='0'
+          aria-valuemax='100'
+        )
+          .page-reading-progress-fill(:style='{ height: `${measuredReading.progress}%` }')
         v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
         .page-reading-dock-context
-          span.page-reading-dock-title {{ readerSection ? readerSection.title : title }}
-          .page-reading-dock-meta(v-if='readerSection')
-            span.page-reading-dock-position {{ $t('common:page.sectionPosition', { current: readerSectionIndex + 1, total: tocFlattened.length }) }}
-            span.page-reading-dock-document {{ title }}
+          span.page-reading-dock-title
+            span.page-reading-completed(v-if='readerSectionReading && readerSectionReading.completed', :title='$t(`common:page.readingSectionCompleted`)')
+              v-icon(icon='mdi-check', size='10', aria-hidden='true')
+              span.d-sr-only {{ $t('common:page.readingSectionCompleted') }}
+            span {{ readerSection ? readerSection.title : title }}
+          .page-reading-dock-meta(v-if='readerSection || readingProgressAvailable')
+            span.page-reading-dock-position(v-if='readerSection') {{ $t('common:page.sectionPosition', { current: readerSectionIndex + 1, total: tocFlattened.length }) }}
+            span.page-reading-dock-document(v-if='readerSection') {{ title }}
+            span.page-reading-dock-progress(v-if='readingProgressAvailable', :title='readingProgressDescription')
+              span.d-sr-only {{ $t('common:page.personalReadingProgress') }}:
+              | {{ $t('common:page.readingSectionProgress', { percent: measuredReading.progress }) }}
           v-btn.page-reading-dock-top(
             v-if='upBtnShown'
             variant='text'
@@ -140,6 +158,29 @@
                 | {{ authorAttribution.before }}
                 bdi.page-provenance-author(:title='authorName') {{ authorName }}
                 | {{ authorAttribution.after }}
+              details.page-accuracy(v-if='!printView')
+                summary.page-accuracy-pill(:class='`page-accuracy-pill--${accuracyStatus}`')
+                  span(aria-hidden='true') ●
+                  |  {{ accuracyLabel }}
+                .page-accuracy-details
+                  p {{ $t('common:page.accuracyHumanAttestation') }}
+                  p(v-if='accuracyStamp')
+                    bdi {{ accuracyStamp.verifiedByName || $t('common:page.accuracyActorUnavailable') }}
+                    |  · 
+                    time(:datetime='accuracyStamp.verifiedAt') {{ approvalTransitionDate(accuracyStamp.verifiedAt) }}
+                    |  · {{ $t('common:page.accuracyAgeDays', { count: accuracyAgeDays }) }}
+                  p(v-else) {{ $t('common:page.accuracyUnknown') }}
+                  p(v-if='accuracyUnavailableReason') {{ accuracyUnavailableReason }}
+                  p(v-if='accuracyError', role='status') {{ accuracyError }}
+                  button.page-accuracy-verify(
+                    v-if='isAuthenticated'
+                    type='button'
+                    :disabled='!accuracyActionReady || accuracyPending'
+                    :aria-busy='accuracyPending'
+                    @click='verifyAccuracy'
+                  ) {{ $t(accuracyPending ? 'common:page.accuracyVerifying' : 'common:page.verifyAccuracy') }}
+                  a(v-if='accuracyReviewRequired', :href='pageUrl') {{ $t('common:page.accuracyReloadReview') }}
+                  button.page-accuracy-verify(v-else-if='!accuracyPending', type='button', @click='loadAccuracy') {{ $t('common:page.accuracyRefresh') }}
             .page-hero-actions(v-if='!printView')
               v-btn.page-focus-control(
                 v-if='!readerFocus && !talkActive && !linksActive'
@@ -309,6 +350,17 @@
             :disabled='printView || tocPosition === `off`'
           )
               v-card.page-toc-card(v-if='tocPosition !== `off` && !talkActive && !linksActive', tag='nav', :aria-label='$t(`common:page.onThisPage`)')
+                .page-reading-progress(
+                  v-if='readingProgressAvailable'
+                  role='progressbar'
+                  :aria-label='$t(`common:page.personalReadingProgress`)'
+                  :aria-valuenow='measuredReading.progress'
+                  :aria-valuetext='readingProgressDescription'
+                  :title='readingProgressDescription'
+                  aria-valuemin='0'
+                  aria-valuemax='100'
+                )
+                  .page-reading-progress-fill(:style='{ height: `${measuredReading.progress}%` }')
                 //- In the picker the outline is always disclosed.
                 .page-toc-summary(v-if='isTocCompact && !readerSectionsOpen')
                   v-btn.page-toc-toggle.text-none(
@@ -319,6 +371,9 @@
                   )
                     span.page-toc-heading-label.text-label-small {{$t('common:page.onThisPage')}}
                     span.page-toc-toggle-meta
+                      span.page-reading-progress-label(v-if='readingProgressAvailable', :title='readingProgressDescription')
+                        span.d-sr-only {{ $t('common:page.personalReadingProgress') }}:
+                        | {{ $t('common:page.readingSectionProgress', { percent: measuredReading.progress }) }}
                       span.page-toc-count(aria-hidden='true') {{ tocFlattened.length }}
                       span.d-sr-only {{ $t('common:page.sectionsCount', { count: tocFlattened.length }) }}
                       v-icon(size='small', aria-hidden='true') {{ tocDisclosureExpanded ? `mdi-chevron-up` : `mdi-chevron-down` }}
@@ -334,6 +389,9 @@
                   span.page-toc-heading-label.text-label-small {{$t('common:page.onThisPage')}}
                   span.page-toc-count(aria-hidden='true') {{ tocFlattened.length }}
                   span.d-sr-only {{ $t('common:page.sectionsCount', { count: tocFlattened.length }) }}
+                span.page-reading-progress-label.page-toc-progress-label(v-if='!isTocCompact && !readerSectionsOpen && readingProgressAvailable', :title='readingProgressDescription')
+                  span.d-sr-only {{ $t('common:page.personalReadingProgress') }}:
+                  | {{ $t('common:page.readingSectionProgress', { percent: measuredReading.progress }) }}
 
                 div#page-toc-content.page-toc-content(
                   v-show='readerSectionsOpen || tocDisclosureExpanded'
@@ -354,6 +412,7 @@
                     page-toc-tree(
                       :nodes='tocTreeVisible'
                       :active-anchor='activeAnchor'
+                      :reading-sections='readingSectionsByAnchor'
                       :is-expanded='isBranchExpanded'
                       :has-active-descendant='hasActiveDescendant'
                       :on-toggle='toggleBranch'
@@ -709,7 +768,7 @@
 import ClipboardJS from 'clipboard'
 import i18next from 'i18next'
 import type { Environment as PrismEnvironment } from 'prismjs'
-import { defineComponent, h, inject, markRaw, type PropType, shallowRef, type VNode } from 'vue'
+import { defineComponent, h, inject, markRaw, type PropType, shallowRef, useId, type VNode } from 'vue'
 import { useGoTo } from 'vuetify'
 import AsyncState from '@/components/common/async-state.vue'
 import PageBrandingMark from '@/components/common/page-branding-mark.vue'
@@ -718,6 +777,8 @@ import GlossaryReader from '@/components/common/glossary-reader.vue'
 import DiscussionAnnotations from '@/components/common/discussion-annotations.vue'
 import { composeDiscussionAnnotation, onJumpDiscussionAnnotation } from '@/helpers/discussion-annotation-events'
 import type { DiscussionAnnotationAnchor } from '../../../../shared/discussion-annotations.ts'
+import { fetchPage, verifyPageAccuracy } from '@/helpers/pages-api'
+import { PageAccuracyViewSchema, PAGE_ACCURACY_DAY_MS, type PageAccuracyView } from '../../../../shared/page-accuracy.ts'
 import {
   buildOutlineTree,
   filterOutlineTree,
@@ -727,7 +788,10 @@ import {
   isBranchEffectivelyExpanded,
   type OutlineNode,
   outlineSublistId,
-  type PageOutlineTracker, 
+  type PageOutlineTracker,
+  type PageReadingProgressScope,
+  type PageReadingProgressState,
+  type PageReadingSectionProgress,
   trackPageOutline
 } from '@/helpers/page-outline'
 import { wikiStore } from '@/store/index.ts'
@@ -737,6 +801,7 @@ import type { PageBrandingView } from '../../../../shared/page-branding.ts'
 import { tagColorBucket } from '../../../../shared/tag-colors.ts'
 import { decodeBase64Json } from '../../../helpers/base64'
 import { hydrateContentExtensions, revealContentExtensionTarget } from '../../../helpers/content-extension-runtime'
+import { hydrateReaderCitedCopy, type ReaderCitedCopySource } from '../../../helpers/reader-cited-copy.ts'
 import {
   MERMAID_MAX_TEXT_SIZE,
   renderMermaidSvg,
@@ -1215,6 +1280,7 @@ const PageTocTree = defineComponent({
   props: {
     nodes: { type: Array as PropType<OutlineNode[]>, required: true },
     activeAnchor: { type: String, default: '' },
+    readingSections: { type: Object as PropType<ReadonlyMap<string, PageReadingSectionProgress>>, required: true },
     isExpanded: { type: Function as PropType<(anchor: string) => boolean>, required: true },
     hasActiveDescendant: { type: Function as PropType<(anchor: string) => boolean>, required: true },
     onToggle: { type: Function as PropType<(anchor: string) => void>, required: true },
@@ -1227,6 +1293,7 @@ const PageTocTree = defineComponent({
       const hasChildren = Boolean(node.children && node.children.length > 0)
       const expanded = hasChildren && props.isExpanded(node.anchor)
       const isActive = props.activeAnchor === node.anchor
+      const reading = props.readingSections.get(decodePageAnchor(node.anchor))
       const isDescendantActive = !expanded && props.hasActiveDescendant(node.anchor)
       const sublistId = outlineSublistId(node.anchor)
 
@@ -1279,7 +1346,8 @@ const PageTocTree = defineComponent({
           class: [
             'page-toc-item',
             isActive ? 'page-toc-item--active' : '',
-            isDescendantActive ? 'page-toc-item--descendant-active' : ''
+            isDescendantActive ? 'page-toc-item--descendant-active' : '',
+            reading?.completed ? 'page-toc-item--completed' : ''
           ],
           'aria-current': isActive ? 'location' : undefined,
           onClick: (e: MouseEvent) => props.onNavigate(e, node.anchor)
@@ -1291,7 +1359,14 @@ const PageTocTree = defineComponent({
               class: ['page-toc-item-title', titleClass]
             },
             [h('span', { class: 'page-toc-item-title-text' }, node.title)]
-          )
+          ),
+          reading ? h('span', { class: 'd-sr-only' }, `, ${props.t(
+            reading.completed ? 'common:page.readingSectionCompleted' : 'common:page.readingSectionProgress',
+            { percent: reading.progress }
+          )}`) : null,
+          reading?.completed ? h('span', { class: 'page-reading-completed', 'aria-hidden': 'true' }, [
+            h('i', { class: ['mdi', 'mdi-check'] })
+          ]) : null
         ]
       )
 
@@ -1384,8 +1459,10 @@ export default defineComponent({
       selectGlossaryPin: glossaryMemory.selectPin,
       requestGlossaryPin: glossaryMemory.requestPin,
       goTo: useGoTo(),
+      readerCitedCopyHintPrefix: `reader-cited-copy-hint-${useId()}`,
       readerContentRoot: shallowRef<HTMLElement | null>(null),
       readerActionReturnFocus: shallowRef<HTMLElement | null>(null),
+      readingContentNode: shallowRef<HTMLElement | null>(null),
       offlineStorage: shallowRef<OfflineStorage | null>(null),
       offlineSyncService: inject<OfflineSyncService>(OFFLINE_SYNC_COORDINATOR_KEY)
     }
@@ -1547,6 +1624,19 @@ export default defineComponent({
       pageWatchSettingsOpen: false,
       readerSectionsOpen: false,
       readingProgress: 0,
+      accuracyView: null as PageAccuracyView | null,
+      accuracyReadyKey: '',
+      accuracyRequestId: 0,
+      accuracyMutationId: 0,
+      accuracyPending: false,
+      accuracyError: '',
+      accuracyReviewRequired: false,
+      accuracyTimer: null as ReturnType<typeof setTimeout> | null,
+      accuracyVisibilityHandler: null as (() => void) | null,
+      measuredReading: { status: 'disabled', progress: 0, sections: [], completedAnchors: [] } as PageReadingProgressState,
+      readingContentAuthority: null as string | null,
+      readingAdmittedContentKey: '',
+      readingOutlineEpoch: 0,
       activeAnchor: '',
       outlineCleanup: null as PageOutlineTracker | null,
       tocRevealRafId: null as number | null,
@@ -1624,6 +1714,7 @@ export default defineComponent({
       printViewBeforePrint: null as boolean | null,
       printDetailsState: null as Map<HTMLDetailsElement, boolean> | null,
       contentExtensionCleanup: null as (() => void) | null,
+      readerCitedCopyCleanup: null as (() => void) | null,
       mermaidAbortController: null as AbortController | null,
       routeAnimationAbortController: null as AbortController | null,
       scrollAnimationFrame: null as number | null,
@@ -1729,6 +1820,91 @@ export default defineComponent({
     pageOnlineActionReady (): boolean {
       return this.pageTransportVerified && this.pageAuthorizationFresh
     },
+    readingContentKey (): string {
+      return JSON.stringify([this.pageId, this.locale, this.sourceRevision, this.navigationKey])
+    },
+    readingReaderAuthority (): string {
+      // A warm bootstrap identity, an offline body, or a failed session refresh
+      // is not admission to measure this reader's content.
+      if (!this.pageTransportVerified || wikiStore.authRefreshPending || !wikiStore.authRefreshSettled) return ''
+      const permissions = [this.effectivePermissions, wikiStore.page.effectivePermissions, wikiStore.user.permissions]
+      if (this.pageAuthorizationFresh && Number.isSafeInteger(wikiStore.user.id) && wikiStore.user.id > 0 &&
+        Number.isSafeInteger(wikiStore.user.authVersion) && wikiStore.user.authVersion >= 0) {
+        return JSON.stringify(['account', wikiStore.user.id, wikiStore.user.authVersion, wikiStore.offlineIdentityEpoch, permissions])
+      }
+      return !this.isAuthenticated && wikiStore.authRefreshOutcome === 'anonymous'
+        ? JSON.stringify(['anonymous', wikiStore.offlineIdentityEpoch, permissions])
+        : ''
+    },
+    readingProgressScope (): PageReadingProgressScope | null {
+      const workspace = typeof window === 'undefined' ? null : window.siteConfig?.offlineDraftSiteId
+      if (typeof workspace !== 'string' || !workspace.trim() ||
+        !this.readingReaderAuthority || this.readingContentAuthority !== this.readingReaderAuthority ||
+        this.readingAdmittedContentKey !== this.readingContentKey ||
+        !Number.isSafeInteger(this.pageId) || this.pageId < 1 || !this.locale.trim() || !this.sourceRevision.trim() ||
+        this.navigationPending || this.printView || this.selectedPageView !== 'article' ||
+        (this.visibility !== 'public' && this.visibility !== 'private') ||
+        (this.visibility === 'private' && !this.pageAuthorizationFresh)) return null
+      return {
+        canonicalWorkspaceId: workspace.trim(),
+        reader: this.isAuthenticated ? { kind: 'account', accountId: String(wikiStore.user.id) } : { kind: 'anonymous' },
+        locale: this.locale,
+        pageId: String(this.pageId),
+        sourceRevision: this.sourceRevision,
+        authority: this.visibility === 'private' ? 'private-readable' : 'public-readable',
+        // Stable across reloads, but changes with membership/authority. Never
+        // use a session token or the transient identity epoch in persisted scope.
+        authorityKey: JSON.stringify([this.visibility, this.isAuthenticated ? wikiStore.user.authVersion : null,
+          this.effectivePermissions, wikiStore.page.effectivePermissions, wikiStore.user.permissions])
+      }
+    },
+    readingProgressContextKey (): string {
+      return JSON.stringify([this.readingContentKey, this.readingReaderAuthority, this.visibility,
+        this.navigationPending, this.printView, this.selectedPageView])
+    },
+    readerCitedCopyContextKey (): string {
+      return JSON.stringify([this.readingProgressContextKey, this.readingContentAuthority,
+        this.readingAdmittedContentKey, this.readerPageActionsState.ready, this.path,
+        this.updatedAt, this.title, this.description, this.offlineDisposed])
+    },
+    readerCitedCopySource (): ReaderCitedCopySource | null {
+      if (this.offlineDisposed || !this.readerPageActionsState.ready || !this.pageTransportVerified ||
+        !this.readingReaderAuthority || this.readingContentAuthority !== this.readingReaderAuthority ||
+        this.readingAdmittedContentKey !== this.readingContentKey ||
+        this.readingContentNode !== this.$refs.container || this.navigationPending || this.printView ||
+        this.selectedPageView !== 'article' || !this.sourceRevision.trim() ||
+        !this.updatedAt.trim() || !Number.isFinite(Date.parse(this.updatedAt)) ||
+        (this.visibility === 'private' && !this.pageAuthorizationFresh)) return null
+      return {
+        id: this.pageId, locale: this.locale, path: this.path, title: this.title,
+        description: this.description, visibility: this.visibility,
+        updatedAt: this.updatedAt, sourceRevision: this.sourceRevision
+      }
+    },
+    readingProgressAvailable (): boolean {
+      return this.readingProgressScope !== null && this.measuredReading.status === 'tracking' && this.measuredReading.sections.length > 0
+    },
+    readingSectionsByAnchor (): ReadonlyMap<string, PageReadingSectionProgress> {
+      return new Map(this.readingProgressAvailable
+        ? this.measuredReading.sections.map(section => [decodePageAnchor(section.anchor), section] as const)
+        : [])
+    },
+    readingProgressSummary (): string {
+      if (!this.tocFlattened.length) {
+        return this.$t('common:page.readingSectionProgress', { percent: this.measuredReading.progress })
+      }
+      return this.$t('common:page.readingProgressSummary', {
+        percent: this.measuredReading.progress,
+        completed: this.measuredReading.completedAnchors.length,
+        total: this.measuredReading.sections.length
+      })
+    },
+    readingProgressDescription (): string {
+      return `${this.readingProgressSummary}. ${this.$t('common:page.readingProgressMeaning')}`
+    },
+    readerSectionReading (): PageReadingSectionProgress | null {
+      return this.readerSection ? this.readingSectionsByAnchor.get(decodePageAnchor(this.readerSection.anchor)) ?? null : null
+    },
     pageOnlineActionUnavailableReason (): string {
       if (!this.pageTransportVerified) {
         if (pwaState.connectionState === 'checking') return this.$t('common:page.waitingForConnection')
@@ -1798,6 +1974,49 @@ export default defineComponent({
         pwaState.serverReachable,
         pwaState.serverHealthy
       ].join(':')
+    },
+    accuracyContextKey (): string {
+      return JSON.stringify([this.pageAuthorityKey, wikiStore.user.authVersion, this.pageActionGeneration,
+        this.pageId, this.locale, this.path, this.sourceRevision, this.navigationKey,
+        this.navigationPending, this.printView, this.readerPageActionsState.ready])
+    },
+    accuracyCurrent (): PageAccuracyView | null {
+      if (this.accuracyReadyKey !== this.accuracyContextKey || !this.pageTransportVerified ||
+        wikiStore.authRefreshPending || !wikiStore.authRefreshSettled || this.navigationPending ||
+        this.offlineDisposed || this.accuracyReviewRequired ||
+        (this.visibility === 'private' && !this.pageAuthorizationFresh)) return null
+      const view = this.accuracyView
+      if (!view || view.sourceRevision !== this.sourceRevision ||
+        (view.latestAttestation && view.latestAttestation.pageId !== this.pageId)) return null
+      return view
+    },
+    accuracyStatus (): string {
+      return this.accuracyCurrent?.status ?? 'needs-verification'
+    },
+    accuracyLabel (): string {
+      return this.$t(`common:page.accuracyStatus.${this.accuracyStatus}`)
+    },
+    accuracyStamp () {
+      const view = this.accuracyCurrent
+      const stamp = view?.latestAttestation
+      return stamp && Date.parse(stamp.verifiedAt) <= Date.parse(view!.asOf) ? stamp : null
+    },
+    accuracyAgeDays (): number {
+      const view = this.accuracyCurrent
+      return view && this.accuracyStamp
+        ? Math.floor((Date.parse(view.asOf) - Date.parse(this.accuracyStamp.verifiedAt)) / PAGE_ACCURACY_DAY_MS)
+        : 0
+    },
+    accuracyActionReady (): boolean {
+      return Boolean(this.accuracyCurrent?.canVerify && this.pageOnlineActionReady &&
+        this.readerPageActionsState.ready && !this.printView && !this.accuracyReviewRequired)
+    },
+    accuracyUnavailableReason (): string {
+      if (this.accuracyReviewRequired) return this.$t('common:page.accuracyRevisionChanged')
+      if (!this.pageOnlineActionReady) return this.pageOnlineActionUnavailableReason
+      if (!this.accuracyCurrent) return this.$t('common:page.accuracyUnknown')
+      if (!this.accuracyCurrent.canVerify) return this.$t('common:page.accuracyNotAuthorized')
+      return ''
     },
     isAuthenticated (): boolean {
       return wikiStore.user.authenticated
@@ -2058,6 +2277,36 @@ export default defineComponent({
     }
   },
   watch: {
+    readerCitedCopyContextKey: {
+      flush: 'sync',
+      handler () {
+        this.retireReaderCitedCopy()
+        const identity = this.readerCitedCopyContextKey
+        this.$nextTick(() => {
+          if (!this.offlineDisposed && identity === this.readerCitedCopyContextKey) this.setupReaderCitedCopy()
+        })
+      }
+    },
+    accuracyContextKey: {
+      flush: 'sync',
+      handler () {
+        this.invalidateAccuracy()
+        this.accuracyReviewRequired = false
+        if (!this.offlineDisposed) void this.loadAccuracy()
+      }
+    },
+    readingProgressContextKey: {
+      flush: 'sync',
+      handler () {
+        // Fence callbacks/dwell/storage synchronously, before changed authority
+        // or a replacement article can render. Reuse the one outline lifecycle.
+        this.retirePageOutline(true)
+        const epoch = this.readingOutlineEpoch
+        this.$nextTick(() => {
+          if (!this.offlineDisposed && epoch === this.readingOutlineEpoch) this.setupPageOutline()
+        })
+      }
+    },
     title () {
       this.$nextTick(() => {
         if (!this.offlineDisposed) this.refreshPageContent()
@@ -2140,6 +2389,7 @@ export default defineComponent({
     tocFlattened: {
       immediate: true,
       handler (entries: FlattenedTableOfContentsNode[]) {
+        this.retirePageOutline()
         this.closeReaderSections()
         this.expandedAnchors = getInitialExpandedAnchors(entries)
         this.collapsedByUser = new Set()
@@ -2147,6 +2397,7 @@ export default defineComponent({
         this.preSearchCollapsedByUser = null
         this.searchOverrides.clear()
         this.$nextTick(() => {
+          if (!this.offlineDisposed) this.setupPageOutline()
           this.setupTocResizeObserver()
           this.ensureActiveTocVisible()
         })
@@ -2204,6 +2455,12 @@ export default defineComponent({
   },
   mounted () {
     onReaderPageActionsRequest(this.provideReaderPageActions)
+    this.accuracyVisibilityHandler = () => {
+      this.invalidateAccuracy()
+      if (document.visibilityState === 'visible') void this.loadAccuracy()
+    }
+    document.addEventListener('visibilitychange', this.accuracyVisibilityHandler)
+    void this.loadAccuracy()
     onReaderPageAction(this.runReaderPageAction)
     emitReaderPageActionsChanged()
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -2281,6 +2538,8 @@ export default defineComponent({
     }
   },
   beforeUnmount () {
+    this.invalidateAccuracy()
+    if (this.accuracyVisibilityHandler) document.removeEventListener('visibilitychange', this.accuracyVisibilityHandler)
     offReaderPageActionsRequest(this.provideReaderPageActions)
     offReaderPageAction(this.runReaderPageAction)
     this.offlineDisposed = true
@@ -2314,9 +2573,10 @@ export default defineComponent({
     if (this.loadHandler) window.removeEventListener('load', this.loadHandler)
     if (this.beforePrintHandler) window.removeEventListener('beforeprint', this.beforePrintHandler)
     if (this.afterPrintHandler) window.removeEventListener('afterprint', this.afterPrintHandler)
-    this.outlineCleanup?.dispose()
+    this.retirePageOutline()
     this.restoreLeadingTitle()
-    this.outlineCleanup = null
+    this.readingContentNode = null
+    this.readingContentAuthority = null
     this.tocResizeObserver?.disconnect()
     this.tocResizeObserver = null
     if (this.tocRevealRafId !== null) {
@@ -2333,6 +2593,88 @@ export default defineComponent({
     this.contentExtensionCleanup = null
   },
   methods: {
+    invalidateAccuracy (): void {
+      this.accuracyRequestId += 1
+      this.accuracyReadyKey = ''
+      this.accuracyView = null
+      this.accuracyError = ''
+      if (this.accuracyTimer !== null) clearTimeout(this.accuracyTimer)
+      this.accuracyTimer = null
+    },
+    acceptAccuracy (view: PageAccuracyView, key: string): void {
+      this.accuracyView = view
+      this.accuracyReadyKey = key
+      if (this.accuracyTimer !== null) clearTimeout(this.accuracyTimer)
+      // Re-read at the exact server-age boundary; never promote cached truth
+      // using a browser clock. The short lease also refreshes write authority.
+      const stamp = view.latestAttestation
+      const age = stamp ? Date.parse(view.asOf) - Date.parse(stamp.verifiedAt) : NaN
+      const boundary = age >= 0 && age < 30 * PAGE_ACCURACY_DAY_MS
+        ? 30 * PAGE_ACCURACY_DAY_MS - age
+        : age >= 0 && age <= 90 * PAGE_ACCURACY_DAY_MS ? 90 * PAGE_ACCURACY_DAY_MS - age + 1 : 60_000
+      this.accuracyTimer = setTimeout(() => {
+        this.invalidateAccuracy()
+        void this.loadAccuracy()
+      }, Math.max(1, Math.min(60_000, boundary)))
+    },
+    async loadAccuracy (): Promise<void> {
+      if (this.offlineDisposed || this.accuracyPending || this.printView || this.navigationPending ||
+        !this.readerPageActionsState.ready || !this.pageTransportVerified ||
+        wikiStore.authRefreshPending || !wikiStore.authRefreshSettled ||
+        (this.visibility === 'private' && !this.pageAuthorizationFresh)) return
+      const key = this.accuracyContextKey
+      const request = ++this.accuracyRequestId
+      this.accuracyReadyKey = ''
+      try {
+        const page = await fetchPage(fetch, this.pageId, this.$t('common:page.accuracyReadFailed'))
+        if (this.offlineDisposed || key !== this.accuracyContextKey || request !== this.accuracyRequestId) return
+        if (page.sourceRevision !== this.sourceRevision) {
+          this.accuracyReviewRequired = true
+          return
+        }
+        const parsed = PageAccuracyViewSchema.safeParse(page.accuracy)
+        if (!parsed.success || parsed.data.sourceRevision !== this.sourceRevision ||
+          (parsed.data.latestAttestation && parsed.data.latestAttestation.pageId !== this.pageId)) throw new Error(this.$t('common:page.accuracyReadFailed'))
+        this.accuracyError = ''
+        this.acceptAccuracy(parsed.data, key)
+      } catch {
+        if (key === this.accuracyContextKey && request === this.accuracyRequestId) {
+          this.accuracyError = this.$t('common:page.accuracyReadFailed')
+        }
+      }
+    },
+    async verifyAccuracy (): Promise<void> {
+      if (!this.accuracyActionReady || this.accuracyPending) return
+      const key = this.accuracyContextKey
+      const request = ++this.accuracyRequestId
+      const pageId = this.pageId
+      const expectedSourceRevision = this.sourceRevision
+      const mutation = ++this.accuracyMutationId
+      this.accuracyPending = true
+      this.accuracyError = ''
+      if (this.accuracyTimer !== null) clearTimeout(this.accuracyTimer)
+      this.accuracyTimer = null
+      try {
+        const view = await verifyPageAccuracy(fetch, pageId, { expectedSourceRevision }, this.$t('common:page.accuracyVerifyFailed'))
+        if (this.offlineDisposed || key !== this.accuracyContextKey || request !== this.accuracyRequestId || !this.pageOnlineActionReady) return
+        this.acceptAccuracy(view, key)
+      } catch {
+        if (this.offlineDisposed || key !== this.accuracyContextKey || request !== this.accuracyRequestId) return
+        this.accuracyReadyKey = ''
+        this.accuracyView = null
+        this.accuracyError = this.$t('common:page.accuracyVerifyFailed')
+        // A rejected action is never replayed. Review the current server read;
+        // a changed revision requires navigation before another deliberate click.
+        this.accuracyPending = false
+        await this.loadAccuracy()
+        if (key === this.accuracyContextKey && mutation === this.accuracyMutationId) this.accuracyError = this.$t('common:page.accuracyVerifyFailed')
+      } finally {
+        if (mutation === this.accuracyMutationId) {
+          this.accuracyPending = false
+          if (key !== this.accuracyContextKey && !this.offlineDisposed) void this.loadAccuracy()
+        }
+      }
+    },
     observeReadingDock (): void {
       if (this.offlineDisposed) return
       const node = this.readerDockVisible ? this.$refs.readingDock : null
@@ -3157,8 +3499,7 @@ export default defineComponent({
       this.offlinePassiveRefreshPending = false
       this.offlineError = ''
       this.offlineAvailabilityError = ''
-      this.outlineCleanup?.dispose()
-      this.outlineCleanup = null
+      this.retirePageOutline()
       this.cancelScheduledScroll()
       this.tocExpanded = false
       this.closeReaderSections()
@@ -3329,8 +3670,69 @@ export default defineComponent({
       element.hidden = true
       this.leadingTitle = markRaw({ heading: element, id, alias })
     },
+    retirePageOutline (invalidateScope = false): void {
+      this.readingOutlineEpoch += 1
+      if (invalidateScope) this.outlineCleanup?.setReadingProgressScope(null)
+      this.outlineCleanup?.dispose()
+      this.outlineCleanup = null
+      this.measuredReading = { status: 'disabled', progress: 0, sections: [], completedAnchors: [] }
+    },
+    setupPageOutline (): void {
+      const container = this.$refs.container
+      if (this.offlineDisposed || !(container instanceof HTMLElement) || !container.isConnected) return
+      if (this.readingContentNode !== container || this.readingAdmittedContentKey !== this.readingContentKey) {
+        this.readingContentNode = container
+        this.readingAdmittedContentKey = this.readingContentKey
+        this.readingContentAuthority = null
+      }
+      // Initial auth may settle after mount. Bind once, never re-admit an old
+      // private DOM to a changed account/membership without a new content epoch.
+      if (this.readingContentAuthority === null && this.readingReaderAuthority) {
+        this.readingContentAuthority = this.readingReaderAuthority
+      }
+      if (this.outlineCleanup) {
+        this.outlineCleanup.refresh()
+        return
+      }
+      const epoch = this.readingOutlineEpoch
+      this.outlineCleanup = markRaw(trackPageOutline(container, this.tocFlattened, anchor => {
+        if (epoch !== this.readingOutlineEpoch) return
+        this.activeAnchor = anchor
+        this.$nextTick(() => this.ensureActiveTocVisible())
+      }, progress => {
+        if (epoch === this.readingOutlineEpoch) this.readingProgress = progress
+      }, {
+        scope: this.readingProgressScope,
+        onChange: state => {
+          if (epoch === this.readingOutlineEpoch) this.measuredReading = state
+        }
+      }))
+    },
+    retireReaderCitedCopy (): void {
+      this.readerCitedCopyCleanup?.()
+      this.readerCitedCopyCleanup = null
+    },
+    setupReaderCitedCopy (): void {
+      this.retireReaderCitedCopy()
+      const container = this.$refs.container
+      if (this.offlineDisposed || this.navigationPending || this.printView ||
+        this.selectedPageView !== 'article' || !(container instanceof HTMLElement) || !container.isConnected) return
+      const identity = this.readerCitedCopyContextKey
+      this.readerCitedCopyCleanup = hydrateReaderCitedCopy(container, {
+        appContext: this.$.appContext,
+        identity,
+        hintIdPrefix: this.readerCitedCopyHintPrefix,
+        source: () => this.readerCitedCopySource,
+        isCurrent: () => !this.offlineDisposed && !this.navigationPending && !this.printView &&
+          this.selectedPageView === 'article' && identity === this.readerCitedCopyContextKey &&
+          this.$refs.container === container,
+        unavailable: this.$t('common:readerCitedCopy.unavailable')
+      })
+    },
     refreshPageContent(): void {
       const container = this.$refs.container as HTMLElement
+      this.retireReaderCitedCopy()
+      this.retirePageOutline()
       this.syncLeadingTitle()
       this.readerContentRoot = container
       this.mermaidAbortController?.abort()
@@ -3368,15 +3770,13 @@ export default defineComponent({
         }
       })
       this.contentExtensionCleanup?.()
-      this.contentExtensionCleanup = hydrateContentExtensions(container, undefined, { mermaidHosts })
-      this.outlineCleanup?.dispose()
-      this.outlineCleanup = trackPageOutline(container, this.tocFlattened, anchor => {
-        this.activeAnchor = anchor
-        // Reveal after Vue has applied the new aria-current, so the ToC list
-        // follows the row that is actually active instead of trailing one
-        // highlight behind during fast scrolls.
-        this.$nextTick(() => this.ensureActiveTocVisible())
-      }, progress => { this.readingProgress = progress })
+      const extensionCleanup = hydrateContentExtensions(container, undefined, { mermaidHosts })
+      this.contentExtensionCleanup = () => {
+        this.retireReaderCitedCopy()
+        extensionCleanup()
+      }
+      this.setupPageOutline()
+      this.setupReaderCitedCopy()
       this.setupTocResizeObserver()
       boot.notify('page-ready')
     },
@@ -4263,6 +4663,70 @@ export default defineComponent({
   margin-block-start: 0;
 }
 
+// Controls are transient siblings, never interactive descendants of <summary>
+// or part of the authored block. Reserve icon width without adding prose rows.
+.wiki-page .contents .reader-cited-copy-surface {
+  position: relative;
+  display: flow-root;
+  margin-block: var(--wiki-space-6, 1.5rem);
+  border-radius: var(--wiki-panel-radius, 12px);
+
+  > :is(details, blockquote, .admonitionblock) { margin-block: 0; }
+  > blockquote { padding-inline-end: 3.75rem; }
+  > .admonitionblock { padding-inline-end: 3.75rem; }
+  > details > summary { padding-inline-end: 3.75rem; }
+
+  .reader-cited-copy-mount {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-end: .125rem;
+    z-index: 2;
+    max-width: calc(100% - 1rem);
+    font-family: var(--wiki-font-body);
+    font-style: normal;
+    font-weight: 400;
+    text-align: start;
+
+    &[hidden], [hidden] { display: none !important; }
+    .cited-copy-action__button > span { display: none; }
+    .cited-copy-action__button {
+      width: 44px;
+      min-height: 44px;
+      padding: .375rem;
+      border-color: transparent;
+      background: transparent;
+      &:disabled { pointer-events: none; }
+    }
+    .cited-copy-action__receipt:not(:empty),
+    .reader-cited-copy-unavailable:not([hidden]) {
+      position: absolute;
+      inset-block-start: 100%;
+      inset-inline-end: 0;
+      width: max-content;
+      max-width: min(18rem, calc(100vw - 3rem));
+      padding: .375rem .625rem;
+      border: 1px solid var(--wiki-surface-border);
+      border-radius: .375rem;
+      color: rgb(var(--v-theme-on-surface));
+      background: rgb(var(--v-theme-surface));
+      font-size: .8125rem;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+      box-shadow: var(--wiki-shadow-inset);
+    }
+    .reader-cited-copy-unavailable { display: none; }
+    &:hover .reader-cited-copy-unavailable:not([hidden]),
+    &:focus-within .reader-cited-copy-unavailable:not([hidden]) { display: block; }
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .reader-cited-copy-surface:not(:hover):not(:focus-within) .cited-copy-action[data-copy-state='idle'] .cited-copy-action__button { opacity: 0; }
+}
+@media print {
+  .wiki-page .contents .reader-cited-copy-mount { display: none !important; }
+}
+
 .wiki-page {
   --page-toc-empty-height: calc(var(--wiki-grid-size) * 2);
   --page-layout-shell-max: 132rem;
@@ -4329,6 +4793,52 @@ export default defineComponent({
   color: var(--wiki-text-muted);
   font-size: .75rem;
   line-height: 1.4;
+}
+.page-accuracy { position: relative; }
+.page-accuracy-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-inline: 6px;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: 999px;
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-specular-border);
+  color: var(--wiki-text-muted);
+  cursor: pointer;
+  list-style: none;
+  &::-webkit-details-marker { display: none; }
+  &--verified-fresh { color: var(--wiki-success-ink); }
+  &--review-soon { color: var(--wiki-warning-ink); }
+}
+.page-accuracy-details {
+  position: absolute;
+  z-index: 12;
+  inset-inline-end: 0;
+  width: min(300px, 80vw);
+  padding: var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-radius-md);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-md);
+  color: rgb(var(--v-theme-on-surface));
+  p { margin-block: 0 8px; }
+  a { display: block; }
+}
+.page-accuracy-verify {
+  min-height: 44px;
+  padding-inline: 8px;
+  color: var(--wiki-primary-ink);
+  text-decoration: underline;
+  &:disabled { color: var(--wiki-text-muted); cursor: not-allowed; }
+}
+.page-accuracy :is(summary, button, a):focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+@media (forced-colors: active) {
+  .page-accuracy-pill, .page-accuracy-details { color: CanvasText; background: Canvas; border-color: CanvasText; }
+  .page-accuracy-verify:disabled { color: GrayText; }
 }
 
 
@@ -4999,7 +5509,77 @@ export default defineComponent({
 }
 
 
+// Earned viewport coverage, separate from the active-location row. These
+// overlays/text do not add a control or change the 40px compact summary.
+.page-reading-progress {
+  position: absolute;
+  z-index: 1;
+  inset-inline-start: 0;
+  inset-block: var(--wiki-space-2);
+  width: 2px;
+  overflow: hidden;
+  border-radius: var(--wiki-radius-pill);
+  background: var(--wiki-surface-border);
+  pointer-events: none;
+}
+
+.page-reading-progress-fill {
+  width: 2px;
+  background: linear-gradient(180deg, var(--wiki-accent-warm), var(--wiki-accent-spectral));
+}
+
+.page-reading-progress-label,
+.page-reading-dock-progress {
+  color: var(--wiki-text-muted);
+  font-size: .6875rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.page-toc-progress-label {
+  flex: 0 0 auto;
+  padding-inline: var(--wiki-space-4);
+  padding-block-end: var(--wiki-space-2);
+}
+
+.page-toc-summary .page-toc-heading-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-toc-card .page-toc-toggle-meta { flex-shrink: 0; }
+
+.page-reading-completed {
+  display: inline-flex;
+  flex: 0 0 12px;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border: 1px solid currentColor;
+  border-radius: var(--wiki-radius-pill);
+  // Muted bronze using palette-safe ink; the check and text carry the meaning.
+  background: color-mix(in oklch, var(--wiki-accent-warm) 14%, var(--wiki-surface-raised));
+  color: color-mix(in oklch, var(--wiki-accent-ink) 45%, var(--wiki-text-muted));
+  font-size: 10px;
+  line-height: 1;
+}
+
+.page-toc-item--completed {
+  gap: var(--wiki-space-1);
+  .page-toc-item-title { flex: 1 1 auto; }
+}
+
+.page-reading-dock-title > .page-reading-completed {
+  margin-inline-end: var(--wiki-space-1);
+  vertical-align: middle;
+}
+
 .page-toc-card {
+  position: relative;
   display: flex;
   min-height: var(--page-toc-empty-height);
   flex-direction: column;
@@ -5700,6 +6280,19 @@ export default defineComponent({
 }
 
 @media (forced-colors: active) {
+  .page-reading-progress {
+    // Preserve a two-pixel data mark using the user's system palette.
+    forced-color-adjust: none;
+    background: GrayText;
+  }
+  .page-reading-progress-fill {
+    background: Highlight;
+  }
+  .page-reading-completed {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
   .page-col-content > .contents,
   .page-col-sd > .v-card,
   .comments-container {
@@ -5851,6 +6444,7 @@ export default defineComponent({
 }
 
 .page-reading-dock {
+  position: relative;
   display: flex;
   align-items: center;
   gap: .5rem;

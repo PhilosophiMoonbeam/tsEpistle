@@ -23,7 +23,7 @@ const queryMatch = (text: string, query: string): RegExpExecArray | null => {
 }
 
 /** Inline search passages never fall back to the opening text of a nonmatching body. */
-export const matchingSearchExcerpt = (render: string, query: string): string | null => {
+export const matchingSearchExcerpt = (render: string, query: string): { excerpt: string; excerptTruncated: boolean } | null => {
   const text = renderedPlainText(render).replace(/\s+/gu, ' ')
   const match = queryMatch(text, query)
   if (!match || match[0].length > 318) return null
@@ -35,7 +35,10 @@ export const matchingSearchExcerpt = (render: string, query: string): string | n
   let end = Math.min(text.length, start + 318)
   if (start > 0 && /[\uDC00-\uDFFF]/u.test(text[start]!)) start += 1
   if (end < text.length && /[\uD800-\uDBFF]/u.test(text[end - 1]!)) end -= 1
-  return `${start > 0 ? '…' : ''}${text.slice(start, end).trim()}${end < text.length ? '…' : ''}`
+  return {
+    excerpt: `${start > 0 ? '…' : ''}${text.slice(start, end).trim()}${end < text.length ? '…' : ''}`,
+    excerptTruncated: start > 0 || end < text.length
+  }
 }
 
 /** Plain text only; callers must authorize the current page before invoking this helper. */

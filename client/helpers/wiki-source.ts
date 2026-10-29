@@ -19,6 +19,8 @@ export const fetchWikiSourcePreview = async (selector: WikiSourceSelector, query
 export const fetchWikiSource = async (selector: WikiSourceSelector, query: string, signal?: AbortSignal): Promise<WikiSource> =>
   WikiSourceSchema.parse(await fetchWikiSourcePreview(selector, query, signal))
 
+const previewTextBlocks = 'p, li, dt, dd, th, td, caption, pre, h1, h2, h3, h4, h5, h6, blockquote'
+
 export const renderWikiSourcePreview = (source: WikiSourcePreview, query: string, idPrefix: string, tableLabel: string): { html: string; matched: boolean } => {
   // Sanitize before any authored content enters even an inert browser DOM.
   const fragment = DOMPurify.sanitize(source.structuredExcerpt.html, { ...wikiSourcePreviewSanitizerPolicy, RETURN_DOM_FRAGMENT: true })
@@ -33,6 +35,7 @@ export const renderWikiSourcePreview = (source: WikiSourcePreview, query: string
   for (const element of fragment.querySelectorAll('*')) {
     element.removeAttribute('hidden')
     element.removeAttribute('aria-hidden')
+    if (element.matches(previewTextBlocks)) element.setAttribute('dir', 'auto')
     if (element.tagName !== 'TH') element.removeAttribute('id')
     if (element.tagName === 'A') {
       const href = wikiSourcePreviewLink(element.getAttribute('href') ?? '', wikiSourceHref(source))
@@ -52,7 +55,7 @@ export const renderWikiSourcePreview = (source: WikiSourcePreview, query: string
   while (walker.nextNode()) {
     const node = walker.currentNode as Text
     // Inline emphasis may split a phrase, but table cells and prose blocks never share a match.
-    const block = node.parentElement?.closest('p, li, dt, dd, th, td, caption, pre, h1, h2, h3, h4, h5, h6, blockquote') ?? fragment
+    const block = node.parentElement?.closest(previewTextBlocks) ?? fragment
     const nodes = groups.get(block)
     if (nodes) nodes.push(node)
     else groups.set(block, [node])

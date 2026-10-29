@@ -1,10 +1,10 @@
 <template>
   <Teleport to="body">
     <!-- biome-ignore lint/a11y/noStaticElementInteractions: Backdrop-only pointer dismissal supplements the named Close button and focus-scope Escape handling. -->
-    <div ref="backdrop" class="wiki-source-preview" :class="themeClasses" @mousedown.self="emit('close')">
+    <div ref="backdrop" class="wiki-source-preview" :class="themeClasses" :dir="isRtl ? 'rtl' : 'ltr'" @mousedown.self="emit('close')">
       <section ref="panel" class="wiki-source-preview__panel" role="dialog" aria-modal="true" :aria-labelledby="titleId" tabindex="-1" :aria-busy="loading">
         <header class="wiki-source-preview__header">
-          <div><p class="wiki-source-preview__eyebrow">{{ $t('common:wikiSourcePreview.sourceNotebook') }}</p><h2 :id="titleId">{{ source?.title || $t('common:wikiSourcePreview.readLittleCloser') }}</h2></div>
+          <div><p class="wiki-source-preview__eyebrow">{{ $t('common:wikiSourcePreview.sourceNotebook') }}</p><h2 :id="titleId" :lang="source?.locale" dir="auto">{{ source?.title || $t('common:wikiSourcePreview.readLittleCloser') }}</h2></div>
           <v-btn icon="mdi-close" variant="text" :aria-label="$t('common:wikiSourcePreview.closeSourcePreview')" @click="emit('close')" />
         </header>
         <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This named overflow-y scroll region must remain keyboard-focusable to scroll the excerpt. -->
@@ -13,11 +13,11 @@
           <div v-else-if="error" class="wiki-source-preview__state" role="alert"><v-icon icon="mdi-file-hidden" size="30" /><p>{{ error }}</p><v-btn variant="tonal" @click="loadSource">{{ $t('common:wikiSourcePreview.tryAgain') }}</v-btn></div>
           <template v-else-if="source">
             <div class="wiki-source-preview__metadata"><span>{{ source.locale.toUpperCase() }}</span><span v-if="source.visibility === 'private'">{{ $t('common:wikiSourcePreview.privatePage') }}</span><span>{{ $t('common:wikiSourcePreview.revision', { sourceRevision: source.sourceRevision, interpolation: { escapeValue: false } }) }}</span></div>
-            <p class="wiki-source-preview__path">{{ source.path }}</p>
-            <p v-if="source.description" class="wiki-source-preview__description">{{ source.description }}</p>
+            <p class="wiki-source-preview__path" dir="ltr">{{ source.path }}</p>
+            <p v-if="source.description" class="wiki-source-preview__description" :lang="source.locale" dir="auto">{{ source.description }}</p>
             <div class="wiki-source-preview__caption"><span>{{ $t('common:wikiSourcePreview.page') }}</span><time :datetime="source.updatedAt">{{ $t('common:wikiSourcePreview.updated', { updated, interpolation: { escapeValue: false } }) }}</time></div>
             <!-- Sanitized passive current-render HTML; highlighting replaces text nodes only. -->
-            <div v-if="renderedExcerpt.html" class="wiki-source-preview__excerpt" v-html="renderedExcerpt.html" />
+            <div v-if="renderedExcerpt.html" class="wiki-source-preview__excerpt" :lang="source.locale" dir="auto" v-html="renderedExcerpt.html" />
             <p v-else class="wiki-source-preview__empty">{{ $t(source.structuredExcerpt.truncated ? 'common:wikiSourcePreview.structuredUnavailable' : 'common:wikiSourcePreview.pageHasNoPreview') }}</p>
             <p v-if="source.structuredExcerpt.truncated" class="wiki-source-preview__footnote">{{ $t('common:wikiSourcePreview.structuredContinuation') }}</p>
           </template>
@@ -35,7 +35,7 @@
 </template>
 
 <script setup lang="ts">
-import { useTheme } from 'vuetify'
+import { useRtl, useTheme } from 'vuetify'
 import { computed, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
 import { WikiSourceSchema, wikiSourceHref } from '../../../shared/wiki-source.ts'
 import type { WikiSource, WikiSourcePreview, WikiSourceSelector } from '../../../shared/wiki-source.ts'
@@ -48,6 +48,7 @@ const t = useTranslate()
 const props = defineProps<{ selector: WikiSourceSelector; query?: string; canAsk?: boolean }>()
 const emit = defineEmits<{ close: []; ask: [source: WikiSource] }>()
 const { themeClasses } = useTheme()
+const { isRtl } = useRtl()
 const titleId = useId()
 const panel = useTemplateRef<HTMLElement>('panel')
 const backdrop = useTemplateRef<HTMLElement>('backdrop')
@@ -111,6 +112,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .wiki-source-preview { position: fixed; inset: 0; z-index: 2800; display: flex; justify-content: flex-end; container: wiki-source-reader / size; background: rgb(0 0 0 / .42); backdrop-filter: blur(3px); }
 .wiki-source-preview__panel { display: flex; flex-direction: column; width: min(42rem, 100%); height: 100%; min-width: 0; background: var(--wiki-surface-raised, rgb(var(--v-theme-surface))); color: rgb(var(--v-theme-on-surface)); box-shadow: -12px 0 60px rgb(0 0 0 / .18); }
+.wiki-source-preview[dir="rtl"] .wiki-source-preview__panel { box-shadow: 12px 0 60px rgb(0 0 0 / .18); }
 .wiki-source-preview__header { display: flex; flex: 0 0 auto; align-items: flex-start; justify-content: space-between; gap: var(--wiki-space-4, 1rem); padding: max(var(--wiki-space-8, 2rem), env(safe-area-inset-top)) max(var(--wiki-space-6, 1.5rem), env(safe-area-inset-right)) var(--wiki-space-5, 1.25rem) max(var(--wiki-space-6, 1.5rem), env(safe-area-inset-left)); border-bottom: 1px solid var(--wiki-surface-border); }
 .wiki-source-preview__header > div { min-width: 0; }
 .wiki-source-preview__header > .v-btn { flex-shrink: 0; }

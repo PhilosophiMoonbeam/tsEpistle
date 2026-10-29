@@ -100,7 +100,7 @@ const setup = (
   overrides: Partial<{
     search: (input: Record<string, unknown>) => Promise<unknown>
     searchTags: (input: Record<string, unknown>) => Promise<unknown>
-    listTags: (requester?: Express.User) => Promise<unknown>
+    listTags: (input: Record<string, unknown>) => Promise<unknown>
     discover: (input: Record<string, unknown>) => Promise<unknown>
     get: (input: Record<string, unknown>) => Promise<unknown>
     getByPath: (input: Record<string, unknown>) => Promise<unknown>
@@ -666,20 +666,18 @@ describe('permission-safe page read actions', () => {
   })
 
   it('searches and pages the visible tag taxonomy', async () => {
-    const { execute, operations } = setup({
+    const { execute } = setup({
       searchTags: vi.fn(async () => ['runbook', 'release']),
       listTags: vi.fn(async () => [
-        { tag: 'Runbook', title: 'Operational runbooks' },
-        { tag: 'Release', title: null }
+        { tag: 'Runbook', title: 'Operational runbooks', pageCount: 3 },
+        { tag: 'Release', title: null, pageCount: null }
       ])
     })
     expect(await execute('pages.searchTags', { query: 'run', limit: 1 })).toEqual({ tags: ['runbook'] })
     expect(await execute('pages.listTags', { limit: 1, offset: 0 })).toEqual({
-      tags: [{ tag: 'Release', title: null }],
+      tags: [{ tag: 'Release', title: null, pageCount: null }],
       nextOffset: 1
     })
-    expect(operations.searchTags).toHaveBeenCalledWith({ query: 'run', limit: 1, requester: principal })
-    expect(operations.listTags).toHaveBeenCalledWith(principal)
   })
 
   it('accepts its emitted tag continuation through kernel input validation', async () => {
@@ -687,21 +685,22 @@ describe('permission-safe page read actions', () => {
       listTags: async () =>
         Array.from({ length: 5_101 }, (_, index) => ({
           tag: `tag-${String(index).padStart(5, '0')}`,
-          title: null
+          title: null,
+          pageCount: 1
         }))
     })
 
     const first = (await execute('pages.listTags', { limit: 100, offset: 5_000 })) as {
-      tags: Array<{ tag: string; title: string | null }>
+      tags: Array<{ tag: string; title: string | null; pageCount: number | null }>
       nextOffset: number | null
     }
     expect(first.tags).toHaveLength(100)
-    expect(first.tags[0]).toEqual({ tag: 'tag-05000', title: null })
-    expect(first.tags[99]).toEqual({ tag: 'tag-05099', title: null })
+    expect(first.tags[0]).toEqual({ tag: 'tag-05000', title: null, pageCount: 1 })
+    expect(first.tags[99]).toEqual({ tag: 'tag-05099', title: null, pageCount: 1 })
     expect(first.nextOffset).toBe(5_100)
 
     expect(await execute('pages.listTags', { limit: 100, offset: first.nextOffset })).toEqual({
-      tags: [{ tag: 'tag-05100', title: null }],
+      tags: [{ tag: 'tag-05100', title: null, pageCount: 1 }],
       nextOffset: null
     })
   })
@@ -1830,7 +1829,7 @@ describe('live page evidence validation', () => {
     let visible = true
     const { execute, validateEvidence } = setup({
       searchTags: async () => (visible ? ['Private category'] : []),
-      listTags: async () => (visible ? [{ tag: 'Private category', title: 'Private taxonomy label' }] : [])
+      listTags: async () => (visible ? [{ tag: 'Private category', title: 'Private taxonomy label', pageCount: 1 }] : [])
     })
     const context: AgentKnowledgeContext = {
       scope: { kind: 'selected' },

@@ -573,7 +573,7 @@ router.get('/tags', async (req, res, next) => {
   }
 
   try {
-    const tags = await pageOperations.listTags(req.user)
+    const tags = await pageOperations.listTags(pageOperationContext(req))
 
     return res.json(
       tags.map(tag => ({
@@ -581,7 +581,8 @@ router.get('/tags', async (req, res, next) => {
         tag: tag.tag,
         title: tag.title,
         createdAt: tag.createdAt,
-        updatedAt: tag.updatedAt
+        updatedAt: tag.updatedAt,
+        pageCount: tag.pageCount
       }))
     )
   } catch (err) {
@@ -842,6 +843,18 @@ router.post('/', async (req, res, next) => {
     res.status(201).json({ page: pageResponse(req, page, await getWikiAuth().loadPageRuleAuthority(req.user)) })
   } catch (err) {
     sendPageCreationError(res, next, err)
+  }
+})
+
+router.post('/:id/verify-accuracy', async (req, res, next) => {
+  setPrivatePageHeaders(res)
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  try {
+    const accuracy = await pageOperations.verifyAccuracy({ ...pageOperationContext(req), id, input: req.body })
+    res.json({ accuracy })
+  } catch (error) {
+    sendOperationError(res, next, error, 'Page accuracy verification failed')
   }
 })
 
@@ -1450,6 +1463,7 @@ router.get('/:id', async (req, res, next) => {
       createdAt: pageResult.createdAt,
       updatedAt: pageResult.updatedAt,
       sourceRevision: String(pageResult.sourceRevision),
+      accuracy: pageResult.accuracy,
       ...(typeof pageResult.changeReason === 'string' ? { changeReason: pageResult.changeReason } : {}),
       locale: pageResult.locale,
       branding: pageBrandingView(pageResult),

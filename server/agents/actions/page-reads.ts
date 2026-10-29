@@ -52,7 +52,7 @@ const SearchResponseSchema = z.looseObject({
   windowLimit: z.coerce.number().int().positive(),
   windowTruncated: z.boolean()
 })
-const TagRowSchema = z.looseObject({ tag: z.string(), title: z.string().nullish() })
+const TagRowSchema = z.looseObject({ tag: z.string(), title: z.string().nullish(), pageCount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable() })
 const DiscoveryResponseSchema = z.strictObject({
   pages: z
     .array(
@@ -131,7 +131,7 @@ const RelatedResponseSchema = z.strictObject({
 interface PageOperations {
   search(input: Record<string, unknown>): Promise<unknown>
   searchTags(input: Record<string, unknown>): Promise<unknown>
-  listTags(input?: Express.User | Record<string, unknown>): Promise<unknown>
+  listTags(input: Record<string, unknown>): Promise<unknown>
   discover(input: Record<string, unknown>): Promise<unknown>
   get(input: Record<string, unknown>): Promise<unknown>
   getByPath(input: Record<string, unknown>): Promise<unknown>
@@ -537,16 +537,16 @@ const listTagProjection = async (
   scope: PageOperationScope | undefined,
   input: ListTagsInput
 ) => {
-  const response = z.array(TagRowSchema).safeParse(await operations.listTags(scope === undefined ? requester : { requester, agentScope: scope }))
+  const response = z.array(TagRowSchema).safeParse(await operations.listTags({ requester, ...(scope === undefined ? {} : { agentScope: scope }) }))
   if (!response.success) throw operationFailure('Tag listing returned an invalid result')
   const unique = [
     ...new Map(
       response.data
         .map(item => {
           const tag = item.tag.trim()
-          return [tag.toLocaleLowerCase(), { tag, title: item.title?.trim().slice(0, 255) || null }] as const
+          return [tag.toLocaleLowerCase(), { tag, title: item.title?.trim().slice(0, 255) || null, pageCount: item.pageCount }] as const
         })
-        .filter((entry): entry is readonly [string, { tag: string; title: string | null }] => Boolean(entry[0]))
+        .filter((entry): entry is readonly [string, { tag: string; title: string | null; pageCount: number | null }] => Boolean(entry[0]))
     ).values()
   ].sort((left, right) => left.tag.localeCompare(right.tag))
   const selected = unique.slice(input.offset, input.offset + input.limit)
