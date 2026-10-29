@@ -158,29 +158,42 @@
                 | {{ authorAttribution.before }}
                 bdi.page-provenance-author(:title='authorName') {{ authorName }}
                 | {{ authorAttribution.after }}
-              details.page-accuracy(v-if='!printView')
-                summary.page-accuracy-pill(:class='`page-accuracy-pill--${accuracyStatus}`')
-                  span(aria-hidden='true') ●
-                  |  {{ accuracyLabel }}
-                .page-accuracy-details
-                  p {{ $t('common:page.accuracyHumanAttestation') }}
-                  p(v-if='accuracyStamp')
-                    bdi {{ accuracyStamp.verifiedByName || $t('common:page.accuracyActorUnavailable') }}
-                    |  · 
-                    time(:datetime='accuracyStamp.verifiedAt') {{ approvalTransitionDate(accuracyStamp.verifiedAt) }}
-                    |  · {{ $t('common:page.accuracyAgeDays', { count: accuracyAgeDays }) }}
-                  p(v-else) {{ $t('common:page.accuracyUnknown') }}
-                  p(v-if='accuracyUnavailableReason') {{ accuracyUnavailableReason }}
-                  p(v-if='accuracyError', role='status') {{ accuracyError }}
-                  button.page-accuracy-verify(
-                    v-if='isAuthenticated'
-                    type='button'
-                    :disabled='!accuracyActionReady || accuracyPending'
-                    :aria-busy='accuracyPending'
-                    @click='verifyAccuracy'
-                  ) {{ $t(accuracyPending ? 'common:page.accuracyVerifying' : 'common:page.verifyAccuracy') }}
-                  a(v-if='accuracyReviewRequired', :href='pageUrl') {{ $t('common:page.accuracyReloadReview') }}
-                  button.page-accuracy-verify(v-else-if='!accuracyPending', type='button', @click='loadAccuracy') {{ $t('common:page.accuracyRefresh') }}
+              .page-accuracy(v-if='!printView')
+                v-menu(
+                  :key='accuracyContextKey'
+                  location='bottom end'
+                  :offset='8'
+                  :close-on-content-click='false'
+                  :content-props='accuracyMenuContentProps'
+                )
+                  template(v-slot:activator='{ props }')
+                    button.page-accuracy-pill(
+                      v-bind='props'
+                      type='button'
+                      aria-haspopup='dialog'
+                      :class='`page-accuracy-pill--${accuracyStatus}`'
+                    )
+                      span(aria-hidden='true') ●
+                      |  {{ accuracyLabel }}
+                  .page-accuracy-details
+                    p {{ $t('common:page.accuracyHumanAttestation') }}
+                    p(v-if='accuracyStamp')
+                      bdi {{ accuracyStamp.verifiedByName || $t('common:page.accuracyActorUnavailable') }}
+                      |  · 
+                      time(:datetime='accuracyStamp.verifiedAt') {{ approvalTransitionDate(accuracyStamp.verifiedAt) }}
+                      |  · {{ $t('common:page.accuracyAgeDays', { count: accuracyAgeDays }) }}
+                    p(v-else) {{ $t('common:page.accuracyUnknown') }}
+                    p(v-if='accuracyUnavailableReason') {{ accuracyUnavailableReason }}
+                    p(v-if='accuracyError', role='status') {{ accuracyError }}
+                    button.page-accuracy-verify(
+                      v-if='isAuthenticated'
+                      type='button'
+                      :disabled='!accuracyActionReady || accuracyPending'
+                      :aria-busy='accuracyPending'
+                      @click='verifyAccuracy'
+                    ) {{ $t(accuracyPending ? 'common:page.accuracyVerifying' : 'common:page.verifyAccuracy') }}
+                    a(v-if='accuracyReviewRequired', :href='pageUrl') {{ $t('common:page.accuracyReloadReview') }}
+                    button.page-accuracy-verify(v-else-if='!accuracyPending', type='button', @click='loadAccuracy') {{ $t('common:page.accuracyRefresh') }}
             .page-hero-actions(v-if='!printView')
               v-btn.page-focus-control(
                 v-if='!readerFocus && !talkActive && !linksActive'
@@ -1979,6 +1992,9 @@ export default defineComponent({
       return JSON.stringify([this.pageAuthorityKey, wikiStore.user.authVersion, this.pageActionGeneration,
         this.pageId, this.locale, this.path, this.sourceRevision, this.navigationKey,
         this.navigationPending, this.printView, this.readerPageActionsState.ready])
+    },
+    accuracyMenuContentProps () {
+      return { role: 'dialog', 'aria-label': this.$t('common:page.accuracyDetails') }
     },
     accuracyCurrent (): PageAccuracyView | null {
       if (this.accuracyReadyKey !== this.accuracyContextKey || !this.pageTransportVerified ||
@@ -4794,28 +4810,40 @@ export default defineComponent({
   font-size: .75rem;
   line-height: 1.4;
 }
-.page-accuracy { position: relative; }
+.page-accuracy { display: inline-flex; position: relative; }
 .page-accuracy-pill {
+  position: relative;
+  box-sizing: border-box;
+  block-size: 1lh;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding-inline: 6px;
+  padding-block: 0;
+  font: inherit;
+  line-height: inherit;
   border: 1px solid var(--wiki-surface-border);
   border-radius: 999px;
   background: var(--wiki-surface-raised);
   box-shadow: var(--wiki-specular-border);
   color: var(--wiki-text-muted);
   cursor: pointer;
-  list-style: none;
-  &::-webkit-details-marker { display: none; }
+  &::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    inset-block-start: 50%;
+    block-size: 44px;
+    transform: translateY(-50%);
+  }
   &--verified-fresh { color: var(--wiki-success-ink); }
   &--review-soon { color: var(--wiki-warning-ink); }
 }
 .page-accuracy-details {
-  position: absolute;
-  z-index: 12;
-  inset-inline-end: 0;
-  width: min(300px, 80vw);
+  box-sizing: border-box;
+  width: min(300px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
   padding: var(--wiki-space-3);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-radius-md);
@@ -4832,7 +4860,8 @@ export default defineComponent({
   text-decoration: underline;
   &:disabled { color: var(--wiki-text-muted); cursor: not-allowed; }
 }
-.page-accuracy :is(summary, button, a):focus-visible {
+.page-accuracy-pill:focus-visible,
+.page-accuracy-details :is(button, a):focus-visible {
   outline: 2px solid currentColor;
   outline-offset: 2px;
 }

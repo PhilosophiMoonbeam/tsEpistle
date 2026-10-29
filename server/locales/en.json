@@ -141,6 +141,7 @@
         "needs-verification": "Needs Verification"
       },
       "accuracyHumanAttestation": "Accuracy verification is a human attestation for this exact revision, separate from its last update.",
+      "accuracyDetails": "Accuracy verification",
       "accuracyActorUnavailable": "Verifier unavailable",
       "accuracyUnknown": "Current accuracy verification is unknown.",
       "accuracyNotAuthorized": "Verification requires current editing permission and an unlocked page.",
