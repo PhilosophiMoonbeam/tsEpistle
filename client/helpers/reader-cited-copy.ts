@@ -37,7 +37,14 @@ export const readerCitedCopyText = (element: HTMLElement, root: HTMLElement): st
   if (!readable(element, root)) return ''
   const walk = (node: Node, preformatted = false): string => {
     if (node.nodeType === Node.TEXT_NODE) return preformatted ? node.nodeValue ?? '' : (node.nodeValue ?? '').replace(/[\t\n\r\f ]+/gu, ' ')
-    if (!(node instanceof HTMLElement) || node.matches(ownedUi) || !readable(node, root)) return ''
+    if (!(node instanceof HTMLElement) || node.matches(ownedUi)) return ''
+    if (node instanceof HTMLDetailsElement && !node.open) {
+      for (const child of node.children) {
+        if (child.tagName === 'SUMMARY') return walk(child, preformatted)
+      }
+      return ''
+    }
+    if (!readable(node, root)) return ''
     if (node.tagName === 'BR') return '\n'
     if (node.tagName === 'HR') return '\n—\n'
     const pre = preformatted || node.tagName === 'PRE' || /^(?:pre|break-spaces)/u.test(root.ownerDocument.defaultView?.getComputedStyle(node).whiteSpace ?? '')
