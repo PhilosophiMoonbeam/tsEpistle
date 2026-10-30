@@ -118,11 +118,13 @@ function updatePosition (): void {
   }
   topEdge = Math.min(topEdge, y + height - margin - 1)
   const cardWidth = Math.min(280, Math.max(1, width - margin * 2))
-  const maxHeight = Math.max(1, y + height - margin - topEdge)
+  const below = Math.max(0, y + height - bounds.bottom - gap - margin)
+  const above = Math.max(0, bounds.top - topEdge - gap)
+  // A tall card must not cover its trigger and reopen itself when dismissed.
+  const maxHeight = Math.max(1, Math.min(y + height - margin - topEdge, Math.max(below, above)))
   element.style.width = `${cardWidth}px`
   element.style.maxHeight = `${maxHeight}px`
   const cardHeight = Math.min(element.getBoundingClientRect().height, maxHeight)
-  const below = y + height - bounds.bottom - gap - margin, above = bounds.top - topEdge - gap
   const preferredTop = below >= cardHeight || below >= above ? bounds.bottom + gap : bounds.top - gap - cardHeight
   position.value = {
     left: `${Math.max(x + margin, Math.min(bounds.left, x + width - cardWidth - margin))}px`,
