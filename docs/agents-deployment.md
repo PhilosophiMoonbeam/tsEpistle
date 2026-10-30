@@ -35,6 +35,14 @@ Offline Reload refreshes local inventory and storage status in place. It neither
 
 Notifications presents five event rows with separate In-App and Email columns. Every channel control names its event and channel and is associated with its row and column headers. Unsaved changes block Reload; Save, Cancel and failed-save feedback retain the current account’s draft. These settings do not change per-page watches or the approval inbox.
 
+### Reader progress, cited copy and stewardship
+
+Reading progress records measured reading on the current device, scoped to the reader, page, locale and revision. Completed-section marks and the progress spine describe local reading activity, not certified mastery. Reload retains the same scoped progress; a different revision does not inherit completion of changed content.
+
+Reader and Search cited-copy actions require current rendered-source identity and current access. They copy clean authored text with a canonical source link, preserving locale, private routing and an existing unique authored anchor. A closed disclosure copies its summary without hidden body text or toggling the disclosure. Pricing text retains its authored signs, currencies and values. Successful copy gives one 450ms sweep; reduced motion keeps a static receipt. Failed writes do not report success, and ordinary selected-text copy remains available.
+
+The hero accuracy pill is a separate human attestation for the exact source revision, not the page's Updated timestamp or a model judgement. Authorized unlocked editors can verify accuracy; server actor, time and revision determine freshness. A recent edit alone never becomes Verified Fresh, and verification does not change content, Updated time, approval state or history. Current-revision verification survives reload and application restart; a later edit requires its own verification. The details popup stays within the viewport, with Escape restoring focus to its activator.
+
 ### Current Agent Administration navigation
 
 Agent Administration (`/a/agents`) exposes all eleven sections, including Browser access, through compact wrapping pills. Labels and badges remain visible without horizontal scrolling; the selected section’s title and description appear in the content header. Left/Right arrows follow the reading direction, while Home/End select the first/last section. Section hashes, restoration, panel associations and inline navigation remain supported.

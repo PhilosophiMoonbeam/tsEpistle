@@ -4856,6 +4856,10 @@ export default defineComponent({
 .page-accuracy-verify {
   min-height: 44px;
   padding-inline: 8px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
   color: var(--wiki-primary-ink);
   text-decoration: underline;
   &:disabled { color: var(--wiki-text-muted); cursor: not-allowed; }
