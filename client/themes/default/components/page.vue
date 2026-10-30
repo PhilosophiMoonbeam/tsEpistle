@@ -224,10 +224,10 @@
                   strong.page-offline-tooltip__title {{ offlineControl.title }}
                   span.page-offline-tooltip__detail(v-if='offlineControl.detail') {{ offlineControl.detail }}
               span.page-offline-status(:id='offlineStatusId', role='status') {{ offlineStatusLabel }}
-              v-menu(location='bottom end', min-width='280', max-width='360')
+              v-menu(v-model='shareMenuOpen', location='bottom end', min-width='280', max-width='360')
                 template(v-slot:activator='{ props }')
-                  v-btn(v-bind='props', variant='outlined', size='small', prepend-icon='mdi-share-variant') {{$t('common:page.share')}}
-                social-sharing(:url='pageUrl', :title='title', :description='description')
+                  v-btn(v-bind='props', data-reader-share-trigger, variant='outlined', size='small', prepend-icon='mdi-share-variant', @keydown.capture='handleShareMenuKeydown') {{$t('common:page.share')}}
+                social-sharing(:url='pageUrl', :title='title', :description='description', @keydown.capture='handleShareMenuKeydown')
             nav.page-header-path(
               v-if='!printView && path !== `home`'
               role='navigation'
@@ -1630,6 +1630,7 @@ export default defineComponent({
       searchOverrides: new Map<string, boolean>(),
       readerFocus: false,
       readerFullWidth: false,
+      shareMenuOpen: false,
       readingDockObserver: null as ResizeObserver | null,
       readingDockNode: null as HTMLElement | null,
       readingDockHeight: 0,
@@ -2735,6 +2736,31 @@ export default defineComponent({
       else if (request.action === 'approval') this.openApprovalWorkflow()
       else if (request.action === 'protection') this.openPageProtection()
     },
+    async handleShareMenuKeydown (event: KeyboardEvent): Promise<void> {
+      if (event.isComposing || event.defaultPrevented) return
+      const trigger = (this.$el as HTMLElement).querySelector<HTMLElement>('[data-reader-share-trigger]')
+      if (!trigger) return
+      if (event.key === 'Escape' && this.shareMenuOpen) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        this.shareMenuOpen = false
+        trigger.focus({ preventScroll: true })
+        return
+      }
+      if (event.currentTarget !== trigger || this.shareMenuOpen ||
+        (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      this.shareMenuOpen = true
+      await this.$nextTick()
+      if (!this.shareMenuOpen || this.offlineDisposed || !trigger.isConnected) return
+      const overlayId = trigger.getAttribute('aria-controls')
+      const controls = overlayId
+        ? document.getElementById(overlayId)?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href]')
+        : null
+      const target = event.key === 'ArrowUp' ? controls?.[controls.length - 1] : controls?.[0]
+      target?.focus({ preventScroll: true })
+    },
     openPageWatchSettings (event?: MouseEvent): void {
       if (!this.pageWatched) return
       if (event?.currentTarget instanceof HTMLElement) {
@@ -3501,6 +3527,7 @@ export default defineComponent({
       this.readerActionReturnPage = null
       this.pageWatchSettingsOpen = false
       this.readerFullWidth = false
+      this.shareMenuOpen = false
       this.pageActionGeneration += 1
       this.pageWatchRequestId += 1
       this.protectionRequestId += 1

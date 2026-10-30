@@ -3225,6 +3225,19 @@ test.describe('reader metadata rendering', () => {
       await expect(dock).toHaveCount(0)
       await expect(focus, `Leaving Focus restores its keyboard target at ${width}px`).toBeFocused()
 
+      const share = hero.getByRole('button', { name: 'Share', exact: true })
+      await share.focus()
+      await share.press('Enter')
+      const sharingMenu = page.locator('.v-menu.v-overlay--active')
+      await expect(sharingMenu).toBeVisible()
+      await expect.poll(() => sharingMenu.evaluate(menu =>
+        menu.contains(document.activeElement) &&
+        document.activeElement?.matches('button:not(:disabled), a[href]')
+      ), `Keyboard Share enters an enabled sharing control at ${width}px`).toBe(true)
+      await page.keyboard.press('Escape')
+      await expect(sharingMenu).toHaveCount(0)
+      await expect(share, `Closing Share restores its keyboard trigger at ${width}px`).toBeFocused()
+
       // Edit remains a separate real affordance, not another metadata utility.
       if (width < 600) {
         const pageActions = page.locator('.page-edit-fab')
