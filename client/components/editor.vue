@@ -2017,6 +2017,21 @@ export default defineComponent({
     },
     handleEditorConflictReset() {
       this.isConflict = false
+      const lifecycleGeneration = this.lifecycleGeneration
+      const pageId = wikiStore.page.id
+      const accountId = this.accountId
+      const identityEpoch = wikiStore.offlineIdentityEpoch
+      // Resolution can remove the control that opened the conflict dialog.
+      this.$nextTick(() => {
+        if (lifecycleGeneration !== this.lifecycleGeneration || pageId !== wikiStore.page.id ||
+            accountId !== this.accountId || identityEpoch !== wikiStore.offlineIdentityEpoch || this.activeModal) return
+        const root = this.$el
+        if (!(root instanceof HTMLElement)) return
+        const target = root.querySelector<HTMLElement>('[contenteditable="true"]')
+        if (!target?.isConnected || target.closest('[inert], [aria-hidden="true"]') ||
+            target.ownerDocument.querySelector('.v-dialog.v-overlay--active')) return
+        target.focus({ preventScroll: true })
+      })
     },
     async retryOkfAuthorityLoad () {
       if (!this.canRetryOkfAuthorityLoad) return
