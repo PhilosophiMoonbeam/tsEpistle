@@ -2736,7 +2736,7 @@ export default defineComponent({
       else if (request.action === 'approval') this.openApprovalWorkflow()
       else if (request.action === 'protection') this.openPageProtection()
     },
-    async handleShareMenuKeydown (event: KeyboardEvent): Promise<void> {
+    handleShareMenuKeydown (event: KeyboardEvent): void {
       if (event.isComposing || event.defaultPrevented) return
       const trigger = (this.$el as HTMLElement).querySelector<HTMLElement>('[data-reader-share-trigger]')
       if (!trigger) return
@@ -2752,14 +2752,19 @@ export default defineComponent({
       event.preventDefault()
       event.stopImmediatePropagation()
       this.shareMenuOpen = true
-      await this.$nextTick()
-      if (!this.shareMenuOpen || this.offlineDisposed || !trigger.isConnected) return
-      const overlayId = trigger.getAttribute('aria-controls')
-      const controls = overlayId
-        ? document.getElementById(overlayId)?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href]')
-        : null
-      const target = event.key === 'ArrowUp' ? controls?.[controls.length - 1] : controls?.[0]
-      target?.focus({ preventScroll: true })
+      const focusLast = event.key === 'ArrowUp'
+      void this.$nextTick(() => {
+        // Lazy VMenu content mounts after its owner's render.
+        requestAnimationFrame(() => {
+          if (!this.shareMenuOpen || this.offlineDisposed || !trigger.isConnected) return
+          const overlayId = trigger.getAttribute('aria-controls')
+          const controls = overlayId
+            ? document.getElementById(overlayId)?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href]')
+            : null
+          const target = focusLast ? controls?.[controls.length - 1] : controls?.[0]
+          target?.focus({ preventScroll: true })
+        })
+      })
     },
     openPageWatchSettings (event?: MouseEvent): void {
       if (!this.pageWatched) return
