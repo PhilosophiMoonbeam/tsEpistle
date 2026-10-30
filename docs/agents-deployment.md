@@ -49,6 +49,8 @@ After **Use Local** or a confirmed **Use Remote**, source and rich editors retur
 
 Conflict choices retain the pending optional reason and do not themselves publish a revision. Verify the real revision conflict and keyboard resolution separately from the subsequent explicit Save or Save and close. Retain an accepted write receipt while rendering is pending; a successful commit alone does not prove Reader navigation.
 
+An accepted conflict choice makes the reviewed canonical revision the discard and render baseline while retaining pending local metadata and the optional reason. After confirmed **Use Remote**, explicit **Discard Changes** restores that remote baseline, not the original checkout. A clean **Close** waits for the exact reviewed render without another canonical write; a newer, unreviewed render leaves the editor open. A current Source conflict load invalidated by collaboration returns to the existing retryable error state rather than an indefinite loading skeleton; obsolete or changed-actor callbacks cannot overwrite newer UI state.
+
 ### Current Agent Administration navigation
 
 Agent Administration (`/a/agents`) exposes all eleven sections, including Browser access, through compact wrapping pills. Labels and badges remain visible without horizontal scrolling; the selected section’s title and description appear in the content header. Left/Right arrows follow the reading direction, while Home/End select the first/last section. Section hashes, restoration, panel associations and inline navigation remain supported.

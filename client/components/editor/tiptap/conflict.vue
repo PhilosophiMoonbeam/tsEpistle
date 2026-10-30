@@ -15,7 +15,7 @@
           role='status'
           aria-live='polite'
           )
-          v-progress-circular.mr-3(indeterminate, color='indigo', size='24', aria-hidden='true')
+          v-progress-circular.mr-3(indeterminate, color='primary', size='24', aria-hidden='true')
           span.text-body-medium {{ $t(`editor:conflict.loadingLatestVersion`) }}
         v-alert(
           v-else-if='loadState === `error`'
@@ -38,17 +38,17 @@
               strong {{latest.authorName}}
             template(#date)
               span(:title='String($helpers.formatMoment(latest.updatedAt, `LLL`))') {{ $helpers.formatMoment(latest.updatedAt, 'from') }}.
-          v-btn.mt-2(variant="outlined", color='indigo', size="small", :href='pageHref(latest)', target='_blank', rel='noopener', :disabled='!hasLatestVersion')
+          v-btn.mt-2(variant="outlined", color='primary', size="small", :href='pageHref(latest)', target='_blank', rel='noopener', :disabled='!hasLatestVersion')
             v-icon(start) mdi-open-in-new
             span {{$t('editor:conflict.viewLatestVersion')}}
           .text-body-medium.mt-5: strong {{$t('editor:conflict.whatToDo')}}
-          .text-body-medium.mt-1 #[v-icon(color='indigo') mdi-alpha-l-box] {{$t('editor:conflict.whatToDoLocal')}}
-          .text-body-medium.mt-1 #[v-icon(color='indigo') mdi-alpha-r-box] {{$t('editor:conflict.whatToDoRemote')}}
+          .text-body-medium.mt-1 #[v-icon(color='primary') mdi-alpha-l-box] {{$t('editor:conflict.whatToDoLocal')}}
+          .text-body-medium.mt-1 #[v-icon(color='primary') mdi-alpha-r-box] {{$t('editor:conflict.whatToDoRemote')}}
       v-card-chin
         v-spacer
         v-btn(variant="text", @click='close') {{$t('common:actions.cancel')}}
         template(v-if='loadState === `success` && hasLatestVersion')
-          v-btn.px-4(color='indigo', @click='useLocal', :title='$t(`editor:conflict.useLocalHint`)')
+          v-btn.px-4(color='primary', @click='useLocal', :title='$t(`editor:conflict.useLocalHint`)')
             v-icon(start) mdi-alpha-l-box
             span {{$t('editor:conflict.useLocal')}}
           v-dialog(
@@ -57,7 +57,7 @@
             aria-labelledby='editor-conflict-overwrite-title'
             )
             template(v-slot:activator='{ props }')
-              v-btn.ml-3(color='indigo', v-bind='props', :title='$t(`editor:conflict.useRemoteHint`)')
+              v-btn.ml-3(color='primary', v-bind='props', :title='$t(`editor:conflict.useRemoteHint`)')
                 v-icon(start) mdi-alpha-r-box
                 span {{$t('editor:conflict.useRemote')}}
             v-card
@@ -70,10 +70,10 @@
                     strong {{$t('editor:conflict.overwrite.editsLost')}}
               v-card-chin
                 v-spacer
-                v-btn(variant="outlined", color='indigo', @click='isRemoteConfirmDiagShown = false')
+                v-btn(variant="outlined", color='primary', @click='isRemoteConfirmDiagShown = false')
                   v-icon(start) mdi-close
                   span {{$t('common:actions.cancel')}}
-                v-btn(@click='useRemote', color='indigo')
+                v-btn(@click='useRemote', color='primary')
                   v-icon(start) mdi-check
                   span {{$t('common:actions.confirm')}}
 </template>
