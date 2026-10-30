@@ -16,6 +16,8 @@ Authorized article terms also offer 280px definition cards on hover or keyboard 
 
 **Pin to my memory** deliberately saves the visible term, locale, expansion and definition, with canonical source/glossary context, to the current user's private memory. Opening a card never writes memory or submits an Agent message. Authored reference destinations and private documentation are not copied. Identical content reuses the existing record, including when capacity is full; over-limit or unsafe content is rejected rather than abbreviated, and a failed save never shows success. The memory manager shows the saved record after reload. Existing conversations retain their frozen memory; the saved value applies to new conversations.
 
+Cards are article-only, including Focus; Talk, Links and the actual Print composition retire decoration. Page, locale, connectivity and account changes fence pending definition and Pin responses: a server-committed memory remains saved for its original owner, but its receipt cannot mark another selection saved. Reconnecting restores Pin only when normal transport and authentication checks pass; nothing is queued or automatically resubmitted.
+
 Opening Agent from an already-open Search dialog retires the previous Search focus scope before capturing the rendered menu activator. Vuetify's activator slot retains its own ref; restoration targets the actual overflow button.
 
 ## Sources in place
