@@ -43,6 +43,12 @@ Reader and Search cited-copy actions require current rendered-source identity an
 
 The hero accuracy pill is a separate human attestation for the exact source revision, not the page's Updated timestamp or a model judgement. Authorized unlocked editors can verify accuracy; server actor, time and revision determine freshness. A recent edit alone never becomes Verified Fresh, and verification does not change content, Updated time, approval state or history. Current-revision verification survives reload and application restart; a later edit requires its own verification. The details popup stays within the viewport, with Escape restoring focus to its activator.
 
+### Editor conflict focus
+
+After **Use Local** or a confirmed **Use Remote**, source and rich editors return keyboard focus to the connected active document after the conflict dialog closes. A changed page, account, offline identity or editor lifecycle, another active dialog, or an unavailable document prevents stale focus restoration.
+
+Conflict choices retain the pending optional reason and do not themselves publish a revision. Verify the real revision conflict and keyboard resolution separately from the subsequent explicit Save or Save and close. Retain an accepted write receipt while rendering is pending; a successful commit alone does not prove Reader navigation.
+
 ### Current Agent Administration navigation
 
 Agent Administration (`/a/agents`) exposes all eleven sections, including Browser access, through compact wrapping pills. Labels and badges remain visible without horizontal scrolling; the selected section’s title and description appear in the content header. Left/Right arrows follow the reading direction, while Home/End select the first/last section. Section hashes, restoration, panel associations and inline navigation remain supported.
