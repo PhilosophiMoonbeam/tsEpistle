@@ -4584,6 +4584,9 @@ export default defineComponent({
         })
       } else {
         this.$nextTick(() => {
+          const focused = document.activeElement
+          // A breakpoint or another surface may have already claimed focus.
+          if (focused && focused !== document.body && !focused.closest('#page-navigation-drawer')) return
           const navToggle = this.$refs.navToggle as HTMLElement | { $el?: unknown } | undefined
           const element = navToggle instanceof HTMLElement
             ? navToggle

@@ -521,6 +521,25 @@ describe('responsive navigation focus', () => {
       expect(browserDocument.activeElement === (width < 1280 ? home : search)).toBe(true)
     }
   })
+
+  it('returns closed drawer focus to its opener without stealing newly claimed content focus', async () => {
+    browserDocument.body.innerHTML = '<button id="opener">Navigation</button><nav id="page-navigation-drawer"><button id="inside">Home</button></nav><input id="filter">'
+    const opener = browserDocument.querySelector<HTMLButtonElement>('#opener')!
+    const inside = browserDocument.querySelector<HTMLButtonElement>('#inside')!
+    const filter = browserDocument.querySelector<HTMLInputElement>('#filter')!
+    const vm = { readerDockVisible: false, wideViewport: false, $refs: { navToggle: opener }, $nextTick: Vue.nextTick }
+
+    inside.focus()
+    page.methods.navigationVisibilityChanged!.call(vm, false)
+    await Vue.nextTick()
+    expect(browserDocument.activeElement === opener).toBe(true)
+
+    inside.focus()
+    page.methods.navigationVisibilityChanged!.call(vm, false)
+    filter.focus()
+    await Vue.nextTick()
+    expect(browserDocument.activeElement === filter).toBe(true)
+  })
 })
 
 describe('focus reading section navigation', () => {
