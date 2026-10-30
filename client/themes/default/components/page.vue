@@ -226,7 +226,7 @@
               span.page-offline-status(:id='offlineStatusId', role='status') {{ offlineStatusLabel }}
               v-menu(v-model='shareMenuOpen', location='bottom end', min-width='280', max-width='360')
                 template(v-slot:activator='{ props }')
-                  v-btn(v-bind='props', data-reader-share-trigger, variant='outlined', size='small', prepend-icon='mdi-share-variant', @keydown.capture='handleShareMenuKeydown') {{$t('common:page.share')}}
+                  v-btn(v-bind='props', data-reader-share-trigger, variant='outlined', size='small', prepend-icon='mdi-share-variant', :aria-label='$t(`common:page.share`)', @keydown.capture='handleShareMenuKeydown') {{$t('common:page.share')}}
                 social-sharing(:url='pageUrl', :title='title', :description='description', @keydown.capture='handleShareMenuKeydown')
             nav.page-header-path(
               v-if='!printView && path !== `home`'
