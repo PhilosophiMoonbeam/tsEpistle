@@ -6767,7 +6767,7 @@ export default defineComponent({
 
 @media (pointer: coarse) and (max-width: 1279px) {
   // Keep real touch targets without restoring the retired above-prose stack.
-  .page-header-section .page-hero-actions .v-btn { min-height: var(--wiki-control-height); }
+  .page-header-section .page-hero-actions .v-btn { min-height: 2.75rem; }
   .page-header-section > .is-page-header { padding-block: 2px !important; }
   .page-body { padding-block-start: 2px !important; }
   .page-inline-toc { margin-block-end: 2px; }
