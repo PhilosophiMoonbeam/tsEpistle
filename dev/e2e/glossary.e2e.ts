@@ -171,8 +171,13 @@ test('preserves unsaved manager edits across type and close attempts, picker dis
     await expect(expansion).toHaveValue('Retained manager draft')
     await expect(search.getByRole('button', { name: 'Glossary', exact: true })).toHaveAttribute('aria-pressed', 'true')
   }
+  const restoredAccess = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/_api/glossary/access' && url.searchParams.get('locale') === 'en'
+  })
   page.once('dialog', dialog => dialog.dismiss())
   await page.goBack()
+  await (await restoredAccess).finished()
   await expect(expansion).toHaveValue('Retained manager draft')
   await expect.poll(() => new URL(page.url()).searchParams.get('glossary')).toBe(terms.first.term)
   if ((page.viewportSize()?.width ?? 1280) < 600) await page.locator('.nav-header-mobile-actions').click()

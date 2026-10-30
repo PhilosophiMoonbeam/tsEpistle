@@ -295,7 +295,7 @@ function acceptRevision (): void { if (!latest.value) return; detail.value = lat
 function useLatest (): void { if (!latest.value || !canLeave()) return; const result = latest.value; detail.value = result; resetDraft(result); mode.value = 'detail' }
 function reload (): void { if (!canLeave()) return; dirty.value = false; if (props.term) void loadDetail(); else void loadCatalog() }
 function unload (event: BeforeUnloadEvent): void { if (dirty.value || saving.value) { event.preventDefault(); event.returnValue = '' } }
-watch(() => [props.locale, props.term, props.access.enabled, props.access.canRead, props.access.canManage], () => {
+watch([() => props.locale, () => props.term, () => props.access.enabled, () => props.access.canRead, () => props.access.canManage], () => {
   detailController?.abort(); catalogController?.abort(); relatedController?.abort(); generation++; catalogGeneration++; relatedGeneration++
   clearTimeout(catalogTimer)
   localeInput.value = props.locale
