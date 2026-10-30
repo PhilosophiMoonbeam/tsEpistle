@@ -41,6 +41,8 @@ Measure the assessment's Home and Contract Interiors reader baselines at 1440×9
 
 Use a real coarse-pointer touch context, not viewport resizing alone: check each hero control's 44px height and center/edge hit targets. Exercise Share by touch and keyboard, Escape focus restoration, the actual header Edit action, Focus/picker navigation, and desktop-to-mobile resizing. Mobile Chrome may report a temporary zoom-derived `innerWidth` during resize and settle through a visual-viewport event; verify the drawer no longer covers the article and the header toggle becomes reachable.
 
+Carry a nonempty outline filter and an explicitly collapsed branch through wide → compact → wide → Focus picker. The same outline and branch state must survive; compact layout returns focus to the summary, wide layout retains the filter, and normal drawer Escape still returns to its opener. A delayed drawer callback must not steal that newly claimed focus. Resolve Share's popup through its trigger's `aria-controls` and wait for actual dismissal before the next gesture, rather than treating removal of an active CSS class as completed dismissal.
+
 Verify the surviving hero, contents rail, compact disclosure, and picker use the canonical raised-card material with retained elevation and visible focus. Measure actual composited glyph/focus contrast in light, dark, and a normally saved custom palette; exercise solid/system fallbacks. Operate Watch/settings and approval/protection with real permission boundaries, and check Print, transient Full width, exact source bytes, and History independently. Isolated fixtures establish only their exercised behavior; maintained-tailnet deployment remains a separate gate.
 
 ### Reader progress, cited copy and stewardship

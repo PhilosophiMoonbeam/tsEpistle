@@ -3239,14 +3239,16 @@ test.describe('reader metadata rendering', () => {
       const share = hero.getByRole('button', { name: 'Share', exact: true })
       await share.focus()
       await share.press('Enter')
-      const sharingMenu = page.locator('.v-menu.v-overlay--active')
+      const sharePopupId = await share.getAttribute('aria-controls')
+      if (!sharePopupId) throw new Error('Share must identify its controlled popup.')
+      const sharingMenu = page.locator(`[id=${JSON.stringify(sharePopupId)}]`)
       await expect(sharingMenu).toBeVisible()
       await expect.poll(() => sharingMenu.evaluate(menu =>
         menu.contains(document.activeElement) &&
         document.activeElement?.matches('button:not(:disabled), a[href]')
       ), `Keyboard Share enters an enabled sharing control at ${width}px`).toBe(true)
       await page.keyboard.press('Escape')
-      await expect(sharingMenu).toHaveCount(0)
+      await expect(sharingMenu).toBeHidden()
       await expect(share, `Closing Share restores its keyboard trigger at ${width}px`).toBeFocused()
       if (coarsePointer) {
         await test.step(`Touch opens Share at ${width}px`, async () => {
@@ -3255,7 +3257,7 @@ test.describe('reader metadata rendering', () => {
         })
         await test.step(`Touch closes Share at ${width}px`, async () => {
           await share.tap({ timeout: 5_000 })
-          await expect(sharingMenu).toHaveCount(0)
+          await expect(sharingMenu).toBeHidden()
         })
       }
 
