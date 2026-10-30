@@ -69,7 +69,8 @@ export const readerCitedCopyText = (element: HTMLElement, root: HTMLElement): st
       text = `${marker} ${text.trim()}`
     }
     if (node.matches('td,th')) return `${text.trim()}\t`
-    return blockTags[node.tagName] ? `\n${text}\n` : text
+    // Hydration owners are not authored paragraph boundaries.
+    return blockTags[node.tagName] && !node.hasAttribute('data-cited-copy-owner') ? `\n${text}\n` : text
   }
   return walk(element).trim()
 }
