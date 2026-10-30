@@ -3241,32 +3241,44 @@ test.describe('reader metadata rendering', () => {
       await expect(sharingMenu).toHaveCount(0)
       await expect(share, `Closing Share restores its keyboard trigger at ${width}px`).toBeFocused()
       if (coarsePointer) {
-        await share.tap()
-        await expect(sharingMenu).toBeVisible()
-        await share.tap()
-        await expect(sharingMenu).toHaveCount(0)
+        await test.step(`Touch opens Share at ${width}px`, async () => {
+          await share.tap({ timeout: 5_000 })
+          await expect(sharingMenu).toBeVisible()
+        })
+        await test.step(`Touch closes Share at ${width}px`, async () => {
+          await share.tap({ timeout: 5_000 })
+          await expect(sharingMenu).toHaveCount(0)
+        })
       }
 
       // Edit remains a separate real affordance, not another metadata utility.
-      if (width < 600) {
-        const pageActions = page.locator('.page-edit-fab')
+      if (width < 600) await test.step(`Keyboard Edit through the header at ${width}px`, async () => {
+        const pageActions = page.getByRole('banner').getByRole('button', { name: 'Page Actions', exact: true })
         await expectLocatorWithinViewport(pageActions, `Page actions at ${width}px`)
         await pageActions.focus()
         await pageActions.press('ArrowDown')
         await expect(pageActions).toHaveAttribute('aria-expanded', 'true')
-        const edit = page.locator('.v-overlay--active .v-list-item').filter({ hasText: /^Edit Page$/ })
+        const actionsMenu = page.locator('.page-actions-menu:visible')
+        const edit = actionsMenu.getByRole('button', { name: 'Edit', exact: true })
+        await expect.poll(() => actionsMenu.evaluate(menu => menu.contains(document.activeElement))).toBe(true)
+        for (let attempt = 0, count = await actionsMenu.getByRole('button').count(); attempt < count; attempt++) {
+          if (await edit.evaluate(element => element === document.activeElement)) break
+          await page.keyboard.press('ArrowDown')
+        }
         await expect(edit, `Real Edit is keyboard reachable at ${width}px`).toBeFocused()
         await expectLocatorWithinViewport(edit, `Edit action at ${width}px`)
         await edit.press('Escape')
         await expect(pageActions).toHaveAttribute('aria-expanded', 'false')
         await expect(pageActions).toBeFocused()
-      }
+      })
       // Focus restoration precedes the navigation drawer's opening transition.
       // Measure its settled layout rather than its intentionally off-canvas start.
-      await page.locator('.v-navigation-drawer').evaluateAll(async drawers => {
-        await Promise.all(drawers.flatMap(drawer => drawer.getAnimations().map(animation => animation.finished)))
+      await test.step(`Settled responsive reader layout at ${width}px`, async () => {
+        await page.locator('.v-navigation-drawer').evaluateAll(async drawers => {
+          await Promise.all(drawers.flatMap(drawer => drawer.getAnimations().map(animation => animation.finished)))
+        })
+        await expectResponsiveLayout(page, `Reader utilities and metadata at ${width}px`)
       })
-      await expectResponsiveLayout(page, `Reader utilities and metadata at ${width}px`)
     }
 
     for (const width of [1440, 320, 375, 390]) await assertReaderUtilities(width)

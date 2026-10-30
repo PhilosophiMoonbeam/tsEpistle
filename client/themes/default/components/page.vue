@@ -95,6 +95,7 @@
           h2#page-reading-sections-title {{$t('common:page.chooseSection')}} · {{tocFlattened.length}}
           v-btn(icon, variant='text', size='small', :aria-label='$t(`common:actions.close`)', @click='closeReaderSections(true)')
             v-icon(aria-hidden='true') mdi-close
+    //- handleSideNavVisibility owns responsive state, not Vuetify's delayed resize writer.
     v-navigation-drawer(
       v-if='navMode !== `NONE` && !printView'
       id='page-navigation-drawer'
@@ -102,6 +103,7 @@
       tag='nav'
       color='surface'
       :mobile-breakpoint='1280'
+      disable-resize-watcher
       :width='navDrawerWidth'
       v-model='navigationOpen'
       :aria-label='$t(`common:sidebar.mainMenu`)'
