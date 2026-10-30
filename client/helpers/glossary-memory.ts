@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, shallowRef, watch } from 'vue'
 import { AGENT_MEMORY_CHARACTER_LIMITS } from '../../shared/agents/contracts.ts'
 import { useAgentsStore } from '../store/agents.ts'
 import { useWikiStore } from '../store/index.ts'
@@ -55,10 +55,18 @@ export function useGlossaryMemory(pageKey: () => string, locale: () => string) {
   const pending = shallowRef(false), feedback = shallowRef<{ key: string; message: string; complete: boolean } | null>(null)
   const deniedIdentity = shallowRef<{ owner: string; reason: 'signIn' | 'denied' } | null>(null)
   let disposed = false
+  // navigator.onLine cannot invalidate a computed value after connectivity returns.
+  const browserOnline = shallowRef(typeof navigator === 'undefined' || navigator.onLine !== false)
+  const refreshBrowserOnline = (): void => { browserOnline.value = navigator.onLine !== false }
+  onMounted(() => {
+    refreshBrowserOnline()
+    window.addEventListener('online', refreshBrowserOnline)
+    window.addEventListener('offline', refreshBrowserOnline)
+  })
   const identity = computed(() => glossaryIdentity(store))
   const csrf = (): string => typeof siteConfig.agentCsrfToken === 'string' ? siteConfig.agentCsrfToken : ''
   const unavailableKey = computed(() => {
-    if (navigator.onLine === false || (currentPwaMode() !== 'retirement' && (pwaState.connectionState !== 'online' || pwaState.serverReachable !== true || pwaState.serverHealthy !== true))) return 'offline'
+    if (!browserOnline.value || (currentPwaMode() !== 'retirement' && (pwaState.connectionState !== 'online' || pwaState.serverReachable !== true || pwaState.serverHealthy !== true))) return 'offline'
     if (!store.user.authenticated || !Number.isSafeInteger(store.user.id) || store.user.id <= 0) return 'signIn'
     if (store.authRefreshPending || !store.authRefreshSettled || store.authRefreshOutcome !== 'authenticated' || !store.offlineIdentityReady) return 'session'
     if (!siteConfig.agentsEnabled || !csrf()) return 'unavailable'
@@ -125,6 +133,11 @@ export function useGlossaryMemory(pageKey: () => string, locale: () => string) {
     }
   }
   watch(() => [identity.value, pageKey(), locale()], () => { selected.value = null; feedback.value = null }, { flush: 'sync' })
-  onBeforeUnmount(() => { disposed = true; selected.value = null; feedback.value = null })
+  onBeforeUnmount(() => {
+    disposed = true
+    window.removeEventListener('online', refreshBrowserOnline)
+    window.removeEventListener('offline', refreshBrowserOnline)
+    selected.value = null; feedback.value = null
+  })
   return { pinState, selectPin, requestPin }
 }
