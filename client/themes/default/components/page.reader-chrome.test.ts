@@ -513,6 +513,7 @@ describe('responsive navigation focus', () => {
         {
           readerDockVisible: false,
           wideViewport: width >= 1280,
+          viewportMedia: { matches: width >= 1280 },
           $nextTick: Vue.nextTick
         },
         true
@@ -521,10 +522,11 @@ describe('responsive navigation focus', () => {
       expect(browserDocument.activeElement === (width < 1280 ? home : search)).toBe(true)
     }
 
-    const resizing = { readerDockVisible: false, wideViewport: false, $nextTick: Vue.nextTick }
+    const resizing = { readerDockVisible: false, wideViewport: false, viewportMedia: { matches: false }, $nextTick: Vue.nextTick }
     search.focus()
     page.methods.navigationVisibilityChanged!.call(resizing, true)
-    resizing.wideViewport = true
+    // CSS has crossed the boundary before the reactive render cache catches up.
+    resizing.viewportMedia.matches = true
     await Vue.nextTick()
     expect(browserDocument.activeElement === search).toBe(true)
   })

@@ -4577,10 +4577,11 @@ export default defineComponent({
       this.navigationVisibilityChanged(false)
     },
     navigationVisibilityChanged (shown: boolean) {
-      if (this.readerDockVisible || (shown && this.wideViewport)) return
+      // Drawer resize callbacks can precede the reactive breakpoint cache.
+      if (this.readerDockVisible || (shown && this.viewportMedia?.matches)) return
       if (shown) {
         this.$nextTick(() => {
-          if (this.readerDockVisible || this.wideViewport) return
+          if (this.readerDockVisible || this.viewportMedia?.matches) return
           document.querySelector<HTMLElement>('#page-navigation-drawer .nav-sidebar button, #page-navigation-drawer .nav-sidebar a')?.focus()
         })
       } else {
