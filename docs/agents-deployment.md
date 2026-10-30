@@ -63,6 +63,14 @@ Exercise genuine summary latency and failure, offline state, reconnect and the i
 
 Inspect the actual stat and discovery-connection gradients and composed specular/elevation shadows in default and normally saved custom palettes. Exercise keyboard focus on both card classes and apply the compositor-backed ink check described above. Preserve persisted viewer preferences and other policy fields; theme-publication fixtures must remain isolated from the maintained application.
 
+### Reader glossary verification
+
+Verify zero, one, thirty and thirty-one matching terms with real catalogue data. Pagination appears only above thirty and resets after query, initial, category or locale changes. Valid catalogue locales apply directly; partial input is not requested. New term remains a small authorized footer action, absent for read-only accounts. Normally authenticated manage-only accounts can create without gaining catalogue-read authority; inaccessible documentation stays redacted.
+
+Exercise native touch and keyboard creation, cancellation and Escape. Removing a form must restore focus inside the glossary without stealing focus from an active control. Equivalent access-object refreshes must not reload canonical text over a manager draft: refuse browser Back, then refuse header Agent entry and confirm the same draft remains. Test real revision conflicts through explicit current-revision review and a separate Save; neither cancellation nor an unreviewed stale save may publish content.
+
+Publish disabled and installed-RTL locale policies only in isolated fixtures. Confirm disabled access through the normal API and absent read/manage controls; reuse the General policy validator so canonical array ordering is not mistaken for a configuration change. Verify actual RTL geometry, the intentionally LTR locale code, safe narrow layout and normal translation fallback. Use genuine delayed requests to check that a superseded locale cannot repaint the restored catalogue; a complete Arabic translation is not implied by RTL or English fallback labels.
+
 ### Current Agent Administration navigation
 
 Agent Administration (`/a/agents`) exposes all eleven sections, including Browser access, through compact wrapping pills. Labels and badges remain visible without horizontal scrolling; the selected section’s title and description appear in the content header. Left/Right arrows follow the reading direction, while Home/End select the first/last section. Section hashes, restoration, panel associations and inline navigation remain supported.
