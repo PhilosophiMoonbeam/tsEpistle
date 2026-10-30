@@ -6765,6 +6765,16 @@ export default defineComponent({
   .page-reading-sections-header .v-btn { min-width: 44px; min-height: 44px; }
 }
 
+@media (pointer: coarse) and (max-width: 1279px) {
+  // Keep real touch targets without restoring the retired above-prose stack.
+  .page-header-section .page-hero-actions .v-btn { min-height: var(--wiki-control-height); }
+  .page-header-section > .is-page-header { padding-block: 2px !important; }
+  .page-body { padding-block-start: 2px !important; }
+  .page-inline-toc { margin-block-end: 2px; }
+  .page-view-tabs { margin-block-end: 0; }
+  .page-col-content > .contents { padding-block-start: 0; }
+}
+
 @media print {
   .page-position,
   .page-focus-control,

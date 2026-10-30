@@ -3204,6 +3204,7 @@ test.describe('reader metadata rendering', () => {
     const historyHref = historyHrefFor(initialPage)
     await expectReaderMetadata(page, { authorName, historyHref })
     const historyAction = page.locator('.page-actions-menu:visible').getByRole('button', { name: 'History', exact: true })
+    const coarsePointer = await page.evaluate(() => matchMedia('(pointer: coarse)').matches)
     const assertReaderUtilities = async (width: number): Promise<void> => {
       await page.setViewportSize({ width, height: initialViewport.height })
       const hero = page.locator('.page-hero')
@@ -3211,6 +3212,10 @@ test.describe('reader metadata rendering', () => {
       for (const action of await hero.locator('.page-hero-actions .v-btn').all()) {
         await expectLocatorWithinViewport(action, `Labeled reader action at ${width}px`)
         await expect(action).toHaveAccessibleName(/\S/)
+        if (coarsePointer) {
+          const bounds = await action.boundingBox()
+          expect(bounds?.height ?? 0, `Reader touch action remains at least 44px high at ${width}px`).toBeGreaterThanOrEqual(44)
+        }
       }
       const focus = hero.getByRole('button', { name: 'Focus', exact: true })
       await focus.focus()
@@ -3235,6 +3240,12 @@ test.describe('reader metadata rendering', () => {
       await page.keyboard.press('Escape')
       await expect(sharingMenu).toHaveCount(0)
       await expect(share, `Closing Share restores its keyboard trigger at ${width}px`).toBeFocused()
+      if (coarsePointer) {
+        await share.tap()
+        await expect(sharingMenu).toBeVisible()
+        await share.tap()
+        await expect(sharingMenu).toHaveCount(0)
+      }
 
       // Edit remains a separate real affordance, not another metadata utility.
       if (width < 600) {
