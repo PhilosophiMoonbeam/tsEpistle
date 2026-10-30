@@ -3207,6 +3207,10 @@ test.describe('reader metadata rendering', () => {
     const coarsePointer = await page.evaluate(() => matchMedia('(pointer: coarse)').matches)
     const assertReaderUtilities = async (width: number): Promise<void> => {
       await page.setViewportSize({ width, height: initialViewport.height })
+      if (width < 1280) await expect(
+        page.locator('#page-navigation-drawer'),
+        `Resizing to ${width}px collapses the temporary navigation`
+      ).not.toBeInViewport()
       const hero = page.locator('.page-hero')
       await expect(hero.locator('.page-document-provenance')).toBeVisible()
       for (const action of await hero.locator('.page-hero-actions .v-btn').all()) {
@@ -3227,6 +3231,10 @@ test.describe('reader metadata rendering', () => {
       await exit.press('Enter')
       await expect(dock).toHaveCount(0)
       await expect(focus, `Leaving Focus restores its keyboard target at ${width}px`).toBeFocused()
+      if (width < 1280) await expect(
+        page.locator('#page-navigation-drawer'),
+        `Leaving Focus at ${width}px does not reopen the collapsed navigation`
+      ).not.toBeInViewport()
 
       const share = hero.getByRole('button', { name: 'Share', exact: true })
       await share.focus()

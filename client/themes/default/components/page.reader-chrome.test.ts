@@ -511,14 +511,14 @@ describe('responsive navigation focus', () => {
       search.focus()
       page.methods.navigationVisibilityChanged!.call(
         {
-          readerFocus: false,
-          $vuetify: { display: { width } },
+          readerDockVisible: false,
+          wideViewport: width >= 1280,
           $nextTick: Vue.nextTick
         },
         true
       )
       await Vue.nextTick()
-      expect(browserDocument.activeElement).toBe(width < 1280 ? home : search)
+      expect(browserDocument.activeElement === (width < 1280 ? home : search)).toBe(true)
     }
   })
 })

@@ -95,7 +95,6 @@
           h2#page-reading-sections-title {{$t('common:page.chooseSection')}} · {{tocFlattened.length}}
           v-btn(icon, variant='text', size='small', :aria-label='$t(`common:actions.close`)', @click='closeReaderSections(true)')
             v-icon(aria-hidden='true') mdi-close
-    //- handleSideNavVisibility owns responsive state, not Vuetify's delayed resize writer.
     v-navigation-drawer(
       v-if='navMode !== `NONE` && !printView'
       id='page-navigation-drawer'
@@ -103,7 +102,6 @@
       tag='nav'
       color='surface'
       :mobile-breakpoint='1280'
-      disable-resize-watcher
       :width='navDrawerWidth'
       v-model='navigationOpen'
       :aria-label='$t(`common:sidebar.mainMenu`)'
@@ -1613,12 +1611,13 @@ export default defineComponent({
     }
   },
   data() {
-    const initialWidth = typeof window === 'undefined' ? 0 : window.innerWidth
+    const viewportMedia = typeof window === 'undefined' ? null : window.matchMedia('(min-width: 1280px)')
+    const initialWideViewport = viewportMedia?.matches ?? false
     return {
       locales: siteLangs,
       discussionMounted: false,
       annotationJumpUnsubscribe: null as (() => void) | null,
-      navShown: initialWidth >= 1280,
+      navShown: initialWideViewport,
       tocExpanded: false,
       tocQuery: '',
       tocUserScrollAt: 0,
@@ -1722,7 +1721,8 @@ export default defineComponent({
           scrollingX: false
         }
       }),
-      winWidth: initialWidth,
+      viewportMedia,
+      wideViewport: initialWideViewport,
       resizeHandler: null as (() => void) | null,
       loadHandler: null as (() => void) | null,
       beforePrintHandler: null as (() => void) | null,
@@ -1786,13 +1786,13 @@ export default defineComponent({
       set (value: boolean) { if (!this.readerFocus || this.talkActive || this.linksActive) this.navShown = value }
     },
     navDrawerWidth (): number {
-      return this.$vuetify.display.width >= 1280 ? 269.6 : 244
+      return this.wideViewport ? 269.6 : 244
     },
     // Below 1280 the drawer floats over the content, so the reading bar keeps
     // its full width; docked, it starts where the sidebar ends.
     pagePositionInsetStart (): string {
       const docked = this.navMode !== 'NONE' &&
-        this.$vuetify.display.width >= 1280 &&
+        this.wideViewport &&
         this.navigationOpen
       return docked ? `${this.navDrawerWidth}px` : '0px'
     },
@@ -2244,7 +2244,7 @@ export default defineComponent({
       return this.lastEditorVisible && Boolean(this.authorName && this.authorName.trim() && this.authorName.toLowerCase() !== 'unknown')
     },
     isTocCompact (): boolean {
-      return this.winWidth < 1280
+      return !this.wideViewport
     },
     tocDisclosureExpanded (): boolean {
       return !this.isTocCompact || this.tocExpanded
@@ -2509,10 +2509,13 @@ export default defineComponent({
     // -> Check side navigation visibility
     this.handleSideNavVisibility()
     this.resizeHandler = () => {
+      // Mobile Chrome can settle its visual viewport without a second window resize.
+      if (this.$vuetify.display.width !== window.innerWidth) this.$vuetify.display.update()
       this.handleSideNavVisibility()
       this.ensureActiveTocVisible()
     }
     window.addEventListener('resize', this.resizeHandler)
+    window.visualViewport?.addEventListener('resize', this.resizeHandler)
 
     this.setupTocResizeObserver()
 
@@ -2588,7 +2591,10 @@ export default defineComponent({
     this.offlineStorage = null
     this.offlineUnlockSecret = ''
     this.offlineUnlockError = ''
-    if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler)
+    if (this.resizeHandler) {
+      window.removeEventListener('resize', this.resizeHandler)
+      window.visualViewport?.removeEventListener('resize', this.resizeHandler)
+    }
     if (this.loadHandler) window.removeEventListener('load', this.loadHandler)
     if (this.beforePrintHandler) window.removeEventListener('beforeprint', this.beforePrintHandler)
     if (this.afterPrintHandler) window.removeEventListener('afterprint', this.afterPrintHandler)
@@ -4539,7 +4545,7 @@ export default defineComponent({
       }
     },
     sidebarNavigationStarted () {
-      if (this.$vuetify.display.width < 1280) this.navShown = false
+      if (!this.wideViewport) this.navShown = false
     },
     toggleNavigation () {
       const shown = !this.navShown
@@ -4564,14 +4570,14 @@ export default defineComponent({
       this.$nextTick(() => this.focusPageTitle())
     },
     navigationEscape (event: KeyboardEvent): void {
-      if (event.defaultPrevented || event.isComposing || this.$vuetify.display.width >= 1280 || !this.navigationOpen) return
+      if (event.defaultPrevented || event.isComposing || this.wideViewport || !this.navigationOpen) return
       event.preventDefault()
       event.stopPropagation()
       this.navShown = false
       this.navigationVisibilityChanged(false)
     },
     navigationVisibilityChanged (shown: boolean) {
-      if (this.readerDockVisible || (shown && this.$vuetify.display.width >= 1280)) return
+      if (this.readerDockVisible || (shown && this.wideViewport)) return
       if (shown) {
         this.$nextTick(() => {
           document.querySelector<HTMLElement>('#page-navigation-drawer .nav-sidebar button, #page-navigation-drawer .nav-sidebar a')?.focus()
@@ -4657,21 +4663,17 @@ export default defineComponent({
       emitPageDelete()
     },
     handleSideNavVisibility () {
-      const previousWidth = this.winWidth
-      const nextWidth = window.innerWidth
-      if (nextWidth === previousWidth) { return }
+      const previousWide = this.wideViewport
+      const nextWide = this.viewportMedia?.matches ?? false
+      if (nextWide === previousWide) { return }
       const focused = document.activeElement instanceof HTMLElement && document.activeElement.closest('.page-toc-card')
         ? document.activeElement
         : null
-      this.winWidth = nextWidth
-      if (previousWidth >= 1280 && nextWidth < 1280) {
+      this.wideViewport = nextWide
+      if (previousWide && !nextWide) {
         this.tocExpanded = false
       }
-      if (nextWidth >= 1280) {
-        this.navShown = true
-      } else {
-        this.navShown = false
-      }
+      this.navShown = nextWide
       this.$nextTick(() => {
         this.setupTocResizeObserver()
         if (focused?.isConnected) {
