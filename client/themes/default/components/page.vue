@@ -4580,6 +4580,7 @@ export default defineComponent({
       if (this.readerDockVisible || (shown && this.wideViewport)) return
       if (shown) {
         this.$nextTick(() => {
+          if (this.readerDockVisible || this.wideViewport) return
           document.querySelector<HTMLElement>('#page-navigation-drawer .nav-sidebar button, #page-navigation-drawer .nav-sidebar a')?.focus()
         })
       } else {

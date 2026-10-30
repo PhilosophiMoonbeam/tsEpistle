@@ -520,6 +520,13 @@ describe('responsive navigation focus', () => {
       await Vue.nextTick()
       expect(browserDocument.activeElement === (width < 1280 ? home : search)).toBe(true)
     }
+
+    const resizing = { readerDockVisible: false, wideViewport: false, $nextTick: Vue.nextTick }
+    search.focus()
+    page.methods.navigationVisibilityChanged!.call(resizing, true)
+    resizing.wideViewport = true
+    await Vue.nextTick()
+    expect(browserDocument.activeElement === search).toBe(true)
   })
 
   it('returns closed drawer focus to its opener without stealing newly claimed content focus', async () => {
