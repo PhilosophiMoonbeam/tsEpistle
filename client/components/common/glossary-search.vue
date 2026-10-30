@@ -1,7 +1,7 @@
 <template>
   <section class="glossary-search" aria-labelledby="glossary-title">
     <header class="glossary-search__heading">
-      <h3 id="glossary-title">{{ $t('common:glossary.title') }}</h3>
+      <h3 id="glossary-title" ref="directoryHeading" tabindex="-1">{{ $t('common:glossary.title') }}</h3>
       <p>{{ $t('common:glossary.searchHint') }}</p>
     </header>
     <div class="glossary-search__content">
@@ -126,9 +126,11 @@ const props = defineProps<{ locale: string; term: string; access: GlossaryAccess
 const emit = defineEmits<{ select: [name: string]; locale: [locale: string]; changed: [] }>()
 const t = useTranslate()
 const mode = ref<'directory' | 'detail' | 'edit'>('directory'), detail = ref<GlossaryTerm | null>(null), latest = ref<GlossaryTerm | null>(null)
-const detailHeading = ref<HTMLElement | null>(null)
+const directoryHeading = ref<HTMLElement | null>(null), detailHeading = ref<HTMLElement | null>(null)
 watch([mode, detail], () => {
-  if (mode.value === 'detail' && detail.value && document.activeElement === document.body) detailHeading.value?.focus()
+  if (document.activeElement !== document.body) return
+  if (mode.value === 'detail' && detail.value) detailHeading.value?.focus()
+  else directoryHeading.value?.focus()
 }, { flush: 'post' })
 const localeInput = ref(props.locale), letter = ref<string | null>(null), category = ref<string | null>(null), page = ref(0), pageSize = 30
 const localeInvalid = computed(() => !isGlossaryLocale(localeInput.value.trim()))

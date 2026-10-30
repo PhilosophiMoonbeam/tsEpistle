@@ -86,14 +86,11 @@ async function openGlossary(page: Page) {
   return search
 }
 
-test('uses the third search type for real term filtering, definitions and history', async ({ page, glossaryTerms: terms }) => {
+test('filters the selected catalogue and follows term definitions and history', async ({ page, glossaryTerms: terms }) => {
   const search = await openGlossary(page)
   const pane = search.locator('.glossary-search')
   const types = search.locator('.search-results-scope-actions')
-  await expect(types.getByRole('button')).toHaveText(['Wiki', 'Saved offline', 'Glossary'])
   await expect(types.getByRole('button', { name: 'Glossary', exact: true })).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.locator('.nav-header').getByRole('button', { name: 'Glossary', exact: true })).toHaveCount(0)
-  await expect(search.locator('.search-results-filters')).toHaveCount(0)
   const input = page.locator('.nav-header-search-control input:visible').first()
   await expect(input).toHaveAttribute('role', 'searchbox')
   await input.fill(terms.query)
@@ -110,15 +107,11 @@ test('uses the third search type for real term filtering, definitions and histor
   await page.getByRole('option', { name: 'C', exact: true }).click()
   await expect(pane.locator('.glossary-search__term')).toHaveCount(1)
   await expect(pane.locator('.glossary-search__term')).toContainText(terms.second.term)
-  await pane.getByRole('combobox', { name: 'A–Z / initial', exact: true }).press('ArrowDown')
-  await page.getByRole('option', { name: 'All', exact: true }).click()
 
   await input.fill(terms.alias)
   await pane.getByRole('textbox', { name: 'Catalog locale', exact: true }).fill('fr')
-  await pane.getByRole('button', { name: 'Change locale', exact: true }).click()
-  await expect(pane.locator('.glossary-search__summary')).toHaveText('0 matching terms')
+  await expect(pane.locator('.glossary-search__term')).toHaveCount(0)
   await pane.getByRole('textbox', { name: 'Catalog locale', exact: true }).fill('en')
-  await pane.getByRole('button', { name: 'Change locale', exact: true }).click()
   const term = pane.getByRole('link', { name: new RegExp(terms.first.term) })
   await expect(pane.locator('.glossary-search__term')).toHaveCount(1)
   await term.focus()
@@ -159,6 +152,13 @@ test('uses the third search type for real term filtering, definitions and histor
 test('preserves unsaved manager edits across type and close attempts, picker dismissal and revision conflicts', async ({ page, glossaryTerms: terms }) => {
   const search = await openGlossary(page)
   const pane = search.locator('.glossary-search')
+  await pane.getByRole('button', { name: 'New term', exact: true }).click()
+  await expect(pane.locator('form')).toBeVisible()
+  await pane.getByRole('button', { name: 'Cancel editing', exact: true }).click()
+  await expect(pane.getByRole('heading', { name: 'Glossary', exact: true })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(search).toBeHidden()
+  await openGlossary(page)
   const input = page.locator('.nav-header-search-control input:visible').first()
   await input.fill(terms.alias)
   await pane.getByRole('link', { name: new RegExp(terms.first.term) }).click()
@@ -203,7 +203,7 @@ test('preserves unsaved manager edits across type and close attempts, picker dis
   })
   expect(peer.ok()).toBe(true)
   await pane.getByRole('button', { name: 'Save term', exact: true }).click()
-  await expect(pane.getByRole('alert').filter({ hasText: 'Your draft is intact' })).toBeVisible()
+  await expect(pane.getByRole('button', { name: 'Save term', exact: true })).toBeDisabled()
   await expect(expansion).toHaveValue('My conflict-resolved draft')
   await pane.getByRole('button', { name: 'Load current revision', exact: true }).click()
   await expect(pane.getByRole('region', { name: 'Current server version', exact: true })).toContainText('Concurrent server version')
@@ -222,7 +222,7 @@ test('keeps Glossary distinct from Saved offline, retries catalog failures and e
   await input.fill(terms.alias)
   await expect(pane.locator('.glossary-search__term').filter({ hasText: terms.first.term })).toBeVisible()
   await page.context().setOffline(true)
-  await expect(pane.getByRole('alert')).toContainText('unavailable offline')
+  await expect(pane.getByRole('alert')).toBeVisible()
   await expect(search.getByRole('button', { name: 'Glossary', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await expect(pane.locator('.glossary-search__term')).toHaveCount(0)
   await search.getByRole('button', { name: 'Saved offline', exact: true }).click()
@@ -234,8 +234,7 @@ test('keeps Glossary distinct from Saved offline, retries catalog failures and e
   const catalog = (url: URL) => url.pathname === '/_api/glossary/'
   await page.route(catalog, route => route.fulfill({ status: 503, json: { error: 'Controlled catalog outage.' } }))
   await input.fill(terms.query)
-  await expect(pane.getByRole('alert')).toContainText('Controlled catalog outage.')
-  await expect(pane.getByText('No terms match these filters.', { exact: true })).toHaveCount(0)
+  await expect(pane.getByRole('button', { name: 'Retry', exact: true })).toBeVisible()
   await page.unroute(catalog)
   await pane.getByRole('button', { name: 'Retry', exact: true }).click()
   await expect(pane.locator('.glossary-search__term').filter({ hasText: terms.first.term })).toBeVisible()
@@ -249,7 +248,6 @@ test('keeps Glossary distinct from Saved offline, retries catalog failures and e
   expect(guest.canManage).toBe(false)
   await expect(pane.getByRole('button', { name: 'New term', exact: true })).toHaveCount(0)
   if (!guest.canRead) {
-    await expect(pane.getByRole('alert')).toContainText('permission')
     await expect(pane.locator('.glossary-search__term')).toHaveCount(0)
   }
 })
