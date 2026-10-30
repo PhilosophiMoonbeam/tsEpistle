@@ -78,6 +78,8 @@ const createConflictHarness = ({
   }
 
   const wikiStore = {
+    user: { authenticated: true, id: 7 },
+    offlineIdentityEpoch: 0,
     editor: {
       activeModal: 'editorModalConflict',
       checkoutDateActive: '',
@@ -87,6 +89,7 @@ const createConflictHarness = ({
     page: {
       description: 'Local description',
       id: 42,
+      sourceRevision: '16',
       title: 'Local title'
     }
   }
@@ -161,6 +164,8 @@ const createTiptapConflictHarness = ({
   modelValue = true
 } = {}) => {
   const wikiStore = {
+    user: { authenticated: true, id: 7 },
+    offlineIdentityEpoch: 0,
     editor: {
       checkoutDateActive: 'local-checkout-date',
       content: 'local draft'
@@ -247,6 +252,8 @@ const settle = async () => {
 }
 const mountTiptapConflict = fetchImplementation => {
   const wikiStore = {
+    user: { authenticated: true, id: 7 },
+    offlineIdentityEpoch: 0,
     editor: { checkoutDateActive: 'local-checkout-date', content: 'local draft' },
     page: { id: 42 }
   }
@@ -538,7 +545,148 @@ describe('Tiptap conflict component behavior', () => {
   })
 })
 
+describe('reviewed conflict ownership boundaries', () => {
+  for (const kind of ['source', 'rich']) {
+    for (const boundary of ['actor changed while loading', 'page changed before confirm', 'source advanced before confirm']) {
+      test(`${kind} refuses a stale reviewed choice: ${boundary}`, async () => {
+        const latest = createLatestConflict()
+        const response = createDeferred()
+        const container = document.body.appendChild(document.createElement('div'))
+        const harness = kind === 'source'
+          ? createConflictHarness({
+              container, realEditor: true, fetchPageConflictLatest: fetchConflictLatest,
+              fetchImplementation: () => response.promise
+            })
+          : createTiptapConflictHarness({ fetchImplementation: () => response.promise })
+        try {
+          const loading = kind === 'source' ? harness.context.loadConflict() : harness.context.loadLatestVersion()
+          if (boundary === 'actor changed while loading') {
+            harness.wikiStore.offlineIdentityEpoch++
+            if (kind === 'source') {
+              harness.context.isLoading = false
+              harness.context.loadError = 'New actor dialog state'
+            }
+          }
+          response.resolve(Response.json(latest))
+          await loading
+          if (boundary === 'page changed before confirm') harness.wikiStore.page.id++
+          if (boundary === 'source advanced before confirm') harness.wikiStore.page.sourceRevision = '18'
+          const sourceRevision = harness.wikiStore.page.sourceRevision
+          const checkoutDate = harness.wikiStore.editor.checkoutDateActive
+
+          harness.context.useRemote()
+          harness.context.useLocal()
+
+          expect(harness.wikiStore.editor.content).toBe('local draft')
+          expect(harness.wikiStore.page.sourceRevision).toBe(sourceRevision)
+          expect(harness.wikiStore.editor.checkoutDateActive).toBe(checkoutDate)
+          if (kind === 'source') {
+            expect(harness.context.activeModal).toBe('editorModalConflict')
+            if (boundary === 'actor changed while loading') {
+              expect(harness.context.latestLoaded).toBe(false)
+              expect(harness.context.isLoading).toBe(false)
+              expect(harness.context.loadError).toBe('New actor dialog state')
+            }
+          } else {
+            expect(harness.context.isShown).toBe(true)
+            expect(harness.resolutionEvents).toEqual([])
+            if (boundary === 'actor changed while loading') expect(harness.context.hasLatestVersion).toBe(false)
+          }
+        } finally {
+          harness.context.cm?.destroy()
+          container.remove()
+        }
+      })
+    }
+  }
+})
+
 describe('editor conflict REST migration guard', () => {
+  for (const advance of ['source revision during fetch', 'checkout date during fetch', 'source revision before editor mount']) {
+    test(`settles an invalidated current load into a retryable error: ${advance}`, async () => {
+      const oldResponse = createDeferred()
+      const reviewed = createLatestConflict()
+      const newer = createLatestConflict({
+        sourceRevision: '18',
+        updatedAt: '2026-09-01T13:00:00.000Z',
+        content: '# Newer source to review'
+      })
+      const container = document.body.appendChild(document.createElement('div'))
+      let requests = 0
+      const harness = createConflictHarness({
+        container, realEditor: true, fetchPageConflictLatest: fetchConflictLatest,
+        fetchImplementation: () => ++requests === 1 ? oldResponse.promise : Promise.resolve(Response.json(newer))
+      })
+      const advanceBaseline = () => {
+        if (advance.startsWith('source revision')) harness.wikiStore.page.sourceRevision = '18'
+        else harness.wikiStore.editor.checkoutDateActive = newer.updatedAt
+      }
+      if (advance.endsWith('before editor mount')) harness.context.$nextTick = async () => { advanceBaseline() }
+      try {
+        const loading = harness.context.loadConflict()
+        if (advance.endsWith('during fetch')) advanceBaseline()
+        oldResponse.resolve(Response.json(reviewed))
+        await loading
+
+        expect(harness.context.isLoading).toBe(false)
+        expect(harness.context.loadError).not.toBe('')
+        expect(harness.context.latestLoaded).toBe(false)
+        expect(harness.context.requestController).toBeNull()
+        expect(harness.context.cm).toBeNull()
+        expect(harness.wikiStore.editor.content).toBe('local draft')
+        expect(harness.notifications).toEqual([])
+        harness.context.useRemote()
+        expect(harness.wikiStore.editor.content).toBe('local draft')
+
+        await harness.context.loadConflict()
+
+        expect(requests).toBe(2)
+        expect(harness.context.isLoading).toBe(false)
+        expect(harness.context.loadError).toBe('')
+        expect(harness.context.latestLoaded).toBe(true)
+        expect(harness.context.latest).toEqual(newer)
+        const view = EditorView.findFromDOM(container.querySelector('.cm-editor'))
+        expect(view.state.doc.toString()).toBe('local draft')
+        expect(getOriginalDoc(view.state).toString()).toBe(newer.content)
+      } finally {
+        harness.context.cm?.destroy()
+        container.remove()
+      }
+    })
+  }
+
+  test('an obsolete source response cannot settle or replace a newer conflict load', async () => {
+    const first = createDeferred()
+    const second = createDeferred()
+    const newer = createLatestConflict({ sourceRevision: '18', content: '# Newer reviewed response' })
+    const container = document.body.appendChild(document.createElement('div'))
+    let requests = 0
+    const harness = createConflictHarness({
+      container, realEditor: true, fetchPageConflictLatest: fetchConflictLatest,
+      fetchImplementation: () => ++requests === 1 ? first.promise : second.promise
+    })
+    try {
+      const obsoleteLoad = harness.context.loadConflict()
+      const currentLoad = harness.context.loadConflict()
+      second.resolve(Response.json(newer))
+      await currentLoad
+      const currentEditor = harness.context.cm
+      first.resolve(Response.json(createLatestConflict()))
+      await obsoleteLoad
+
+      expect(harness.context.cm).toBe(currentEditor)
+      expect(harness.context.latest).toEqual(newer)
+      expect(harness.context.latestLoaded).toBe(true)
+      expect(harness.context.isLoading).toBe(false)
+      expect(harness.context.loadError).toBe('')
+      expect(harness.context.requestController).toBeNull()
+      expect(harness.wikiStore.editor.content).toBe('local draft')
+    } finally {
+      harness.context.cm?.destroy()
+      container.remove()
+    }
+  })
+
   test('reports a failed REST load, destroys the stale editor, and releases its request', async () => {
     const harness = createConflictHarness({
       fetchPageConflictLatest: fetchConflictLatest,
@@ -612,6 +760,8 @@ describe('editor conflict REST migration guard', () => {
     const harness = createConflictHarness({
       fetchPageConflictLatest: async () => {
         context.activeModal = ''
+        context.isLoading = false
+        context.loadError = 'Closed dialog state'
         return latest
       }
     })
@@ -621,6 +771,8 @@ describe('editor conflict REST migration guard', () => {
 
     expect(context.requestController).toBeNull()
     expect(context.latestLoaded).toBe(false)
+    expect(context.isLoading).toBe(false)
+    expect(context.loadError).toBe('Closed dialog state')
     expect(harness.Editor.instances).toHaveLength(0)
     expect(harness.notifications).toHaveLength(0)
   })

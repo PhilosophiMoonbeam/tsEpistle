@@ -111,7 +111,6 @@ import LocalizedRichText from '../common/localized-rich-text'
 /* global siteConfig */
 
 
-type ConflictLatest = Pick<PageConflictLatest, 'title' | 'description' | 'updatedAt' | 'authorName' | 'content' | 'sourceRevision'>
 export default defineComponent({
   components: { LocalizedRichText },
   data() {
@@ -123,9 +122,13 @@ export default defineComponent({
         updatedAt: '',
         authorName: '',
         content: '',
-        sourceRevision: ''
-      } as ConflictLatest,
+        sourceRevision: '',
+        locale: '',
+        path: '',
+        visibility: 'public'
+      } as PageConflictLatest,
       latestLoaded: false,
+      conflictOwner: '',
       isLoading: true,
       loadError: '',
       isRemoteConfirmDiagShown: false,
@@ -172,6 +175,17 @@ export default defineComponent({
     }
   },
   methods: {
+    currentConflictSessionOwner () {
+      return JSON.stringify([
+        wikiStore.user.authenticated, wikiStore.user.id, wikiStore.offlineIdentityEpoch,
+        wikiStore.page.id, this.editorKey
+      ])
+    },
+    currentConflictOwner () {
+      return JSON.stringify([
+        this.currentConflictSessionOwner(), wikiStore.page.sourceRevision, wikiStore.editor.checkoutDateActive
+      ])
+    },
     onDialogModelUpdate (isOpen: boolean) {
       if (!isOpen) this.requestClose()
     },
@@ -203,25 +217,28 @@ export default defineComponent({
       this.activeModal = ''
     },
     overwriteAndClose() {
-      if (!this.latestLoaded) return
+      if (!this.latestLoaded || this.activeModal !== 'editorModalConflict' || this.conflictOwner !== this.currentConflictOwner()) return
       this.checkoutDateActive = this.latest.updatedAt
       wikiStore.page.sourceRevision = this.latest.sourceRevision
-      emitEditorConflictResolved()
+      emitEditorConflictResolved(this.latest)
       this.finishClose()
     },
     useLocal () {
-      if (!this.cm || !this.latestLoaded) return
+      if (!this.cm || !this.latestLoaded || this.activeModal !== 'editorModalConflict' || this.conflictOwner !== this.currentConflictOwner()) return
       wikiStore.editor.content = this.cm.getValue()
       this.overwriteAndClose()
     },
     useRemote () {
-      if (!this.latestLoaded) return
+      if (!this.latestLoaded || this.activeModal !== 'editorModalConflict' || this.conflictOwner !== this.currentConflictOwner()) return
       wikiStore.editor.content = this.latest.content
       this.overwriteAndClose()
     },
     async loadConflict () {
       this.requestController?.abort()
       const requestController = markRaw(new AbortController())
+      const sessionOwner = this.currentConflictSessionOwner()
+      const conflictOwner = this.currentConflictOwner()
+      this.conflictOwner = conflictOwner
       this.requestController = requestController
       this.isLoading = true
       this.loadError = ''
@@ -230,7 +247,16 @@ export default defineComponent({
       this.cm = null
       this.initialMergeValue = null
       this.mergeValue = ''
-      let resp: ConflictLatest | null = null
+      const settleInvalidatedRequest = () => {
+        if (this.requestController !== requestController) return
+        this.requestController = null
+        if (requestController.signal.aborted || this.activeModal !== 'editorModalConflict' ||
+            sessionOwner !== this.currentConflictSessionOwner()) return
+        this.latestLoaded = false
+        this.isLoading = false
+        this.loadError = this.$t('editor:editorModalConflict.failedFetchLatestVersion')
+      }
+      let resp: PageConflictLatest | null = null
       try {
         resp = await fetchPageConflictLatest(
           (url, init) => window.fetch(url, { ...init, signal: requestController.signal }),
@@ -242,8 +268,9 @@ export default defineComponent({
           return
         }
       }
-      if (requestController.signal.aborted || this.activeModal !== 'editorModalConflict') {
-        if (this.requestController === requestController) this.requestController = null
+      if (requestController.signal.aborted || this.requestController !== requestController ||
+          this.activeModal !== 'editorModalConflict' || conflictOwner !== this.currentConflictOwner()) {
+        settleInvalidatedRequest()
         return
       }
       if (!resp) {
@@ -260,8 +287,9 @@ export default defineComponent({
       this.latest = resp
       this.isLoading = false
       await this.$nextTick()
-      if (requestController.signal.aborted || this.activeModal !== 'editorModalConflict') {
-        if (this.requestController === requestController) this.requestController = null
+      if (requestController.signal.aborted || this.requestController !== requestController ||
+          this.activeModal !== 'editorModalConflict' || conflictOwner !== this.currentConflictOwner()) {
+        settleInvalidatedRequest()
         return
       }
       const language: Extension | undefined = this.editorKey === 'markdown'

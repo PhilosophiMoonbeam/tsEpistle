@@ -9,16 +9,22 @@ const conflictEventCases = [
   ['EditorContentOverwrite', EDITOR_CONTENT_OVERWRITE_EVENT],
   ['EditorConflictReset', EDITOR_CONFLICT_RESET_EVENT]
 ]
+const baseline = {
+  updatedAt: '2026-09-03T12:00:00.000Z', sourceRevision: '2', content: 'Reviewed remote source',
+  authorName: 'Remote author', title: 'Remote title', description: 'Remote description',
+  locale: 'en', path: 'remote-page', visibility: 'public'
+}
+const eventArgs = suffix => suffix === 'EditorConflictReset' ? [baseline] : []
 
 describe('editor conflict events', () => {
   test.each(conflictEventCases)('emit%s delivers only to its private %s channel', suffix => {
     const listeners = conflictEventCases.map(([name]) => ({ name, handler: vi.fn() }))
     for (const { name, handler } of listeners) editorConflictEvents[`on${name}`](handler)
     try {
-      editorConflictEvents[`emit${suffix}`]()
+      editorConflictEvents[`emit${suffix}`](...eventArgs(suffix))
       for (const { name, handler } of listeners) {
         expect(handler).toHaveBeenCalledTimes(name === suffix ? 1 : 0)
-        if (name === suffix) expect(handler).toHaveBeenCalledWith()
+        if (name === suffix) expect(handler).toHaveBeenCalledWith(...eventArgs(suffix))
       }
     } finally {
       for (const { name, handler } of listeners) editorConflictEvents[`off${name}`](handler)
@@ -32,13 +38,14 @@ describe('editor conflict events', () => {
 
     editorConflictEvents.onEditorContentOverwrite(overwriteHandler)
     editorConflictEvents.onEditorConflictReset(resetHandler)
-    editorConflictEvents.emitEditorConflictResolved()
+    editorConflictEvents.emitEditorConflictResolved(baseline)
     editorConflictEvents.offEditorContentOverwrite(overwriteHandler)
     editorConflictEvents.offEditorConflictReset(resetHandler)
 
     expect(calls).toEqual([EDITOR_CONTENT_OVERWRITE_EVENT, EDITOR_CONFLICT_RESET_EVENT])
     expect(overwriteHandler).toHaveBeenCalledTimes(1)
     expect(resetHandler).toHaveBeenCalledTimes(1)
+    expect(resetHandler).toHaveBeenCalledWith(baseline)
   })
 
   test.each(conflictEventCases)('off%s removes only its handler from the private %s channel', suffix => {
@@ -48,7 +55,7 @@ describe('editor conflict events', () => {
     editorConflictEvents[`on${suffix}`](remaining)
     try {
       editorConflictEvents[`off${suffix}`](removed)
-      editorConflictEvents[`emit${suffix}`]()
+      editorConflictEvents[`emit${suffix}`](...eventArgs(suffix))
       expect(removed).not.toHaveBeenCalled()
       expect(remaining).toHaveBeenCalledTimes(1)
     } finally {
@@ -62,7 +69,7 @@ describe('editor conflict events', () => {
 
     editorConflictEvents[`on${suffix}`](handler)
     editorConflictEvents[`off${suffix}`]()
-    editorConflictEvents[`emit${suffix}`]()
+    editorConflictEvents[`emit${suffix}`](...eventArgs(suffix))
     editorConflictEvents[`off${suffix}`](handler)
 
     expect(handler).toHaveBeenCalledTimes(1)

@@ -108,6 +108,7 @@ export default defineComponent({
         description: ''
       } as PageConflictLatest,
       isRemoteConfirmDiagShown: false,
+      conflictOwner: '',
       hasLatestVersion: false,
       requestController: null as AbortController | null,
       loadState: 'loading' as 'loading' | 'error' | 'success',
@@ -122,23 +123,29 @@ export default defineComponent({
     }
   },
   methods: {
+    currentConflictOwner () {
+      return JSON.stringify([
+        wikiStore.user.authenticated, wikiStore.user.id, wikiStore.offlineIdentityEpoch,
+        wikiStore.page.id, wikiStore.page.sourceRevision, wikiStore.editor.checkoutDateActive, wikiStore.editor.editorKey
+      ])
+    },
     pageHref,
     close () {
       this.isShown = false
     },
     useLocal () {
-      if (!this.hasLatestVersion) return
+      if (!this.hasLatestVersion || !this.isShown || this.conflictOwner !== this.currentConflictOwner()) return
       wikiStore.editor.checkoutDateActive = this.latest.updatedAt
       wikiStore.page.sourceRevision = this.latest.sourceRevision
-      emitEditorConflictReset()
+      emitEditorConflictReset(this.latest)
       this.close()
     },
     useRemote () {
-      if (!this.hasLatestVersion) return
+      if (!this.hasLatestVersion || !this.isShown || this.conflictOwner !== this.currentConflictOwner()) return
       wikiStore.editor.checkoutDateActive = this.latest.updatedAt
       wikiStore.page.sourceRevision = this.latest.sourceRevision
       wikiStore.editor.content = this.latest.content
-      emitEditorConflictResolved()
+      emitEditorConflictResolved(this.latest)
       this.close()
     },
     focusLoadError () {
@@ -151,6 +158,7 @@ export default defineComponent({
       this.requestController?.abort()
       const requestGeneration = ++this.requestGeneration
       const requestController = markRaw(new AbortController())
+      this.conflictOwner = this.currentConflictOwner()
       this.requestController = requestController
       this.loadState = 'loading'
       this.loadError = ''
@@ -165,7 +173,7 @@ export default defineComponent({
         if (requestController.signal.aborted) return
       }
 
-      if (requestController.signal.aborted) return
+      if (requestController.signal.aborted || !this.isShown || this.conflictOwner !== this.currentConflictOwner()) return
       if (requestGeneration !== this.requestGeneration) return
       this.requestController = null
       if (!resp) {

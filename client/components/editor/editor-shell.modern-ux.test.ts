@@ -19,7 +19,7 @@ import { EditorView } from '@codemirror/view'
 import { createSourceAuthoring } from '../../helpers/editor-source-authoring'
 import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
 import * as imagePropertiesHelpers from '../../helpers/editor-image-properties'
-import { isPageRenderPending, waitForPageRender, type PageRenderTarget, type PageWriteInput } from '../../helpers/pages-api.ts'
+import { discardCollaborationDraft, isPageRenderPending, waitForPageRender, type PageConflictLatest, type PageRenderTarget, type PageWriteInput } from '../../helpers/pages-api.ts'
 import { EditorAdapterController, type EditorAdapterSafety as PublicAdapterSafety } from './common/editor-adapter.ts'
 import type { OfflineEditorDraftIdentity } from '../../helpers/offline-editor-drafts.ts'
 import type { BrowserFetch as Fetch } from '../../helpers/json-transport.ts'
@@ -303,6 +303,7 @@ type ShellContext = {
   discardAndExit: () => Promise<void>
   handleCollaborationState: (state: { active: boolean; discarded: boolean; generation: number | null }) => void
   refreshConflict: () => Promise<void>
+  handleEditorConflictReset: (baseline: PageConflictLatest) => void
   hydratePage: () => Promise<void>
   captureSaveSnapshot: () => SaveCapture
   openConflict: () => void
@@ -639,6 +640,7 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
     dialogUnsaved: false,
     saveFeedback: 'idle',
     lastSavedAt: null,
+    hasReviewedConflictBaseline: false,
     lastSaveKind: 'server',
     welcomeMode: false,
     serverSaveDisabled: false,
@@ -1979,6 +1981,247 @@ describe('modern editor shell interaction contract', () => {
         host.remove()
       }
     }
+  })
+
+  for (const [editor, action, render] of [
+    ['markdown', 'Save and close', 'ready'],
+    ['ckeditor', 'Save and close', 'ready'],
+    ['markdown', 'Close', 'ready'],
+    ['ckeditor', 'Close', 'ready'],
+    ['markdown', 'Close', 'pending'],
+    ['markdown', 'Close', 'newer revision']
+  ] as const) {
+    test(`${editor} clean ${action} after remote acceptance waits for the exact reviewed render: ${render}`, async () => {
+      vi.useFakeTimers()
+      const store = createStore()
+      store.editor.editorKey = editor
+      store.editor.editor = editor === 'markdown' ? 'editorMarkdown' : 'editorCkeditor'
+      const testWindow = createTestWindow()
+      const remote: PageConflictLatest = {
+        updatedAt: '2026-09-03T12:00:00.000Z', sourceRevision: '2',
+        content: editor === 'markdown' ? '# Reviewed remote R2\n' : '<p>Reviewed remote R2</p>',
+        authorName: 'Independent writer', title: store.page.title, description: store.page.description,
+        locale: store.page.locale, path: store.page.path, visibility: store.page.visibility
+      }
+      let writes = 0
+      let previews = 0
+      const { promise: renderResponse, resolve: release } = Promise.withResolvers<void>()
+      mockRenderPreviews(testWindow, async () => {
+        previews++
+        await renderResponse
+        return render === 'pending'
+          ? Response.json({ error: 'Still rendering', code: 'PAGE_RENDER_PENDING' }, { status: 503 })
+          : Response.json(createRenderPreview(store, render === 'ready' ? '2' : '3'))
+      })
+      const context = createShellHarness(store, testWindow, {
+        waitForPageRender,
+        updatePage: async () => {
+          writes++
+          throw new Error('The reviewed remote source must not be rewritten')
+        }
+      })
+      let editorText = store.editor.content
+      const adapter = new EditorAdapterController({
+        readText: () => editorText,
+        writeText: text => { editorText = text; store.editor.content = text },
+        clearText: () => { editorText = ''; store.editor.content = '' }
+      })
+      adapter.initialize()
+      context.editorAdapter = Vue.markRaw(adapter)
+      adapter.onState(safety => { context.editorAdapterSafety = safety })
+      try {
+        adapter.replaceText(remote.content)
+        const acceptedVersion = adapter.capture().editVersion
+        expect(adapter.snapshot().nonPersisted).toBe(true)
+        store.page.sourceRevision = remote.sourceRevision
+        context.checkoutDateActive = remote.updatedAt
+
+        context.handleEditorConflictReset(remote)
+
+        expect(context.isDirty).toBe(false)
+        expect(adapter.snapshot()).toMatchObject({ editVersion: acceptedVersion, nonPersisted: false })
+        expect(context.lastSavedAt).toBeNull()
+        const closing = action === 'Close' ? context.exit() : context.saveAndClose()
+        await flushSaveUi()
+        expect(previews).toBe(1)
+        expect(testWindow.location.assigned).toEqual([])
+        expect(context.renderWaitController).not.toBeNull()
+        expect(writes).toBe(0)
+
+        release()
+        await flushSaveUi()
+        if (render === 'pending') await vi.advanceTimersByTimeAsync(15_000)
+        await closing
+
+        expect(testWindow.location.assigned).toEqual(render === 'ready' ? ['/en/persisted-path'] : [])
+        expect(store.editor.content).toBe(remote.content)
+        expect(editorText).toBe(remote.content)
+        expect(store.page.sourceRevision).toBe('2')
+        expect(context.localDiscardCalls).toBe(0)
+        expect(context.lastSavedAt).toBeNull()
+        expect(writes).toBe(0)
+      } finally {
+        adapter.destroy()
+      }
+    })
+  }
+
+  for (const pending of ['local merge', 'metadata', 'reason', 'different adapter capture'] as const) {
+    test(`remote baseline acceptance does not acknowledge ${pending} as persisted`, () => {
+      const store = createStore()
+      const context = createShellHarness(store, createTestWindow())
+      const remote: PageConflictLatest = {
+        updatedAt: '2026-09-03T12:00:00.000Z', sourceRevision: '2', content: 'Reviewed remote R2',
+        authorName: 'Independent writer', title: store.page.title, description: store.page.description,
+        locale: store.page.locale, path: store.page.path, visibility: store.page.visibility
+      }
+      let editorText = store.editor.content
+      const adapter = new EditorAdapterController({
+        readText: () => editorText,
+        writeText: text => { editorText = text; store.editor.content = text },
+        clearText: () => { editorText = ''; store.editor.content = '' }
+      })
+      adapter.initialize()
+      context.editorAdapter = Vue.markRaw(adapter)
+      adapter.onState(safety => { context.editorAdapterSafety = safety })
+      try {
+        adapter.replaceText(pending === 'local merge' ? 'Local merge on R2' : remote.content)
+        if (pending === 'metadata') store.page.title = 'Unsaved local title'
+        if (pending === 'reason') context.changeReason = 'Unsaved reason'
+        if (pending === 'different adapter capture') editorText = 'A later editor-only edit'
+        store.page.sourceRevision = remote.sourceRevision
+        context.checkoutDateActive = remote.updatedAt
+
+        context.handleEditorConflictReset(remote)
+
+        expect(adapter.snapshot().nonPersisted).toBe(true)
+        expect(adapter.capture().text).toBe(pending === 'different adapter capture' ? 'A later editor-only edit' : store.editor.content)
+        expect(context.isDirty).toBe(pending !== 'different adapter capture')
+        if (pending === 'metadata') expect(store.page.title).toBe('Unsaved local title')
+        if (pending === 'reason') expect(context.changeReason).toBe('Unsaved reason')
+      } finally {
+        adapter.destroy()
+      }
+    })
+  }
+
+  for (const editor of ['markdown', 'ckeditor'] as const) {
+    for (const render of ['accepted revision', 'newer unreviewed revision'] as const) {
+      test(`${editor} explicit discard keeps the accepted remote source and requires its exact render: ${render}`, async () => {
+        const store = createStore()
+        store.editor.editorKey = editor
+        store.editor.editor = editor === 'markdown' ? 'editorMarkdown' : 'editorCkeditor'
+        const remote: PageConflictLatest = {
+          updatedAt: '2026-09-03T12:00:00.000Z',
+          sourceRevision: '2',
+          content: editor === 'markdown' ? '# Accepted remote\n\nExact R2 source.\n' : '<p>Exact <strong>R2</strong> source.</p>',
+          authorName: 'Independent writer',
+          title: 'Accepted remote title',
+          description: 'Accepted remote description',
+          locale: 'en',
+          path: 'accepted-remote-path',
+          visibility: 'private'
+        }
+        const testWindow = createTestWindow()
+        const deletes: unknown[] = []
+        const previews: string[] = []
+        let writes = 0
+        testWindow.fetch = async (_input, init) => {
+          if (init?.method !== 'DELETE') throw new Error('Unexpected request')
+          deletes.push(JSON.parse(String(init.body)))
+          return Response.json({ discarded: true })
+        }
+        mockRenderPreviews(testWindow, async input => {
+          previews.push(String(input))
+          return Response.json({
+            id: 12,
+            sourceRevision: render === 'accepted revision' ? '2' : '3',
+            locale: 'en',
+            path: 'accepted-remote-path',
+            visibility: 'private',
+            excerpt: 'Rendered remote source'
+          })
+        })
+        const context = createShellHarness(store, testWindow, {
+          discardCollaborationDraft,
+          waitForPageRender,
+          updatePage: async () => {
+            writes++
+            throw new Error('Discard must never write canonical source')
+          }
+        })
+        let editorText = store.editor.content
+        const adapter = new EditorAdapterController({
+          readText: () => editorText,
+          writeText: text => { editorText = text; store.editor.content = text },
+          clearText: () => { editorText = ''; store.editor.content = '' }
+        })
+        adapter.initialize()
+        context.editorAdapter = Vue.markRaw(adapter)
+        adapter.onState(safety => { context.editorAdapterSafety = safety })
+        adapter.replaceText(remote.content)
+        store.page.sourceRevision = remote.sourceRevision
+        context.checkoutDateActive = remote.updatedAt
+        store.page.title = 'Pending local metadata'
+        store.page.path = 'pending-local-move'
+        store.page.tags = ['pending-local-tag']
+        context.changeReason = 'Pending reason survives the conflict choice'
+        context.isConflict = true
+
+        context.handleEditorConflictReset(remote)
+
+        expect(editorText).toBe(remote.content)
+        expect(store.page.title).toBe('Pending local metadata')
+        expect(store.page.tags).toEqual(['pending-local-tag'])
+        expect(context.changeReason).toBe('Pending reason survives the conflict choice')
+        expect(context.isDirty).toBe(true)
+        expect(context.editorAdapterSafety.nonPersisted).toBe(true)
+        expect(context.isConflict).toBe(false)
+        await context.exit()
+        expect(context.dialogUnsaved).toBe(true)
+        await context.discardAndExit()
+
+        expect(editorText).toBe(remote.content)
+        expect(store.editor.content).toBe(remote.content)
+        expect(store.page.sourceRevision).toBe('2')
+        expect(store.page.title).toBe(remote.title)
+        expect(store.page.tags).toEqual(['persisted-tag'])
+        expect(context.changeReason).toBe('')
+        expect(context.isDirty).toBe(false)
+        expect(context.dialogUnsaved).toBe(false)
+        expect(context.localDiscardCalls).toBe(1)
+        expect(deletes).toEqual(editor === 'markdown' ? [{ expectedUpdatedAt: remote.updatedAt, expectedSourceRevision: '2' }] : [])
+        expect(previews).toHaveLength(1)
+        expect(testWindow.location.assigned).toEqual(render === 'accepted revision' ? ['/_private/en/accepted-remote-path'] : [])
+        expect(writes).toBe(0)
+        adapter.destroy()
+      })
+    }
+  }
+
+  test('discard after accepting a local merge restores the reviewed remote baseline, not the merge or original source', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    const context = createShellHarness(store, testWindow)
+    const remote: PageConflictLatest = {
+      updatedAt: '2026-09-03T12:00:00.000Z', sourceRevision: '2', content: 'Reviewed remote R2',
+      authorName: 'Independent writer', title: store.page.title, description: store.page.description,
+      locale: store.page.locale, path: store.page.path, visibility: store.page.visibility
+    }
+    context.editorAdapter.replaceText('Unsaved local merge on R2')
+    store.page.sourceRevision = remote.sourceRevision
+    context.checkoutDateActive = remote.updatedAt
+    context.changeReason = 'Explain the merge'
+
+    context.handleEditorConflictReset(remote)
+
+    expect(store.editor.content).toBe('Unsaved local merge on R2')
+    expect(context.changeReason).toBe('Explain the merge')
+    expect(context.isDirty).toBe(true)
+    expect(context.editorAdapterSafety.nonPersisted).toBe(true)
+    await context.discardAndExit()
+    expect(store.editor.content).toBe('Reviewed remote R2')
+    expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
   })
 
   for (const outcome of ['ready', 'cancelled', 'account changed', 'forbidden'] as const) {

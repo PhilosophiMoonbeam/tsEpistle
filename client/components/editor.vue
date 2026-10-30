@@ -396,7 +396,7 @@ import moment from 'moment-timezone'
 import { useHotkey } from 'vuetify'
 import { createAsyncComponent } from './common/async-component.ts'
 import * as _ from 'lodash-es'
-import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, discardCollaborationDraft, fetchPage, isPageRenderPending, updatePage, waitForPageRender, type PageDetails, type PageRenderTarget, type PageWriteInput } from '../helpers/pages-api'
+import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, discardCollaborationDraft, fetchPage, isPageRenderPending, updatePage, waitForPageRender, type PageConflictLatest, type PageDetails, type PageRenderTarget, type PageWriteInput } from '../helpers/pages-api'
 import { openOfflineStorage, type OfflineStorage } from '../helpers/offline-storage.ts'
 import { wikiStore } from '@/store/index.ts'
 import { translate } from '../modules/localization.ts'
@@ -792,6 +792,7 @@ export default defineComponent({
       lastSavedAt: null as number | null,
       lastSaveKind: 'server' as 'server' | 'device',
       savedRenderTarget: null as Pick<PageRenderTarget, 'id' | 'sourceRevision'> | null,
+      hasReviewedConflictBaseline: false,
       pendingDraftDiscard: null as string | null,
       pendingSubmissionDelete: null as string | null,
       busyRecoveryRow: null as string | null,
@@ -1915,6 +1916,7 @@ export default defineComponent({
         okf: _.cloneDeep(emptyOkf)
       }
       this.savedRenderTarget = null
+      this.hasReviewedConflictBaseline = false
       this.submissionCaptureValues = null
       this.submissionCaptureIdentity = null
       this.offlineCreateIdentity = null
@@ -2015,7 +2017,26 @@ export default defineComponent({
       }
       void this.save()
     },
-    handleEditorConflictReset() {
+    handleEditorConflictReset(baseline: PageConflictLatest) {
+      if (wikiStore.page.sourceRevision !== baseline.sourceRevision || this.checkoutDateActive !== baseline.updatedAt) return
+      // A conflict choice accepts this reviewed canonical baseline, not local metadata
+      // or the editable merge result. Keep those edits and the reason pending.
+      this.savedState = {
+        ...this.savedState,
+        content: baseline.content,
+        title: baseline.title,
+        description: baseline.description,
+        locale: baseline.locale,
+        path: baseline.path,
+        visibility: baseline.visibility
+      }
+      this.savedRenderTarget = Object.freeze({ id: wikiStore.page.id, sourceRevision: baseline.sourceRevision })
+      this.hasReviewedConflictBaseline = true
+      if (!this.isDirty && this.editorAdapterSafety.ready) {
+        const adapter = this.editorAdapter
+        const capture = adapter?.capture()
+        if (capture?.text === baseline.content) adapter?.markPersisted?.(capture.editVersion)
+      }
       this.isConflict = false
       const lifecycleGeneration = this.lifecycleGeneration
       const pageId = wikiStore.page.id
@@ -2706,7 +2727,7 @@ export default defineComponent({
         this.dialogUnsaved = true
       } else {
         this.discardError = ''
-        if (this.lastSavedAt !== null && this.lastSaveKind === 'server') {
+        if (this.hasReviewedConflictBaseline || (this.lastSavedAt !== null && this.lastSaveKind === 'server')) {
           await this.saveAndClose()
           return
         }
