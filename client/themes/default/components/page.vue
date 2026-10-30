@@ -2753,18 +2753,23 @@ export default defineComponent({
       event.stopImmediatePropagation()
       this.shareMenuOpen = true
       const focusLast = event.key === 'ArrowUp'
-      void this.$nextTick(() => {
-        // Lazy VMenu content mounts after its owner's render.
-        requestAnimationFrame(() => {
-          if (!this.shareMenuOpen || this.offlineDisposed || !trigger.isConnected) return
+      let target: HTMLElement | null = null
+      let attempts = 0
+      const focusWhenReady = (): void => {
+        if (!this.shareMenuOpen || this.offlineDisposed || !trigger.isConnected ||
+          document.activeElement !== trigger) return
+        if (!target) {
           const overlayId = trigger.getAttribute('aria-controls')
           const controls = overlayId
             ? document.getElementById(overlayId)?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href]')
             : null
-          const target = focusLast ? controls?.[controls.length - 1] : controls?.[0]
-          target?.focus({ preventScroll: true })
-        })
-      })
+          target = (focusLast ? controls?.[controls.length - 1] : controls?.[0]) ?? null
+        }
+        target?.focus({ preventScroll: true })
+        // Connected menus reject focus until positioned; match VMenu's bounded settling.
+        if (document.activeElement !== target && ++attempts <= 10) requestAnimationFrame(focusWhenReady)
+      }
+      void this.$nextTick(focusWhenReady)
     },
     openPageWatchSettings (event?: MouseEvent): void {
       if (!this.pageWatched) return
@@ -4582,6 +4587,7 @@ export default defineComponent({
       }
     },
     preparePrintView () {
+      this.shareMenuOpen = false
       if (this.printViewBeforePrint === null) {
         this.printViewBeforePrint = this.printView
       }
