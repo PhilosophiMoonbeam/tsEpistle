@@ -55,6 +55,14 @@ For mobile conflict verification, exercise the real page-actions menu and editor
 
 Rich conflict and overwrite-confirmation actions use the existing accessible primary ink, not fixed Indigo. Verify text at 4.5:1 and meaningful icons at 3:1 over the actual light/dark compositor backing. Reuse the materials check's original computed ink/opacity and temporary glyph-paint mask; restore the exact mask before any real action. Do not treat fractional `color()` surfaces or mineral gradients as flat CSS backgrounds.
 
+### Dashboard inventory verification
+
+The fully authorized dashboard has six inventory cards; Assets combines the asset count and storage. Restricted accounts show only their authorized subset. Verify real normal-API counts after bounded binary uploads, including zero, byte and KB/MB values, at desktop and mobile widths. Storage numbers follow the browser locale; a French numeric locale does not establish a translated interface. Keep unknown counts/storage distinct from known zero.
+
+Exercise genuine summary latency and failure, offline state, reconnect and the inventory's own **Retry**, independently of activity-panel retries. Compare every authorized card and the inventory grid between loading and ready, including normally authenticated restricted accounts; unknown states must not expose numeric placeholders. Record whole-document bootstrap CLS separately from component rectangle stability. Identify controlled nullable-data and GB formatter checks explicitly; they do not establish native persisted-missing/GB UI behavior.
+
+Inspect the actual stat and discovery-connection gradients and composed specular/elevation shadows in default and normally saved custom palettes. Exercise keyboard focus on both card classes and apply the compositor-backed ink check described above. Preserve persisted viewer preferences and other policy fields; theme-publication fixtures must remain isolated from the maintained application.
+
 ### Current Agent Administration navigation
 
 Agent Administration (`/a/agents`) exposes all eleven sections, including Browser access, through compact wrapping pills. Labels and badges remain visible without horizontal scrolling; the selected section’s title and description appear in the content header. Left/Right arrows follow the reading direction, while Home/End select the first/last section. Section hashes, restoration, panel associations and inline navigation remain supported.
