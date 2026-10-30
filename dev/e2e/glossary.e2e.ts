@@ -1,6 +1,7 @@
 import { expect, type Page } from '@playwright/test'
 import type { GlossaryTerm, GlossaryTermInput } from '../../shared/glossary.ts'
 import { authenticateAsAdmin, responsiveTest as base, openSearch, sameOriginHeaders } from './helpers'
+import { waitForPageRender } from '../../client/helpers/pages-api.ts'
 
 interface GlossaryFixture {
   first: GlossaryTerm
@@ -254,5 +255,75 @@ test('keeps Glossary distinct from Saved offline, retries catalog failures and e
   await expect(pane.getByRole('button', { name: 'New term', exact: true })).toHaveCount(0)
   if (!guest.canRead) {
     await expect(pane.locator('.glossary-search__term')).toHaveCount(0)
+  }
+})
+
+test('dismisses a tall definition without covering or reactivating its trigger', async ({ page, glossaryTerms: terms }) => {
+  const updated = await page.request.put(`/_api/glossary/terms/${terms.first.id}`, {
+    headers: sameOriginHeaders(),
+    data: {
+      ...inputFor(terms.first),
+      autoLink: true,
+      definition: 'A long visible definition. '.repeat(80),
+      expectedRevision: terms.first.revision
+    }
+  })
+  expect(updated.ok(), `Tall glossary definition: HTTP ${updated.status()}`).toBe(true)
+  const path = `e2e-glossary-hover-${crypto.randomUUID()}`
+  let pageId: number | undefined
+  let sourceRevision: string | undefined
+  try {
+    const created = await page.request.post('/_api/pages', {
+      headers: { ...sameOriginHeaders(), Accept: 'application/json' },
+      data: {
+        content: `# Tall glossary aid\n\n${terms.first.term} appears in this paragraph.\n\n[Continue reading](#continue)\n\n## Continue\n\nThe rest of the article remains reachable.\n`,
+        description: 'Isolated tall glossary card regression',
+        editor: 'markdown',
+        visibility: 'public',
+        isPublished: true,
+        isSearchable: false,
+        locale: 'en',
+        path,
+        publishEndDate: '',
+        publishStartDate: '',
+        scriptCss: '',
+        scriptJs: '',
+        tags: [],
+        title: 'Tall glossary aid'
+      }
+    })
+    expect(created.ok(), `Tall glossary article: HTTP ${created.status()}`).toBe(true)
+    const payload = (await created.json()) as { page: { id: number; sourceRevision: string } }
+    pageId = payload.page.id
+    sourceRevision = payload.page.sourceRevision
+    await waitForPageRender(async url => {
+      const response = await page.request.get(url)
+      return new Response(await response.body(), { status: response.status(), headers: response.headers() })
+    }, { id: pageId, sourceRevision, locale: 'en', path, visibility: 'public' }, AbortSignal.timeout(15_000))
+
+    await page.goto(`/en/${path}`, { waitUntil: 'domcontentloaded' })
+    const reader = page.locator('article.contents')
+    const trigger = reader.locator('a[data-glossary-term]').filter({ hasText: terms.first.term })
+    await expect(trigger).toBeVisible()
+    await trigger.hover()
+    const card = page.getByRole('dialog', { name: terms.first.term, exact: true })
+    await expect(card.locator('.glossary-hover-card__definition')).toBeVisible()
+    const [cardBox, triggerBox] = await Promise.all([card.boundingBox(), trigger.boundingBox()])
+    if (!cardBox || !triggerBox) throw new Error('Glossary card and trigger must have visible geometry.')
+    expect(cardBox.y >= triggerBox.y + triggerBox.height || cardBox.y + cardBox.height <= triggerBox.y).toBe(true)
+    expect(await card.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+
+    await page.keyboard.press('Escape')
+    await expect(card).toBeHidden()
+    await reader.getByRole('link', { name: 'Continue reading', exact: true }).hover({ timeout: 5_000 })
+    await expect(card).toBeHidden()
+  } finally {
+    if (pageId !== undefined && sourceRevision !== undefined) {
+      const removed = await page.request.delete(`/_api/pages/${pageId}`, {
+        headers: sameOriginHeaders(),
+        data: { expectedSourceRevision: sourceRevision }
+      })
+      expect(removed.ok(), `Tall glossary article cleanup: HTTP ${removed.status()}`).toBe(true)
+    }
   }
 })

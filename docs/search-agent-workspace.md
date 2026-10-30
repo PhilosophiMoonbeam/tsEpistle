@@ -12,6 +12,10 @@ Page term links and `?glossary=` URLs open that same Glossary search type. Selec
 
 Management controls remain permission-gated. Unsaved Glossary edits and active saves guard switching search type, closing Search, opening Agent, page navigation and document unload. Typing in the shared header does not discard an edit; its query applies when the user returns to Directory. A server outage or offline state is shown inside Glossary without presenting its results as Saved offline, and terms are not persisted as an offline catalog.
 
+Authorized article terms also offer 280px definition cards on hover or keyboard focus; the first touch opens the aid without navigating, and a second touch dismisses it. The card uses the article's locale independently of the directory locale picker. Tab reaches its controls, Escape restores owned focus, and **Open full glossary** opens the same selected definition in Search. Tall definitions scroll within the available space above or below their trigger rather than covering and reactivating it on dismissal. Open cards revalidate access; offline, disabled and revoked states remove resident definitions instead of reusing an authorized-looking stale result.
+
+**Pin to my memory** deliberately saves the visible term, locale, expansion and definition, with canonical source/glossary context, to the current user's private memory. Opening a card never writes memory or submits an Agent message. Authored reference destinations and private documentation are not copied. Identical content reuses the existing record, including when capacity is full; over-limit or unsafe content is rejected rather than abbreviated, and a failed save never shows success. The memory manager shows the saved record after reload. Existing conversations retain their frozen memory; the saved value applies to new conversations.
+
 Opening Agent from an already-open Search dialog retires the previous Search focus scope before capturing the rendered menu activator. Vuetify's activator slot retains its own ref; restoration targets the actual overflow button.
 
 ## Sources in place
