@@ -35,6 +35,14 @@ Offline Reload refreshes local inventory and storage status in place. It neither
 
 Notifications presents five event rows with separate In-App and Email columns. Every channel control names its event and channel and is associated with its row and column headers. Unsaved changes block Reload; Save, Cancel and failed-save feedback retain the current account’s draft. These settings do not change per-page watches or the approval inbox.
 
+### Reader layout and input verification
+
+Measure the assessment's Home and Contract Interiors reader baselines at 1440×900, 390×844, and 768×1024, plus the 1279/1280 boundary. With default automatic placement and the wide navigation open, actual prose starts at x ≤ 300px beside a 220px right contents rail. Compact baselines start their first paragraph/heading above y = 260px and show one collapsed 40px summary. Also inspect long metadata, RTL, enlarged text, saved Left/Right/Hidden placement, navigation NONE, and custom reading typography without hiding authored content or resetting preferences.
+
+Use a real coarse-pointer touch context, not viewport resizing alone: check each hero control's 44px height and center/edge hit targets. Exercise Share by touch and keyboard, Escape focus restoration, the actual header Edit action, Focus/picker navigation, and desktop-to-mobile resizing. Mobile Chrome may report a temporary zoom-derived `innerWidth` during resize and settle through a visual-viewport event; verify the drawer no longer covers the article and the header toggle becomes reachable.
+
+Verify the surviving hero, contents rail, compact disclosure, and picker use the canonical raised-card material with retained elevation and visible focus. Measure actual composited glyph/focus contrast in light, dark, and a normally saved custom palette; exercise solid/system fallbacks. Operate Watch/settings and approval/protection with real permission boundaries, and check Print, transient Full width, exact source bytes, and History independently. Isolated fixtures establish only their exercised behavior; maintained-tailnet deployment remains a separate gate.
+
 ### Reader progress, cited copy and stewardship
 
 Reading progress records measured reading on the current device, scoped to the reader, page, locale and revision. Completed-section marks and the progress spine describe local reading activity, not certified mastery. Reload retains the same scoped progress; a different revision does not inherit completion of changed content.
