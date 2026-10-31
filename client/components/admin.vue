@@ -605,12 +605,12 @@ export default defineComponent({
 
   .v-list-item--active {
     opacity: 1;
-    background: color-mix(in srgb, var(--wiki-ambient-accent) 12%, transparent);
+    background: color-mix(in oklch, var(--wiki-accent-warm) 12%, transparent);
     color: var(--wiki-accent-ink);
-    box-shadow: inset .1875rem 0 0 var(--wiki-ambient-accent);
+    box-shadow: inset .1875rem 0 0 var(--wiki-accent-ink);
 
     .v-locale--is-rtl & {
-      box-shadow: inset -.1875rem 0 0 var(--wiki-ambient-accent);
+      box-shadow: inset -.1875rem 0 0 var(--wiki-accent-ink);
     }
 
     .v-icon {
