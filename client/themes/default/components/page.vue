@@ -283,10 +283,12 @@
       v-container.page-body(fluid)
         v-row
           v-col.page-col-sd(
-            v-if='tocPosition !== `off` && !printView'
+            v-if='tocPosition !== `off`'
+            v-show='!printView'
             cols='12'
             :class='tocPosition === `right` ? `page-col-sd--toc-right` : `page-col-sd--toc-left`'
           )
+            //- Teleport caches this target across print's disabled/enabled cycle.
             #page-desktop-rail.page-desktop-rail
 
           v-col.page-col-content(
