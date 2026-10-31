@@ -14,7 +14,11 @@ The shared `AdminHero` provides a semantic heading, contextual description, stat
 
 Explicitly elevated, enabled, uncoloured Vuetify cards consume the saved palette's `--wiki-surface-gradient` and `--wiki-specular-border`. The pointer-inert specular pseudo-layer does not replace native elevation or hover feedback; keyboard focus keeps its visible outline and host shadow. Flat, tonal, zero-elevation, disabled, semantic-colour and explicitly painted cards retain their own treatment. Forced colours use system backing rather than decorative sheen.
 
-The application canvas keeps its two subtle, palette-derived radial washes without periodic coordinate-grid layers. Component-specific public-state treatments remain separately scoped; removing the global grid does not erase their live variables or replace content with opaque masking surfaces.
+The application canvas keeps its two subtle, palette-derived radial washes without periodic coordinate-grid layers. Public missing-page, unauthorized and new-page states use clean mineral canvases rather than independent pseudo-element grids. Keep shared spacing variables: Reader and History layouts still consume them.
+
+The shared sign-in, registration, setup and empty-wiki welcome frame also has no coordinate overlay. Its configured background, ambient aura, peripheral frame, card layout and branding remain independent of that decorative layer. Compact auth layouts intentionally suppress the configured background image at widths up to 599px; removing the grid must not undo that responsive policy or change the particle logo's existing 960px composition contract.
+
+Missing-page headings use modest negative tracking and wrap with the path and action group in narrow or enlarged-text layouts. The icon and top accent share the warm-to-spectral mineral gradient. Create invitations retain the exact authorized locale/path editor destination; private, reserved and read/write-denied routes do not gain an editor link. Search, Home and Back remain ordinary keyboard-accessible navigation actions.
 
 The shared glass API lives in `client/scss/base/base.scss`; consumers select a role instead of declaring another palette or opacity system.
 
