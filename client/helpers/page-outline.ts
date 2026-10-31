@@ -215,10 +215,10 @@ export type PageReadingProgressState = {
  * Opt-in only. Update scope synchronously before an authority/account/page
  * transition can render. Matching records expire after 90 days; future,
  * corrupt, unknown-version or mismatched scope/revision/page-fingerprint
- * records are ignored before display. Fingerprints ignore only initial Vue
- * slot transport whitespace, preserving preformatted text. A revision change
- * resets everything; a live same-revision refresh resets changed/renamed/removed
- * sections only.
+ * records are ignored before display. Fingerprints ignore initial Vue slot
+ * transport whitespace and empty fragment anchors, preserving preformatted text.
+ * A revision change resets everything; a live same-revision refresh resets
+ * changed/renamed/removed sections only.
  * Same-scope tabs union earned coverage; storage deletion clears local state.
  * Storage denial/quota failure leaves the session usable in memory.
  */
@@ -271,7 +271,9 @@ function readingRangeText(range: Range): string {
   let text = ''
   while (walker.nextNode()) {
     const node = walker.currentNode as Text
-    if (!range.intersectsNode(node)) continue
+    // Vue's empty Text fragment anchors are not authored whitespace. Nested
+    // initial slots have more anchors than SPA slots; none may invent a space.
+    if (node.data.length === 0 || !range.intersectsNode(node)) continue
     let content = node.data
     // Initial server slots pass through Vue's whitespace-condensing compiler;
     // SPA content uses v-html. Match the initial representation so the same

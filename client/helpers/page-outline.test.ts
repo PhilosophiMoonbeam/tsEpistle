@@ -490,7 +490,10 @@ describe('local reading traversal', () => {
     return { key, raw: window.localStorage.getItem(key)! }
   }
 
-  function fixture({ short = false, noHeadings = false, disclosure = false, rawTransport = false, readingScope = scope, code = '' } = {}) {
+  function fixture({
+    short = false, noHeadings = false, disclosure = false,
+    rawTransport = false, slotTransport = false, readingScope = scope, code = ''
+  } = {}) {
     const now = Date.now()
     vi.useFakeTimers()
     vi.setSystemTime(now)
@@ -540,17 +543,27 @@ describe('local reading traversal', () => {
       pre.textContent = code
       article.append(pre)
     }
-    if (rawTransport) {
-      // Initial in-DOM Vue slots condense these formatting nodes; SPA v-html
-      // preserves them and adds its wrapper around the server transport.
+    if (slotTransport || rawTransport) {
+      // Initial nested Vue slots have two fragment pairs around one server
+      // transport. SPA keeps one pair and adds a raw v-html transport wrapper.
       const transport = document.createElement('div')
       transport.className = 'wiki-page-rendered-contents'
-      transport.append('\n')
-      for (const node of [...article.childNodes]) transport.append(node, '\n')
-      const wrapper = document.createElement('div')
-      wrapper.className = 'wiki-page-rendered-contents'
-      wrapper.append(transport)
-      article.append(wrapper)
+      if (rawTransport) transport.append('\n')
+      for (const node of [...article.childNodes]) {
+        transport.append(node)
+        if (rawTransport) transport.append('\n')
+      }
+      let content = transport
+      if (rawTransport) {
+        content = document.createElement('div')
+        content.className = 'wiki-page-rendered-contents'
+        content.append(transport)
+      }
+      article.append(document.createTextNode(''))
+      if (!rawTransport) article.append(document.createTextNode(''))
+      article.append(content)
+      if (!rawTransport) article.append(document.createTextNode(''))
+      article.append(document.createTextNode(''))
     }
     document.body.append(header, article)
     const states: PageReadingProgressState[] = []
@@ -800,8 +813,10 @@ describe('local reading traversal', () => {
   })
 
   test('restores earned same-scope coverage after returning through raw SPA transport without relaxing authority or code fingerprints', () => {
-    const code = '  keep indentation\n    and line breaks\n'
-    const first = fixture({ code })
+    const code = '\n  keep indentation\n    and line breaks\n\n'
+    const first = fixture({ code, slotTransport: true })
+    expect(first.article.childNodes.length).toBe(5)
+    expect(first.article.querySelectorAll('.wiki-page-rendered-contents').length).toBe(1)
     first.read(0)
     vi.advanceTimersByTime(1_500)
     const earned = first.states.at(-1)!
@@ -818,6 +833,8 @@ describe('local reading traversal', () => {
 
     const returned = fixture({ rawTransport: true, code })
     try {
+      expect(returned.article.childNodes.length).toBe(3)
+      expect(returned.article.querySelectorAll('.wiki-page-rendered-contents').length).toBe(2)
       expect(returned.states.at(-1)).toEqual(earned)
       vi.advanceTimersByTime(2_500)
       expect(returned.states.at(-1)).toEqual(earned)
@@ -832,12 +849,19 @@ describe('local reading traversal', () => {
       returned.dispose()
     }
 
-    const changedCode = fixture({ rawTransport: true, code: code.replace('    and', '  and') })
-    try {
-      expect(changedCode.states.at(-1)?.completedAnchors).toEqual([])
-      expect(window.localStorage.getItem(saved.key)).toBe(saved.raw)
-    } finally {
-      changedCode.dispose()
+    for (const changed of [
+      code.slice(1),
+      code.slice(0, -1),
+      code.replace('  keep', ' keep'),
+      code.replace('    and', '  and')
+    ]) {
+      const changedCode = fixture({ rawTransport: true, code: changed })
+      try {
+        expect(changedCode.states.at(-1)?.completedAnchors).toEqual([])
+        expect(window.localStorage.getItem(saved.key)).toBe(saved.raw)
+      } finally {
+        changedCode.dispose()
+      }
     }
   })
 
