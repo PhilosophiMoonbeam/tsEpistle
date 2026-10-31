@@ -151,10 +151,6 @@ export default defineComponent({
     inset: var(--wiki-space-8);
     border: 1px solid color-mix(in srgb, var(--wiki-accent-spectral) 14%, transparent);
     border-radius: var(--wiki-hero-radius);
-    background-image:
-      linear-gradient(var(--wiki-surface-border) 1px, transparent 1px),
-      linear-gradient(90deg, var(--wiki-surface-border) 1px, transparent 1px);
-    background-size: var(--wiki-grid-size) var(--wiki-grid-size);
     content: '';
     mask-image: linear-gradient(90deg, transparent 38%, rgb(var(--v-theme-on-surface)));
     opacity: .42;
