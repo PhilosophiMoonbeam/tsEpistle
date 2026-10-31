@@ -473,6 +473,8 @@ export default defineComponent({
       offlinePrivateSearchCorpusRevision: null as number | null,
       offlinePrivateSearchCorpusSessionGeneration: null as number | null,
       offlinePrivateSearchCorpusExpiresAt: null as number | null,
+      offlinePrivateResponseExpiresAt: null as number | null,
+      offlinePrivateResponseExpiryTimer: null as number | null,
       offlinePrivateSearchEnabled: false,
       serverRetryPending: false,
       searchRetryId: 0,
@@ -748,7 +750,27 @@ export default defineComponent({
     },
     response: {
       flush: 'sync',
-      handler() { this.copyIdentityEpoch++ }
+      handler() {
+        this.copyIdentityEpoch++
+        this.offlinePrivateResponseExpiresAt = null
+      }
+    },
+    offlinePrivateResponseExpiresAt(expiresAt: number | null) {
+      if (this.offlinePrivateResponseExpiryTimer !== null) window.clearTimeout(this.offlinePrivateResponseExpiryTimer)
+      this.offlinePrivateResponseExpiryTimer = null
+      if (expiresAt === null) return
+      const expire = (): void => {
+        if (this.offlinePrivateResponseExpiresAt !== expiresAt) return
+        const remaining = expiresAt - Date.now()
+        if (remaining > 0) {
+          this.offlinePrivateResponseExpiryTimer = window.setTimeout(expire, Math.min(remaining, 2_147_483_647))
+          return
+        }
+        this.offlinePrivateResponseExpiryTimer = null
+        // Retire hidden responses too, but only refresh a query the user is viewing.
+        this.queueSearch(this.searchIsFocused ? this.search : '')
+      }
+      expire()
     },
     glossaryOpened: {
       immediate: true,
@@ -787,7 +809,7 @@ export default defineComponent({
         this.searchScope = 'wiki'
       }
       if (mode === 'search') {
-        if (!this.hasFreshResponse) this.queueSearch(this.search)
+        this.queueSearch(this.search)
         return
       }
       this.searchAbortController?.abort()
@@ -818,7 +840,7 @@ export default defineComponent({
       }
       if (open) {
         void this.activateAgentModal()
-        if (this.searchMode === 'search' && !this.hasFreshResponse) this.queueSearch(this.search)
+        if (this.searchMode === 'search') this.queueSearch(this.search)
         return
       }
       const restoreFocus = this.searchExitRestoreFocus
@@ -899,6 +921,8 @@ export default defineComponent({
     this.directPromptHandoffId += 1
     this.resolveInlineAgentWaiters(null)
     if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
+    if (this.offlinePrivateResponseExpiryTimer !== null) window.clearTimeout(this.offlinePrivateResponseExpiryTimer)
+    this.offlinePrivateResponseExpiryTimer = null
     this.searchAbortController?.abort()
     this.searchAbortController = null
     this.moreAbortController?.abort()
@@ -1242,6 +1266,17 @@ export default defineComponent({
       if (scope === 'downloaded' && this.searchMode === 'ask') this.searchMode = 'search'
     },
     queueSearch(query: string | null | undefined): void {
+      // A matching request key does not extend a decrypted response's lifetime.
+      if (this.offlinePrivateResponseExpiresAt !== null && this.offlinePrivateResponseExpiresAt <= Date.now()) {
+        this.offlinePrivateResponseExpiresAt = null
+        this.response = emptySearchResponse()
+        this.responseKey = ''
+        this.responseQuery = ''
+        this.responseScopeLabel = ''
+        this.offlineCorpusCount = null
+        this.offlineResultsTruncated = false
+        this.cursor = -1
+      }
       if (this.responseKey !== this.searchRequestKey) this.cursor = -1
       this.searchRequestId += 1
       const requestId = this.searchRequestId
@@ -1887,6 +1922,7 @@ export default defineComponent({
         this.responseKey = requestKey
         this.responseQuery = query
         this.responseScopeLabel = this.searchContextLabel
+        this.offlinePrivateResponseExpiresAt = privateNextExpiry
       } catch (error) {
         if (
           requestId !== this.searchRequestId ||

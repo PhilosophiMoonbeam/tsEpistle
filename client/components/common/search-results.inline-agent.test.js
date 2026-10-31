@@ -1,6 +1,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import * as ts from 'typescript'
+import { compileTemplate, parse } from '@vue/compiler-sfc'
+import { browserWindow, document, setLocation } from '../../test/browser-dom.mts'
+import { translateEnglish } from '../../test/english-translate.mts'
+import { createModalFocusScope, activeOwnedOverlayRoots } from './modal-focus-scope'
+import { createSearchHighlighter } from '../../helpers/search-highlight.ts'
+import { offlinePageHref, requestOfflineSavedPageOpen } from '../../helpers/offline-routes.ts'
 import {
   OFFLINE_CONTENT_TYPE,
   OFFLINE_HTML_SANITIZER_VERSION,
@@ -9,7 +15,7 @@ import {
   OfflinePrivateSearchDocumentV1Schema,
   OfflineSnapshotRecordSchema
 } from '../../../shared/offline.ts'
-import { currentOfflineReadingEpoch, currentOfflineReadingHandle } from '../../helpers/offline-session.ts'
+import { currentOfflineReadingEpoch, currentOfflineReadingHandle, OFFLINE_READING_STATE_EVENT } from '../../helpers/offline-session.ts'
 import { readPrivateCorpus } from '../../helpers/offline-crypto.ts'
 import { mergeOfflineSearchCorpora, prepareOfflineSearchCorpus, searchPreparedOfflineDocumentsAsync } from '../../helpers/offline-search.ts'
 
@@ -99,39 +105,47 @@ const deferred = () => {
   return { promise, resolve, reject }
 }
 
-const useSearchScheduler = () => {
+const useSearchScheduler = (targetWindow = null) => {
   const originalWindow = globalThis.window
+  const originalSetTimeout = targetWindow?.setTimeout
+  const originalClearTimeout = targetWindow?.clearTimeout
   let nextId = 0
   const timers = new Map()
+  const setTimeout = (callback, milliseconds = 0) => {
+    const id = ++nextId
+    timers.set(id, { callback, milliseconds })
+    return id
+  }
+  const clearTimeout = id => timers.delete(id)
+  if (targetWindow) {
+    targetWindow.setTimeout = setTimeout
+    targetWindow.clearTimeout = clearTimeout
+  }
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
     writable: true,
-    value: {
-      clearTimeout: id => timers.delete(id),
-      fetch: () => Promise.reject(new Error('Unexpected fetch')),
-      setTimeout: callback => {
-        const id = ++nextId
-        timers.set(id, callback)
-        return id
-      }
-    }
+    value: targetWindow ?? { clearTimeout, setTimeout, fetch: () => Promise.reject(new Error('Unexpected fetch')) }
   })
   return {
     pending: () => timers.size,
-    runNext: () => {
-      const entry = timers.entries().next().value
+    runNext: (milliseconds = null) => {
+      const entry = [...timers.entries()].find(([, timer]) => milliseconds === null || timer.milliseconds === milliseconds)
       if (!entry) throw new Error('No scheduled search was available.')
       timers.delete(entry[0])
-      entry[1]()
+      entry[1].callback()
     },
     restore: () => {
+      if (targetWindow) {
+        targetWindow.setTimeout = originalSetTimeout
+        targetWindow.clearTimeout = originalClearTimeout
+      }
       if (originalWindow === undefined) delete globalThis.window
       else globalThis.window = originalWindow
     }
   }
 }
 
-const createPrivateExpirySearch = (source, { deferFirstRanking = false } = {}) => {
+const createPrivateExpirySearch = (source, { deferFirstRanking = false, targetWindow = null } = {}) => {
   const origin = 'https://wiki.example.test'
   const siteId = 'private-search-site'
   const capturedAt = '2026-09-01T12:00:00.000Z'
@@ -171,7 +185,8 @@ const createPrivateExpirySearch = (source, { deferFirstRanking = false } = {}) =
       searchDocument: OfflinePrivateSearchDocumentV1Schema.parse({
         ...adapters.toOfflineSearchDocument(record),
         sourceRevision: record.snapshot.sourceRevision
-      })
+      }),
+      record
     }
   })
   const policies = [
@@ -225,13 +240,32 @@ const createPrivateExpirySearch = (source, { deferFirstRanking = false } = {}) =
   const rankingStarted = deferred()
   const releaseRanking = deferred()
   const replacementFinished = deferred()
+  let onStorageClose = null
   const storage = {
-    readSnapshotCorpus: async () => ({ snapshots: [], corpusRevision, sessionGeneration: 1 }),
+    readSnapshotCorpus: async () => ({
+      snapshots: targetWindow ? [{
+        ...pairs[1].record,
+        siteId: origin,
+        pageId: 3,
+        snapshot: {
+          ...pairs[1].snapshot,
+          pageId: 3,
+          title: 'Quasar public reference',
+          path: 'public/reference',
+          canonicalPath: '/en/public/reference'
+        }
+      }] : [],
+      corpusRevision,
+      sessionGeneration: 1
+    }),
     currentCorpusRevision: async () => corpusRevision,
     currentSessionGeneration: async () => 1,
-    close: () => {}
+    close: () => {
+      onStorageClose?.()
+      onStorageClose = null
+    }
   }
-  const methods = compileSearchMethods(source, ['queueSearch', 'runSearch', 'runOfflineSearch', 'handleOfflineReadingStateChange'], {
+  const dependencies = {
     openOfflineStorage: async () => storage,
     emptySearchResponse: () => ({ results: [], suggestions: [], totalHits: 0 }),
     getErrorMessage: value => (value instanceof Error ? value.message : String(value)),
@@ -264,7 +298,8 @@ const createPrivateExpirySearch = (source, { deferFirstRanking = false } = {}) =
       return ranked
     },
     OFFLINE_SEARCH_RESULT_LIMIT: 50
-  })
+  }
+  const methods = compileSearchMethods(source, ['queueSearch', 'runSearch', 'runOfflineSearch', 'handleOfflineReadingStateChange'], dependencies)
   const state = {
     search: '',
     searchMode: 'search',
@@ -305,13 +340,16 @@ const createPrivateExpirySearch = (source, { deferFirstRanking = false } = {}) =
       return methods.runOfflineSearch.apply(this, args)
     }
   }
-  const scheduler = useSearchScheduler()
-  window.location = { origin }
+  const scheduler = useSearchScheduler(targetWindow)
+  if (targetWindow) setLocation(origin)
+  else window.location = { origin }
   const originalNow = Date.now
   Date.now = () => now
   return {
     state,
     methods,
+    dependencies,
+    nextSearchFinished: () => new Promise(resolve => { onStorageClose = resolve }),
     scheduler,
     expiresAt,
     rankingStarted,
@@ -334,6 +372,131 @@ const createPrivateExpirySearch = (source, { deferFirstRanking = false } = {}) =
     restore() {
       Date.now = originalNow
       scheduler.restore()
+    }
+  }
+}
+
+const Vue = await import('vue')
+const mountPrivateExpirySearch = async (source, options = {}) => {
+  const previousLocation = window.location.href
+  const harness = createPrivateExpirySearch(source, { ...options, targetWindow: browserWindow })
+  const store = Vue.reactive({
+    user: { id: 7, authenticated: true, permissions: [] },
+    authRefreshPending: false,
+    authRefreshSettled: true,
+    authRefreshOutcome: 'authenticated',
+    offlineIdentityReady: true,
+    page: { id: 0, locale: 'en', path: '', updatedAt: '', title: '' },
+    site: {
+      search: 'quasar',
+      searchMode: 'search',
+      searchIsFocused: true,
+      searchIsLoading: false,
+      searchRestrictLocale: false,
+      searchRestrictPath: false
+    }
+  })
+  const passthrough = (tag = 'div') => Vue.defineComponent({
+    setup(_props, { attrs, slots }) {
+      return () => Vue.h(tag, attrs, [slots.prepend?.(), slots.default?.(), slots.append?.()])
+    }
+  })
+  const dependencies = {
+    // Inject imported boundaries only; the complete script declares its own adapters.
+    openOfflineStorage: harness.dependencies.openOfflineStorage,
+    getErrorMessage: harness.dependencies.getErrorMessage,
+    currentOfflineReadingHandle: harness.dependencies.currentOfflineReadingHandle,
+    currentOfflineReadingEpoch: harness.dependencies.currentOfflineReadingEpoch,
+    readPrivateCorpus: harness.dependencies.readPrivateCorpus,
+    prepareOfflineSearchCorpus: harness.dependencies.prepareOfflineSearchCorpus,
+    searchPreparedOfflineDocumentsAsync: harness.dependencies.searchPreparedOfflineDocumentsAsync,
+    OFFLINE_SEARCH_RESULT_LIMIT: harness.dependencies.OFFLINE_SEARCH_RESULT_LIMIT,
+    defineComponent: Vue.defineComponent,
+    AsyncState: Vue.defineComponent({
+      props: ['state', 'title', 'message'],
+      setup: props => () => Vue.h('div', { role: props.state === 'error' ? 'alert' : 'status' }, [props.title, props.message])
+    }),
+    CitedCopyAction: Vue.defineComponent({
+      props: ['disabled', 'source'],
+      setup: props => () => Vue.h('button', { class: 'fixture-cited-copy', disabled: props.disabled }, 'Copy')
+    }),
+    createAsyncComponent: () => Vue.defineComponent({ render: () => null }),
+    wikiStore: store,
+    siteConfig: { agentsEnabled: false },
+    pwaState: { connectionState: 'offline', serverReachable: false, serverHealthy: false },
+    useAgentsStore: () => ({ setCurrentPage() {}, closeWorkspace() {} }),
+    onSearchEnter() {}, onSearchExit() {}, onSearchMove() {},
+    offSearchEnter() {}, offSearchExit() {}, offSearchMove() {},
+    emitSearchFocus() {},
+    subscribeOfflineStorageChanges: () => () => {},
+    OFFLINE_READING_STATE_EVENT,
+    OfflinePrivateSearchDocumentV1Schema,
+    mergeOfflineSearchCorpora,
+    createSearchHighlighter,
+    createModalFocusScope,
+    activeOwnedOverlayRoots,
+    offlinePageHref,
+    requestOfflineSavedPageOpen
+  }
+  const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)[1]
+  const parsed = ts.createSourceFile('search-results.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const executable = ts.transpileModule(
+    parsed.statements.filter(statement => !ts.isImportDeclaration(statement))
+      .map(statement => statement.getText(parsed)).join('\n').replace('export default', 'return'),
+    { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }
+  ).outputText
+  const component = new Function(...Object.keys(dependencies), executable)(...Object.values(dependencies))
+  const { descriptor, errors } = parse(source, { filename: 'search-results.vue' })
+  if (errors.length) throw errors[0]
+  if (!descriptor.template) throw new Error('Search component template was not found.')
+  const template = compileTemplate({
+    source: descriptor.template.content,
+    filename: 'search-results.vue',
+    id: 'private-search-expiry-consumer',
+    preprocessLang: descriptor.template.lang,
+    preprocessOptions: { doctype: 'html' },
+    compilerOptions: { mode: 'function' }
+  })
+  if (template.errors.length) throw template.errors[0]
+  const container = document.createElement('div')
+  container.innerHTML = '<header class="nav-header"><label class="nav-header-search-control"><input aria-label="Search"></label></header><div class="fixture-search-host"></div>'
+  document.body.append(container)
+  const input = container.querySelector('input')
+  input.value = store.site.search
+  input.addEventListener('focus', () => { store.site.searchIsFocused = true })
+  input.addEventListener('input', () => { store.site.search = input.value })
+  const app = Vue.createApp({ ...component, render: new Function('Vue', template.code)(Vue) })
+  for (const name of ['v-list', 'v-list-item', 'v-list-item-title', 'v-list-item-subtitle', 'v-chip', 'v-icon', 'v-divider', 'v-tooltip']) {
+    app.component(name, passthrough())
+  }
+  app.component('v-btn', passthrough('button'))
+  app.config.globalProperties.$t = translateEnglish
+  app.config.globalProperties.$vuetify = { display: { smAndDown: false } }
+  const instance = app.mount(container.querySelector('.fixture-search-host'))
+  await Vue.nextTick()
+  return {
+    ...harness,
+    container,
+    instance,
+    async completeSearch() {
+      const finished = harness.nextSearchFinished()
+      harness.scheduler.runNext(300)
+      await finished
+      await Vue.nextTick()
+    },
+    async reopen() {
+      input.focus()
+      await Vue.nextTick()
+    },
+    async close() {
+      container.querySelector('.search-results-close').click()
+      await Vue.nextTick()
+    },
+    restore() {
+      app.unmount()
+      container.remove()
+      harness.restore()
+      setLocation(previousLocation)
     }
   }
 }
@@ -1518,6 +1681,83 @@ describe('inline Ask mode contract', () => {
       expect(state.searchError).toBe('')
       expect(harness.scheduler.pending()).toBe(0)
     } finally {
+      harness.restore()
+    }
+  })
+  test.each(['visible deadline', 'same-query reopen'])('retires rendered private metadata through %s without a corpus revision change', async transition => {
+    const harness = await mountPrivateExpirySearch(search)
+    const { container } = harness
+    try {
+      await harness.completeSearch()
+      expect(container.querySelectorAll('.search-results-row')).toHaveLength(3)
+      expect(container.textContent).toContain('Quasar stellar transient')
+      expect(container.querySelectorAll('.fixture-cited-copy:disabled')).toHaveLength(3)
+      expect(container.querySelector('.search-results-preview')).toBeNull()
+
+      if (transition === 'same-query reopen') {
+        await harness.close()
+        await harness.reopen()
+        expect(container.querySelectorAll('.search-results-row')).toHaveLength(3)
+        expect(container.querySelector('.search-results-loader')).toBeNull()
+        await harness.close()
+      }
+      harness.advanceToDeadline()
+      if (transition === 'same-query reopen') {
+        // Deliberately leave the deadline callback pending, as in a suspended tab.
+        await harness.reopen()
+      } else {
+        harness.scheduler.runNext(1000)
+        await Vue.nextTick()
+      }
+      expect(container.textContent).not.toContain('Quasar stellar transient')
+      expect(container.querySelector('[title="Quasar stellar transient"]')).toBeNull()
+      await harness.completeSearch()
+      expect(container.querySelectorAll('.search-results-row')).toHaveLength(2)
+      expect(container.textContent).toContain('Observatory notes')
+      expect(container.textContent).toContain('Quasar public reference')
+      expect(container.textContent).not.toContain('Quasar stellar transient')
+      expect(container.querySelectorAll('.fixture-cited-copy:disabled')).toHaveLength(2)
+      expect(container.querySelector('.search-results-preview')).toBeNull()
+      expect(container.querySelector('.search-results-summary')).not.toBeNull()
+      expect(container.querySelector('.search-results-previous, .search-results-loader, [role="alert"]')).toBeNull()
+      expect(container.querySelector('.search-results')?.getAttribute('aria-busy')).toBe('false')
+      expect(container.querySelector('input')?.value).toBe('quasar')
+      await harness.close()
+      await harness.reopen()
+      expect(container.querySelectorAll('.search-results-row')).toHaveLength(2)
+      expect(container.textContent).not.toContain('Quasar stellar transient')
+    } finally {
+      harness.restore()
+    }
+  })
+
+  test('never renders a private title from ranking delivered after expiry and settles the same query with public and unexpired hits', async () => {
+    const harness = await mountPrivateExpirySearch(search, { deferFirstRanking: true })
+    const { container } = harness
+    try {
+      const firstFinished = harness.nextSearchFinished()
+      harness.scheduler.runNext(300)
+      const ranked = await harness.rankingStarted.promise
+      expect(ranked.results.map(result => result.document.pageId).sort()).toEqual([1, 2, 3])
+      harness.advanceToDeadline()
+      harness.releaseRanking.resolve()
+      await firstFinished
+      await Vue.nextTick()
+      expect(container.textContent).not.toContain('Quasar stellar transient')
+      expect(container.querySelector('[title="Quasar stellar transient"]')).toBeNull()
+
+      await harness.completeSearch()
+      expect(container.querySelectorAll('.search-results-row')).toHaveLength(2)
+      expect(container.textContent).toContain('Observatory notes')
+      expect(container.textContent).toContain('Quasar public reference')
+      expect(container.textContent).not.toContain('Quasar stellar transient')
+      expect(container.querySelectorAll('.fixture-cited-copy:disabled')).toHaveLength(2)
+      expect(container.querySelector('.search-results-preview, .search-results-loader, .search-results-previous, [role="alert"]')).toBeNull()
+      expect(container.querySelector('.search-results-summary')).not.toBeNull()
+      expect(container.querySelector('.search-results')?.getAttribute('aria-busy')).toBe('false')
+      expect(container.querySelector('input')?.value).toBe('quasar')
+    } finally {
+      harness.releaseRanking.resolve()
       harness.restore()
     }
   })
