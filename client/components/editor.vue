@@ -114,7 +114,8 @@
         v-divider.editor-actions-divider.ml-3(v-if='$vuetify.display.mdAndUp', vertical)
     v-menu.editor-change-reason-popover(
       ref='changeReasonPopover'
-      v-model='changeReasonOpen'
+      :key='`change-reason-${changeReasonPopoverKey}`'
+      :model-value='changeReasonOpen'
       :id='`${changeReasonId}-popover`'
       :activator='changeReasonActivator ?? undefined'
       :activator-props='{ "aria-haspopup": "dialog" }'
@@ -127,6 +128,8 @@
       role='dialog'
       :aria-label='$t(`editor:save.changeReason`)'
       @after-enter='focusChangeReason'
+      @update:model-value='onChangeReasonModel'
+      @click:outside='changeReasonOpen = false'
     )
       v-card.editor-change-reason-panel
         v-text-field(
@@ -756,6 +759,7 @@ export default defineComponent({
       changeReason: '',
       changeReasonLimit: MAX_PAGE_CHANGE_REASON_LENGTH,
       changeReasonOpen: false,
+      changeReasonPopoverKey: 0,
       changeReasonActivator: null as HTMLElement | null,
       renderWaitController: null as AbortController | null,
       editorAdapter: null as EditorAdapter | null,
@@ -1077,6 +1081,11 @@ export default defineComponent({
     imagePropertiesOwnerKey: {
       flush: 'sync',
       handler() { this.closeImageProperties() }
+    },
+    changeReasonOpen(open: boolean) {
+      // Reopened inactive overlays defer globalTop; each opening starts active.
+      // Namespace its identity away from Vue's numeric v-if branch keys.
+      if (open) this.changeReasonPopoverKey += 1
     },
     '$vuetify.display.smAndDown'() {
       if (!this.changeReasonOpen) return
@@ -1522,7 +1531,8 @@ export default defineComponent({
       return {
         dirtyMetadata: this.isMetadataDirty(),
         mergeState: !adapter.ready || adapter.nonPersisted || adapter.mergeDirty || this.activeModal !== '' || this.dialogUnsaved || this.dialogProps || this.dialogEditorSelector,
-        collaborationBacklog: Math.max(adapter.collaborationBacklog, this.collaborationActive ? 1 : 0),
+        // An open collaboration session is not an unacknowledged update.
+        collaborationBacklog: adapter.collaborationBacklog,
         routeIdentity: JSON.stringify({
           mode: this.mode,
           pageId: wikiStore.page.id,
@@ -1986,6 +1996,19 @@ export default defineComponent({
       }
       this.changeReasonActivator = markRaw(target)
       this.changeReasonOpen = true
+    },
+    onChangeReasonModel(open: boolean) {
+      // Outside clicks close the owner first, leaving pointer focus alone.
+      if (!open && this.changeReasonOpen) {
+        const popover = this.$refs.changeReasonPopover as { contentEl?: HTMLElement } | undefined
+        // A fresh menu binds its imperative activator on the next tick. If
+        // dismissal wins that race, the owner still knows where focus belongs.
+        if (popover?.contentEl?.contains(document.activeElement)) {
+          this.dismissChangeReason()
+          return
+        }
+      }
+      this.changeReasonOpen = open
     },
     dismissChangeReason() {
       const activator = this.changeReasonActivator

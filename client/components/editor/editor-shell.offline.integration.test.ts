@@ -27,7 +27,7 @@ import type {
   OfflineSubmissionFinalizationResult
 } from '../../helpers/offline-storage.ts'
 import { isPageRenderPending, type PageWriteInput, updatePage, waitForPageRender } from '../../helpers/pages-api.ts'
-import type { EditorAdapterController, EditorAdapterSafety as AdapterSafety } from './common/editor-adapter.ts'
+import { EditorAdapterController, type EditorAdapterSafety as AdapterSafety } from './common/editor-adapter.ts'
 import type { BrowserFetch as Fetch } from '../../helpers/json-transport.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
@@ -179,6 +179,7 @@ type ShellContext = {
   offlineDraftMutationBlocked: boolean
   save: (options?: { rethrow?: boolean; overwrite?: boolean }) => Promise<boolean>
   saveAndClose: () => Promise<boolean>
+  handleBeforeUnload: (event: BeforeUnloadEvent) => void
   navigateToSavedPage: (capture: SaveCapture, requireReloadSafety?: boolean) => Promise<boolean>
   setupOfflineDraftCoordinator: () => void
   initializeOfflineDrafts: () => Promise<void>
@@ -671,6 +672,106 @@ afterEach(() => {
 })
 
 describe('composed editor offline submission boundary', () => {
+  test('a saved connected Markdown session becomes unload-safe only after its actual update backlog drains', async () => {
+    const storage = new ComposedDraftStorage()
+    const writes: PageWriteInput[] = []
+    const fetchImpl: Fetch = async (input, init) => {
+      const url = new URL(String(input), ORIGIN)
+      if (url.pathname === '/_api/offline/draft-key' && init?.method === 'POST') return keyFetch()
+      if (url.pathname === '/_api/pages/12' && init?.method === 'PUT') {
+        writes.push(JSON.parse(String(init.body)))
+        return new Response(JSON.stringify({ page: { updatedAt: '2026-09-03T12:00:00.000Z', sourceRevision: '2' } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    }
+    const testWindow = createTestWindow(fetchImpl)
+    installWindow(testWindow)
+    const store = reactive(createStore())
+    const shell = createReactiveShellContext(store, testWindow, storage, { debounceMs: 60_000 })
+    let pendingUpdates = 1
+    const adapter = new EditorAdapterController({
+      readText: () => store.editor.content,
+      writeText: text => { store.editor.content = text },
+      clearText: () => { store.editor.content = '' },
+      collaborationBacklog: () => pendingUpdates
+    })
+    shell.editorAdapter = markRaw(adapter)
+    adapter.onState(safety => { shell.editorAdapterSafety = safety })
+    adapter.initialize()
+    shell.collaborationActive = true
+    shell.collaborationGeneration = 1
+    shell.changeReason = 'Explain this saved capture'
+    adapter.noteTextChange()
+    const expectUnloadProtection = (protectedUnload: boolean): void => {
+      let prevented = false
+      const event = {
+        preventDefault() { prevented = true },
+        returnValue: false
+      }
+      shell.handleBeforeUnload(event as unknown as BeforeUnloadEvent)
+      expect(prevented).toBe(protectedUnload)
+      expect(event.returnValue).toBe(protectedUnload)
+    }
+    try {
+      shell.setupOfflineDraftCoordinator()
+      await shell.initializeOfflineDrafts()
+      const coordinator = shell.offlineDraftCoordinator!
+      expect(await shell.save()).toBe(true)
+      // Settle the real post-save watcher/capture rather than pretending a 200
+      // also acknowledged collaboration or committed pending local recovery.
+      expect(await coordinator.captureNow({ editVersion: adapter.capture().editVersion })).toBe(true)
+      expect(writes).toHaveLength(1)
+      expect(writes[0]).toMatchObject({ content: 'A', changeReason: 'Explain this saved capture' })
+      expect(store.page.sourceRevision).toBe('2')
+      expect(shell.saveFeedback).toBe('saved')
+      expect(shell.isDirty).toBe(false)
+      expect(shell.isSaving).toBe(false)
+      expect(shell.changeReason).toBe('')
+      expect(storage.records.size).toBe(0)
+      expect(coordinator.hasInFlightWork).toBe(false)
+      expect(coordinator.hasUnresolvedSubmission).toBe(false)
+      expect(coordinator.view.error).toBeNull()
+      expect(adapter.snapshot()).toMatchObject({ ready: true, nonPersisted: false, collaborationBacklog: 1 })
+      expect(coordinator.reloadSafetySnapshot.safe).toBe(false)
+      expectUnloadProtection(true)
+
+      pendingUpdates = 0
+      adapter.notifyState()
+      expect(shell.collaborationActive).toBe(true)
+      expect(coordinator.reloadSafetySnapshot.safe).toBe(true)
+      expectUnloadProtection(false)
+
+      pendingUpdates = 1
+      adapter.notifyState()
+      expectUnloadProtection(true)
+      pendingUpdates = 0
+      adapter.notifyState()
+      adapter.setMergeDirty(true)
+      expectUnloadProtection(true)
+      adapter.setMergeDirty(false)
+      shell.dialogProps = true
+      expectUnloadProtection(true)
+      shell.dialogProps = false
+      store.page.title = 'Late metadata'
+      expectUnloadProtection(true)
+      store.page.title = shell.savedState.title
+      shell.changeReason = 'A different unsaved reason'
+      expectUnloadProtection(true)
+      shell.changeReason = ''
+      expectUnloadProtection(false)
+      adapter.replaceText('A later edit not covered by the saved capture')
+      expect(adapter.snapshot().nonPersisted).toBe(true)
+      expectUnloadProtection(true)
+      expect(writes).toHaveLength(1)
+      expect(testWindow.location.assigned).toEqual([])
+    } finally {
+      adapter.destroy()
+    }
+  })
+
   test('refreshes the cached offline notice after a raw coordinator commits body and reason-only edits', async () => {
     const storage = new ComposedDraftStorage()
     const testWindow = createTestWindow(keyFetchImpl)

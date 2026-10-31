@@ -244,6 +244,7 @@ type ShellContext = {
   changeReasonErrors: string[]
   changeReasonId: string
   changeReasonOpen: boolean
+  changeReasonPopoverKey: number
   changeReasonActivator: HTMLElement | null
   serverSaveDisabled: boolean
   $refs: Record<string, unknown>
@@ -327,6 +328,7 @@ type ShellBehavior = {
   }
   watch: {
     renderWaitOwnerKey: { flush: 'sync'; handler: (this: ShellContext) => void }
+    changeReasonOpen: (this: ShellContext, open: boolean) => void
     '$vuetify.display.smAndDown': (this: ShellContext) => void
   }
   methods: Record<string, (this: ShellContext, ...args: never[]) => unknown>
@@ -652,6 +654,7 @@ const createShellHarness = (store: EditorStore, testWindow: TestWindow, override
     changeReasonLimit: MAX_PAGE_CHANGE_REASON_LENGTH,
     changeReasonId: 'editor-change-reason-test',
     changeReasonOpen: false,
+    changeReasonPopoverKey: 0,
     changeReasonActivator: null,
     renderWaitController: null,
     discardError: '',
@@ -884,6 +887,7 @@ const mountSaveActions = (store: EditorStore, testWindow: TestWindow, overrides:
     setup: () => context,
     watch: {
       renderWaitOwnerKey: behavior.watch.renderWaitOwnerKey,
+      changeReasonOpen: behavior.watch.changeReasonOpen,
       '$vuetify.display.smAndDown': behavior.watch['$vuetify.display.smAndDown']
     },
     beforeUnmount() {
@@ -940,7 +944,7 @@ const mountSaveActions = (store: EditorStore, testWindow: TestWindow, overrides:
       return action
     },
     click(actionName: 'save' | 'close' = 'close'): Promise<boolean> {
-      const button = host.querySelector<HTMLButtonElement>(actionName === 'save' ? '.editor-save-action' : '.editor-save-close-action')
+      const button = host.querySelector<HTMLButtonElement>(actionName === 'save' ? '.editor-save-action, .editor-mobile-save' : '.editor-save-close-action')
       if (!button) throw new Error('The editor save action is not mounted')
       button.click()
       if (!action) throw new Error('The editor save action did not run')
@@ -1048,46 +1052,86 @@ const applyEveryEdit = (store: EditorStore) => {
 }
 
 describe('modern editor shell interaction contract', () => {
-  test('reason disclosure focuses one optional field and dismisses without saving or losing its value', async () => {
-    const store = Vue.reactive(createStore())
-    const testWindow = createTestWindow()
-    const writes: PageInput[] = []
-    const mounted = mountSaveActions(store, testWindow, {
-      updatePage: async (_fetch, _id, input) => {
-        writes.push(input)
-        return { sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }
-      }
+  for (const width of [1440, 390]) {
+    test(`reason disclosure at ${width}px retains its value through Done and immediate reopened Escape`, async () => {
+      const store = Vue.reactive(createStore())
+      const testWindow = createTestWindow()
+      const writes: PageInput[] = []
+      const mounted = mountSaveActions(store, testWindow, {
+        updatePage: async (_fetch, _id, input) => {
+          writes.push(input)
+          return { sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }
+        }
+      }, width)
+      expect(document.getElementById(mounted.context.changeReasonId) === null).toBe(true)
+      const field = await mounted.openReason()
+      const trigger = mounted.host.querySelector<HTMLButtonElement>('.editor-change-reason-action, .editor-mobile-reason')
+      if (!trigger) throw new Error('The reason disclosure needs its invoking control')
+      expect(trigger.getAttribute('aria-haspopup')).toBe('dialog')
+      expect(trigger.getAttribute('aria-expanded')).toBe('true')
+      const popup = document.getElementById(trigger.getAttribute('aria-controls') ?? '')
+      expect(popup?.getAttribute('role')).toBe('dialog')
+      expect(document.activeElement === field, 'Opening the reason disclosure focuses its input').toBe(true)
+      field.value = 'Pending explanation'
+      field.dispatchEvent(new Event('input', { bubbles: true }))
+      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await Vue.nextTick()
+      expect(mounted.context.changeReason).toBe('Pending explanation')
+      const done = popup?.querySelector<HTMLButtonElement>('.editor-change-reason-panel-actions button')
+      if (!done) throw new Error('The reason disclosure needs a dismiss control')
+      done.click()
+      await Vue.nextTick()
+      expect(trigger.getAttribute('aria-expanded')).toBe('false')
+      expect(document.activeElement === trigger, 'Done restores focus to the invoking control').toBe(true)
+      expect(mounted.context.changeReason).toBe('Pending explanation')
+
+      trigger.click()
+      // The reopened field and Escape listener exist after this render flush.
+      // Do not wait for Vuetify's deferred globalTop publication or three RAFs.
+      await Vue.nextTick()
+      const reopened = document.getElementById(mounted.context.changeReasonId)
+      if (!(reopened instanceof HTMLInputElement)) throw new Error('The reason disclosure did not reopen')
+      expect(reopened.value).toBe('Pending explanation')
+      expect(document.querySelectorAll(`#${mounted.context.changeReasonId}`).length).toBe(1)
+      reopened.focus()
+      reopened.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      expect(mounted.context.changeReasonOpen).toBe(false)
+      await settleReasonPopover()
+      expect(document.activeElement === trigger, 'Immediate reopened Escape restores focus to the invoking control').toBe(true)
+      expect(mounted.context.changeReason).toBe('Pending explanation')
+      expect(writes).toEqual([])
+      expect(testWindow.location.assigned).toEqual([])
+
+      expect((await mounted.openReason()).value).toBe('Pending explanation')
+      // Clicking non-focusable editor chrome must not pull focus back to the
+      // trigger just because the input still owns focus during dismissal.
+      const outside = document.createElement('div')
+      mounted.host.append(outside)
+      outside.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+      outside.click()
+      await settleReasonPopover()
+      expect(mounted.context.changeReasonOpen).toBe(false)
+      expect(document.activeElement === trigger, 'Outside dismissal does not steal pointer focus').toBe(false)
+      expect(mounted.context.changeReason).toBe('Pending explanation')
+      expect(await mounted.click('save')).toBe(true)
+      expect(writes).toHaveLength(1)
+      expect(writes[0]?.changeReason).toBe('Pending explanation')
+      expect(mounted.context.changeReason).toBe('')
     })
-    expect(document.getElementById(mounted.context.changeReasonId)).toBeNull()
-    const field = await mounted.openReason()
-    const trigger = mounted.host.querySelector<HTMLButtonElement>('.editor-change-reason-action')
-    expect(trigger?.getAttribute('aria-haspopup')).toBe('dialog')
-    expect(trigger?.getAttribute('aria-expanded')).toBe('true')
-    const popup = document.getElementById(trigger?.getAttribute('aria-controls') ?? '')
-    expect(popup?.getAttribute('role')).toBe('dialog')
-    expect(document.activeElement).toBe(field)
-    field.value = 'Pending explanation'
-    field.dispatchEvent(new Event('input', { bubbles: true }))
-    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    await Vue.nextTick()
-    expect(mounted.context.changeReason).toBe('Pending explanation')
-    const done = popup?.querySelector<HTMLButtonElement>('.editor-change-reason-panel-actions button')
-    if (!done) throw new Error('The reason disclosure needs a dismiss control')
-    done.click()
-    await settleReasonPopover()
-    expect(trigger?.getAttribute('aria-expanded')).toBe('false')
-    expect(document.activeElement).toBe(trigger)
-    expect(mounted.context.changeReason).toBe('Pending explanation')
-    const reopened = await mounted.openReason()
-    expect(reopened.value).toBe('Pending explanation')
-    expect(document.querySelectorAll(`#${mounted.context.changeReasonId}`)).toHaveLength(1)
-    reopened.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    await settleReasonPopover()
-    expect(mounted.context.changeReasonOpen).toBe(false)
-    expect(document.activeElement).toBe(trigger)
-    expect(mounted.context.changeReason).toBe('Pending explanation')
-    expect(writes).toEqual([])
-    expect(testWindow.location.assigned).toEqual([])
+  }
+
+  test('retiring an open reason disclosure removes its field before another editor opens', async () => {
+    const first = mountSaveActions(Vue.reactive(createStore()), createTestWindow(), {}, 390)
+    const retiredField = await first.openReason()
+    first.unmount()
+    expect(retiredField.isConnected, 'Retiring the editor removes its teleported reason input').toBe(false)
+    expect(document.querySelectorAll(`#${first.context.changeReasonId}`).length).toBe(0)
+
+    const second = mountSaveActions(Vue.reactive(createStore()), createTestWindow(), {}, 1440)
+    const currentField = await second.openReason()
+    expect(currentField === retiredField).toBe(false)
+    expect(document.querySelectorAll(`#${second.context.changeReasonId}`).length).toBe(1)
+    expect(document.activeElement === currentField, 'The replacement editor owns reason focus').toBe(true)
   })
 
   for (const action of ['save', 'close'] as const) {
@@ -1106,7 +1150,7 @@ describe('modern editor shell interaction contract', () => {
       expect(await mounted.click(action)).toBe(true)
       expect(writes).toHaveLength(1)
       expect(mounted.context.changeReasonOpen).toBe(false)
-      expect(document.getElementById(mounted.context.changeReasonId)).toBeNull()
+      expect(document.getElementById(mounted.context.changeReasonId) === null).toBe(true)
       expect(testWindow.location.assigned).toHaveLength(action === 'close' ? 1 : 0)
     })
 
@@ -1130,7 +1174,7 @@ describe('modern editor shell interaction contract', () => {
       await settleReasonPopover()
       const invalid = document.getElementById(mounted.context.changeReasonId) as HTMLInputElement
       expect(mounted.context.changeReasonOpen).toBe(true)
-      expect(document.activeElement).toBe(invalid)
+      expect(document.activeElement === invalid, 'Invalid reason correction owns focus').toBe(true)
       expect(invalid.getAttribute('aria-invalid')).toBe('true')
       const descriptions = invalid.getAttribute('aria-describedby')?.split(/\s+/) ?? []
       expect(descriptions).toContain(`${invalid.id}-messages`)
@@ -1160,19 +1204,19 @@ describe('modern editor shell interaction contract', () => {
       }
     }, 390)
     const mobileField = await mounted.openReason()
-    expect(mounted.host.querySelector('.editor-change-reason-action')).toBeNull()
+    expect(mounted.host.querySelector('.editor-change-reason-action') === null).toBe(true)
     mobileField.value = 'One reason across screen sizes'
     mobileField.dispatchEvent(new Event('input', { bubbles: true }))
     await Vue.nextTick()
     mounted.setWidth(1440)
     await settleReasonPopover()
     const desktopField = document.getElementById(mounted.context.changeReasonId) as HTMLInputElement
-    expect(desktopField).toBe(mobileField)
+    expect(desktopField === mobileField, 'Changing breakpoints retains the same reason input').toBe(true)
     expect(desktopField.value).toBe('One reason across screen sizes')
-    expect(document.querySelectorAll(`#${mounted.context.changeReasonId}`)).toHaveLength(1)
+    expect(document.querySelectorAll(`#${mounted.context.changeReasonId}`).length).toBe(1)
     desktopField.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await settleReasonPopover()
-    expect(document.activeElement).toBe(mounted.host.querySelector('.editor-change-reason-action'))
+    expect(document.activeElement === mounted.host.querySelector('.editor-change-reason-action'), 'Escape returns focus to the current desktop trigger').toBe(true)
     mounted.setWidth(390)
     await Vue.nextTick()
     expect(await mounted.closeFromMobile()).toBe(true)
@@ -1202,7 +1246,7 @@ describe('modern editor shell interaction contract', () => {
     expect(mounted.context.dialogUnsaved).toBe(false)
     expect(mounted.context.changeReasonOpen).toBe(true)
     const field = document.getElementById(mounted.context.changeReasonId)
-    expect(document.activeElement).toBe(field)
+    expect(document.activeElement === field, 'Invalid reason correction takes focus from the unsaved dialog').toBe(true)
     expect(field?.getAttribute('aria-invalid')).toBe('true')
     expect(mounted.context.changeReason).toBe('Invalid\u202Econtext')
     expect(writes).toEqual([])
@@ -1225,7 +1269,7 @@ describe('modern editor shell interaction contract', () => {
     const offlineField = await mounted.openReason()
     expect(offlineField.value).toBe('Retain this explanation')
     expect(offlineField.readOnly).toBe(true)
-    expect(document.activeElement).toBe(offlineField)
+    expect(document.activeElement === offlineField, 'Read-only reason disclosure still receives focus').toBe(true)
     expect(mounted.host.querySelector<HTMLButtonElement>('.editor-save-action')?.disabled).toBe(true)
     expect(mounted.host.querySelector<HTMLButtonElement>('.editor-save-close-action')?.disabled).toBe(true)
     offlineField.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
