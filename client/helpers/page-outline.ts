@@ -215,8 +215,10 @@ export type PageReadingProgressState = {
  * Opt-in only. Update scope synchronously before an authority/account/page
  * transition can render. Matching records expire after 90 days; future,
  * corrupt, unknown-version or mismatched scope/revision/page-fingerprint
- * records are ignored before display. A revision change resets everything;
- * a live same-revision refresh resets changed/renamed/removed sections only.
+ * records are ignored before display. Fingerprints ignore only initial Vue
+ * slot transport whitespace, preserving preformatted text. A revision change
+ * resets everything; a live same-revision refresh resets changed/renamed/removed
+ * sections only.
  * Same-scope tabs union earned coverage; storage deletion clears local state.
  * Storage denial/quota failure leaves the session usable in memory.
  */
@@ -262,6 +264,35 @@ function readingFingerprint(value: string): string {
     second = Math.imul(second ^ code, 0x85ebca6b)
   }
   return `${(first >>> 0).toString(16).padStart(8, '0')}${(second >>> 0).toString(16).padStart(8, '0')}`
+}
+
+function readingRangeText(range: Range): string {
+  const walker = document.createTreeWalker(range.commonAncestorContainer, NodeFilter.SHOW_TEXT)
+  let text = ''
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text
+    if (!range.intersectsNode(node)) continue
+    let content = node.data
+    // Initial server slots pass through Vue's whitespace-condensing compiler;
+    // SPA content uses v-html. Match the initial representation so the same
+    // revision restores its existing fingerprints without rewriting records.
+    if (node.parentElement?.closest('pre')) {
+      text += content.replace(/\r\n/g, '\n')
+      continue
+    }
+    if (!/[^\t\r\n\f ]/.test(content)) {
+      const previous = node.previousSibling
+      const next = node.nextSibling
+      if (!previous || !next ||
+        (previous.nodeType === 8 && (next.nodeType === 8 || next.nodeType === 1)) ||
+        (previous.nodeType === 1 && (next.nodeType === 8 || (next.nodeType === 1 && /[\r\n]/.test(content))))) continue
+      content = ' '
+    } else {
+      content = content.replace(/[\t\r\n\f ]+/g, ' ')
+    }
+    text += content
+  }
+  return text
 }
 
 function mergeReadingRanges(ranges: ReadingRange[]): ReadingRange[] {
@@ -487,7 +518,7 @@ function createReadingProgress(container: HTMLElement, options: PageReadingProgr
       if (following) range.setEndBefore(following.element)
       else range.setEnd(container, container.childNodes.length)
       const disclosures = details.filter(detail => range.intersectsNode(detail))
-      const sectionFingerprint = readingFingerprint(`${range.toString()}\u0000${disclosures.length}`)
+      const sectionFingerprint = readingFingerprint(`${readingRangeText(range)}\u0000${disclosures.length}`)
       const anchor = heading?.anchor ?? ''
       const units: ReadingUnit[] = [{
         start: heading && heading.top === null ? Infinity : index === 0 ? articleTop : heading!.top!,

@@ -490,7 +490,7 @@ describe('local reading traversal', () => {
     return { key, raw: window.localStorage.getItem(key)! }
   }
 
-  function fixture({ short = false, noHeadings = false, disclosure = false } = {}) {
+  function fixture({ short = false, noHeadings = false, disclosure = false, rawTransport = false, readingScope = scope, code = '' } = {}) {
     const now = Date.now()
     vi.useFakeTimers()
     vi.setSystemTime(now)
@@ -522,7 +522,9 @@ describe('local reading traversal', () => {
       heading.id = `private-heading-${index}`
       heading.textContent = `Confidential heading ${index}`
       heading.getClientRects = () => [rect(top - window.scrollY, top + 40 - window.scrollY)] as unknown as DOMRectList
-      article.append(heading, document.createTextNode(`Confidential prose ${index}`))
+      const prose = document.createElement('p')
+      prose.textContent = `Confidential prose ${index}`
+      article.append(heading, prose)
       return { anchor: `#${heading.id}`, title: heading.textContent, depth: 0 }
     })
     if (noHeadings) article.textContent = 'Confidential prose without headings'
@@ -533,6 +535,23 @@ describe('local reading traversal', () => {
     summary.getBoundingClientRect = () => rect(200 - window.scrollY, 230 - window.scrollY)
     details.getBoundingClientRect = () => rect(200 - window.scrollY, (details.open ? 500 : 230) - window.scrollY)
     if (disclosure) article.append(details)
+    if (code) {
+      const pre = document.createElement('pre')
+      pre.textContent = code
+      article.append(pre)
+    }
+    if (rawTransport) {
+      // Initial in-DOM Vue slots condense these formatting nodes; SPA v-html
+      // preserves them and adds its wrapper around the server transport.
+      const transport = document.createElement('div')
+      transport.className = 'wiki-page-rendered-contents'
+      transport.append('\n')
+      for (const node of [...article.childNodes]) transport.append(node, '\n')
+      const wrapper = document.createElement('div')
+      wrapper.className = 'wiki-page-rendered-contents'
+      wrapper.append(transport)
+      article.append(wrapper)
+    }
     document.body.append(header, article)
     const states: PageReadingProgressState[] = []
     const scalar: number[] = []
@@ -541,7 +560,7 @@ describe('local reading traversal', () => {
     const windowEvents = vi.spyOn(window, 'addEventListener')
     const articleEvents = vi.spyOn(article, 'addEventListener')
     const tracker = trackPageOutline(article, entries, () => {}, value => scalar.push(value), {
-      scope, onChange: state => states.push(state)
+      scope: readingScope, onChange: state => states.push(state)
     })
     const wheel = windowEvents.mock.calls.find(([type]) => type === 'wheel')![1] as EventListener
     const keydown = windowEvents.mock.calls.find(([type]) => type === 'keydown')![1] as EventListener
@@ -777,6 +796,48 @@ describe('local reading traversal', () => {
       } finally {
         page.dispose()
       }
+    }
+  })
+
+  test('restores earned same-scope coverage after returning through raw SPA transport without relaxing authority or code fingerprints', () => {
+    const code = '  keep indentation\n    and line breaks\n'
+    const first = fixture({ code })
+    first.read(0)
+    vi.advanceTimersByTime(1_500)
+    const earned = first.states.at(-1)!
+    const saved = storedRecord()
+    first.dispose()
+
+    const other = fixture({ rawTransport: true, code, readingScope: { ...scope, pageId: 'another-page' } })
+    try {
+      expect(other.states.at(-1)?.completedAnchors).toEqual([])
+      expect(window.localStorage.getItem(saved.key)).toBe(saved.raw)
+    } finally {
+      other.dispose()
+    }
+
+    const returned = fixture({ rawTransport: true, code })
+    try {
+      expect(returned.states.at(-1)).toEqual(earned)
+      vi.advanceTimersByTime(2_500)
+      expect(returned.states.at(-1)).toEqual(earned)
+      expect(window.localStorage.getItem(saved.key)).toBe(saved.raw)
+      returned.tracker.setReadingProgressScope({ ...scope, authorityKey: 'authority-revision-2' })
+      returned.flush()
+      expect(returned.states.at(-1)?.completedAnchors).toEqual([])
+      returned.tracker.setReadingProgressScope(scope)
+      returned.flush()
+      expect(returned.states.at(-1)).toEqual(earned)
+    } finally {
+      returned.dispose()
+    }
+
+    const changedCode = fixture({ rawTransport: true, code: code.replace('    and', '  and') })
+    try {
+      expect(changedCode.states.at(-1)?.completedAnchors).toEqual([])
+      expect(window.localStorage.getItem(saved.key)).toBe(saved.raw)
+    } finally {
+      changedCode.dispose()
     }
   })
 
