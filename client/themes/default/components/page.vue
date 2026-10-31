@@ -204,7 +204,7 @@
                 :aria-pressed='readerFocus'
                 @click='toggleReaderFocus'
               ) {{$t('common:page.focusReading')}}
-              v-tooltip(:disabled='readerFocus', location='bottom', max-width='320')
+              v-tooltip(:disabled='readerFocus', :close-delay='0', :transition='false', location='bottom', max-width='320')
                 template(v-slot:activator='{ props }')
                   v-btn.page-offline-control(
                     v-bind='props'
