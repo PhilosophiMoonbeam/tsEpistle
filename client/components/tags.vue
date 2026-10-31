@@ -163,7 +163,13 @@
                           :data-tag-color='tagColor(tag.tag)'
                           @animationend.self='finishFollowedTagAnimation(tag.tag, $event)'
                         ) {{isFollowed(tag.tag) ? 'mdi-pin' : 'mdi-pin-outline'}}
-                        v-tooltip(activator='parent' location='bottom' :text='followTagButtonLabel(tag)')
+                        v-tooltip(
+                          activator='parent'
+                          :id='`tags-follow-tooltip-${tag.id}`'
+                          :activator-props='{ "aria-describedby": `tags-follow-help tags-follow-tooltip-${tag.id}` }'
+                          location='bottom'
+                          :text='followTagButtonLabel(tag)'
+                        )
 
           section.tags-results(
             v-if='hasSelection'

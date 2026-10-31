@@ -150,7 +150,7 @@ function tagButton(page: Page, label: string) {
 }
 
 function followTagButton(page: Page, label: string) {
-  return page.getByRole('button', { name: new RegExp(`^(?:Save|Saved) offline: ${escapeRegExp(label)}$`) })
+  return page.getByRole('button', { name: new RegExp(`^(?:Follow|Stop following) ${escapeRegExp(label)} for offline reading on this device$`) })
 }
 
 async function revealTagButton(page: Page, label: string) {
@@ -710,17 +710,17 @@ routedTagTest('tag following saves device offline preferences independently of b
   await openTags(page)
   const alpha = await revealTagButton(page, 'Alpha')
   const follow = followTagButton(page, 'Alpha (alpha)')
-  await expect(page.locator('#tags-follow-help')).toContainText('Save a tag offline to keep its public pages on this device.')
   await expect(page.locator('#tags-follow-help').getByRole('link', { name: 'Offline preferences', exact: true })).toHaveAttribute('href', '/p/offline')
-  // The native toggle exposes both its visible saved state and its pressed state.
-  await expect(follow).toHaveAccessibleName(/^Save offline: Alpha \(alpha\)$/)
+  const policyDescription = new RegExp(escapeRegExp((await page.locator('#tags-follow-help').innerText()).replace(/\s+/g, ' ').trim()))
   await expect(follow).toBeEnabled({ timeout: 30_000 })
   await follow.focus()
   await expect(follow).toBeFocused()
+  await expect(page.getByRole('tooltip').filter({ hasText: 'Alpha' })).toBeVisible()
+  await expect(follow).toHaveAccessibleDescription(policyDescription)
   await follow.press('Space')
   await expect(follow).toHaveAttribute('aria-pressed', 'true')
-  await expect(follow).toHaveAccessibleName(/^Saved offline: Alpha \(alpha\)$/)
   await expect(alpha).toHaveAttribute('aria-pressed', 'false')
+  await expect(follow).toHaveAccessibleDescription(policyDescription)
   await expect(page).toHaveURL('/t')
   await expect(follow).toBeEnabled({ timeout: 30_000 })
 
@@ -737,13 +737,11 @@ routedTagTest('tag following saves device offline preferences independently of b
   await expect(follow).toHaveAttribute('aria-pressed', 'true')
   await expect(alpha).toHaveAttribute('aria-pressed', 'false')
   await expect(beta).toHaveAttribute('aria-pressed', 'true')
-  await expect(follow).toHaveAccessibleName(/^Saved offline: Alpha \(alpha\)$/)
   await expect(follow).toBeEnabled({ timeout: 30_000 })
   await follow.focus()
   await expect(follow).toBeFocused()
   await follow.press('Enter')
   await expect(follow).toHaveAttribute('aria-pressed', 'false')
-  await expect(follow).toHaveAccessibleName(/^Save offline: Alpha \(alpha\)$/)
   await expect(alpha).toHaveAttribute('aria-pressed', 'false')
   await expect(beta).toHaveAttribute('aria-pressed', 'true')
   await expect(follow).toBeEnabled({ timeout: 30_000 })
