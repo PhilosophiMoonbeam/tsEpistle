@@ -20,6 +20,8 @@ The prescribed light hex pair has WCAG relative luminances 0.880842/0.964671, an
 
 Active administration navigation uses the configured primary's warm tint rather than the mixed ambient accent. Labels use on-surface ink over the active tint; icons and the directional inset retain the surface-aware accent ink, keeping the active edge readable in both LTR and RTL. Decorative ambient blends and valid saved palettes remain unchanged.
 
+Active switch tracks render the resolved semantic ink at full track opacity so additional translucency does not erase their control boundary. Palette values and disabled attributes remain unchanged.
+
 ### Login composition
 
 Login opts into a centered narrow-screen card while short viewports retain natural scrolling and reachable fields/actions. The decorative stage has no independent box frame. A committed visible particle enhancement hides the redundant inner mark; static, reduced-motion and failed-enhancement states retain the ordinary logo and text identity. The optional enhancement loads asynchronously without enlarging the critical login form budget. Other authentication shells retain their existing composition.
