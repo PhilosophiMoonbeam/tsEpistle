@@ -142,6 +142,10 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
     return this.pendingBytes
   }
 
+  stopCapturing(): void {
+    this.undoManager.stopCapturing()
+  }
+
   undo(): boolean {
     return this.undoManager.undo() != null
   }

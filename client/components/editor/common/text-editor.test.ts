@@ -175,6 +175,7 @@ describe('TextEditor', () => {
     const manager = new Y.UndoManager(text)
     const provider = {
       extension: yCollab(text, null, { undoManager: manager }),
+      stopCapturing: () => manager.stopCapturing(),
       undo: () => manager.undo() != null,
       redo: () => manager.redo() != null,
       historyDepth: () => ({ undo: manager.undoStack.length, redo: manager.redoStack.length })

@@ -58,6 +58,8 @@ export type TextEditorSelectionChange = TextEditorOffsetChange & {
 /** The active history implementation, including its keyboard and native-input bindings. */
 export interface TextEditorHistory {
   readonly extension: Extension
+  /** End the current undo group so the next edit starts a distinct item. */
+  stopCapturing(): void
   undo(): boolean
   redo(): boolean
   historyDepth(): { undo: number; redo: number }
@@ -440,8 +442,16 @@ export class TextEditor implements TextEditorHandle {
         range: EditorSelection.range(result.anchor, result.head)
       }
     })
-    // Toolbar formatting is one undo step, separate from typing on either side.
-    if (changed) this.view.dispatch(transaction, { annotations: isolateHistory.of('full') })
+    if (!changed) return
+    // CodeMirror's annotation isolates standalone history; Yjs providers need
+    // capture boundaries around the synchronous view-to-document transaction.
+    const history = this.historyProvider
+    history?.stopCapturing()
+    try {
+      this.view.dispatch(transaction, { annotations: isolateHistory.of('full') })
+    } finally {
+      history?.stopCapturing()
+    }
   }
 
   replaceRange(content: string, from: TextPosition, to: TextPosition = from): void {
