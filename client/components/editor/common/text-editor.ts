@@ -1,5 +1,5 @@
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete'
-import { defaultKeymap, history, historyKeymap, redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap, isolateHistory, redo, redoDepth, undo, undoDepth } from '@codemirror/commands'
 import {
   bracketMatching,
   defaultHighlightStyle,
@@ -440,7 +440,8 @@ export class TextEditor implements TextEditorHandle {
         range: EditorSelection.range(result.anchor, result.head)
       }
     })
-    if (changed) this.view.dispatch(transaction)
+    // Toolbar formatting is one undo step, separate from typing on either side.
+    if (changed) this.view.dispatch(transaction, { annotations: isolateHistory.of('full') })
   }
 
   replaceRange(content: string, from: TextPosition, to: TextPosition = from): void {

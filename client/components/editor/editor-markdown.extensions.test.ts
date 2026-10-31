@@ -27,6 +27,7 @@ type InsertionComponent = {
   methods: {
     handleEditorInsert: (this: InsertionContext, payload: EditorInsertPayload) => void
     insertAtCursor: (this: InsertionContext, options: { content: string }) => void
+    toggleMarkup: (this: { cm: TextEditor }, options: { start: string; end?: string }) => void
   }
 }
 // Compile the production routing method, including its legacy cursor insertion
@@ -135,4 +136,43 @@ describe('Markdown native content-extension insertion', () => {
       expect(editor.historyDepth().undo).toBe(0)
     })
   }
+})
+
+describe('Markdown toolbar history', () => {
+  test('keeps bold separate from adjacent typing and restores formatted source on redo', () => {
+    for (const selected of [false, true]) {
+      const { editor, view } = createEditor('omega tail')
+      // Cover both a caret within the typed word and a backward selection
+      // delivered with the input transaction, without an intervening history
+      // boundary from a separate selection transaction or a typing pause.
+      view.dispatch({
+        changes: { from: 0, insert: 'fresh' },
+        selection: selected ? { anchor: 10, head: 0 } : { anchor: 5 },
+        userEvent: 'input.type'
+      })
+      const authoredSource = editor.getValue()
+      const authoredSelection = view.state.selection
+
+      component.methods.toggleMarkup.call({ cm: editor }, { start: '**' })
+
+      expect(editor.getValue()).toBe('**freshomega** tail')
+      expect(view.state.selection.main.anchor).toBe(selected ? 12 : 7)
+      expect(view.state.selection.main.head).toBe(selected ? 2 : 7)
+      const formattedSelection = view.state.selection
+      view.dispatch(view.state.replaceSelection('!'), { userEvent: 'input.type' })
+      expect(editor.getValue()).toBe(selected ? '**!** tail' : '**fresh!omega** tail')
+      expect(editor.undo()).toBe(true)
+      expect(editor.getValue()).toBe('**freshomega** tail')
+      expect(view.state.selection.eq(formattedSelection)).toBe(true)
+      expect(editor.undo()).toBe(true)
+      expect(editor.getValue()).toBe(authoredSource)
+      expect(view.state.selection.eq(authoredSelection)).toBe(true)
+      expect(editor.redo()).toBe(true)
+      expect(editor.getValue()).toBe('**freshomega** tail')
+      expect(editor.undo()).toBe(true)
+      expect(editor.getValue()).toBe(authoredSource)
+      expect(editor.undo()).toBe(true)
+      expect(editor.getValue()).toBe('omega tail')
+    }
+  })
 })
