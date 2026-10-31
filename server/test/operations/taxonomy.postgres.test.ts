@@ -20,7 +20,7 @@ suite('PostgreSQL taxonomy transactions', () => {
   let db: Knex
   let peerDb: Knex
   let service: ReturnType<typeof createTaxonomyService>
-  let locked = false, failHistory = false, failRefresh = false
+  let locked = false, failHistory = false, failRefresh = false, checkAuthority = false
   const runtime = (knex: Knex) => ({
     config: {}, configSvc: {}, events: { inbound: {}, outbound: {} }, lang: {}, logger: {}, models: { knex }, startedAt: {}
   })
@@ -67,7 +67,10 @@ suite('PostgreSQL taxonomy transactions', () => {
       t.integer('attempts'); for (const field of ['availableAt', 'createdAt', 'updatedAt']) t.timestamp(field); t.unique(['pageId', 'sourceRevision', 'effectKind'])
     })
     service = createTaxonomyService({ db, authorize(input) { if (!input.requester?.permissions?.includes('manage:system')) throw Object.assign(new Error('Forbidden'), { status: 403 }); return 1 },
-      async assertUnlocked() { if (locked) throw Object.assign(new Error('Page locked'), { status: 403 }) },
+      async assertUnlocked(_actor, _pageId, transaction?: Knex.Transaction) {
+        if (locked) throw Object.assign(new Error('Page locked'), { status: 403 })
+        if (checkAuthority) await loadPageRuleAuthority(authorityRequester, transaction)
+      },
       async snapshotPage(input) {
         const tx = input.transaction!
         const [h] = await tx('pageHistory').insert({ pageId: input.id, sourceRevision: input.sourceRevision, content: input.content, extra: JSON.stringify(input.extra) }).returning('id')
@@ -80,7 +83,7 @@ suite('PostgreSQL taxonomy transactions', () => {
     })
   })
   beforeEach(async () => {
-    locked = false; failHistory = false; failRefresh = false
+    locked = false; failHistory = false; failRefresh = false; checkAuthority = false
     for (const table of ['outboxEvents', 'pageMutationOutbox', 'pageHistoryTags', 'pageHistory', 'pageTags', 'groups', 'pages']) await db(table).delete()
     await db('tags').update({ redirectToId: null }); await db('tags').delete()
     await db('tags').insert([{ id: 1, tag: 'source', title: 'Source', createdAt: now, updatedAt: now }, { id: 2, tag: 'target', title: 'Target', createdAt: now, updatedAt: now }])
@@ -96,6 +99,39 @@ suite('PostgreSQL taxonomy transactions', () => {
     }
     if (peerDb) await peerDb.destroy()
     globalThis.WIKI = originalWiki
+  })
+  it('merges assigned tags with current authority without waiting on its own tag locks', async () => {
+    const authorityDb = knexModule({
+      client: 'pg',
+      connection: connection ? { ...connection, options: '-c lock_timeout=500' } : undefined,
+      pool: { min: 0, max: 1 }
+    })
+    const previous = globalThis.WIKI
+    globalThis.WIKI = runtime(authorityDb) as never
+    checkAuthority = true
+    try {
+      const preview = await service.preview(actor, { action: 'merge', tagId: 1, targetId: 2 })
+      const result = await service.apply(actor, { change: preview.change, fingerprint: preview.fingerprint, acknowledgeAccess: true })
+      expect(result.pageCount).toBe(2)
+      expect(await db('tags').where({ id: 1 }).first('redirectToId')).toEqual({ redirectToId: 2 })
+      expect(await db('pageTags').orderBy('pageId')).toEqual([
+        { pageId: 1, tagId: 2 }, { pageId: 2, tagId: 2 }, { pageId: 3, tagId: 2 }
+      ])
+      expect(await db('pages').orderBy('id').select('id', 'sourceRevision', 'content', 'visibility', 'ownerId')).toEqual([
+        { id: 1, sourceRevision: '10', content: '# Page 1', visibility: 'public', ownerId: null },
+        { id: 2, sourceRevision: '9', content: '# Page 2', visibility: 'public', ownerId: null },
+        { id: 3, sourceRevision: '10', content: '# Page 3', visibility: 'private', ownerId: 7 }
+      ])
+      expect(await db('pageHistory').orderBy('pageId').select('pageId', 'sourceRevision', 'content')).toEqual([
+        { pageId: 1, sourceRevision: '9', content: '# Page 1' },
+        { pageId: 3, sourceRevision: '9', content: '# Page 3' }
+      ])
+      expect(await db('pageHistoryTags').orderBy('tagId').pluck('tagId')).toEqual([1, 1, 2])
+    } finally {
+      checkAuthority = false
+      globalThis.WIKI = previous
+      await authorityDb.destroy()
+    }
   })
   it('persists rename aliases, exact historical assignments and durable projections while preserving visibility and ownership', async () => {
     await db('pages').update({ changeReason: 'Reason before taxonomy edit' })

@@ -9,6 +9,7 @@ import { writeOutboxEvent } from '../core/outbox.ts'
 import { enqueuePageMutationEffects } from '../core/page-mutation-outbox.ts'
 import { mutateOkfMetadata } from '../okf/format.ts'
 import errors from './errors.ts'
+import type { WikiAuth } from '../controllers/_types.ts'
 
 const { ApplicationError } = errors
 export interface TaxonomyActor { requester: PagePrincipal; sessionId: string }
@@ -17,7 +18,7 @@ export interface TaxonomyStoredPage extends Omit<VersionInput, 'transaction' | '
 interface TaxonomyDependencies {
   db: Knex
   authorize(actor: TaxonomyActor): number
-  assertUnlocked(actor: TaxonomyActor, pageId: number): Promise<void>
+  assertUnlocked(actor: TaxonomyActor, pageId: number, transaction: Knex.Transaction): Promise<void>
   snapshotPage(input: VersionInput): Promise<unknown>
   refresh(pages: { id: number; hash: string }[]): Promise<string[]>
 }
@@ -95,7 +96,7 @@ export const createTaxonomyService = (deps: TaxonomyDependencies) => ({
         const plan = planTaxonomy(before, input.change)
         if (plan.preview.fingerprint !== input.fingerprint) return conflict()
         if (plan.preview.accessChanges && input.acknowledgeAccess !== true) throw new ApplicationError('Acknowledge the changes to tag-based access rule matches before continuing.', { status: 400 })
-        for (const id of plan.changedPageIds) await deps.assertUnlocked(actor, id)
+        for (const id of plan.changedPageIds) await deps.assertUnlocked(actor, id, tx)
         const now = new Date().toISOString()
         let tagId = plan.preview.source.id
         if (plan.preview.destination?.id === -1) {
@@ -158,6 +159,7 @@ export const createTaxonomyService = (deps: TaxonomyDependencies) => ({
 })
 
 interface TaxonomyRuntime {
+  auth: Pick<WikiAuth, 'loadPageRuleAuthority'>
   models: { knex: Knex; pageHistory: typeof PageHistory; pages: { deletePageFromCache(hash: string): Promise<unknown> } }
   events: { outbound: { emit(event: string, value?: unknown): void } }
   collaboration?: { pageChanged(pageId: number): Promise<void> }
@@ -172,7 +174,11 @@ const service = () => createTaxonomyService({
     if (id === null) throw new ApplicationError('An authenticated administrator is required.', { status: 401 })
     return id
   },
-  assertUnlocked: (actor, pageId) => assertPageUnlocked({ ...actor, pageId }),
+  async assertUnlocked(actor, pageId, transaction) {
+    // A second authority connection would wait on this transaction's tag locks.
+    const authority = await runtime().auth.loadPageRuleAuthority(actor.requester, transaction)
+    await assertPageUnlocked({ ...actor, pageId, authority })
+  },
   snapshotPage: input => runtime().models.pageHistory.addVersion(input),
   async refresh(pages) {
     const wiki = runtime()
