@@ -18,7 +18,7 @@ The prescribed light hex pair has WCAG relative luminances 0.880842/0.964671, an
 
 `--wiki-surface-gradient` is the shared 145° mineral sheen, not the assessment diagram’s conceptual 135°. Light mode blends 4% warm accent into the raised surface at 0%, the unblended raised surface at 62%, and 3% spectral accent at 100%; dark uses 6%, 58%, and 5% respectively. Accent blends use OKLCH. `--wiki-specular-border` supplies the inset top hairline at white 65%/7% for light/dark; compose it with existing elevation and focus shadows rather than replacing them. Both roles re-resolve at nested theme boundaries. Existing foreground solvers sample flat and gradient backings, including custom palettes and interior gradient samples.
 
-Active administration navigation uses the configured primary's warm tint rather than the mixed ambient accent. Its directional inset uses the existing surface-aware accent ink, keeping the active edge readable in both LTR and RTL. Decorative ambient blends and valid saved palettes remain unchanged.
+Active administration navigation uses the configured primary's warm tint rather than the mixed ambient accent. Labels use on-surface ink over the active tint; icons and the directional inset retain the surface-aware accent ink, keeping the active edge readable in both LTR and RTL. Decorative ambient blends and valid saved palettes remain unchanged.
 
 ### Login composition
 

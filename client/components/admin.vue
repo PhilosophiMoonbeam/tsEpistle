@@ -613,6 +613,10 @@ export default defineComponent({
       box-shadow: inset -.1875rem 0 0 var(--wiki-accent-ink);
     }
 
+    .v-list-item-title {
+      color: rgb(var(--v-theme-on-surface));
+    }
+
     .v-icon {
       color: var(--wiki-accent-ink);
       opacity: 1;
