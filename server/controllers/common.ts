@@ -199,6 +199,14 @@ const getEditorWikiLinkSettings = async (wiki: CommonWiki): Promise<{ wikiLinksE
   }
 }
 
+export const createHealthHandler = (knex: Knex): express.RequestHandler => (_req, res) => {
+  if (knex.client.pool.numFree() < 1 && knex.client.pool.numUsed() < 1) {
+    res.status(503).json({ ok: false }).end()
+  } else {
+    res.status(200).json({ ok: true }).end()
+  }
+}
+
 export default function createCommonController(wiki: CommonWiki): express.Router {
   const router = express.Router()
 
@@ -494,13 +502,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
   /**
    * Health Endpoint
    */
-  router.get('/healthz', (req, res) => {
-    if (wiki.models.knex.client.pool.numFree() < 1 && wiki.models.knex.client.pool.numUsed() < 1) {
-      res.status(503).json({ ok: false }).end()
-    } else {
-      res.status(200).json({ ok: true }).end()
-    }
-  })
+  router.get('/healthz', createHealthHandler(wiki.models.knex))
   router.get('/metrics/status', (req, res) => {
     res.set('Cache-Control', 'private, no-store')
     res.vary('Cookie')

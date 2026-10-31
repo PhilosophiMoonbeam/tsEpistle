@@ -114,6 +114,8 @@ A confirmed terminal authentication, authorization, or conversation failure clos
 
 `navigator.onLine` is a hint only. A capability becomes available after its actual request succeeds. UI wording MUST distinguish **Available offline**, **Saved on this device**, **Waiting for connection**, **Needs review**, **Publishing**, **Published**, **Update ready**, and **Server unavailable**.
 
+Browser-online notifications do not establish server readiness. The same-origin `GET /healthz` probe uses the shared HTTP handler's live Knex-pool check, not a simulated success response. Agent actions remain blocked until connection verification and fresh workspace admission succeed; a healthy probe does not prove that a subsequent action completed.
+
 The account Appearance control offers explicit **Light**, **Dark**, and **System** selections using the same profile preference as the profile editor. Light and Dark remain explicit choices even when they match the device; System follows later device changes. Selection is keyboard-accessible, persists through reload and sign-in, and excludes overlapping saves. Network or confirmation failure restores the prior choice; a retired account or session's response cannot replace the current account's appearance.
 
 ## 5. Server admission contracts
@@ -325,6 +327,8 @@ The visual direction is a **resilient field notebook**: a quiet, editorial exten
 The reader offline action shows **Save offline copy** with a disabled or explanatory state until page admission and any required private key permit the action. States include checking, updating, saved, locked, expiring, stale/error, unavailable, remove, and explicit exclusion. The reader status is source-aware: it reports whether the page is selected or excluded and names every active source—**Manual**, **Automatic**, and each followed tag—alongside whether a readable offline copy is present, pending, stale, locked, or unavailable.
 
 The reader utility row groups the labeled Focus, offline, and Share actions outside Page Contents. The offline tooltip has no close delay or exit animation and is disabled during Focus, so it cannot linger after its reader control is hidden. The offline retry action remains conditional, and the live status continues to describe the current saved-copy state without relying on the button icon alone.
+
+Printing temporarily hides the retained desktop Page Contents rail instead of destroying its Teleport target. Returning from native Print restores one live contents card with the reader's current progress and independent glossary/cited-copy controls; print composition still excludes those controls and restores the original disclosure state.
 
 On an already-locked private page, same-generation policy/corpus notifications recheck vault metadata without temporarily withdrawing the Unlock action. Generation or authoritative identity refreshes still withdraw old admission immediately; failed vault inspection becomes unavailable. Opening the prompt grants no reading authority: actual unlock retains the current origin, account, authentication-version, vault, and session-generation checks.
 
