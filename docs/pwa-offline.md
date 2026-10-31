@@ -344,6 +344,8 @@ Automatic selection is on by default and can be disabled per device. Eligible re
 
 Tag subscriptions have per-row **Follow**/**Unfollow** controls on the Browse by Tags page and use union (OR) semantics: each followed tag contributes pages to one deduplicated candidate set, including pages with overlapping tags, rather than intersecting tags. Unfollowing one tag removes only that tag's provenance; the page remains selected while another followed tag, a manual pin, or automatic selection still includes it.
 
+Tag cards show access-scoped page counts; unavailable counts are not reported as zero. The compact Follow control has a tag-specific name and pressed state, a hover/focus tooltip, and an associated shared policy explanation. Tooltip activation preserves that explanation for assistive technology. Following records device-local selection, not proof of a completed download; pending synchronization and errors remain explicit, independently of the current AND-based tag-browsing selection.
+
 The neutral shell includes:
 
 - clear offline/server-unavailable status;
