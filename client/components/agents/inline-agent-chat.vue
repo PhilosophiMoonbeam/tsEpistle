@@ -1274,19 +1274,26 @@ type InitializationRequest = {
   readonly allowCreate?: boolean
   readonly bypassConnectionGate?: boolean
   readonly forceFresh?: boolean
+  readonly currentSessionId?: string
 }
-const initializationAuthorityKey = (): string =>
+const currentOwnedSessionId = (): string | undefined =>
+  agents.workspaceOwnerId === props.ownerId && thread.value?.memoryContext.ownerId === props.ownerId
+    ? thread.value.session.id
+    : undefined
+const initializationAuthorityKey = (resumeSessionId = props.resumeSessionId): string =>
   JSON.stringify({
     csrfToken: props.csrfToken,
     ownerId: props.ownerId,
-    resumeSessionId: props.resumeSessionId ?? null,
+    resumeSessionId: resumeSessionId ?? null,
     currentPage: currentPage.value
   })
 const ensureInitialized = (request: InitializationRequest = {}): Promise<boolean> => {
   if (disposed || closingForExpiry || props.approvalId) return Promise.resolve(false)
   if (admissionBlocked.value && !request.forceFresh) return Promise.resolve(false)
+  if (request.currentSessionId !== undefined && request.currentSessionId !== currentOwnedSessionId()) return Promise.resolve(false)
+  const resumeSessionId = request.currentSessionId ?? props.resumeSessionId
   const allowCreate = request.allowCreate ?? true
-  const authorityKey = `${initializationAuthorityKey()}:create=${allowCreate}`
+  const authorityKey = `${initializationAuthorityKey(resumeSessionId)}:create=${allowCreate}`
   if (!request.bypassConnectionGate && serverConnectionUnavailable.value) {
     waitingForConnection.value = true
     return Promise.resolve(false)
@@ -1307,7 +1314,7 @@ const ensureInitialized = (request: InitializationRequest = {}): Promise<boolean
   agents.error = ''
   const pending = agents.initialize(props.csrfToken, {
     ownerId: props.ownerId,
-    resumeSessionId: props.resumeSessionId,
+    resumeSessionId,
     routeSync: false,
     currentPage: currentPage.value,
     allowCreate
@@ -1351,20 +1358,33 @@ const retryAgentConnection = async (): Promise<void> => {
   const generation = retryGeneration + 1
   retryGeneration = generation
   const componentOwnerId = props.ownerId
+  const component = componentGeneration
+  const ownerGeneration = agents.ownerGeneration
+  const workspaceVersion = agents.workspaceVersion
+  const selectionVersion = agents.sessionTransitionVersion
+  const authorityKey = initializationAuthorityKey()
+  const currentSessionId = currentOwnedSessionId()
   connectionRetrying.value = true
   waitingForConnection.value = true
   try {
     const reachable = await retryServerConnection()
-    if (!reachable || !isComponentCurrent(componentGeneration, componentOwnerId) || retryGeneration !== generation) return
+    if (
+      !reachable || !isComponentCurrent(component, componentOwnerId) || retryGeneration !== generation ||
+      agents.ownerGeneration !== ownerGeneration || agents.workspaceVersion !== workspaceVersion ||
+      agents.sessionTransitionVersion !== selectionVersion || initializationAuthorityKey() !== authorityKey ||
+      currentOwnedSessionId() !== currentSessionId
+    ) return
     if (props.approvalId) {
       waitingForConnection.value = false
       return
     }
     initializationError.value = ''
     agents.error = ''
-    await ensureInitialized({ allowCreate: false, bypassConnectionGate: true, forceFresh: true })
+    // The launch prop may predate a History selection or an explicit New chat.
+    // Reauthorize the selected same-owner thread with the store's fresh GET.
+    await ensureInitialized({ allowCreate: false, bypassConnectionGate: true, forceFresh: true, currentSessionId })
   } finally {
-    if (isComponentCurrent(componentGeneration, componentOwnerId) && retryGeneration === generation) connectionRetrying.value = false
+    if (isComponentCurrent(component, componentOwnerId) && retryGeneration === generation) connectionRetrying.value = false
   }
 }
 const retryInitialization = async (): Promise<void> => {
@@ -1377,13 +1397,14 @@ const retryInitialization = async (): Promise<void> => {
   const generation = retryGeneration + 1
   retryGeneration = generation
   const componentOwnerId = props.ownerId
+  const component = componentGeneration
   connectionRetrying.value = true
   initializationError.value = ''
   agents.error = ''
   try {
-    await ensureInitialized({ allowCreate: false, bypassConnectionGate: true, forceFresh: true })
+    await ensureInitialized({ allowCreate: false, bypassConnectionGate: true, forceFresh: true, currentSessionId: currentOwnedSessionId() })
   } finally {
-    if (isComponentCurrent(componentGeneration, componentOwnerId) && retryGeneration === generation) connectionRetrying.value = false
+    if (isComponentCurrent(component, componentOwnerId) && retryGeneration === generation) connectionRetrying.value = false
   }
 }
 const focusComposer = async (): Promise<void> => {

@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
-import type { StoreGeneric } from 'pinia'
+import type { Pinia, StoreGeneric } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import type { AgentThreadState } from '../../../shared/agents/contracts.ts'
 import type { AgentMediaCapabilities } from '../../../shared/agents/contracts.ts'
@@ -101,6 +101,8 @@ const contextSummaryComponent = (await import('./agent-context-summary.vue')).de
 const threadComponent = (await import('./agent-thread.vue')).default
 // The SFC loader above must be installed before the real goal module is evaluated.
 const goalStatusComponent = (await import('./agent-goal-status.vue')).default
+// History also imports SFC children, so it must load after the test SFC plugin above.
+const historyPanelComponent = (await import('./agent-history-panel.vue')).default
 const testPwaState = Vue.reactive({ connectionState: 'online' as 'online' | 'offline' | 'server-unavailable' })
 
 const compiledTemplate = compileTemplate({
@@ -815,8 +817,10 @@ const reviewThread = (
   }
 }
 const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPageHint | null = null, initialThread?: AgentThreadState) => {
-  const store = useAgentsStore(createPinia())
+  const pinia = createPinia()
+  const store = useAgentsStore(pinia)
   let serverThread = initialThread ?? threadFixture(sessionId, retention)
+  const additionalThreads = new Map<string, AgentThreadState>()
   const creations: Array<{ retention: 'saved' | 'temporary'; thread: AgentThreadState }> = []
   const authorization = { pending: null as Promise<Response> | null }
   const mediaUpload = { pending: null as Promise<Response> | null }
@@ -872,7 +876,8 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     }
     if (path === '/_api/agents/skills') return Response.json({ skills: [] })
     if (path === '/_api/agents/conversation-folders') return Response.json({ folders: [] })
-    if (path === '/_api/agents/sessions' && method === 'GET') return authorization.pending ?? Response.json({ sessions: [summary()], nextCursor: null })
+    if (path === '/_api/agents/sessions' && method === 'GET')
+      return authorization.pending ?? Response.json({ sessions: [summary(), ...Array.from(additionalThreads.values(), thread => ({ ...thread.session, deletedAt: null }))], nextCursor: null })
     if (path === '/_api/agents/sessions' && method === 'POST') {
       const next = creations.shift()
       if (!next || body.retention !== next.retention || Object.keys(body).some(key => key !== 'retention'))
@@ -916,6 +921,10 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
       return Response.json(serverThread)
     }
     if (path === `/_api/agents/sessions/${serverThread.session.id}` && method === 'GET') return threadRead.pending ?? Response.json(serverThread)
+    if (method === 'GET') {
+      const additionalThread = Array.from(additionalThreads.values()).find(thread => path === `/_api/agents/sessions/${thread.session.id}`)
+      if (additionalThread) return Response.json(additionalThread)
+    }
     if (path === `/_api/agents/sessions/${serverThread.session.id}/messages` && method === 'POST') {
       messageInputs.push(body)
       if (sendResponse.pending) return sendResponse.pending
@@ -955,6 +964,8 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     store.$dispose()
   })
   return {
+    pinia,
+    additionalThreads,
     store,
     state,
     creations,
@@ -983,6 +994,8 @@ const mountInlineAgent = (
     readonly approvalJumpVisible?: boolean
     readonly followJumpVisible?: boolean
     readonly realThread?: boolean
+    readonly realHistory?: boolean
+    readonly pinia?: Pinia
     readonly realGoal?: boolean
     readonly mediaComponent?: Component
   } = {}
@@ -1079,6 +1092,7 @@ const mountInlineAgent = (
     }
   })
   const app = Vue.createApp(inlineHarness, Object.fromEntries(Object.entries(lockState.componentProps).filter(([name]) => inlinePropNames.includes(name))))
+  if (options.pinia) app.use(options.pinia)
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.config.globalProperties.$t = translateEnglish
   for (const name of [
@@ -1093,7 +1107,7 @@ const mountInlineAgent = (
   app.component('AgentGoalStatus', options.realGoal ? goalStatusComponent : componentStub)
   app.component(
     'AgentHistoryPanel',
-    Vue.defineComponent({
+    options.realHistory ? historyPanelComponent : Vue.defineComponent({
       props: { headingId: String, descriptionId: String },
       setup(props) {
         return () => Vue.h('div', [Vue.h('h2', { id: props.headingId }, 'Conversations'), Vue.h('p', { id: props.descriptionId }, 'Conversation history')])
@@ -3262,6 +3276,174 @@ describe('Inline Agent conversation starters', () => {
     await settle()
     expect(lockState.agentCalls.send).not.toHaveBeenCalled()
   })
+})
+
+describe('Inline Agent selected-session recovery', () => {
+  const launchId = '00000000-0000-4000-8000-000000000002'
+  const launchTitle = 'Original launch conversation'
+  const selectHistory = async (mounted: MountedInlineAgent, title: string): Promise<void> => {
+    const toggle = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__history-toggle')
+    if (!toggle) throw new Error('History toggle missing')
+    if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click()
+    await settle()
+    const row = Array.from(mounted.root.querySelectorAll<HTMLElement>('.agent-history__session'))
+      .find(candidate => candidate.querySelector('.v-list-item-title')?.textContent?.trim() === title)
+    if (!row) throw new Error(`History conversation missing: ${title}`)
+    row.click()
+    await settle()
+  }
+  const selectedWorkspace = async () => {
+    const selected = proposalThread()
+    const workspace = realWorkspace('saved', null, selected)
+    const launch = threadFixture(launchId)
+    workspace.additionalThreads.set(launchId, { ...launch, session: { ...launch.session, title: launchTitle } })
+    expect(await workspace.store.openSession(launchId)).toBe(true)
+    workspace.store.setDraft(launchId, 'Keep the original conversation draft separate')
+    const draft: AgentDraft = {
+      ...emptyAgentDraft(), text: 'Keep this selected conversation draft', includeCurrentPage: false,
+      scope: { kind: 'selected' }, sources: [reviewSource(7)]
+    }
+    workspace.store.updateDraft(sessionId, draft)
+    const state = workspace.state()
+    state.componentProps.resumeSessionId = launchId
+    const mounted = mountInlineAgent(state, { realThread: true, realHistory: true, pinia: workspace.pinia, viewportWidth: 1600 })
+    await settle()
+    await selectHistory(mounted, selected.session.title)
+    expect(workspace.store.thread?.session.id).toBe(sessionId)
+    expect(mounted.root.querySelector('.proposal-diff')?.textContent).toContain('Wait for reviewer confirmation')
+    expect(mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')?.value).toBe(draft.text)
+    return { ...workspace, state, mounted, selected, draft }
+  }
+
+  for (const recovery of ['connection', 'initialization'] as const) {
+    it(`reauthorizes the rendered History selection rather than the launch session on ${recovery} retry`, async () => {
+      const workspace = await selectedWorkspace()
+      if (recovery === 'initialization')
+        workspace.threadRead.pending = Promise.resolve(Response.json({ error: 'Current access denied' }, { status: 403 }))
+      testPwaState.connectionState = 'offline'
+      await settle()
+      if (recovery === 'initialization') {
+        testPwaState.connectionState = 'online'
+        await settle()
+        expect(workspace.store.initializationAdmissionFailure).toBe('access')
+        workspace.threadRead.pending = null
+      }
+      const beforeRecovery = workspace.requests.length
+      if (recovery === 'initialization') {
+        const retry = workspace.mounted.root.querySelector<HTMLButtonElement>('.inline-agent__admission-alert button')
+        if (!retry) throw new Error('Admission retry missing')
+        retry.click()
+      } else {
+        testPwaState.connectionState = 'online'
+      }
+      await settle()
+      expect(workspace.store.isWorkspaceReady()).toBe(true)
+      expect(workspace.store.thread?.session.id).toBe(sessionId)
+      expect(workspace.store.thread?.proposals).toEqual(workspace.selected.proposals)
+      expect(workspace.store.thread?.memoryContext).toEqual(workspace.selected.memoryContext)
+      expect(workspace.store.drafts[sessionId]?.text).toBe(workspace.draft.text)
+      expect(workspace.store.drafts[sessionId]?.includeCurrentPage).toBe(false)
+      expect(workspace.store.drafts[sessionId]?.scope.kind).toBe('selected')
+      expect(workspace.store.drafts[sessionId]?.sources.map(source => source.id)).toEqual([7])
+      expect(workspace.store.drafts[launchId]?.text).toBe('Keep the original conversation draft separate')
+      expect(workspace.mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')?.value).toBe(workspace.draft.text)
+      expect(workspace.mounted.root.querySelector('.proposal-diff')?.textContent).toContain('Wait for reviewer confirmation')
+      expect(workspace.mounted.root.querySelector('.inline-agent__admission-alert')).toBeNull()
+      expect(workspace.mounted.root.querySelector('.inline-agent__connection-alert')).toBeNull()
+      const recoveryReads = workspace.requests.slice(beforeRecovery)
+      expect(recoveryReads).toContainEqual({ method: 'GET', path: `/_api/agents/sessions/${sessionId}` })
+      expect(recoveryReads.some(request => request.path === `/_api/agents/sessions/${launchId}`)).toBe(false)
+      expect(workspace.requests.every(request => request.method === 'GET')).toBe(true)
+    })
+  }
+
+  it('keeps an explicit New chat selected when reconnecting from an older launch prop', async () => {
+    const workspace = await selectedWorkspace()
+    const freshId = '00000000-0000-4000-8000-000000000003'
+    workspace.creations.push({ retention: 'saved', thread: threadFixture(freshId) })
+    const newChat = workspace.mounted.root.querySelector<HTMLButtonElement>('[aria-label="New chat"]')
+    if (!newChat) throw new Error('New chat action missing')
+    newChat.click()
+    await settle()
+    expect(workspace.store.thread?.session.id).toBe(freshId)
+    workspace.store.setDraft(freshId, 'A draft belonging to the explicit new conversation')
+    testPwaState.connectionState = 'offline'
+    await settle()
+    const beforeRecovery = workspace.requests.length
+    testPwaState.connectionState = 'online'
+    await settle()
+    expect(workspace.store.isWorkspaceReady()).toBe(true)
+    expect(workspace.store.thread?.session.id).toBe(freshId)
+    expect(workspace.mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')?.value).toBe('A draft belonging to the explicit new conversation')
+    expect(workspace.mounted.root.querySelector('.proposal-diff')).toBeNull()
+    expect(workspace.requests.slice(beforeRecovery).filter(request => /^\/_api\/agents\/sessions\//.test(request.path)))
+      .toEqual([{ method: 'GET', path: `/_api/agents/sessions/${freshId}` }])
+    expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([{ method: 'POST', path: '/_api/agents/sessions' }])
+  })
+
+  it('does not fall back to the launch session or create a chat when the selected-session GET is denied', async () => {
+    const workspace = await selectedWorkspace()
+    workspace.threadRead.pending = Promise.resolve(Response.json({ error: 'Current access denied' }, { status: 403 }))
+    testPwaState.connectionState = 'offline'
+    await settle()
+    const beforeRecovery = workspace.requests.length
+    testPwaState.connectionState = 'online'
+    await settle()
+    expect(workspace.store.isWorkspaceReady()).toBe(false)
+    expect(workspace.store.initializationAdmissionFailure).toBe('access')
+    expect(workspace.store.thread?.session.id).toBe(sessionId)
+    expect(workspace.store.drafts[sessionId]?.text).toBe(workspace.draft.text)
+    expect(workspace.store.drafts[sessionId]?.includeCurrentPage).toBe(false)
+    expect(workspace.store.drafts[sessionId]?.scope.kind).toBe('selected')
+    expect(workspace.store.drafts[sessionId]?.sources.map(source => source.id)).toEqual([7])
+    const retry = workspace.mounted.root.querySelector<HTMLButtonElement>('.inline-agent__admission-alert button')
+    if (!retry) throw new Error('Fresh admission retry missing')
+    retry.click()
+    await settle()
+    expect(workspace.store.isWorkspaceReady()).toBe(false)
+    expect(workspace.store.initializationAdmissionFailure).toBe('access')
+    expect(workspace.state.canSubmit.value).toBe(false)
+    expect(workspace.mounted.root.querySelector('.inline-agent__admission-alert')?.textContent).toContain('access permission')
+    const threadReads = workspace.requests.slice(beforeRecovery).filter(request => /^\/_api\/agents\/sessions\//.test(request.path))
+    expect(threadReads).toEqual([
+      { method: 'GET', path: `/_api/agents/sessions/${sessionId}` },
+      { method: 'GET', path: `/_api/agents/sessions/${sessionId}` }
+    ])
+    expect(workspace.requests.every(request => request.method === 'GET')).toBe(true)
+    expect(workspace.decisionInputs).toEqual([])
+  })
+
+  for (const boundary of ['selection', 'owner', 'unmount'] as const) {
+    it(`does not revive the captured session after ${boundary} changes during the connection probe`, async () => {
+      const workspace = await selectedWorkspace()
+      const probe = Promise.withResolvers<boolean>()
+      vi.mocked(workspace.state.connectionProbe).mockReturnValueOnce(probe.promise)
+      testPwaState.connectionState = 'offline'
+      await settle()
+      testPwaState.connectionState = 'online'
+      await settle()
+      if (boundary === 'selection') await selectHistory(workspace.mounted, launchTitle)
+      else if (boundary === 'owner') {
+        workspace.state.componentProps.ownerId = 3
+        await settle()
+      } else workspace.mounted.unmount()
+      const afterBoundary = workspace.requests.length
+      probe.resolve(true)
+      await settle()
+      expect(workspace.requests).toHaveLength(afterBoundary)
+      if (boundary === 'selection') {
+        expect(workspace.store.isWorkspaceReady()).toBe(true)
+        expect(workspace.store.thread?.session.id).toBe(launchId)
+        expect(workspace.mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')?.value).toBe('Keep the original conversation draft separate')
+        expect(workspace.mounted.root.querySelector('.proposal-diff')).toBeNull()
+      } else if (boundary === 'owner') {
+        expect(workspace.store.workspaceOwnerId).toBe(3)
+        expect(workspace.store.thread).toBeNull()
+        expect(workspace.store.drafts).toEqual({})
+      } else expect(workspace.store.workspaceDisposed).toBe(true)
+      expect(workspace.requests.every(request => request.method === 'GET')).toBe(true)
+    })
+  }
 })
 
 describe('Inline Agent initialization admission', () => {
