@@ -2704,11 +2704,11 @@ export default class Page extends Model {
     return page
   }
 
-  static async getPageFromDb(opts: number | PageLookup): Promise<Page | undefined> {
+  static async getPageFromDb(opts: number | PageLookup, transaction?: Knex.Transaction): Promise<Page | undefined> {
     const queryModeID = typeof opts === 'number'
     try {
       return wiki.models.pages
-        .query()
+        .query(transaction)
         .column([
           'pages.id',
           'pages.path',

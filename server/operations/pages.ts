@@ -775,7 +775,7 @@ interface WikiPageOperations {
         authority: PageRuleAuthority
       }): string[]
       relatedQuery(relation: 'tags'): RelatedTagQuery
-      getPageFromDb(input: number | { path: string; locale: string; visibility: PageVisibility; ownerId: number | null }): Promise<PageSourceRecord | undefined>
+      getPageFromDb(input: number | { path: string; locale: string; visibility: PageVisibility; ownerId: number | null }, transaction?: Knex.Transaction): Promise<PageSourceRecord | undefined>
       deletePage(input: { id: number; expectedSourceRevision?: string; user?: Express.User }): unknown
       createPage(input: Record<string, unknown> & { user?: Express.User }): unknown
       updatePage(input: Record<string, unknown> & { user?: Express.User }): Promise<PageRecord>
@@ -814,6 +814,7 @@ interface WikiPageOperations {
         versionId: number
         requester: Express.User | undefined
         authority?: PageRuleAuthority
+        transaction?: Knex.Transaction
       }): Promise<PageVersionRecord | undefined>
     }
   }
@@ -899,14 +900,21 @@ const authorityFor = async (input: OperationInput, transaction?: Knex.Transactio
   if (!transaction && input.authority !== undefined && input.authority.requester === input.requester) return input.authority
   return wiki.auth.loadPageRuleAuthority(input.requester, transaction)
 }
-const authorityForInput = async (input: OperationInput, supplied?: PageRuleAuthority): Promise<PageRuleAuthority> =>
-  supplied !== undefined && supplied.requester === input.requester ? supplied : authorityFor(input)
-const assertUnlocked = (input: OperationInput, pageId: number): Promise<void> =>
-  assertPageUnlocked({
+const authorityForInput = async (input: OperationInput, supplied?: PageRuleAuthority, transaction?: Knex.Transaction): Promise<PageRuleAuthority> =>
+  supplied !== undefined && supplied.requester === input.requester ? supplied : authorityFor(input, transaction)
+const assertUnlocked = (input: OperationInput, pageId: number, authority?: PageRuleAuthority, transaction?: Knex.Transaction): Promise<void> => {
+  const unlockInput: Parameters<typeof assertPageUnlocked>[0] = {
     requester: input.requester,
     pageId,
     sessionId: typeof input.sessionId === 'string' ? input.sessionId : ''
-  })
+  }
+  // Outside a caller transaction, preserve the fresh unlock-admission read.
+  if (transaction !== undefined) {
+    unlockInput.transaction = transaction
+    if (authority !== undefined) unlockInput.authority = authority
+  }
+  return assertPageUnlocked(unlockInput)
+}
 const wiki = WIKI as unknown as WikiPageOperations
 const normalizeDbBoolean = (value: unknown, fallback = false): boolean => {
   if (value === true || value === 1) return true
@@ -918,8 +926,8 @@ const normalizePageBooleans = <T extends PageRecord>(page: T): T => {
   page.isSearchable = normalizeDbBoolean(page.isSearchable, true)
   return page
 }
-const loadPageFromDb = async (input: Parameters<WikiPageOperations['models']['pages']['getPageFromDb']>[0]): Promise<PageSourceRecord | undefined> => {
-  const page = await wiki.models.pages.getPageFromDb(input)
+const loadPageFromDb = async (input: Parameters<WikiPageOperations['models']['pages']['getPageFromDb']>[0], transaction?: Knex.Transaction): Promise<PageSourceRecord | undefined> => {
+  const page = await wiki.models.pages.getPageFromDb(input, transaction)
   return page === undefined ? undefined : normalizePageBooleans(page)
 }
 interface OfflineGuestRecord extends Record<string, unknown> {
@@ -1758,14 +1766,14 @@ const searchTags = async (input: OperationInput) => {
     .slice(0, limit)
 }
 
-const authorizedPageSource = async (input: OperationInput, suppliedAuthority?: PageRuleAuthority): Promise<PageSourceRecord> => {
+const authorizedPageSource = async (input: OperationInput, suppliedAuthority?: PageRuleAuthority, transaction?: Knex.Transaction): Promise<PageSourceRecord> => {
   const requester = input.requester
-  const authority = await authorityForInput(input, suppliedAuthority)
-  const page = await loadPageFromDb(positiveInteger(input.id, 'id'))
+  const authority = await authorityForInput(input, suppliedAuthority, transaction)
+  const page = await loadPageFromDb(positiveInteger(input.id, 'id'), transaction)
   if (!page || !canAccessCurrentPageSource(requester, page, authority)) {
     throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
   }
-  await assertUnlocked(input, page.id)
+  await assertUnlocked(input, page.id, authority, transaction)
   return page
 }
 
@@ -3523,11 +3531,11 @@ const move = async (input: OperationInput): Promise<unknown> => {
     )
   )
 }
-const authorizeMutation = async (input: OperationInput): Promise<void> => {
+const authorizeMutation = async (input: OperationInput, transaction?: Knex.Transaction): Promise<void> => {
   const requester = input.requester
   const kind = stringValue(input.kind, 'kind')
   const operationInput = recordValue(input.input, 'input')
-  const authority = await authorityFor(input)
+  const authority = await authorityForInput(input, input.authority, transaction)
   if (kind === 'create') {
     const path = stringValue(operationInput.path, 'path')
     const locale = stringValue(operationInput.locale, 'locale')
@@ -3543,7 +3551,7 @@ const authorizeMutation = async (input: OperationInput): Promise<void> => {
   }
   const rawId = kind === 'restore' ? operationInput.pageId : operationInput.id
   const pageId = positiveInteger(rawId, kind === 'restore' ? 'pageId' : 'id')
-  const page = await loadPageFromDb(pageId)
+  const page = await loadPageFromDb(pageId, transaction)
   if (!page) throw new wiki.Error.PageNotFound()
   const canMutate = kind === 'delete' ? canDeletePage(requester, page, authority) : canWritePage(requester, page, authority)
   if (page.visibility === 'private' && !canMutate) throw new wiki.Error.PageNotFound()
@@ -3553,12 +3561,14 @@ const authorizeMutation = async (input: OperationInput): Promise<void> => {
     if (kind === 'restore') throw new wiki.Error.PageRestoreForbidden()
     throw new wiki.Error.PageUpdateForbidden()
   }
-  await assertUnlocked(input, page.id)
+  await assertUnlocked(input, page.id, authority, transaction)
   let proposedTags: unknown = page.tags
   if (kind === 'update' && operationInput.tags !== undefined) proposedTags = tagNames(operationInput.tags).map(tag => ({ tag }))
   if (kind === 'restore') {
     const versionId = positiveInteger(operationInput.versionId, 'versionId')
-    const version = await wiki.models.pageHistory.getVersion({ pageId, versionId, requester, authority })
+    const versionInput: Parameters<typeof wiki.models.pageHistory.getVersion>[0] = { pageId, versionId, requester, authority }
+    if (transaction !== undefined) versionInput.transaction = transaction
+    const version = await wiki.models.pageHistory.getVersion(versionInput)
     if (!version) throw new wiki.Error.PageNotFound()
     proposedTags = version.tags
   }
@@ -3772,6 +3782,7 @@ export default {
   setPublication,
   preview,
   authorizeMutation,
+  authorizedPageSource,
   verifyAccuracy,
   changeVisibility,
   checkConflict,

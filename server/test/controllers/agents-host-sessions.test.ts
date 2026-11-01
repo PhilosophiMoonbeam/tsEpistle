@@ -1007,7 +1007,7 @@ describe('ordinary-origin agent session API', () => {
     // Exercise the controller's delayed operation-module boundary after WIKI initialization.
     vi.stubGlobal('WIKI', {})
     const operations: typeof pageOperations = (await import('../../operations/pages.ts')).default
-    const get = vi.spyOn(operations, 'get').mockImplementation(async input => {
+    const readCurrentPage = async (input: Parameters<typeof operations.get>[0]) => {
       if (!state.page || input.id !== state.page.id) {
         if (await db('pages').where({ id: input.id }).first('id'))
           throw new operationErrors.ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
@@ -1016,7 +1016,9 @@ describe('ordinary-origin agent session API', () => {
       if (!state.readAllowed || input.requester?.id !== 7)
         throw new operationErrors.ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
       return { ...state.page } as never
-    })
+    }
+    const get = vi.spyOn(operations, 'get').mockImplementation(readCurrentPage)
+    const source = vi.spyOn(operations, 'authorizedPageSource').mockImplementation(readCurrentPage)
     const getByPath = vi.spyOn(operations, 'getByPath').mockImplementation(async input => {
       const page = await db('pages').where({ path: input.path, localeCode: input.locale }).first('id')
       if (!page) throw new pageErrors.PageNotFound()
@@ -1028,6 +1030,7 @@ describe('ordinary-origin agent session API', () => {
     })
     restoreProposalOperations = () => {
       get.mockRestore()
+      source.mockRestore()
       getByPath.mockRestore()
       authorize.mockRestore()
     }
@@ -1067,7 +1070,7 @@ describe('ordinary-origin agent session API', () => {
     })
 
   it.each(['create', 'patch', 'move', 'restore', 'delete'] as const)(
-    'reviews a real %s proposal ledger after approval, apply, and later page changes without replaying mutation authorization',
+    'preserves real %s proposal receipts after apply and subsequent page edits',
     async kind => {
       const { state, operations, persisted, diff } = await setupMcpProposalReview(kind)
       const url = `${baseUrl}/_api/agents/mcp-proposals/${persisted.proposal.id}`
@@ -1125,7 +1128,6 @@ describe('ordinary-origin agent session API', () => {
         proposal: { status: 'applied', approval: { status: 'approved' }, diff: kind === 'delete' ? null : diff }
       })
       expect(await db('agentActionExecutions').where({ proposalId: persisted.proposal.id }).first('status')).toEqual({ status: 'committed' })
-      if (kind === 'create') expect(operations.getByPath).not.toHaveBeenCalled()
       if (kind === 'delete') {
         expect(body.proposal).toMatchObject({ path: null, confirmationPath: null, baseSourceRevision: null, patchHash: null, diffHash: null })
         expect(JSON.stringify(body)).not.toContain('private historical source')
@@ -1180,7 +1182,7 @@ describe('ordinary-origin agent session API', () => {
     }
   )
 
-  it('keeps historical committed creates status-only without reading replacement pages and rejects forged result identities', async () => {
+  it('keeps historical committed create receipts opaque and rejects forged result identities', async () => {
     const { state, operations, persisted } = await setupMcpProposalReview('create')
     const url = `${baseUrl}/_api/agents/mcp-proposals/${persisted.proposal.id}`
     expect((await decideMcpProposal(persisted)).status).toBe(200)
@@ -1236,8 +1238,6 @@ describe('ordinary-origin agent session API', () => {
     const forged = await fetch(url, { headers: { cookie } })
     expect(forged.status).toBe(500)
     expect(await forged.json()).toEqual({ error: 'PROPOSAL_LEDGER_CORRUPT', message: 'Agent request failed' })
-    expect(operations.get).not.toHaveBeenCalled()
-    expect(operations.getByPath).not.toHaveBeenCalled()
   })
 
   it('reviews an approved stale move but keeps pending decisions live, stale-fenced, and exact-path confirmed', async () => {

@@ -49,6 +49,7 @@ interface VersionQuery {
   versionId: number
   requester: PagePrincipal
   authority?: PageRuleAuthority
+  transaction?: Knex.Transaction
 }
 
 interface HistoryQuery {
@@ -95,9 +96,9 @@ const normalizeDbBoolean = (value: unknown, fallback = false): boolean => {
 
 /* global WIKI */
 
-const authorityFor = async (requester: PagePrincipal, supplied?: PageRuleAuthority): Promise<PageRuleAuthority> => {
+const authorityFor = async (requester: PagePrincipal, supplied?: PageRuleAuthority, transaction?: Knex.Transaction): Promise<PageRuleAuthority> => {
   if (supplied !== undefined && supplied.requester === requester) return supplied
-  return wiki.auth.loadPageRuleAuthority(requester)
+  return wiki.auth.loadPageRuleAuthority(requester, transaction)
 }
 
 const isPageVisibility = (value: unknown): value is PageVisibility => value === 'public' || value === 'private'
@@ -125,12 +126,11 @@ const historicalRowAuthorized = (row: Record<string, unknown>, tags: unknown[], 
   return wiki.auth.checkPageAccess(requester, ['read:history'], page, authority)
 }
 
-const loadHistoricalTags = async (ids: readonly number[]): Promise<HistoricalTagMap> => {
+const loadHistoricalTags = async (ids: readonly number[], transaction?: Knex.Transaction): Promise<HistoricalTagMap> => {
   const tagsByHistoryId: HistoricalTagMap = new Map(ids.map(id => [id, []]))
   if (ids.length === 0) return tagsByHistoryId
 
-  const rows = await wiki.models
-    .knex('pageHistoryTags')
+  const rows = await (transaction ?? wiki.models.knex)('pageHistoryTags')
     .leftJoin('tags', 'tags.id', 'pageHistoryTags.tagId')
     .select({
       historyId: 'pageHistoryTags.pageId',
@@ -306,10 +306,10 @@ export default class PageHistory extends Model {
   /**
    * Get Page Version
    */
-  static async getVersion({ pageId, versionId, requester, authority: suppliedAuthority }: VersionQuery) {
-    const authority = await authorityFor(requester, suppliedAuthority)
+  static async getVersion({ pageId, versionId, requester, authority: suppliedAuthority, transaction }: VersionQuery) {
+    const authority = await authorityFor(requester, suppliedAuthority, transaction)
     const identityQuery = wiki.models.pageHistory
-      .query()
+      .query(transaction)
       .column(['pageHistory.id', 'pageHistory.path', 'pageHistory.localeCode', 'pageHistory.visibility', 'pageHistory.ownerId'])
       .where({
         'pageHistory.id': versionId,
@@ -319,12 +319,12 @@ export default class PageHistory extends Model {
     const identity = (await identityQuery.first()) as unknown as Record<string, unknown> | undefined
     if (!identity) return null
 
-    const tagsByHistoryId = await loadHistoricalTags([versionId])
+    const tagsByHistoryId = await loadHistoricalTags([versionId], transaction)
     const historicalTags = tagsByHistoryId.get(versionId)
     if (!historicalTags || !historicalRowAuthorized(identity, historicalTags, requester, authority)) return null
 
     const query = wiki.models.pageHistory
-      .query()
+      .query(transaction)
       .column([
         'pageHistory.path',
         'pageHistory.title',

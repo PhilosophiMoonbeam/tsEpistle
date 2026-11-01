@@ -379,25 +379,27 @@ const proposalTargetId = (proposal: ProposalRecord, operation: z.infer<typeof Pr
   return id
 }
 
-const authorizeProposalMutation = async (req: Request, proposal: ProposalRecord): Promise<void> => {
+const authorizeProposalMutation = async (req: Request, proposal: ProposalRecord, authority?: PageRuleAuthority, transaction?: Knex.Transaction): Promise<void> => {
   if (!req.user) throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Authenticated user is required', 401)
   const operation = proposalMutationOperation(proposal)
   // Page operations capture WIKI at module load, so wait until wiki initialization.
   const pageOperations = (await import('../operations/pages.ts')).default
-  await pageOperations.authorizeMutation({
+  const authorizationInput: Parameters<typeof pageOperations.authorizeMutation>[0] = {
     kind: operation.kind,
     input: operation.operationInput,
     requester: req.user,
     sessionId: req.sessionID
-  })
+  }
+  if (authority !== undefined) authorizationInput.authority = authority
+  await pageOperations.authorizeMutation(authorizationInput, transaction)
 }
 
-const authorizeProposalTarget = async (req: Request, proposal: ProposalRecord): Promise<void> => {
+const authorizeProposalTarget = async (req: Request, proposal: ProposalRecord, authority: PageRuleAuthority, transaction: Knex.Transaction): Promise<void> => {
   const pageId = proposalTargetId(proposal, proposalMutationOperation(proposal))
   if (pageId === null) return
   if (!req.user) throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Authenticated user is required', 401)
   const pageOperations = (await import('../operations/pages.ts')).default
-  const page = await pageOperations.get({ id: pageId, requester: req.user, sessionId: req.sessionID })
+  const page = await pageOperations.authorizedPageSource({ id: pageId, requester: req.user, sessionId: req.sessionID }, authority, transaction)
   if (proposal.baseSourceRevision != null && String(Reflect.get(page, 'sourceRevision')) !== String(proposal.baseSourceRevision))
     throw new AgentRepositoryError('PAGE_REVISION_CONFLICT', 'Page changed after proposal preparation', 409)
 }
@@ -1020,9 +1022,12 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         userId,
         decision: input.decision,
         ...(input.decisionNote === undefined ? {} : { decisionNote: input.decisionNote }),
-        authorize: async ({ proposal }) => {
-          await authorizeProposalTarget(req, proposal)
-          await authorizeProposalMutation(req, proposal)
+        authorize: async ({ proposal, transaction }) => {
+          if (!wiki.auth.loadPageRuleAuthority)
+            throw new AgentRepositoryError('PAGE_AUTHORITY_UNAVAILABLE', 'Current page authorization is unavailable.', 503)
+          const authority = await wiki.auth.loadPageRuleAuthority(req.user, transaction)
+          await authorizeProposalTarget(req, proposal, authority, transaction)
+          await authorizeProposalMutation(req, proposal, authority, transaction)
           if (proposal.risk === 'destructive-write' && input.decision === 'approved') {
             const inputValue = proposalInput(proposal)
             const requiredPath = inputValue.confirmationPath

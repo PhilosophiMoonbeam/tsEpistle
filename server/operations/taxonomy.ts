@@ -177,7 +177,7 @@ const service = () => createTaxonomyService({
   async assertUnlocked(actor, pageId, transaction) {
     // A second authority connection would wait on this transaction's tag locks.
     const authority = await runtime().auth.loadPageRuleAuthority(actor.requester, transaction)
-    await assertPageUnlocked({ ...actor, pageId, authority })
+    await assertPageUnlocked({ ...actor, pageId, authority, transaction })
   },
   snapshotPage: input => runtime().models.pageHistory.addVersion(input),
   async refresh(pages) {

@@ -38,7 +38,7 @@ interface WikiContext {
   models: {
     knex: Knex
     pages: {
-      getPageFromDb(id: number): Promise<ProtectedPage | undefined>
+      getPageFromDb(id: number, transaction?: Knex.Transaction): Promise<ProtectedPage | undefined>
       query(): {
         findById(id: number): { select(...columns: string[]): Promise<Record<string, unknown> | undefined> }
       }
@@ -266,10 +266,11 @@ export const assertPageUnlocked = async (input: {
   pageId: number
   sessionId: string
   authority?: PageRuleAuthority
+  transaction?: Knex.Transaction
 }): Promise<void> => {
-  const page = await wiki.models.pages.getPageFromDb(input.pageId)
+  const page = await wiki.models.pages.getPageFromDb(input.pageId, input.transaction)
   if (!page) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
-  const authority = input.authority ?? (await wiki.auth.loadPageRuleAuthority(input.requester))
+  const authority = input.authority ?? (await wiki.auth.loadPageRuleAuthority(input.requester, input.transaction))
   if (!canReadPage(input.requester, page, authority)) {
     throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
   }
