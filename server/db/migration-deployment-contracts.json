@@ -417,6 +417,17 @@
       "rehearsalPostconditions": ["native-page-creation-receipts-schema"],
       "runtimePostconditions": ["native-page-creation-receipts-schema"]
     },
+    "tsepistle-000069-page-history-reasons.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": ["native-page-history-reasons-schema"],
+      "runtimePostconditions": ["native-page-history-reasons-schema"]
+    },
     "tsepistle-000070-page-accuracy-attestations.js": {
       "persistentState": "additive",
       "reversible": false,

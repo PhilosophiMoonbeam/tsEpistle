@@ -292,7 +292,7 @@ make_plan() {
         site-logo-schema-v7|site-logo-pipeline-v7|agent-goal-budget-columns|agent-goal-budget-tier-selection|agent-google-search-grounding-columns|agent-google-search-consent-admission|agent-media-context-state-columns|native-page-ratings-and-recovery-schema|native-page-ratings-and-recovery) ;;
         agent-quota-daily-token-reset-credit-column|agent-media-table|agent-runs-media-request-column|native-gemini-profile-reconformance|historical-agent-content-retained|native-gemini-generate-content|retired-live-google-search-disabled|external-mcp-owner-isolation-and-grants|guarded-native-external-mcp-discovery-and-invocation|independent-decision-provider-configuration|native-typesafe-environment-fallback-and-validated-usage|immutable-model-task-declarations-and-routing-policy|eligible-owner-routing-and-accounted-safe-fallback|independent-draft-root-preserves-legacy-ciphertext|offline-draft-key-survives-session-protection-rotation|owner-root-bound-specialist-context-and-idempotent-invocation|delegated-context-reuse-preserves-incumbent-root-and-accounting|independent-media-provider-versions-preserve-legacy-models-prices-grants-and-credentials|authorized-current-media-version-bindings-and-retained-credentials) ;;
         native-page-creation-receipts-schema|native-live-notes-schema|native-glossary-schema|native-discussion-annotations-schema|native-discussion-notifications-schema|native-account-profile-schema|native-links-grid-registration) ;;
-        native-page-accuracy-attestations-schema) ;;
+        native-page-accuracy-attestations-schema|native-page-history-reasons-schema) ;;
         personal-mcp-credential-kind-and-owner-schema) ;;
         external-mcp-oauth-grants-and-pending-schema|external-mcp-generic-oauth-schema|external-mcp-retired-oauth-configuration-schema) ;;
         *) die "Unsupported named migration postcondition: $probe" ;;
@@ -413,13 +413,8 @@ on_exit() {
       if [[ "$PROXY_GATED" == true ]]; then docker network connect --alias "$PROXY_ALIAS" "$PROXY_NETWORK" "$OLD_APP_CONTAINER" >/dev/null 2>&1 || true; fi
     elif [[ "$RECREATE_BEGUN" == true ]]; then
       if [[ "$(ledger_summary | cut -d'|' -f1)" -gt "$(jq -r '.migrationLedger.count' "$PLAN_FILE")" ]]; then MIGRATION_COMMITTED=true; fi
-      if [[ "$PROXY_GATED" == true && -n "$APP_CONTAINER" ]] &&
-        [[ "$(docker inspect "$APP_CONTAINER" --format '{{.State.Health.Status}}' 2>/dev/null || true)" == healthy ]]; then
-        if docker network connect --alias "$PROXY_ALIAS" "$PROXY_NETWORK" "$APP_CONTAINER" >/dev/null 2>&1; then
-          warn 'Healthy candidate was reconnected to the public proxy after verification failed.'
-        else
-          warn 'Healthy candidate could not be reconnected to the public proxy after verification failed.'
-        fi
+      if [[ "$PROXY_GATED" == true ]]; then
+        warn 'Candidate verification failed; admission remains gated. Health alone does not authorize reconnecting the candidate.'
       fi
       warn 'Candidate recreation began; no automatic rollback was attempted.'
       [[ "$MIGRATION_COMMITTED" == false ]] || warn 'A migration committed. Never start the old image against this database.'
@@ -591,6 +586,42 @@ verify_page_accuracy_schema() {
   [[ "$result" == 1 ]] || die "Postcondition failed: native-page-accuracy-attestations-schema ($result/1 indexes)"
 }
 
+verify_page_history_reasons_schema() {
+  local container="$1" user="$2" database="$3" result
+  result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+    SELECT count(*) FROM information_schema.columns
+    WHERE table_schema=current_schema() AND table_name IN ('pages','pageHistory')
+      AND column_name='changeReason' AND data_type='character varying'
+      AND character_maximum_length=200 AND is_nullable='YES' AND column_default IS NULL;")"
+  [[ "$result" == 2 ]] || die "Postcondition failed: native-page-history-reasons-schema ($result/2 columns)"
+  result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+    WITH source_columns AS (
+      SELECT column_name, position FROM unnest(ARRAY[
+        'path','hash','title','description','visibility','ownerId','isPublished','isSearchable',
+        'publishStartDate','publishEndDate','content','contentType','editorKey','localeCode',
+        'authorId','creatorId','changeReason'
+      ]) WITH ORDINALITY AS columns(column_name, position)
+    ), expected AS (
+      SELECT 'BEGIN IF ROW(' || string_agg(format('NEW.\"%s\"',column_name), ', ' ORDER BY position)
+        || ', NEW.extra::text) IS DISTINCT FROM ROW('
+        || string_agg(format('OLD.\"%s\"',column_name), ', ' ORDER BY position)
+        || ', OLD.extra::text) THEN NEW.\"sourceRevision\" := OLD.\"sourceRevision\" + 1; END IF; RETURN NEW; END;' AS body
+      FROM source_columns
+    )
+    SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
+      JOIN pg_proc p ON p.oid=t.tgfoid JOIN pg_language l ON l.oid=p.prolang
+      CROSS JOIN expected e
+    WHERE c.relnamespace=current_schema()::regnamespace AND c.relname='pages'
+      AND t.tgname='pages_source_revision_trigger' AND NOT t.tgisinternal
+      AND t.tgenabled IN ('O','A') AND t.tgtype=19 AND t.tgattr::text=''
+      AND t.tgqual IS NULL AND t.tgnargs=0 AND octet_length(t.tgargs)=0 AND t.tgconstraint=0
+      AND p.pronamespace=c.relnamespace AND p.proname='wiki_increment_page_source_revision'
+      AND p.pronargs=0 AND p.prorettype='trigger'::regtype AND l.lanname='plpgsql'
+      AND regexp_replace(p.prosrc,'[[:space:]]','','g')
+        = regexp_replace(e.body,'[[:space:]]','','g');")"
+  [[ "$result" == 1 ]] || die "Postcondition failed: native-page-history-reasons-schema ($result/1 source-revision trigger)"
+}
+
 verify_postconditions() {
   local phase="$1" container="$2" user="$3" database="$4" probe result
   while IFS= read -r probe; do
@@ -624,6 +655,9 @@ verify_postconditions() {
       agent-media-context-state-columns)
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='agentMedia' AND ((column_name='promptTokens' AND data_type='integer' AND is_nullable='YES') OR (column_name='detachedAt' AND data_type='timestamp with time zone' AND is_nullable='YES'));")"
         [[ "$result" == 2 ]] || die "Postcondition failed: $probe ($result/2 columns)"
+        ;;
+      native-page-history-reasons-schema)
+        verify_page_history_reasons_schema "$container" "$user" "$database"
         ;;
       native-page-accuracy-attestations-schema)
         verify_page_accuracy_schema "$container" "$user" "$database"
@@ -1259,6 +1293,12 @@ table_hash() {
     local excluded_columns
     excluded_columns="$(IFS=,; printf '%s' "${excluded_user_columns[*]}")"
     psql_live -Atc "COPY (SELECT (to_jsonb(t) - ARRAY[$excluded_columns]::text[])::text FROM users t ORDER BY id) TO STDOUT" | sha256sum | cut -d' ' -f1
+    return
+  fi
+  if [[ "$table" == pages || "$table" == pageHistory ]] &&
+    jq -e '.pendingMigrations | index("tsepistle-000069-page-history-reasons.js") != null' "$PLAN_FILE" >/dev/null; then
+    # Canonicalize both sides while these planned columns are absent at baseline.
+    psql_live -Atc "COPY (SELECT (to_jsonb(t) - 'changeReason')::text FROM $sql_table t ORDER BY id) TO STDOUT" | sha256sum | cut -d' ' -f1
     return
   fi
   psql_live -Atc "COPY (SELECT row_to_json(t)::text FROM $sql_table t ORDER BY id) TO STDOUT" | sha256sum | cut -d' ' -f1

@@ -103,6 +103,8 @@ const threadComponent = (await import('./agent-thread.vue')).default
 const goalStatusComponent = (await import('./agent-goal-status.vue')).default
 // History also imports SFC children, so it must load after the test SFC plugin above.
 const historyPanelComponent = (await import('./agent-history-panel.vue')).default
+const borderBeamPath = path.join(process.cwd(), 'client/components/common/control-border-beam.vue')
+const borderBeamComponent = (await import(borderBeamPath)).default
 const testPwaState = Vue.reactive({ connectionState: 'online' as 'online' | 'offline' | 'server-unavailable' })
 
 const compiledTemplate = compileTemplate({
@@ -1116,6 +1118,7 @@ const mountInlineAgent = (
   )
   app.component('AgentContextPicker', contextPickerComponent)
   app.component('AgentContextSummary', contextSummaryComponent)
+  app.component('ControlBorderBeam', borderBeamComponent)
   app.component('AgentComposer', composerComponent)
   app.component('AgentComposerSkillMenu', skillMenuComponent)
   app.component('AgentComposerMedia', options.mediaComponent ?? mediaComposerComponent)
@@ -3784,5 +3787,98 @@ describe('Inline Agent goal submission lock', () => {
     expect(lockState.agentCalls.reloadSessions).toHaveBeenCalledTimes(1)
     expect(lockState.clearUnfiledHistoryOpen.value).toBe(true)
     expect(lockState.clearUnfiledError.value).toContain('No replacement conversation is available yet. Retry.')
+  })
+})
+
+describe('Live Memory receipt presentation', () => {
+  it('serializes distinct recall receipts into one 600ms pulse each and discards hidden queued feedback without replay', async () => {
+    const visibility = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+    stateCleanups.push(() => {
+      if (visibility) Object.defineProperty(document, 'visibilityState', visibility)
+      else Reflect.deleteProperty(document, 'visibilityState')
+    })
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    const base = threadFixture()
+    const user = { target: 'user' as const, state: 'available' as const, characters: 24, limit: 1375 as const, snapshotId: 'a'.repeat(64) }
+    const agent = { target: 'agent' as const, state: 'available' as const, characters: 0, limit: 2200 as const, snapshotId: 'b'.repeat(64) }
+    const thread: ReturnType<typeof threadFixture> = {
+      ...base,
+      session: {
+        ...base.session,
+        currentRun: {
+          id: '00000000-0000-4000-8000-000000000020', sessionId,
+          status: 'running', attempt: 1, eventSequence: 1, canCancel: true,
+          createdAt: timestamp, startedAt: timestamp, completedAt: null,
+          errorCode: null, errorMessage: null
+        }
+      },
+      memoryContext: {
+        ownerId: 2, sessionId,
+        frozen: { snapshotId: sessionId, user, agent }, latestSaved: { user, agent },
+        nextSession: { user: 'unchanged', agent: 'unchanged' }
+      }
+    }
+    const workspace = realWorkspace('saved', null, thread)
+    const state = workspace.state()
+    const mounted = mountInlineAgent(state)
+    await settle()
+    const pill = mounted.root.querySelector<HTMLElement>('.inline-agent__memory-pill')!
+    // JSDOM has no layout; only the browser visibility boundary is supplied.
+    pill.getClientRects = () => [{ width: 80, height: 32 }] as unknown as DOMRectList
+    const beam = () => mounted.root.querySelector('.inline-agent__memory-beam')
+    const publish = (sequence: number): void => {
+      const capture = workspace.store.captureMemoryMutationContext()
+      if (!capture) throw new Error('Current owned memory context is required')
+      workspace.store.projectRunMemoryReceipt({
+        id: `recall-${sequence}`, runId: thread.session.currentRun!.id, sequence,
+        type: 'memory.contextIncluded', attempt: 1, schemaVersion: 1, createdAt: timestamp,
+        data: {
+          ownerId: 2, sessionId, snapshotId: sessionId, deliveryId: `dispatch-${sequence}`,
+          targets: [{ target: 'user', characters: 24, limit: 1375, snapshotId: 'a'.repeat(64) }]
+        }
+      }, 'live', capture)
+    }
+    expect(beam() === null).toBe(true)
+    publish(1)
+    await settle()
+    const first = beam()
+    expect(first).not.toBeNull()
+    publish(2)
+    await settle()
+    expect(beam() === first).toBe(true)
+    state.advanceTime(599)
+    await settle()
+    expect(beam() === first).toBe(true)
+    state.advanceTime(1)
+    await settle()
+    const second = beam()
+    expect(second).not.toBeNull()
+    expect(second === first).toBe(false)
+    state.advanceTime(599)
+    await settle()
+    expect(beam() === second).toBe(true)
+    state.advanceTime(1)
+    await settle()
+    expect(beam() === null).toBe(true)
+    expect(pill.classList.contains('inline-agent__memory-pill--feedback')).toBe(false)
+
+    publish(3)
+    await settle()
+    expect(beam()).not.toBeNull()
+    publish(4)
+    await settle()
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    document.dispatchEvent(new browserWindow.Event('visibilitychange'))
+    await settle()
+    expect(beam() === null).toBe(true)
+    expect((state.memoryFeedbackStatusRegion as ValueRef<HTMLElement | null>).value?.textContent?.trim()).toBe('')
+    state.advanceTime(1200)
+    await settle()
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new browserWindow.Event('visibilitychange'))
+    state.advanceTime(600)
+    await settle()
+    expect(beam() === null).toBe(true)
+    expect(pill.classList.contains('inline-agent__memory-pill--feedback')).toBe(false)
   })
 })
