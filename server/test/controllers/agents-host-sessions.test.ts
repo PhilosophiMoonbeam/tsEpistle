@@ -5247,10 +5247,21 @@ describe('ordinary-origin agent session API', () => {
       '00000000-0000-4000-8000-000000000223',
       '00000000-0000-4000-8000-000000000224'
     )
+    const awaitingUsage = [
+      { usageVersion: 2, inputTokens: 2, outputTokens: 1, totalTokens: 3, costMicros: 4 },
+      { usageVersion: 2, inputTokens: 1, outputTokens: 2, totalTokens: 3, costMicros: 5 }
+    ]
+    await db('agentEvents').insert(awaitingUsage.map((usage, index) => {
+      const data = JSON.stringify(usage)
+      return { id: randomUUID(), runId: awaiting.run.id, sequence: awaiting.run.eventSequence + index + 1,
+        type: 'model.turn', attempt: 1, schemaVersion: 1, data,
+        dataSha256: createHash('sha256').update(data).digest('hex'), createdAt: now }
+    }))
     await db('agentRuns')
       .where({ id: awaiting.run.id })
       .update({
         status: 'awaiting_approval',
+        eventSequence: awaiting.run.eventSequence + awaitingUsage.length,
         attempts: 1,
         leaseOwner: 'lost-worker',
         leaseToken: '00000000-0000-4000-8000-000000000225',
@@ -5259,6 +5270,14 @@ describe('ordinary-origin agent session API', () => {
     const awaitingCancellationResponse = await fetch(`${baseUrl}/_api/agents/runs/${awaiting.run.id}/cancel`, { method: 'POST', headers })
     expect(awaitingCancellationResponse.status).toBe(200)
     await requestAgentRunCancellation(db, 7, awaiting.run.id)
+    expect(normalizeAccountingRow(await db('agentRuns').where({ id: awaiting.run.id })
+      .first('inputTokens', 'outputTokens', 'totalTokens', 'estimatedCostMicros'))).toEqual({
+      inputTokens: 3, outputTokens: 3, totalTokens: 6, estimatedCostMicros: 9
+    })
+    expect(normalizeAccountingRow(await db('agentQuotaReservations').where({ runId: awaiting.run.id })
+      .first('status', 'consumedTokens', 'consumedCostMicros'))).toEqual({
+      status: 'consumed', consumedTokens: 6, consumedCostMicros: 9
+    })
 
     const expired = await admit(
       '00000000-0000-4000-8000-000000000241',
@@ -5459,9 +5478,10 @@ describe('ordinary-origin agent session API', () => {
       [racing.run.id]: racing.run.assistantMessageId
     }
     for (const runId of [queued.run.id, awaiting.run.id, expired.run.id, racing.run.id]) {
+      const terminalSequence = runId === awaiting.run.id ? 5 : 3
       expect(await db('agentRuns').where({ id: runId }).first('status', 'eventSequence', 'leaseToken', 'completedAt')).toMatchObject({
         status: 'cancelled',
-        eventSequence: 3,
+        eventSequence: terminalSequence,
         leaseToken: null,
         completedAt: expect.anything()
       })
@@ -5473,14 +5493,14 @@ describe('ordinary-origin agent session API', () => {
         .select('sequence', 'type', 'data')
       expect(terminalEvents.map(event => ({ sequence: event.sequence, type: event.type, data: JSON.parse(event.data) }))).toEqual([
         {
-          sequence: 2,
+          sequence: terminalSequence - 1,
           type: 'message.completed',
           data: { messageId: terminalMessageIds[runId], status: 'cancelled' }
         },
-        { sequence: 3, type: 'run.cancelled', data: { runId, status: 'cancelled' } }
+        { sequence: terminalSequence, type: 'run.cancelled', data: { runId, status: 'cancelled' } }
       ])
       expect(await db('agentQuotaReservations').where({ runId }).first('status')).toEqual({
-        status: runId === racing.run.id ? 'consumed' : 'released'
+        status: runId === racing.run.id || runId === awaiting.run.id ? 'consumed' : 'released'
       })
     }
     expect(

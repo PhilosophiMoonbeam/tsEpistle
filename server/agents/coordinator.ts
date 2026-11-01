@@ -1053,12 +1053,15 @@ const assertTerminalMessageStatus = (runStatus: AgentTerminalRunStatus, messageS
   if (!valid) throw new AgentRepositoryError('INVALID_TERMINAL_MESSAGE_STATUS', 'Assistant message status is inconsistent with the terminal run', 400)
 }
 
-const persistedAgentRunUsage = async (transaction: Knex.Transaction, runId: string): Promise<{ readonly totalTokens: number; readonly costMicros: number }> => {
+const persistedAgentRunUsage = async (transaction: Knex.Transaction, runId: string): Promise<ReturnType<typeof readAgentUsageEvent> | null> => {
   const rows = (await transaction('agentEvents')
     .where({ runId })
     .whereIn('type', ['task.planCreated', 'model.turn', 'usage.updated'])
     .orderBy('sequence')
     .select('type', 'data', 'dataSha256')) as Array<{ type: 'task.planCreated' | 'model.turn' | 'usage.updated'; data: string; dataSha256: string }>
+  if (rows.length === 0) return null
+  let inputTokens = 0
+  let outputTokens = 0
   let totalTokens = 0
   let costMicros = 0
   for (const row of rows) {
@@ -1078,14 +1081,18 @@ const persistedAgentRunUsage = async (transaction: Knex.Transaction, runId: stri
       throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored agent usage event usage is invalid', 500)
     }
     if (row.type === 'usage.updated') {
+      inputTokens = usage.inputTokens
+      outputTokens = usage.outputTokens
       totalTokens = usage.totalTokens
       costMicros = usage.costMicros
     } else {
+      inputTokens = storedQuotaSum(inputTokens, usage.inputTokens, 'Persisted input token usage')
+      outputTokens = storedQuotaSum(outputTokens, usage.outputTokens, 'Persisted output token usage')
       totalTokens = storedQuotaSum(totalTokens, usage.totalTokens, 'Persisted token usage')
       costMicros = storedQuotaSum(costMicros, usage.costMicros, 'Persisted cost usage')
     }
   }
-  return { totalTokens, costMicros }
+  return { inputTokens, outputTokens, totalTokens, costMicros }
 }
 
 export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transaction, input: TerminalizeAgentRunInput): Promise<AgentRunRecord> => {
@@ -1113,8 +1120,8 @@ export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transac
       const pendingIntent = await readAgentRunQuotaSettlementIntent(transaction, row.id, row.ownerId)
       if (pendingIntent !== null) {
         const usage = await persistedAgentRunUsage(transaction, row.id)
-        const consumedTokens = Math.max(usage.totalTokens, pendingIntent.consumedTokens)
-        const consumedCostMicros = Math.max(usage.costMicros, pendingIntent.consumedCostMicros)
+        const consumedTokens = Math.max(usage?.totalTokens ?? 0, pendingIntent.consumedTokens)
+        const consumedCostMicros = Math.max(usage?.costMicros ?? 0, pendingIntent.consumedCostMicros)
         await reconcileAgentRunQuotaInTransaction(
           transaction,
           {
@@ -1183,6 +1190,7 @@ export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transac
     }))
   )
 
+  const persistedUsage = input.quota === undefined ? await persistedAgentRunUsage(transaction, row.id) : null
   const runPatch: Record<string, unknown> = {
     status,
     eventSequence,
@@ -1195,11 +1203,15 @@ export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transac
   }
   if (status === 'cancelled') runPatch.cancelRequestedAt = row.cancelRequestedAt ?? input.cancelRequestedAt ?? now
   if (input.runPatch?.inputTokens !== undefined) runPatch.inputTokens = nonNegativeInteger(input.runPatch.inputTokens, 'Run input tokens')
+  else if (persistedUsage !== null) runPatch.inputTokens = persistedUsage.inputTokens
   if (input.runPatch?.outputTokens !== undefined) runPatch.outputTokens = nonNegativeInteger(input.runPatch.outputTokens, 'Run output tokens')
+  else if (persistedUsage !== null) runPatch.outputTokens = persistedUsage.outputTokens
   if (input.runPatch?.totalTokens !== undefined) runPatch.totalTokens = nonNegativeInteger(input.runPatch.totalTokens, 'Run total tokens')
+  else if (persistedUsage !== null) runPatch.totalTokens = persistedUsage.totalTokens
   if (input.runPatch?.estimatedCostMicros !== undefined)
     runPatch.estimatedCostMicros =
       input.runPatch.estimatedCostMicros === null ? null : nonNegativeInteger(input.runPatch.estimatedCostMicros, 'Run estimated cost')
+  else if (persistedUsage !== null) runPatch.estimatedCostMicros = persistedUsage.costMicros
   if (requestedStatusWon) {
     runPatch.errorCode = input.errorCode ?? null
     runPatch.errorMessage = input.errorMessage ?? null
@@ -1210,7 +1222,6 @@ export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transac
   const changed = await transaction('agentRuns').where({ id: row.id, status: row.status, eventSequence: row.eventSequence }).update(runPatch)
   if (changed !== 1) throw new AgentRepositoryError('RUN_TERMINAL_FENCE_CHANGED', 'Agent run changed during terminalization', 409)
 
-  const persistedUsage = input.quota === undefined ? await persistedAgentRunUsage(transaction, row.id) : null
   const persistedIntent = input.quota === undefined ? await readAgentRunQuotaSettlementIntent(transaction, row.id, row.ownerId) : null
   const persistedTokens = Math.max(persistedUsage?.totalTokens ?? 0, persistedIntent?.consumedTokens ?? 0)
   const persistedCostMicros = Math.max(persistedUsage?.costMicros ?? 0, persistedIntent?.consumedCostMicros ?? 0)
