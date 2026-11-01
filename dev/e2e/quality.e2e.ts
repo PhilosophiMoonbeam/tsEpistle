@@ -1293,13 +1293,14 @@ test.describe('release accessibility profiles', () => {
         await expect(locator, `${surface} does not become a glass layer`).toHaveCSS('backdrop-filter', 'none')
       }
       const expectContextualGlass = async (reduced: boolean) => {
+        const bodyAlpha = await body.evaluate(element => element.closest('.v-theme--dark') ? .84 : .86)
         for (const [name, locator] of [['toolbar', toolbar], ['body', body]] as const) {
           await expect(locator, `The Agent ${name} finishes entering at full opacity`).toHaveCSS('opacity', '1')
           await expect(locator).toHaveCSS('backdrop-filter', reduced ? 'none' : /blur\(/u)
           if (reduced) {
             await expect.poll(async () => (await readSurfaceStyle(locator)).backgroundAlpha, { message: `Reduced transparency makes the Agent ${name} opaque` }).toBe(1)
           } else {
-            await expect.poll(async () => (await readSurfaceStyle(locator)).backgroundAlpha, { message: `The Agent ${name} retains its established transparency` }).toBeCloseTo(name === 'toolbar' ? .64 : .36, 4)
+            await expect.poll(async () => (await readSurfaceStyle(locator)).backgroundAlpha, { message: `The Agent ${name} keeps its independent contextual material` }).toBeCloseTo(name === 'toolbar' ? .64 : bodyAlpha, 4)
           }
         }
         const [toolbarStyles, bodyStyles] = await Promise.all([readSurfaceStyle(toolbar), readSurfaceStyle(body)])
@@ -1314,20 +1315,16 @@ test.describe('release accessibility profiles', () => {
         const history = agent.locator('.inline-agent__side--history')
         await expect(history).toBeVisible()
         await expectOpaque(history, 'Agent history')
-        await history.getByRole('button', { name: 'Close chat history' }).click()
+        await history.locator('input').first().focus()
+        await page.keyboard.press('Escape')
         await expect(history).toBeHidden()
 
-        // Memory sits beside History on wider layouts and in More chat actions on phones.
-        const memoryToggle = agent.getByRole('button', { name: 'Memory', exact: true })
-        if (await memoryToggle.isVisible()) await memoryToggle.click()
-        else {
-          await agent.getByRole('button', { name: 'More chat actions', exact: true }).click()
-          await agent.locator('.v-menu.v-overlay--active').getByText('Memory', { exact: true }).click()
-        }
+        await agent.locator('.inline-agent__memory-pill').click()
         const memory = agent.locator('.inline-agent__side--memory')
         await expect(memory).toBeVisible()
         await expectOpaque(memory, 'Agent memory')
-        await memory.getByRole('button', { name: 'Close agent memory' }).click()
+        await memory.getByRole('button').filter({ visible: true }).first().focus()
+        await page.keyboard.press('Escape')
         await expect(memory).toBeHidden()
       }
 
