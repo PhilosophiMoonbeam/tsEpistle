@@ -108,6 +108,8 @@ Search keeps its rounded header flush with both card borders. The surrounding ov
 
 Clicking the page backdrop, **Close search**, or Escape dismisses ordinary search without clearing its query and current results. Clicking the search field reopens them; explicitly clearing or replacing its text starts a new search. Only an active scrollbar rail is exempt from backdrop dismissal; empty gutter space remains dismissible.
 
+Result action cells leave Escape and Tab to the owning modal focus scope, including while **Copy snippet** is focused. Cited copy remains separate from its sibling result link: keyboard or touch activation copies the current passage without navigating, submitting Ask, or dismissing Search.
+
 The welcome area scrolls in short viewports so lower starters remain reachable above the sticky composer. Without a current-page hint, **Explore the Wiki** starts from a bounded locale-root discovery window at the supported maximum depth, reads chosen page IDs, and offers a source-cited sample with a follow-up topic question. A shallow or empty navigation window is not proof of Wiki-wide absence; discovery metadata never becomes citation evidence.
 
 ### Current creation receipts
