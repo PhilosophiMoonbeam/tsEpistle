@@ -238,7 +238,7 @@
                               | {{ $t('common:searchPanel.private') }}
                             v-chip(size='x-small' label variant='outlined') {{ item.locale.toLocaleUpperCase() }}
                             v-icon.search-results-item-chevron(icon='mdi-chevron-right' size='19' aria-hidden='true')
-                    .search-results-action-cell(role='gridcell' @keydown.stop @click.stop)
+                    .search-results-action-cell(role='gridcell' @click.stop)
                       cited-copy-action(
                         :text='copySource(item)?.excerpt || ``'
                         :source='copySource(item)'
