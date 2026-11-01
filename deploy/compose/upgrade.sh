@@ -1348,8 +1348,7 @@ drain_and_recover() {
   compose config > "$RECOVERY_PATH/compose.resolved.yml"
   docker exec "$DB_CONTAINER" sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$RECOVERY_PATH/postgres.dump"
   docker exec -i "$DB_CONTAINER" pg_restore -l < "$RECOVERY_PATH/postgres.dump" > "$RECOVERY_PATH/postgres.list"
-  docker run --rm --network none --volumes-from "$APP_CONTAINER":ro -v "$RECOVERY_PATH:/backup" alpine:3.22 \
-    tar -czf /backup/wiki-data.tar.gz -C / wiki/data
+  docker cp --archive "$APP_CONTAINER:/wiki/data/." - | gzip -c > "$RECOVERY_PATH/wiki-data.tar.gz"
   tar -czf "$RECOVERY_PATH/config-and-keys.tar.gz" -P "$ENV_FILE" "$COMPOSE_FILE" "$SCRIPT_DIR/config.yml" \
     "$STATE_DIR/agent-runtime.env" "$STATE_DIR/db-password" "$STATE_DIR/app-db-password" \
     "$STATE_DIR/agent-profile-resolution-keys.json" "$STATE_DIR/agent-provider-secret-keys.json" "$STATE_DIR/agent-snapshot-signing-secret"
@@ -1379,6 +1378,8 @@ start_candidate() {
     compose up --no-start --no-deps --no-build --pull never --force-recreate "$APP_SERVICE"
     APP_CONTAINER="$(compose ps -a -q "$APP_SERVICE")"
     docker network disconnect "$PROXY_NETWORK" "$APP_CONTAINER" >/dev/null 2>&1 || true
+    [[ -n "$RECOVERY_PATH" && -s "$RECOVERY_PATH/wiki-data.tar.gz" ]] || die 'Complete application data recovery archive is missing'
+    gzip -dc "$RECOVERY_PATH/wiki-data.tar.gz" | docker cp --archive - "$APP_CONTAINER:/wiki/data"
     docker start "$APP_CONTAINER" >/dev/null
     wait_health "$APP_CONTAINER" || { docker logs --tail 160 "$APP_CONTAINER" >&2; die 'Candidate failed internal readiness'; }
   else
