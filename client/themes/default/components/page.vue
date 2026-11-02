@@ -5868,6 +5868,9 @@ export default defineComponent({
   --page-reader-surface-padding: var(--wiki-space-3);
 
   min-height: calc(var(--wiki-grid-size) * 3);
+  width: 100%;
+  max-inline-size: var(--page-reader-copy-max);
+  margin-inline: auto;
   scroll-margin-block-start: calc(var(--v-layout-top, 64px) + 24px);
   padding: var(--page-reader-surface-padding) 0;
   border: 0;
@@ -5879,11 +5882,6 @@ export default defineComponent({
     width: 100%;
     margin: 0;
 
-    // Keep prose comfortable while tables, diagrams and code use the canvas.
-    > :where(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
-      max-inline-size: var(--page-reader-copy-max);
-      margin-inline: auto;
-    }
   }
 
   :not(pre) > code {
@@ -5997,20 +5995,21 @@ export default defineComponent({
   font-size: .8125rem;
 }
 
+.page-inline-toc {
+  position: sticky;
+  inset-block-start: var(--v-layout-top, 56px);
+  z-index: 4;
+  margin-block-end: var(--wiki-space-1);
+}
+
+.page-inline-toc > .page-toc-card {
+  min-height: 40px;
+  max-height: min(60dvh, 32rem);
+  border: 0 !important;
+}
+
 @media (max-width: 1279px) {
   .page-body { padding-block-start: var(--wiki-space-2) !important; }
-  .page-inline-toc {
-    position: sticky;
-    inset-block-start: var(--v-layout-top, 56px);
-    z-index: 4;
-    margin-block-end: var(--wiki-space-1);
-  }
-
-  .page-inline-toc > .page-toc-card {
-    min-height: 40px;
-    max-height: min(60dvh, 32rem);
-    border: 0 !important;
-  }
 
   .page-toc-summary {
     display: flex;
