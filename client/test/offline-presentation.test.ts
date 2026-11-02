@@ -25,6 +25,7 @@ describe('offline presentation branding allowlist', () => {
       logoEffect: { private: 'never persisted' },
       agentCsrfToken: 'secret',
       user: { authenticated: true, privatePageTitle: 'secret page' },
+      publicSocialSharing: true,
       offlineDraftSiteId: 'server-installation',
       lang: 'en',
       tocPosition: 'right',
@@ -42,6 +43,8 @@ describe('offline presentation branding allowlist', () => {
     expect(offlinePresentation().config.readerLayout).toEqual({ textSize: 19, lineHeight: 1.8, copyWidth: 101 })
     expect(JSON.parse(stored)).not.toHaveProperty('offlineDraftSiteId')
     expect(offlinePresentation().config.offlineDraftSiteId).toBeNull()
+    expect(JSON.parse(stored)).not.toHaveProperty('publicSocialSharing')
+    expect(offlinePresentation().config.publicSocialSharing).toBe(false)
   })
 
   it('revalidates local presentation data and permits the exact bundled default', () => {
@@ -62,6 +65,23 @@ describe('offline presentation branding allowlist', () => {
   it('does not turn a local installation hint into verified bootstrap authority', () => {
     presentationStorage(JSON.stringify({ offlineDraftSiteId: 'forged-installation' }))
     expect(offlinePresentation().config.offlineDraftSiteId).toBeNull()
+  })
+
+  it('never authorizes public sharing from a cached online setting or forged presentation record', () => {
+    presentationStorage(JSON.stringify({ publicSocialSharing: true }))
+    expect(offlinePresentation().config.publicSocialSharing).toBe(false)
+  })
+
+  it('uses the bundled copy width only for absent or invalid reader layouts, preserving valid saved preferences', () => {
+    const values = presentationStorage()
+    for (const saved of [{}, { readerLayout: null }, { readerLayout: { textSize: 19, lineHeight: 1.8, copyWidth: 111 } }]) {
+      values.set(key, JSON.stringify(saved))
+      expect(offlinePresentation().config.readerLayout?.copyWidth).toBe(76)
+    }
+    for (const copyWidth of [48, 101, 110]) {
+      values.set(key, JSON.stringify({ readerLayout: { textSize: 19, lineHeight: 1.8, copyWidth } }))
+      expect(offlinePresentation().config.readerLayout).toEqual({ textSize: 19, lineHeight: 1.8, copyWidth })
+    }
   })
 })
 

@@ -41,7 +41,7 @@
               span {{ user.email }}
 
       .profile-layout
-        .profile-column
+        .profile-row.profile-row--account(:class='{ "profile-row--account-compact": user.providerKey !== "local" }')
           section.profile-section(aria-labelledby='profile-info-title')
             header.profile-section__header
               h2#profile-info-title.profile-section__title {{ $t('profile:myInfo') }}
@@ -98,7 +98,164 @@
                   autocomplete='organization-title'
                   prepend-inner-icon='mdi-briefcase-outline'
                 )
+            header.profile-section__header
+              h2#profile-avatar-title.profile-section__title {{ $t('profile:avatar.title', { defaultValue: 'Profile avatar' }) }}
+              p.profile-section__hint {{ $t('profile:avatar.saveHint', { defaultValue: 'Avatar changes save when applied.' }) }}
+            .profile-section__body
+              .profile-avatar-editor
+                .profile-avatar-preview
+                  v-avatar(v-if='picture.kind === `initials`', size='88', color='primary')
+                    span.text-headline-medium.text-on-primary.font-weight-bold {{ picture.initials }}
+                  v-avatar(v-else, size='88')
+                    v-img(:src='picture.url', alt='')
+                .profile-avatar-actions
+                  input.profile-avatar-input(
+                    ref='avatarInput'
+                    type='file'
+                    accept='image/jpeg,image/png,image/webp'
+                    tabindex='-1'
+                    aria-hidden='true'
+                    :disabled='avatarLoading'
+                    @change='handleAvatarSelected'
+                  )
+                  .profile-avatar-buttons
+                    v-btn(
+                      ref='avatarUploadButton'
+                      type='button'
+                      variant='outlined'
+                      color='primary'
+                      :loading='avatarAction === `upload`'
+                      :disabled='avatarLoading'
+                      :aria-busy='avatarLoading'
+                      :aria-label='$t(`profile:avatar.upload`, { defaultValue: `Upload avatar` })'
+                      @click='openAvatarPicker'
+                    )
+                      v-icon(start) mdi-upload
+                      span {{$t('profile:avatar.upload', { defaultValue: 'Upload avatar' })}}
+                    v-btn(
+                      v-if='hasInternalAvatar'
+                      type='button'
+                      variant='text'
+                      color='error'
+                      :loading='avatarAction === `remove`'
+                      :disabled='avatarLoading'
+                      :aria-busy='avatarLoading'
+                      :aria-label='$t(`profile:avatar.remove`, { defaultValue: `Remove avatar` })'
+                      @click='removeAvatar'
+                    )
+                      v-icon(start) mdi-delete-outline
+                      span {{$t('profile:avatar.remove', { defaultValue: 'Remove avatar' })}}
+                  p.profile-muted.text-body-small {{ $t('profile:avatar.help', { defaultValue: 'PNG, JPEG, or WebP up to 1 MB and 4096 × 4096 pixels. Crop and apply to save. Provider avatars return after the next sign-in when removed.' }) }}
+                  v-alert(
+                    v-if='avatarError'
+                    type='error'
+                    variant='tonal'
+                    density='compact'
+                    role='alert'
+                  ) {{ avatarError }}
+                  v-alert(
+                    v-if='avatarSuccess'
+                    type='success'
+                    variant='tonal'
+                    density='compact'
+                    role='status'
+                  ) {{ avatarSuccess }}
+              avatar-crop-dialog(
+                v-if='pendingAvatar'
+                :key='avatarCropKey'
+                :file='pendingAvatar.file'
+                :selection-id='avatarCropKey'
+                :reduce-motion='user.reduceMotion'
+                @cancel='cancelAvatarCrop'
+                @apply='applyAvatarCrop'
+              )
 
+
+
+
+          section.profile-section(aria-labelledby='profile-auth-title')
+            header.profile-section__header
+              h2#profile-auth-title.profile-section__title {{ $t('profile:auth.title') }}
+            .profile-section__body
+              .profile-auth-provider
+                .profile-auth-provider__mark
+                  v-icon(aria-hidden='true') mdi-shield-lock-outline
+                .profile-auth-provider__copy
+                  span.profile-muted.text-label-large {{ $t('profile:auth.provider') }}
+                  span.profile-auth-provider__name.text-body-large {{ user.providerName }}
+              form#change-password-form.profile-password-form(
+                v-if='user.providerKey === `local`'
+                @submit.prevent='changePassword'
+                :aria-busy='changePassLoading'
+                aria-labelledby='profile-password-title'
+              )
+                h3#profile-password-title.profile-subsection-title {{ $t('profile:auth.changePassword') }}
+                p.profile-muted.text-body-small {{ $t('profile:auth.changePasswordHint', { defaultValue: 'Saved on its own. Other profile changes are not affected.' }) }}
+                v-alert.mb-3(
+                  v-if='passwordErrorSummary'
+                  type='error'
+                  variant='tonal'
+                  role='alert'
+                ) {{ passwordErrorSummary }}
+                v-text-field(
+                  ref='iptCurrentPass'
+                  v-model='currentPass'
+                  variant='outlined'
+                  density='comfortable'
+                  :label='$t(`profile:auth.currentPassword`)'
+                  :type='showCurrentPass ? "text" : "password"'
+                  :error-messages='passwordErrors.current'
+                  prepend-inner-icon='mdi-form-textbox-password'
+                  autocomplete='current-password'
+                  :disabled='changePassLoading'
+                )
+                  template(v-slot:append-inner)
+                    password-visibility-toggle(v-model:visible='showCurrentPass', :field='$t(`common:password.fields.currentPassword`)', :disabled='changePassLoading')
+                v-text-field(
+                  ref='iptNewPass'
+                  v-model='newPass'
+                  variant='outlined'
+                  density='comfortable'
+                  :label='$t(`profile:auth.newPassword`)'
+                  :type='showNewPass ? "text" : "password"'
+                  :error-messages='passwordErrors.password'
+                  :hint='passwordHint'
+                  persistent-hint
+                  prepend-inner-icon='mdi-form-textbox-password'
+                  autocomplete='new-password'
+                  counter='255'
+                  loading
+                  :disabled='changePassLoading'
+                )
+                  template(v-slot:loader)
+                    password-strength(v-model='newPass')
+                  template(v-slot:append-inner)
+                    password-visibility-toggle(v-model:visible='showNewPass', :field='$t(`common:password.fields.newPassword`)', :disabled='changePassLoading')
+                v-text-field(
+                  ref='iptVerifyPass'
+                  v-model='verifyPass'
+                  variant='outlined'
+                  density='comfortable'
+                  :label='$t(`profile:auth.verifyPassword`)'
+                  :type='showVerifyPass ? "text" : "password"'
+                  :error-messages='passwordErrors.verifyPassword'
+                  prepend-inner-icon='mdi-form-textbox-password'
+                  autocomplete='new-password'
+                  :disabled='changePassLoading'
+                )
+                  template(v-slot:append-inner)
+                    password-visibility-toggle(v-model:visible='showVerifyPass', :field='$t(`common:password.fields.newPasswordConfirmation`)', :disabled='changePassLoading')
+                .profile-password-form__actions
+                  v-btn(
+                    color='primary'
+                    :variant='newPass ? "flat" : "tonal"'
+                    :data-commitment='newPass && !changePassLoading ? "active" : undefined'
+                    type='submit'
+                    :loading='changePassLoading'
+                    :disabled='changePassLoading'
+                    prepend-icon='mdi-lock-reset'
+                  ) {{ $t('profile:auth.changePassword') }}
+        .profile-row
           section.profile-section(aria-labelledby='profile-preferences-title')
             header.profile-section__header
               h2#profile-preferences-title.profile-section__title {{ $t('profile:preferences') }}
@@ -211,192 +368,38 @@
                     density='comfortable'
                   )
 
-          .profile-save-dock(
-            role='region'
-            :aria-label='$t("profile:dock.label", { defaultValue: "Profile changes" })'
-            :class='{ "profile-save-dock--dirty": dirty }'
-          )
-            p.profile-save-dock__copy(role='status' aria-live='polite' aria-atomic='true')
-              v-icon(size='18' aria-hidden='true') {{ dirty ? 'mdi-circle-edit-outline' : 'mdi-check-circle-outline' }}
-              span#profile-save-state {{ dockMessage }}
-            .profile-save-dock__actions
-              v-btn(
-                v-if='dirty'
-                variant='text'
-                :disabled='saving'
-                prepend-icon='mdi-undo-variant'
-                @click='resetDraft'
-              ) {{ $t('profile:dock.reset', { defaultValue: 'Reset' }) }}
-              v-btn.profile-save-dock__save(
-                color='primary'
-                variant='flat'
-                prepend-icon='mdi-check'
-                :loading='saving'
-                :aria-disabled='canSave ? undefined : "true"'
-                aria-describedby='profile-save-state'
-                :class='{ "profile-save-dock__save--inactive": !canSave }'
-                @click='saveDraft'
-              ) {{ $t('profile:dock.save', { defaultValue: 'Save changes' }) }}
 
-        .profile-column
-          section.profile-section(aria-labelledby='profile-avatar-title')
-            header.profile-section__header
-              h2#profile-avatar-title.profile-section__title {{ $t('profile:avatar.title', { defaultValue: 'Profile avatar' }) }}
-              p.profile-section__hint {{ $t('profile:avatar.saveHint', { defaultValue: 'Avatar changes save when applied.' }) }}
-            .profile-section__body
-              .profile-avatar-editor
-                .profile-avatar-preview
-                  v-avatar(v-if='picture.kind === `initials`', size='88', color='primary')
-                    span.text-headline-medium.text-on-primary.font-weight-bold {{ picture.initials }}
-                  v-avatar(v-else, size='88')
-                    v-img(:src='picture.url', alt='')
-                .profile-avatar-actions
-                  input.profile-avatar-input(
-                    ref='avatarInput'
-                    type='file'
-                    accept='image/jpeg,image/png,image/webp'
-                    tabindex='-1'
-                    aria-hidden='true'
-                    :disabled='avatarLoading'
-                    @change='handleAvatarSelected'
-                  )
-                  .profile-avatar-buttons
-                    v-btn(
-                      ref='avatarUploadButton'
-                      type='button'
-                      variant='outlined'
-                      color='primary'
-                      :loading='avatarAction === `upload`'
-                      :disabled='avatarLoading'
-                      :aria-busy='avatarLoading'
-                      :aria-label='$t(`profile:avatar.upload`, { defaultValue: `Upload avatar` })'
-                      @click='openAvatarPicker'
-                    )
-                      v-icon(start) mdi-upload
-                      span {{$t('profile:avatar.upload', { defaultValue: 'Upload avatar' })}}
-                    v-btn(
-                      v-if='hasInternalAvatar'
-                      type='button'
-                      variant='text'
-                      color='error'
-                      :loading='avatarAction === `remove`'
-                      :disabled='avatarLoading'
-                      :aria-busy='avatarLoading'
-                      :aria-label='$t(`profile:avatar.remove`, { defaultValue: `Remove avatar` })'
-                      @click='removeAvatar'
-                    )
-                      v-icon(start) mdi-delete-outline
-                      span {{$t('profile:avatar.remove', { defaultValue: 'Remove avatar' })}}
-                  p.profile-muted.text-body-small {{ $t('profile:avatar.help', { defaultValue: 'PNG, JPEG, or WebP up to 1 MB and 4096 × 4096 pixels. Crop and apply to save. Provider avatars return after the next sign-in when removed.' }) }}
-                  v-alert(
-                    v-if='avatarError'
-                    type='error'
-                    variant='tonal'
-                    density='compact'
-                    role='alert'
-                  ) {{ avatarError }}
-                  v-alert(
-                    v-if='avatarSuccess'
-                    type='success'
-                    variant='tonal'
-                    density='compact'
-                    role='status'
-                  ) {{ avatarSuccess }}
-              avatar-crop-dialog(
-                v-if='pendingAvatar'
-                :key='avatarCropKey'
-                :file='pendingAvatar.file'
-                :selection-id='avatarCropKey'
-                :reduce-motion='user.reduceMotion'
-                @cancel='cancelAvatarCrop'
-                @apply='applyAvatarCrop'
-              )
-
-          section.profile-section(aria-labelledby='profile-auth-title')
-            header.profile-section__header
-              h2#profile-auth-title.profile-section__title {{ $t('profile:auth.title') }}
-            .profile-section__body
-              .profile-auth-provider
-                .profile-auth-provider__mark
-                  v-icon(aria-hidden='true') mdi-shield-lock-outline
-                .profile-auth-provider__copy
-                  span.profile-muted.text-label-large {{ $t('profile:auth.provider') }}
-                  span.profile-auth-provider__name.text-body-large {{ user.providerName }}
-              form#change-password-form.profile-password-form(
-                v-if='user.providerKey === `local`'
-                @submit.prevent='changePassword'
-                :aria-busy='changePassLoading'
-                aria-labelledby='profile-password-title'
-              )
-                h3#profile-password-title.profile-subsection-title {{ $t('profile:auth.changePassword') }}
-                p.profile-muted.text-body-small {{ $t('profile:auth.changePasswordHint', { defaultValue: 'Saved on its own. Other profile changes are not affected.' }) }}
-                v-alert.mb-3(
-                  v-if='passwordErrorSummary'
-                  type='error'
-                  variant='tonal'
-                  role='alert'
-                ) {{ passwordErrorSummary }}
-                v-text-field(
-                  ref='iptCurrentPass'
-                  v-model='currentPass'
-                  variant='outlined'
-                  density='comfortable'
-                  :label='$t(`profile:auth.currentPassword`)'
-                  :type='showCurrentPass ? "text" : "password"'
-                  :error-messages='passwordErrors.current'
-                  prepend-inner-icon='mdi-form-textbox-password'
-                  autocomplete='current-password'
-                  :disabled='changePassLoading'
-                )
-                  template(v-slot:append-inner)
-                    password-visibility-toggle(v-model:visible='showCurrentPass', :field='$t(`common:password.fields.currentPassword`)', :disabled='changePassLoading')
-                v-text-field(
-                  ref='iptNewPass'
-                  v-model='newPass'
-                  variant='outlined'
-                  density='comfortable'
-                  :label='$t(`profile:auth.newPassword`)'
-                  :type='showNewPass ? "text" : "password"'
-                  :error-messages='passwordErrors.password'
-                  :hint='passwordHint'
-                  persistent-hint
-                  prepend-inner-icon='mdi-form-textbox-password'
-                  autocomplete='new-password'
-                  counter='255'
-                  loading
-                  :disabled='changePassLoading'
-                )
-                  template(v-slot:loader)
-                    password-strength(v-model='newPass')
-                  template(v-slot:append-inner)
-                    password-visibility-toggle(v-model:visible='showNewPass', :field='$t(`common:password.fields.newPassword`)', :disabled='changePassLoading')
-                v-text-field(
-                  ref='iptVerifyPass'
-                  v-model='verifyPass'
-                  variant='outlined'
-                  density='comfortable'
-                  :label='$t(`profile:auth.verifyPassword`)'
-                  :type='showVerifyPass ? "text" : "password"'
-                  :error-messages='passwordErrors.verifyPassword'
-                  prepend-inner-icon='mdi-form-textbox-password'
-                  autocomplete='new-password'
-                  :disabled='changePassLoading'
-                )
-                  template(v-slot:append-inner)
-                    password-visibility-toggle(v-model:visible='showVerifyPass', :field='$t(`common:password.fields.newPasswordConfirmation`)', :disabled='changePassLoading')
-                .profile-password-form__actions
-                  v-btn(
-                    color='primary'
-                    variant='flat'
-                    type='submit'
-                    :loading='changePassLoading'
-                    :disabled='changePassLoading'
-                    prepend-icon='mdi-lock-reset'
-                  ) {{ $t('profile:auth.changePassword') }}
-
+        .profile-save-dock(
+          role='region'
+          :aria-label='$t("profile:dock.label", { defaultValue: "Profile changes" })'
+          :class='{ "profile-save-dock--dirty": dirty }'
+        )
+          p.profile-save-dock__copy(role='status' aria-live='polite' aria-atomic='true')
+            v-icon(size='18' aria-hidden='true') {{ dirty ? 'mdi-circle-edit-outline' : 'mdi-check-circle-outline' }}
+            span#profile-save-state {{ dockMessage }}
+          .profile-save-dock__actions
+            v-btn(
+              v-if='dirty'
+              variant='text'
+              :disabled='saving'
+              prepend-icon='mdi-undo-variant'
+              @click='resetDraft'
+            ) {{ $t('profile:dock.reset', { defaultValue: 'Reset' }) }}
+            v-btn.profile-save-dock__save(
+              color='primary'
+              :variant='dirty && canSave ? "flat" : "tonal"'
+              :data-commitment='dirty && canSave ? "active" : undefined'
+              prepend-icon='mdi-check'
+              :loading='saving'
+              :aria-disabled='canSave ? undefined : "true"'
+              aria-describedby='profile-save-state'
+              :class='{ "profile-save-dock__save--inactive": !canSave }'
+              @click='saveDraft'
+            ) {{ $t('profile:dock.save', { defaultValue: 'Save changes' }) }}
+        .profile-integrations
           profile-mcp-keys(:key='user.id', :owner-id='user.id', :csrf-token='mcpCsrfToken')
           profile-external-mcp(:key='`mcp-oauth-${user.id}`', :owner-id='user.id', :csrf-token='mcpCsrfToken')
-
+        .profile-row
           section.profile-section(aria-labelledby='profile-groups-title')
             header.profile-section__header
               h2#profile-groups-title.profile-section__title {{ $t('profile:groups.title') }}
@@ -1158,24 +1161,31 @@ export default {
   }
 }
 
-.profile-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
-  align-items: start;
-  gap: var(--wiki-space-5);
-}
-
-.profile-column {
+.profile-layout,
+.profile-integrations {
   display: grid;
   min-width: 0;
   gap: var(--wiki-space-5);
+}
+
+.profile-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  min-width: 0;
+  gap: var(--wiki-space-5);
+
+  &--account-compact {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .profile-section {
   min-width: 0;
-  border: 1px solid var(--wiki-surface-border);
+  border: 1px solid var(--wiki-material-border);
   border-radius: var(--profile-radius);
-  background: var(--wiki-surface-raised);
+  background: var(--wiki-surface-gradient);
+  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-sm);
 
   &__header {
     padding: var(--wiki-space-4) var(--wiki-space-5) var(--wiki-space-3);
@@ -1427,7 +1437,7 @@ export default {
 }
 
 @media (max-width: 1100px) {
-  .profile-layout {
+  .profile-row {
     grid-template-columns: minmax(0, 1fr);
   }
 }

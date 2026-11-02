@@ -130,6 +130,8 @@
       "requestFailed": "The glossary request failed. Please retry."
     },
     "page": {
+      "articlePosition": "Article position",
+      "exitFocusEscape": "Exit focus · Esc",
       "personalReadingProgress": "Personal reading progress",
       "readingProgressSummary": "{{percent}}% read · {{completed}}/{{total}} sections completed",
       "readingSectionProgress": "{{percent}}% read",
@@ -571,6 +573,12 @@
       "currentStateRefreshed": "The current page state was refreshed."
     },
     "header": {
+      "actionGroup": {
+        "layout": "Assistant & Layout",
+        "authoring": "Page Authoring",
+        "history": "History & Source",
+        "destructive": "Destructive actions"
+      },
       "edit": "Edit",
       "home": "Home",
       "move": "Move / Rename",
@@ -618,6 +626,33 @@
       "pageLoading": "Page loading"
     },
     "searchPanel": {
+      "workingSetTitle": "Recent pages & quick actions",
+      "recentThisTab": "Recent visits & edits in this tab",
+      "pinnedThisTab": "Pinned in this tab",
+      "quickActions": "Quick actions",
+      "workingSetNeedsServer": "Recent pages and pins need a live server connection to check current access. Search downloaded pages above while offline.",
+      "workingSetNeedsSession": "Sign in with a verified session to see recent pages and pins from this tab.",
+      "workingSetUnavailable": "Recent pages and pins are unavailable. You can still use the available quick actions or search.",
+      "workingSetLoading": "Checking current access to this tab’s recent pages and pins…",
+      "workingSetMetadataUnavailable": "Some recent pages or pins could not be checked. Only pages with current access are shown.",
+      "workingSetMemoryOnly": "Browser storage is unavailable. Visits, edits and pins are kept in memory only and will be lost when this page reloads.",
+      "workingSetRetention": "Your last five visited or edited pages and pins stay in this tab only. Pinned recent pages appear once, with a filled pin.",
+      "workingSetEmpty": "No recent pages or pins in this tab yet. Visit or save a page, or pin a search result to start your working set.",
+      "pin": "Pin",
+      "unpin": "Unpin",
+      "pinPageLabel": "Pin {{title}} in this tab",
+      "unpinPageLabel": "Unpin {{title}} from this tab",
+      "pinLimit": "This tab can hold up to {{count}} pinned pages. Unpin a page first.",
+      "askCurrentPage": "Ask Agent about this page",
+      "askAgent": "Ask Wiki Agent",
+      "askNeedsCurrentPage": "Open a readable wiki page first to prepare a current-page draft.",
+      "createPage": "Create page",
+      "createCurrentFolder": "Choose a title in the current folder before creating.",
+      "createChooseLocation": "Choose the location and title before creating.",
+      "createUnavailable": "Creating a page requires current page-creation permission, a verified live connection, and leaving any active editor first.",
+      "browseTags": "Browse by tags",
+      "browseTagsHelp": "Explore pages by their available tags.",
+      "tagsNeedServer": "Browsing tags needs a live server connection.",
       "title": "Search the Wiki",
       "agentWorkspace": "Wiki Agent workspace",
       "instructions": "Use Arrow Up and Down to move through results, Enter to open a result, Alt+Enter to preview a selected result, Tab to reach filters and actions, and Escape to close search.",
@@ -714,6 +749,7 @@
       "emptyAccessible": "No accessible matches in this search scope. This does not establish whether the information exists elsewhere or requires different access."
     },
     "agentWorkspace": {
+      "invalidPresetMessage": "The message preset is invalid.",
       "admissionRequiredMessage": "Wiki Agent could not open this workspace. Check that your account has access permission and that you are using the wiki’s configured address, then try opening it again.",
       "authenticationRequiredMessage": "Your Wiki session expired. Sign in again, then try opening this workspace.",
       "actionsLabel": "Wiki Agent actions",
@@ -763,6 +799,8 @@
       "googleSuggestions": "Google Search suggestions"
     },
     "agentComposer": {
+      "capabilities": "Capabilities",
+      "myTools": "My tools",
       "attachmentsUnsupported": "This provider does not support file attachments.",
       "attachmentsOffline": "Reconnect before attaching files or changing goal mode.",
       "attachmentsNeedSession": "Start a conversation before attaching files.",
@@ -925,6 +963,7 @@
       "destination": "Page destination:"
     },
     "sidebar": {
+      "configureMenu": "Configure menu",
       "loadError": "Unable to load this folder. Please try again.",
       "root": "(root)",
       "browse": "Browse",
@@ -1139,6 +1178,12 @@
       "editorRawHtml": "Raw HTML"
     },
     "pageSelector": {
+      "destinationControls": "Page destination",
+      "submittingSelection": "Submitting selection…",
+      "enterValidDestination": "Enter a valid page path and choose a locale to continue.",
+      "readyToCreate": "Ready to create {{path}}",
+      "readyToMove": "Move destination: {{path}}",
+      "readyToSelect": "Ready to select {{path}}",
       "pages": "Pages",
       "moveTitle": "Move / Rename Page Location",
       "createTitle": "Select New Page Location",
@@ -1253,6 +1298,15 @@
     "modernBrowser": "modern browser",
     "outdatedBrowserWarning": "Your browser is outdated. Upgrade to a {{modernBrowser}}.",
     "socialSharing": {
+      "canonicalUrl": "Page URL",
+      "copyLink": "Copy link",
+      "copyMarkdownLink": "Copy Markdown link",
+      "copyCurrentSectionLink": "Copy current section link",
+      "noCurrentSection": "No current section is available.",
+      "shareViaEmail": "Share via Email",
+      "linkAccessNotice": "Sharing a link does not publish this page or grant access.",
+      "markdownLinkCopied": "Markdown link copied to clipboard.",
+      "sectionLinkCopied": "Current section link copied to clipboard.",
       "untitledPage": "Untitled Page",
       "localCopySavedDevice": "This is a local copy saved on this device.",
       "failedCopyClipboard": "Failed to copy to clipboard",
@@ -1600,6 +1654,8 @@
       "root": "/ (root)"
     },
     "liveNotes": {
+      "emptyHelp": "Live notes are standalone collaborative documents, separate from wiki pages.",
+      "browsePages": "Browse pages",
       "access": "Sharing access",
       "accountRequired": "A current signed-in account is required. Reload after signing in again.",
       "blocked": "Connection stopped — local recovery is available.",
@@ -1760,6 +1816,7 @@
       "allowAnonymousTelemetry": "Allow anonymous telemetry"
     },
     "offlineLibrary": {
+      "savedSourceAvailable": "Saved · source available",
       "savedPage": "Saved page",
       "openPageOnlineSaved": "{{value}}\n\nOpen this page online, or from a saved copy on your device.",
       "offlineSyncHasNot": "Offline sync has not reported a status yet.",
@@ -1913,6 +1970,8 @@
       "pageHasNotBeen": "This page has not been saved on this device. You can open another saved page below or reconnect to continue."
     },
     "inlineAgentChat": {
+      "untitledConversation": "Untitled conversation",
+      "finishDraftInteraction": "Finish composing text or wait for the pending message before preparing another prompt.",
       "providerIdentity": "{{name}} · {{model}}",
       "chooseProvider": "Conversation provider",
       "chooseProviderLabel": "Choose conversation provider. Current provider: {{identity}}",
@@ -2331,6 +2390,10 @@
       "unknown": "Unknown"
     },
     "agentMarkdown": {
+      "citationPreviewloading": "Loading source excerpt…",
+      "citationPreviewunavailable": "Source excerpt unavailable. Open the Source Notebook for details.",
+      "citationPreviewdenied": "You no longer have access to preview this source.",
+      "citationPreviewstale": "This source has changed or is no longer current. Open the Source Notebook to review it.",
       "scrollableCode": "Scrollable {{language}} code block",
       "scrollableTable": "Scrollable table",
       "copyCodeClipboard": "Copy code to clipboard",
@@ -2454,10 +2517,21 @@
       "downloadedSearchCorpusUnavailable": "Downloaded search corpus is unavailable."
     },
     "agentContextUi": {
+      "snapshotLocked": "Session memory snapshot locked",
+      "snapshotUnknown": "Session memory snapshot unavailable",
+      "copySessionId": "Copy session snapshot ID",
+      "copyMemoryId": "Copy {{name}} memory fingerprint",
+      "frozenCapacity": "{{name}} frozen memory capacity: {{state}}",
+      "savedCapacity": "{{name}} latest saved memory capacity: {{state}}",
+      "copySuccess": "Snapshot identifier copied.",
+      "copyFailed": "Could not copy the snapshot identifier. Try again.",
       "context": "Conversation context",
       "included": "Included",
       "excluded": "Excluded",
       "details": "Context details",
+      "detailsScrollHelp": "Use the scroll controls to read all context details.",
+      "scrollPrevious": "Scroll context details up",
+      "scrollNext": "Scroll context details down",
       "attachedCount": "{{count}}/8 committed attached sources. Open source picker.",
       "sourcesUnknown": "Attached sources: {{state}}. Capacity: 8.",
       "committedOnly": "Only committed attachments count toward this ring; pending selections do not.",
@@ -2498,6 +2572,8 @@
       }
     },
     "agentContextPicker": {
+      "currentAndAttached": "Current page · attached",
+      "currentHint": "Current page hint",
       "searchScopeHelp": "Scope limits the Wiki pages the Agent can search for your next message. Add sources also respects locale and page-tree scopes; Selected pages discovers new sources across All Wiki.",
       "sourceDiscoveryScope": "Source discovery: {{scopeLabel}}.",
       "recentSources": "Recently updated accessible pages · {{scopeLabel}}",
@@ -2737,6 +2813,12 @@
       "researchOperationProgress": "Research operation progress"
     },
     "agentThread": {
+      "showFullPrompt": "Show full prompt",
+      "presetPageSummary": "Summarize the current page",
+      "presetWikiOverview": "Explore the wiki",
+      "presetPageConnections": "Find connections to the current page",
+      "presetWikiConnections": "Explore connections across the wiki",
+      "presetCatchUp": "Catch up on recent workspace changes",
       "activityCount_one": "{{count}} activity",
       "activityCount_other": "{{count}} activities",
       "activityTitle": "{{title}}",
@@ -4344,6 +4426,11 @@
       "iUnderstandTheseTag": "I understand that these tag-based access rules will match different pages."
     },
     "pages": {
+      "filters": "Filters",
+      "activeFilters": "Active",
+      "details": "Details",
+      "detailsFor": "Details for {{title}}",
+      "recordIdentity": "Record identity",
       "title": "Pages",
       "publicationStates": {
         "enabled": "Publication enabled · schedule unknown",
@@ -4426,6 +4513,8 @@
       "statisticsViewNotConnected": "This statistics view is not connected to a data source yet."
     },
     "theme": {
+      "manageThemeSettings": "Manage palettes, reader layout, custom code and publication history.",
+      "paletteLibraryHelp": "Select a palette to edit its light and dark colors. Review changes before publishing.",
       "narrowPreview": "Narrow screens use one collapsed outline above the article. Widen the preview to see the configured rail.",
       "automaticContents": "Automatic · right rail on wide screens",
       "error": "Error",
@@ -5068,6 +5157,11 @@
       "packageRemoved": "The installed package was removed and runtime language resources were refreshed. Content was preserved."
     },
     "search": {
+      "reviewChanges": "Review changes",
+      "reviewHelp": "Review the search engine and changed settings below. Configuration values are hidden to protect credentials. Only Save configuration applies this reviewed snapshot; returning to the draft does not save anything.",
+      "backToDraft": "Back to draft",
+      "savedValueHidden": "Saved value (hidden)",
+      "changedValueHidden": "Changed value (hidden)",
       "indexInspectionResponseInvalid": "The search index inspection response is invalid. Run the inspection again.",
       "title": "Search Engine",
       "subtitle": "Configure the search capabilities of your wiki",
@@ -5154,6 +5248,7 @@
       "chooseEngine": "Choose an engine"
     },
     "system": {
+      "operationalSummary": "Process observations, background work and support diagnostics.",
       "os": "Operating System",
       "title": "System Info",
       "cpuCores": "CPU Cores",
@@ -5354,6 +5449,8 @@
       "exactSupportReport": "Exact support report"
     },
     "general": {
+      "enablePublicSocialSharing": "Enable public social sharing",
+      "publicSocialSharingHint": "Allow external social sharing for publicly accessible pages only. Restricted pages remain ineligible. This is off by default and does not change page permissions.",
       "enableGlossary": "Enable glossary",
       "glossaryAvailabilityHint": "Turning this off hides the glossary and refuses glossary changes without deleting terms. Turning it back on restores access under the existing permissions.",
       "logo": "Logo",
@@ -5375,7 +5472,7 @@
       "logoStatusUploadInterrupted": "Upload interrupted",
       "logoStatusSourceFailure": "Logo image needs attention",
       "logoStatusProcessingFailed": "Logo preparation failed",
-      "logoStatusIdle": "Ready to review a new workspace logo.",
+      "logoStatusIdle": "Select an image file to preview a new workspace logo.",
       "logoStatusActive": "Active",
       "logoRetryUpload": "Retry upload",
       "logoCheckAgain": "Check again",
@@ -5459,6 +5556,7 @@
       "siteBannerContentHint": "Markdown is supported; raw HTML is ignored. Maximum 8,000 characters.",
       "siteBannerPreview": "Preview",
       "fieldLabels": {
+        "publicSocialSharing": "Public social sharing",
         "featureGlossary": "Glossary",
         "host": "Public address",
         "title": "Workspace name",
@@ -5574,7 +5672,7 @@
       "chooseWhichFileLike": "Choose which file-like URLs resolve to wiki pages. Removing an extension can change how existing links are handled.",
       "noExtensionAliasesExtensionless": "No extension aliases. Extensionless page URLs remain available.",
       "pageEditingActions": "Page editing actions",
-      "chooseHowAuthorsReach": "Choose how authors reach the editor. These controls are shown only where page permissions allow them.",
+      "chooseHowAuthorsReach": "Direct Edit and Edit with page actions target one permission-gated action in the article header.",
       "exampleEnHandbookMd": "Example · en/handbook.md",
       "consistentStartingPoint": "A consistent starting point",
       "newAccountPresentation": "New account presentation",
@@ -5616,9 +5714,9 @@
       "followPageLinks": "Follow page links",
       "recognizedPageExtensions": "Recognized page extensions",
       "typeExtensionPressEnter": "Type an extension and press Enter. Use letters or digits without a leading dot.",
-      "showFloatingEditButton": "Show a floating edit button",
-      "showPageActionBar": "Show the page action bar",
-      "includeEditAction": "Include the edit action",
+      "showArticleEditShortcut": "Show a direct article Edit shortcut",
+      "showPageActionsMenu": "Enable the page actions menu",
+      "includeArticleEditShortcut": "Include the article Edit shortcut",
       "includeExternalSourceAction": "Include an external source action",
       "mdiIconNameExample": "An mdi- icon name, for example mdi-github.",
       "useFilenamePageSource": "Use {filename} for the page source path. HTTP(S) only.",
@@ -5748,6 +5846,7 @@
       "reasonChange": "Reason for this change"
     },
     "storage": {
+      "workspaceDescription": "Configure storage targets, review runtime state and plan recovery.",
       "reviewInputWillBeDiscarded": "Leaving will discard your review reason, confirmation input and any unsaved target changes. It will not undo actions already recorded on the server.",
       "title": "Storage",
       "status": "Status",
@@ -6497,6 +6596,7 @@
     },
     "adminArea": "Administration Area",
     "analytics": {
+      "operationalSubtitle": "Reader counts, collection policy, and integrations.",
       "optionalFieldLabel": "{{field}} (optional)",
       "simulationLocalEligible": "Local: eligible",
       "simulationLocalExcluded": "Local: excluded",
@@ -8740,6 +8840,11 @@
       "useExistingAccountId": "Use an existing account ID. The server verifies it before writing."
     },
     "pagesVisualize": {
+      "diagramControls": "Diagram controls",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "fitDiagram": "Fit diagram",
+      "diagramCanvas": "Page diagram — pan or zoom to explore nodes",
       "outgoingLinksCount_one": "{{count}} outgoing link",
       "outgoingLinksCount_other": "{{count}} outgoing links",
       "pageLinksResponseInvalid": "Page links response is invalid",
@@ -9602,8 +9707,8 @@
       "unsavedChanges": "Unsaved changes",
       "saveAndClose": "Save and close",
       "noChanges": "No changes to save.",
-      "changeReason": "Change reason (optional)",
-      "reasonAction": "Reason",
+      "changeReason": "Change note",
+      "reasonAction": "Change note",
       "changeReasonHelp": "Optional context for this save. Leave blank to save without a reason.",
       "changeReasonInvalid": "Use a single line of at most 200 characters without controls or bidi formatting."
     },
@@ -9619,6 +9724,7 @@
       "preview": "Page preview"
     },
     "actions": {
+      "pageDetails": "Page details",
       "mobileLabel": "Editor actions",
       "more": "More editor actions",
       "moreShort": "More"
@@ -9789,11 +9895,11 @@
       "relocationEffectFailed": "Failed",
       "relocationEffectSuperseded": "Superseded",
       "relocationEffectUnknown": "Unknown",
-      "uploadAssetsDropZone": "Browse or Drop files here...",
+      "uploadAssetsDropZone": "Drop files here or <span class=\"filepond--label-action\" tabindex=\"0\">Browse</span>",
       "folderNameNamingRules": "Must follow the asset folder {{namingRules}}.",
       "folderNameNamingRulesLink": "naming rules",
       "headerPreview": "Preview",
-      "uploadLimits": "Drop or browse files. Max 10 files, 5 MB each.",
+      "uploadLimits": "Max 10 files, 5 MB each.",
       "uploadReady": "Files ready to upload: {{count}}.",
       "uploadCount": "Upload {{count}}"
     },
@@ -9878,7 +9984,7 @@
       "deleteTable": "Delete table",
       "editSource": "Edit source",
       "insertGroup": "Insert",
-      "contentExtensionShort": "Content",
+      "contentExtensionShort": "Content block",
       "insertAdmonition": "Insert admonition",
       "admonitionShort": "Admonition",
       "definitionListShort": "Definition list",
@@ -10575,6 +10681,20 @@
     }
   },
   "profile": {
+    "personalMcp": {
+      "administratorDisabled": "Personal MCP tools are currently disabled by your workspace administrator.",
+      "viewSettings": "View workspace agent settings",
+      "close": "Close",
+      "safetyHeading": "External tools, credentials and safety",
+      "personalDeniedSharedAvailable": "Your account or group cannot manage personal connections. Shared connections granted to your groups remain available below.",
+      "personalAccessDenied": "Personal connection management is not permitted for your current account or group.",
+      "availableAccessDenied": "Your current account cannot access the connected-tools inventory. Access may have changed; reload to try again.",
+      "sessionUnavailable": "Your session could not be verified. Sign in to your current account or reload to try again.",
+      "personalLoadFailed": "Personal servers could not be loaded. Reload to try again.",
+      "availableLoadFailed": "Available external servers could not be loaded. Reload to try again.",
+      "serverUnavailable": "The server is temporarily unavailable.",
+      "connectionUnavailable": "A connection to the server could not be established."
+    },
     "reload": "Reload",
     "overview": {
       "reload": "Reload",
@@ -10582,9 +10702,18 @@
       "reloadConfirm": "Discard and reload"
     },
     "discussions": {
+      "empty": "No readable contributions to show.",
+      "emptyHelp": "Browse pages to explore discussions available to you.",
+      "browsePages": "Browse pages",
       "subtitle": "Your contributions on pages you can currently read. Hidden or locked discussions are not included."
     },
     "notificationPreferences": {
+      "bulkInApp": "Enable In-App for all displayed events",
+      "bulkEmail": "Enable Email for all displayed events",
+      "bulkAll": "All enabled: {{selected}} of {{total}}.",
+      "bulkNone": "None enabled: {{selected}} of {{total}}.",
+      "bulkMixed": "Some enabled: {{selected}} of {{total}}.",
+      "bulkHelp": "Header switches change only the displayed events in that channel. Save preferences to apply your changes, or Cancel changes to discard them.",
       "description": "Choose which events appear in your inbox or are sent by email. New categories are off until you enable and save them.",
       "existingWatches": "These settings do not change your existing per-page watches or approval inbox.",
       "reloadBlocked": "Save or cancel your changes before reloading preferences.",
@@ -10840,6 +10969,9 @@
     }
   },
   "tags": {
+    "availableTagCount_one": "{{count}} tag",
+    "availableTagCount_other": "{{count}} tags",
+    "libraryDescription": "Select tags to find pages that match every choice.",
     "offlineFollowHelp": "Follow tags on this device; downloads depend on sync.",
     "followOfflineTagLabel": "Follow {{tag}} for offline reading on this device",
     "unfollowOfflineTagLabel": "Stop following {{tag}} for offline reading on this device",

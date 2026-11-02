@@ -36,7 +36,17 @@
     </div>
     <p v-if="accessibleNote" role="status">{{ t('accessibleNoteFound', 'An accessible note exists at the requested address. This check does not prove this creation attempt made it, especially when a custom address was used.') }} <a :href="`/p/notes/${encodeURIComponent(accessibleNote.key)}?mode=${accessibleNote.canEdit ? 'edit' : 'read'}`">{{ t('openNote', 'Open note') }}</a></p>
     <p v-if="loading" role="status">{{ t('loadingInventory', 'Loading your notes…') }}</p>
-    <p v-else-if="loaded && !items.length">{{ t('empty', 'No live notes yet.') }}</p>
+    <AsyncState
+      v-else-if="loaded && ready && !error && !items.length && cursor === null && !creating && !creationUncertain"
+      class="profile-notes__empty wiki-surface-well"
+      state="empty"
+      :title="t('empty', 'No live notes yet.')"
+      :message="t('emptyHelp', 'Live notes are standalone collaborative documents, separate from wiki pages.')"
+    >
+      <template #actions>
+        <v-btn href="/t" variant="tonal">{{ t('browsePages', 'Browse pages') }}</v-btn>
+      </template>
+    </AsyncState>
     <ul class="profile-notes__list"><li v-for="item in items" :key="item.id"><a :href="`/p/notes/${encodeURIComponent(item.key)}?mode=${item.canEdit ? 'edit' : 'read'}`"><strong>{{ item.title || t('untitled', 'Untitled note') }}</strong><code>{{ item.key }}</code></a><div><span>{{ accessLabel(item.access) }}</span> · <time :datetime="item.updatedAt">{{ new Date(item.updatedAt).toLocaleString() }}</time> · {{ t('revision', 'Revision') }} {{ item.revision }}<span v-if="!item.canEdit"> · {{ t('readOnlyShort', 'Read only') }}</span></div></li></ul>
     <button v-if="cursor" type="button" :disabled="loading || !ready" @click="load(true)">{{ t('loadMore', 'Load more') }}</button>
   </section>
@@ -51,6 +61,7 @@ import type { LiveNoteAccess, LiveNoteSummary, LiveNoteView } from '../../../sha
 import { requestConfirmation } from '../common/confirm-dialog.ts'
 import { notifyReloadSafetyChanged, setReloadSafetyProvider } from '../../helpers/pwa.ts'
 import AdminHero from '../common/admin-hero.vue'
+import AsyncState from '../common/async-state.vue'
 
 const t = (key: string, defaultValue: string) => translate(`common:liveNotes.${key}`, { defaultValue })
 const identity = () => `${wikiStore.user.id}:${wikiStore.user.authVersion}:${wikiStore.offlineIdentityEpoch}:${siteConfig.agentCsrfToken}`
@@ -154,4 +165,8 @@ onBeforeUnmount(() => { disposed = true; generation++; controller.abort(); setRe
 .profile-notes__list a { display: grid; gap: .25rem; overflow-wrap: anywhere; }
 .profile-notes__list code { font-size: .875rem; }
 .profile-notes__error { color: rgb(var(--v-theme-error)); }
+.profile-notes__empty.wiki-surface-well { flex-direction: column; text-align: center; margin-block: 1.5rem; padding: clamp(1.25rem, 4vw, 2rem); background: var(--wiki-surface-sunken); background-image: none; border: 1px solid var(--wiki-well-border); box-shadow: var(--wiki-shadow-inset); }
+.profile-notes__empty :deep(.async-state__icon) { display: grid; place-items: center; inline-size: 3rem; block-size: 3rem; border-radius: 50%; background: var(--wiki-surface-raised); border: 1px solid var(--wiki-well-border); }
+.profile-notes__empty :deep(.async-state__actions) { max-inline-size: 100%; }
+.profile-notes__empty :deep(.v-btn) { max-inline-size: 100%; white-space: normal; height: auto; min-height: 44px; padding-block: .65rem; }
 </style>

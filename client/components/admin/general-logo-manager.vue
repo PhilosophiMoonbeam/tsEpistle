@@ -6,11 +6,10 @@
       .logo-preview-card
         .logo-preview-heading {{ $t('admin:general.logoActive') }}
         .logo-preview-frame
-          v-img(
+          img.logo-active-image(
             v-if='activeLogoUrl'
             :src='activeLogoUrl'
             :alt='$t(`admin:general.logoActivePreviewAlt`)'
-            :cover='false'
           )
           v-icon.text-medium-emphasis(v-else size='42' aria-hidden='true') mdi-image-off-outline
         .logo-preview-status(v-if='activeLogoUrl')
@@ -138,6 +137,7 @@
         @click='chooseAnother'
       ) {{ $t('admin:general.logoChooseAnotherImage') }}
     p.logo-status(
+      :class='{ "logo-status--idle": candidateStatusKey === "admin:general.logoStatusIdle" }'
       role='status'
       aria-live='polite'
       :aria-busy='candidateIsProcessing ? "true" : "false"'
@@ -724,14 +724,14 @@ export default {
 }
 .logo-file-details { margin: 0 0 .75rem; font-size: .875rem; overflow-wrap: anywhere; }
 .logo-review-copy { margin: 0; }
-.logo-manager { --logo-manager-border: rgba(var(--v-border-color), var(--v-border-opacity)); }
 .logo-preview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-bottom: 1rem; }
-.logo-preview-card { min-width: 0; padding: 1rem; border: 1px solid var(--logo-manager-border); border-radius: 12px; background: rgba(var(--v-theme-surface-variant), .24); }
+.logo-preview-card { min-width: 0; padding: 1rem; border: 1px solid var(--wiki-material-border); border-radius: 12px; background: var(--wiki-surface-gradient); }
 .logo-preview-heading { margin-bottom: .75rem; color: var(--wiki-text-muted); font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.logo-preview-frame { display: grid; width: 100%; height: 112px; place-items: center; overflow: hidden; border-radius: 8px; background-color: rgb(var(--v-theme-surface)); }
+.logo-preview-frame { display: grid; width: 100%; height: 112px; place-items: center; overflow: hidden; border-radius: 8px; background: var(--wiki-surface-sunken); border: 1px solid var(--wiki-well-border); box-shadow: var(--wiki-shadow-inset); }
 .logo-preview-frame--dark { background: #202321; }
 .logo-preview-frame > .v-img { width: 100%; height: 100%; }
 .logo-preview-frame > .v-img :deep(img) { object-fit: contain; }
+.logo-preview-frame > .logo-active-image { width: auto; height: auto; max-width: min(96px, 100%); max-height: 96px; object-fit: contain; image-rendering: auto; }
 .logo-preview-status { margin-top: .75rem; }
 .logo-preview-empty { margin: .75rem 0 0; color: var(--wiki-text-muted); font-size: .875rem; }
 .logo-candidate-status-line { display: flex; align-items: center; gap: .5rem; min-height: 24px; margin-top: .75rem; font-size: .875rem; font-weight: 600; }
@@ -749,6 +749,7 @@ export default {
 .logo-message--error { color: rgb(var(--v-theme-error)); }
 .logo-error-action { color: inherit; }
 .logo-status { margin: .75rem 0 0; min-height: 1.35rem; font-size: .875rem; font-weight: 600; }
+.logo-status--idle { color: var(--wiki-text-muted); font-weight: 400; }
 .logo-disclosure { display: flex; align-items: flex-start; margin: 1rem 0 0; line-height: 1.5; }
 @media (max-width: 600px) {
   .logo-preview-grid { grid-template-columns: 1fr; }

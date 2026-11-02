@@ -86,6 +86,7 @@
   // (about 4.5:1 on the default surfaces).
   &:is(.v-btn--disabled, [aria-disabled='true']):is(.v-btn--variant-flat, .v-btn--variant-elevated, .v-btn--variant-tonal) {
     background-color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, rgb(var(--v-theme-surface))) !important;
+    background-image: none !important;
     color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, rgb(var(--v-theme-surface))) !important;
     filter: none;
 
@@ -268,5 +269,80 @@
     background: ButtonFace;
     color: ButtonText;
     box-shadow: none;
+  }
+}
+
+// Keep one bounded paint layer mounted while clean: background images cannot
+// interpolate, but this opacity crossfade preserves the tonal-to-dirty change.
+.v-btn::before {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(155deg in srgb, var(--wiki-commitment-start), var(--wiki-commitment-end));
+  content: '';
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms cubic-bezier(.22, 1, .36, 1);
+}
+
+.v-btn > :is(.v-btn__content, .v-btn__prepend, .v-btn__append, .v-btn__loader) {
+  position: relative;
+  z-index: 1;
+}
+
+.v-btn:is([data-commitment], [data-purpose='primary']) {
+  transition:
+    color 180ms cubic-bezier(.22, 1, .36, 1),
+    background-color 180ms cubic-bezier(.22, 1, .36, 1),
+    border-color 180ms cubic-bezier(.22, 1, .36, 1),
+    box-shadow 180ms cubic-bezier(.22, 1, .36, 1);
+}
+
+.v-btn[data-commitment='active']:not(:disabled):not(.v-btn--disabled):not(.v-btn--loading):not([aria-disabled='true']) {
+  --wiki-purpose-control-ink: var(--wiki-commitment-ink);
+  --wiki-purpose-control-edge: var(--wiki-commitment-end);
+  border-color: var(--wiki-commitment-end);
+  border-radius: var(--wiki-radius-pill);
+  color: var(--wiki-commitment-ink) !important;
+
+  &::before {
+    opacity: 1;
+  }
+
+  > .v-btn__underlay {
+    opacity: 0;
+  }
+}
+
+.v-btn:is(:disabled, .v-btn--disabled, .v-btn--loading, [aria-disabled='true']) {
+  transform: none !important;
+
+  &::before {
+    background-image: none;
+    opacity: 0;
+    transition: none;
+  }
+
+  > .v-btn__overlay {
+    opacity: 0 !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v-btn[data-commitment],
+  .v-btn::before {
+    transition: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .v-btn::before {
+    background: none;
+  }
+
+  .v-btn[data-commitment='active']:not(:disabled):not(.v-btn--disabled):not(.v-btn--loading):not([aria-disabled='true']) {
+    border: 2px solid ButtonText;
+    background: ButtonFace !important;
+    color: ButtonText !important;
   }
 }

@@ -653,33 +653,55 @@ describe('durable agent repositories', () => {
 
   it('persists strict owned memory receipts once per delivery and operation and rejects corrupt historical payloads', async () => {
     const data = {
-      ownerId: 7, sessionId, snapshotId: sessionId, deliveryId: 'provider-dispatch-1',
+      ownerId: 7,
+      sessionId,
+      snapshotId: sessionId,
+      deliveryId: 'provider-dispatch-1',
       targets: [{ target: 'user' as const, characters: 12, limit: 1375 as const, snapshotId: 'a'.repeat(64) }]
     }
     const input = { id: 'memory-included-1', runId, ownerId: 7, attempt: 1, type: 'memory.contextIncluded' as const, data }
     const first = await appendAgentEvent(knex, input)
     expect(await appendAgentEvent(knex, { ...input, id: 'duplicate-delivery-id' })).toEqual(first)
     expect(await knex('agentRuns').where({ id: runId }).first('eventSequence')).toEqual({ eventSequence: 1 })
-    await expect(appendAgentEvent(knex, { ...input, id: 'conflicting-delivery-id', data: { ...data, targets: [{ ...data.targets[0]!, characters: 13 }] } }))
-      .rejects.toMatchObject({ code: 'AGENT_EVENT_IDEMPOTENCY_MISMATCH' })
+    await expect(
+      appendAgentEvent(knex, { ...input, id: 'conflicting-delivery-id', data: { ...data, targets: [{ ...data.targets[0]!, characters: 13 }] } })
+    ).rejects.toMatchObject({ code: 'AGENT_EVENT_IDEMPOTENCY_MISMATCH' })
     for (const patch of [
-      { attempt: 0 }, { data: { ...data, ownerId: 8 } }, { data: { ...data, sessionId: 'foreign', snapshotId: 'foreign' } },
-      { data: { ...data, privateText: 'private memory' } }, { data: { ...data, targets: [{ ...data.targets[0]!, characters: 0 }] } }
+      { attempt: 0 },
+      { data: { ...data, ownerId: 8 } },
+      { data: { ...data, sessionId: 'foreign', snapshotId: 'foreign' } },
+      { data: { ...data, privateText: 'private memory' } },
+      { data: { ...data, targets: [{ ...data.targets[0]!, characters: 0 }] } }
     ]) {
-      await expect(appendAgentEvent(knex, JSON.parse(JSON.stringify({ ...input, id: 'invalid-receipt', ...patch }))))
-        .rejects.toMatchObject({ code: 'INVALID_AGENT_EVENT' })
+      await expect(appendAgentEvent(knex, JSON.parse(JSON.stringify({ ...input, id: 'invalid-receipt', ...patch })))).rejects.toMatchObject({
+        code: 'INVALID_AGENT_EVENT'
+      })
     }
     const saved = {
-      id: 'memory-saved-1', runId, ownerId: 7, attempt: 1, type: 'memory.saved' as const,
-      data: { ownerId: 7, sessionId, snapshotId: sessionId, origin: 'memory.manage' as const, operationId: 'tool-1',
-        operation: 'replace' as const, changed: true as const, targets: data.targets }
+      id: 'memory-saved-1',
+      runId,
+      ownerId: 7,
+      attempt: 1,
+      type: 'memory.saved' as const,
+      data: {
+        ownerId: 7,
+        sessionId,
+        snapshotId: sessionId,
+        origin: 'memory.manage' as const,
+        operationId: 'tool-1',
+        operation: 'replace' as const,
+        changed: true as const,
+        targets: data.targets
+      }
     }
     const saveEvent = await appendAgentEvent(knex, saved)
     expect(await appendAgentEvent(knex, { ...saved, id: 'duplicate-operation-id' })).toEqual(saveEvent)
     expect(await listOwnedAgentEvents(knex, 7, runId)).toEqual([first, saveEvent])
     await expect(listOwnedAgentEvents(knex, 8, runId)).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND' })
     const corrupt = JSON.stringify({ ...data, privateText: 'private memory' })
-    await knex('agentEvents').where({ id: first.id }).update({ data: corrupt, dataSha256: createHash('sha256').update(corrupt).digest('hex') })
+    await knex('agentEvents')
+      .where({ id: first.id })
+      .update({ data: corrupt, dataSha256: createHash('sha256').update(corrupt).digest('hex') })
     await expect(listOwnedAgentEvents(knex, 7, runId)).rejects.toMatchObject({ code: 'AGENT_EVENT_CORRUPT' })
   })
 
@@ -783,8 +805,11 @@ describe('durable agent repositories', () => {
       data: { suggestions: [{ id: 'next', label: 'Continue', prompt: 'Continue' }] }
     })
     const events = await listOwnedAgentEvents(knex, 7, runId)
-    const projected = await projectAgentThread(knex, 7, sessionId, { memorySigningSecret: 'agent-memory-test-signing-secret', profileResolutionToken: session => `profile:${session.id}:${session.version}`,
-    now: new Date('2026-08-17T00:00:00.000Z') })
+    const projected = await projectAgentThread(knex, 7, sessionId, {
+      memorySigningSecret: 'agent-memory-test-signing-secret',
+      profileResolutionToken: session => `profile:${session.id}:${session.version}`,
+      now: new Date('2026-08-17T00:00:00.000Z')
+    })
     expect(projected.tools).toEqual([
       {
         id: 'call-1',
@@ -810,7 +835,12 @@ describe('durable agent repositories', () => {
     const knowledgeContext = {
       scope: { kind: 'selected' },
       sources: Array.from({ length: 8 }, (_, index) => ({
-        id: index + 1, locale: 'en', path: `original/source-${index}`, title: `Original ${index}`, visibility: 'private', sourceRevision: '7'
+        id: index + 1,
+        locale: 'en',
+        path: `original/source-${index}`,
+        title: `Original ${index}`,
+        visibility: 'private',
+        sourceRevision: '7'
       }))
     }
     await appendAgentEvent(knex, {
@@ -829,9 +859,17 @@ describe('durable agent repositories', () => {
         sources: true
       },
       { data: JSON.stringify({ runId, status: 'queued', knowledgeContext, currentPage: { ...hint, id: 0 } }), expected: undefined, sources: true },
-      { data: JSON.stringify({ runId, status: 'queued', knowledgeContext, currentPage: { ...hint, observedUpdatedAt: 'not a date' } }), expected: undefined, sources: true },
+      {
+        data: JSON.stringify({ runId, status: 'queued', knowledgeContext, currentPage: { ...hint, observedUpdatedAt: 'not a date' } }),
+        expected: undefined,
+        sources: true
+      },
       { data: JSON.stringify({ runId, status: 'queued', knowledgeContext, currentPage: null }), expected: undefined, sources: true },
-      { data: JSON.stringify({ runId, status: 'queued', knowledgeContext, currentPage: hint, private: 'x'.repeat(32 * 1_024) }), expected: undefined, sources: true },
+      {
+        data: JSON.stringify({ runId, status: 'queued', knowledgeContext, currentPage: hint, private: 'x'.repeat(32 * 1_024) }),
+        expected: undefined,
+        sources: true
+      },
       { data: JSON.stringify({ runId: 'foreign-run', status: 'queued', knowledgeContext, currentPage: hint }), expected: undefined },
       { data: '[]', expected: undefined },
       { data: '{broken old context', expected: undefined }
@@ -839,7 +877,10 @@ describe('durable agent repositories', () => {
     for (const entry of cases) {
       // Historical queued context is outside the current execution attempt.
       await knex('agentEvents').where({ id: eventId }).update({ data: entry.data })
-      const thread = await projectAgentThread(knex, 7, sessionId, { memorySigningSecret: 'agent-memory-test-signing-secret', profileResolutionToken: () => 'token' })
+      const thread = await projectAgentThread(knex, 7, sessionId, {
+        memorySigningSecret: 'agent-memory-test-signing-secret',
+        profileResolutionToken: () => 'token'
+      })
       const user = thread.messages.find(message => message.id === userMessageId)!
       expect(user.content).toBe('Question')
       if (entry.expected === undefined) expect(user).not.toHaveProperty('currentPage')
@@ -849,9 +890,73 @@ describe('durable agent repositories', () => {
       expect(JSON.stringify(thread)).not.toContain('PRIVATE AUTHORITY')
       expect(JSON.stringify(thread)).not.toContain('PRIVATE BODY')
     }
-    await expect(projectAgentThread(knex, 8, sessionId, { memorySigningSecret: 'agent-memory-test-signing-secret', profileResolutionToken: () => 'token' })).rejects.toMatchObject({
+    await expect(
+      projectAgentThread(knex, 8, sessionId, { memorySigningSecret: 'agent-memory-test-signing-secret', profileResolutionToken: () => 'token' })
+    ).rejects.toMatchObject({
       code: 'AGENT_RESOURCE_NOT_FOUND'
     })
+  })
+
+  it('labels only an integrity-checked preset on its owned original user message, never inferred or foreign history', async () => {
+    const eventId = '00000000-0000-4000-8000-000000000098'
+    const hint = { id: 42, locale: 'en', path: 'original/page', observedUpdatedAt: '2026-08-16T00:00:00.000Z' }
+    const originalPrompt = '  # Goal\r\nKeep the original café and e\u0301 prompt.  '
+    const payload = { runId, status: 'queued', presetId: 'catch-up', currentPage: hint }
+    await knex('agentMessages').where({ id: userMessageId }).update({ content: originalPrompt })
+    await appendAgentEvent(knex, { id: eventId, runId, ownerId: 7, type: 'run.queued', attempt: 0, data: payload })
+    const cases: Array<{
+      name: string
+      data: string
+      corruptHash?: boolean
+      run?: Record<string, unknown>
+      message?: Record<string, unknown>
+      preset?: string
+      currentPage?: typeof hint
+    }> = [
+      { name: 'explicit preset', data: JSON.stringify(payload), preset: 'catch-up', currentPage: hint },
+      { name: 'untagged template-shaped prompt', data: JSON.stringify({ runId, status: 'queued', currentPage: hint }), currentPage: hint },
+      { name: 'unknown preset', data: JSON.stringify({ ...payload, presetId: 'find-gaps' }), currentPage: hint },
+      { name: 'non-string preset', data: JSON.stringify({ ...payload, presetId: ['catch-up'] }), currentPage: hint },
+      { name: 'tampered queued metadata', data: JSON.stringify(payload), corruptHash: true, currentPage: hint },
+      { name: 'foreign payload run', data: JSON.stringify({ ...payload, runId: 'foreign-run' }) },
+      { name: 'non-queued metadata', data: JSON.stringify({ ...payload, status: 'running' }) },
+      { name: 'oversized metadata', data: JSON.stringify({ ...payload, private: 'x'.repeat(32 * 1_024) }) },
+      { name: 'malformed history', data: '{broken' },
+      { name: 'array history', data: '[]' },
+      { name: 'foreign owner run', data: JSON.stringify(payload), run: { ownerId: 8 } },
+      { name: 'foreign session run', data: JSON.stringify(payload), run: { sessionId: '00000000-0000-4000-8000-000000000097' } },
+      { name: 'different original message', data: JSON.stringify(payload), run: { userMessageId: assistantMessageId }, currentPage: hint },
+      { name: 'message bound to another run', data: JSON.stringify(payload), message: { runId: '00000000-0000-4000-8000-000000000096' } },
+      { name: 'assistant message', data: JSON.stringify(payload), message: { role: 'assistant' } }
+    ]
+    for (const entry of cases) {
+      await knex('agentRuns')
+        .where({ id: runId })
+        .update({ ownerId: 7, sessionId, userMessageId, ...entry.run })
+      await knex('agentMessages')
+        .where({ id: userMessageId })
+        .update({ runId, role: 'user', ...entry.message })
+      // Old queued metadata is outside attempt 1; history must remain readable
+      // without trusting corrupted display identity as a preset.
+      await knex('agentEvents')
+        .where({ id: eventId })
+        .update({
+          data: entry.data,
+          dataSha256: entry.corruptHash ? '0'.repeat(64) : createHash('sha256').update(entry.data).digest('hex')
+        })
+      const thread = await projectAgentThread(knex, 7, sessionId, {
+        memorySigningSecret: 'agent-memory-test-signing-secret',
+        profileResolutionToken: () => 'token'
+      })
+      const original = thread.messages.find(message => message.id === userMessageId)!
+      expect(original.content, entry.name).toBe(originalPrompt)
+      if (entry.preset === undefined) expect(original, entry.name).not.toHaveProperty('presetId')
+      else expect(original.presetId, entry.name).toBe(entry.preset)
+      if (entry.currentPage !== undefined) expect(original.currentPage, entry.name).toEqual(entry.currentPage)
+      for (const message of thread.messages.filter(message => message.role === 'assistant')) {
+        expect(message, entry.name).not.toHaveProperty('presetId')
+      }
+    }
   })
 
   it('projects only safe current-attempt correction phases and resets on accepted completion', async () => {
@@ -949,7 +1054,10 @@ describe('durable agent repositories', () => {
       attempt: 1,
       data: { accepted: false, claims: [{ claim: 'Private rejected claim' }] }
     })
-    const correcting = await projectAgentThread(knex, 7, sessionId, { memorySigningSecret: 'agent-memory-test-signing-secret', profileResolutionToken: () => 'token' })
+    const correcting = await projectAgentThread(knex, 7, sessionId, {
+      memorySigningSecret: 'agent-memory-test-signing-secret',
+      profileResolutionToken: () => 'token'
+    })
     expect(correcting.session.currentRun).toMatchObject({ workingPhase: 'correcting' })
 
     await knex('agentRuns').where({ id: runId }).update({ attempts: 2 })
@@ -961,7 +1069,10 @@ describe('durable agent repositories', () => {
       attempt: 2,
       data: { attempt: 2 }
     })
-    const restarted = await projectAgentThread(knex, 7, sessionId, { memorySigningSecret: 'agent-memory-test-signing-secret', profileResolutionToken: () => 'token' })
+    const restarted = await projectAgentThread(knex, 7, sessionId, {
+      memorySigningSecret: 'agent-memory-test-signing-secret',
+      profileResolutionToken: () => 'token'
+    })
     expect(restarted.session.currentRun).toMatchObject({ id: runId, attempt: 2, status: 'running' })
     expect(restarted.session.currentRun).not.toHaveProperty('workingPhase')
   })
@@ -1366,8 +1477,11 @@ describe('durable agent repositories', () => {
       }
     ])
 
-    const projected = await projectAgentThread(knex, 7, sessionId, { memorySigningSecret: 'agent-memory-test-signing-secret', profileResolutionToken: session => `profile:${session.id}:${session.version}`,
-    now: createdAt })
+    const projected = await projectAgentThread(knex, 7, sessionId, {
+      memorySigningSecret: 'agent-memory-test-signing-secret',
+      profileResolutionToken: session => `profile:${session.id}:${session.version}`,
+      now: createdAt
+    })
 
     expect(projected.proposals.map(proposal => proposal.pageLink)).toEqual([
       { label: '/example-page', href: '/en/example-page' },
@@ -1645,7 +1759,12 @@ describe('durable agent repositories', () => {
         throw new Error('unreachable')
       }
     }
-    const runtimeOptions = { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'worker-provider-overrun', globalConcurrency: 1, perUserConcurrency: 1 }
+    const runtimeOptions = {
+      memorySigningSecret: 'agent-memory-test-signing-secret',
+      workerId: 'worker-provider-overrun',
+      globalConcurrency: 1,
+      perUserConcurrency: 1
+    }
     const runtime = new AgentProductRuntime(
       knex,
       {
@@ -1690,14 +1809,19 @@ describe('durable agent repositories', () => {
     expect(await runtime.runOnce()).toBe(false)
     await runtime.shutdown()
 
-    const restarted = new AgentProductRuntime(knex, {
-      async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
-        throw new Error('not used')
+    const restarted = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          throw new Error('not used')
+        }
       },
-      async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
-        throw new Error('not used')
-      }
-    }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', ...runtimeOptions, workerId: 'worker-provider-overrun-restart' })
+      engine,
+      { memorySigningSecret: 'agent-memory-test-signing-secret', ...runtimeOptions, workerId: 'worker-provider-overrun-restart' }
+    )
     expect(await restarted.runOnce()).toBe(false)
     expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toEqual(dailyAfterTerminal)
     await restarted.shutdown()
@@ -1766,14 +1890,19 @@ describe('durable agent repositories', () => {
         throw new Error('provider outcome uncertain')
       }
     }
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
-        throw new Error('not used')
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          throw new Error('not used')
+        }
       },
-      async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
-        throw new Error('not used')
-      }
-    }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'worker-sequence-hold', globalConcurrency: 1, perUserConcurrency: 1 })
+      engine,
+      { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'worker-sequence-hold', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
 
     expect(await runtime.runOnce()).toBe(true)
     expect(heldDuringDispatch).toEqual({ reservedTokens: 180, reservedCostMicros: 180 })
@@ -1864,14 +1993,19 @@ describe('durable agent repositories', () => {
     await knex('agentRuns')
       .where({ id: runId })
       .update({ leaseExpiresAt: new Date('2026-08-16T00:00:00.000Z') })
-    const restarted = new AgentProductRuntime(knex, {
-      async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
-        throw new Error('not used')
+    const restarted = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          throw new Error('not used')
+        }
       },
-      async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
-        throw new Error('not used')
-      }
-    }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', ...runtimeOptions, workerId: 'worker-provider-overrun-repair-restart' })
+      engine,
+      { memorySigningSecret: 'agent-memory-test-signing-secret', ...runtimeOptions, workerId: 'worker-provider-overrun-repair-restart' }
+    )
     expect(await restarted.runOnce()).toBe(false)
     await restarted.shutdown()
     expect(executions).toBe(1)
@@ -1960,14 +2094,19 @@ describe('durable agent repositories', () => {
         return { inputTokens: 5, outputTokens: 2, totalTokens: 7, costMicros: 9 }
       }
     }
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
-        throw new Error('not used')
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          throw new Error('not used')
+        }
       },
-      async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
-        throw new Error('not used')
-      }
-    }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'worker-retry-usage', globalConcurrency: 1, perUserConcurrency: 1 })
+      engine,
+      { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'worker-retry-usage', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
 
     expect(await runtime.runOnce()).toBe(true)
     expect(await knex('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens', 'totalTokens', 'estimatedCostMicros')).toMatchObject({
@@ -2013,28 +2152,33 @@ describe('durable agent repositories', () => {
       new Date('2026-08-17T00:05:00.000Z'),
       now
     )
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
-        throw new Error('not used')
-      },
-      async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
-        throw new Error('not used')
-      }
-    }, {
-      preflight: preflightAgentRequest,
-      async execute(_request, sink) {
-        await sink.text('A validated but incomplete answer.')
-        return {
-          inputTokens: 6,
-          outputTokens: 3,
-          totalTokens: 9,
-          costMicros: 13,
-          outputLimited: true,
-          contextLimit: { reason: 'tool_result_capacity', omittedActionCallIds: ['source-call'] },
-          providerState: { schemaVersion: 1, continuationDialect: 'gemini-generate-content-v1', thoughtBlocks: [] }
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          throw new Error('not used')
         }
-      }
-    }, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'worker-output-limited', globalConcurrency: 1, perUserConcurrency: 1 })
+      },
+      {
+        preflight: preflightAgentRequest,
+        async execute(_request, sink) {
+          await sink.text('A validated but incomplete answer.')
+          return {
+            inputTokens: 6,
+            outputTokens: 3,
+            totalTokens: 9,
+            costMicros: 13,
+            outputLimited: true,
+            contextLimit: { reason: 'tool_result_capacity', omittedActionCallIds: ['source-call'] },
+            providerState: { schemaVersion: 1, continuationDialect: 'gemini-generate-content-v1', thoughtBlocks: [] }
+          }
+        }
+      },
+      { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'worker-output-limited', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
 
     expect(await runtime.runOnce()).toBe(true)
     const run = await knex('agentRuns')
@@ -2094,10 +2238,19 @@ describe('durable agent repositories', () => {
         return { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
       }
     }
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve() { throw new Error('not used') },
-      async resolveCurrent() { throw new Error('not used') }
-    }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'memory-delivery-identity', globalConcurrency: 1, perUserConcurrency: 1 })
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        },
+        async resolveCurrent() {
+          throw new Error('not used')
+        }
+      },
+      engine,
+      { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'memory-delivery-identity', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
     try {
       expect(await runtime.runOnce()).toBe(true)
       const events = await listOwnedAgentEvents(knex, 7, runId)
@@ -2154,14 +2307,19 @@ describe('durable agent repositories', () => {
       }
     }
     const createRuntime = (workerId: string) =>
-      new AgentProductRuntime(knex, {
-        async resolve() {
-          throw new Error('not used')
+      new AgentProductRuntime(
+        knex,
+        {
+          async resolve() {
+            throw new Error('not used')
+          },
+          async resolveCurrent() {
+            throw new Error('not used')
+          }
         },
-        async resolveCurrent() {
-          throw new Error('not used')
-        }
-      }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId, globalConcurrency: 1, perUserConcurrency: 1 })
+        engine,
+        { memorySigningSecret: 'agent-memory-test-signing-secret', workerId, globalConcurrency: 1, perUserConcurrency: 1 }
+      )
     const first = createRuntime('compaction-before-replacement')
     expect(await first.runOnce()).toBe(true)
     await first.shutdown()
@@ -2194,14 +2352,19 @@ describe('durable agent repositories', () => {
         return { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
       }
     }
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve() {
-        throw new Error('not used')
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        },
+        async resolveCurrent() {
+          throw new Error('not used')
+        }
       },
-      async resolveCurrent() {
-        throw new Error('not used')
-      }
-    }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'compaction-source-change', globalConcurrency: 1, perUserConcurrency: 1 })
+      engine,
+      { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'compaction-source-change', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
     expect(await runtime.runOnce()).toBe(true)
     await runtime.shutdown()
     expect(rejected).toBe(true)
@@ -2262,14 +2425,19 @@ describe('durable agent repositories', () => {
         throw Object.assign(new Error('retry synthesis failed'), { code: 'AGENT_ACTION_RECOVERY_REQUIRED' })
       }
     }
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
-        throw new Error('not used')
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          throw new Error('not used')
+        }
       },
-      async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
-        throw new Error('not used')
-      }
-    }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'worker-retry-failure-usage', globalConcurrency: 1, perUserConcurrency: 1 })
+      engine,
+      { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'worker-retry-failure-usage', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
 
     expect(await runtime.runOnce()).toBe(true)
     expect(await knex('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens', 'estimatedCostMicros')).toMatchObject({
@@ -2357,14 +2525,19 @@ describe('durable agent repositories', () => {
         })
       }
     }
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve() {
-        throw new Error('not used')
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        },
+        async resolveCurrent() {
+          throw new Error('not used')
+        }
       },
-      async resolveCurrent() {
-        throw new Error('not used')
-      }
-    }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'post-action-provider-failure', globalConcurrency: 1, perUserConcurrency: 1 })
+      engine,
+      { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'post-action-provider-failure', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
 
     expect(await runtime.runOnce()).toBe(true)
     expect(executions).toBe(1)
@@ -2460,14 +2633,19 @@ describe('durable agent repositories', () => {
         throw new AgentExecutionFailure(failureCode, failureStage)
       }
     }
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve() {
-        throw new Error('not used')
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        },
+        async resolveCurrent() {
+          throw new Error('not used')
+        }
       },
-      async resolveCurrent() {
-        throw new Error('not used')
-      }
-    }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'non-recoverable-post-action-failure', globalConcurrency: 1, perUserConcurrency: 1 })
+      engine,
+      { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'non-recoverable-post-action-failure', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
 
     expect(await runtime.runOnce()).toBe(true)
     expect(await knex('agentRuns').where({ id: runId }).first('status', 'errorCode')).toEqual({ status: 'failed', errorCode: failureCode })
@@ -2506,18 +2684,26 @@ describe('durable agent repositories', () => {
         throw new Error('unreachable')
       }
     }
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
-        throw new Error('not used')
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          throw new Error('not used')
+        }
       },
-      async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
-        throw new Error('not used')
+      engine,
+      {
+        memorySigningSecret: 'agent-memory-test-signing-secret',
+        workerId: 'worker-approval-shutdown',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        leaseMilliseconds: 60_000,
+        heartbeatMilliseconds: 5_000
       }
-    }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'worker-approval-shutdown',
-    globalConcurrency: 1,
-    perUserConcurrency: 1,
-    leaseMilliseconds: 60_000,
-    heartbeatMilliseconds: 5_000 })
+    )
     const running = runtime.runOnce()
     await entered.promise
     await runtime.shutdown()
@@ -2525,6 +2711,47 @@ describe('durable agent repositories', () => {
     expect(await knex('agentRuns').where({ id: runId }).first('status')).toEqual({ status: 'awaiting_approval' })
     expect(await knex('agentQuotaReservations').where({ runId }).first('status')).toEqual({ status: 'reserved' })
     expect(await knex('agentEvents').where({ runId }).orderBy('sequence').pluck('type')).toEqual(['run.attemptStarted', 'message.started'])
+  })
+
+  it('replays a pre-preset admission hash unchanged when metadata is absent and rejects retroactive relabeling', async () => {
+    // Stored pre-preset protocol fixture: adding even a null presetId to the
+    // admission envelope would strand this existing client's exact retry.
+    const legacyHash = '788f147e0bbd6a314101286fb280edc8b536512de6ca2d3c8e695ef30d1aab4d'
+    await knex('agentRuns').where({ id: runId }).update({ clientRequestSha256: legacyHash })
+    const input = {
+      ownerId: 7,
+      sessionId,
+      clientRequestId: '00000000-0000-4000-8000-000000000005',
+      expectedSessionVersion: 1,
+      profileResolutionSha256: 'b'.repeat(64),
+      content: 'Question',
+      mediaBindings: {},
+      googleSearchEnabled: false,
+      providerProfileVersionId: '00000000-0000-4000-8000-000000000007',
+      transportKind: 'openai-responses',
+      model: 'test',
+      executionMode: 'agent' as const,
+      profilePolicyVersion: 1,
+      defaultGeneration: 1,
+      capabilityRevision: 'v1',
+      pricingRevision: 'v1',
+      promptVersion: 1,
+      skillVersionIds: [],
+      quota: { tokens: 100, costMicros: 100 },
+      quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+      reservationExpiresAt: new Date('2026-08-17T00:05:00.000Z')
+    }
+    expect(await admitAgentRun(knex, input)).toMatchObject({ replayed: true, run: { id: runId, status: 'running' } })
+    await expect(admitAgentRun(knex, { ...input, presetId: 'catch-up' })).rejects.toMatchObject({
+      code: 'RUN_IDEMPOTENCY_MISMATCH',
+      status: 409
+    })
+    expect(await knex('agentRuns').where({ sessionId }).pluck('clientRequestSha256')).toEqual([legacyHash])
+    expect(await knex('agentMessages').where({ sessionId }).orderBy('ordinal').pluck('content')).toEqual(['Question', ''])
+    expect(await knex('agentEvents').where({ runId })).toEqual([])
+    expect(await knex('agentQuotaReservations').where({ runId })).toEqual([])
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 })).toEqual([])
+    expect(await knex('agentSessions').where({ id: sessionId }).first('version')).toEqual({ version: 1 })
   })
 
   it('admits a run atomically and binds exact retries to a canonical input hash', async () => {
@@ -2678,49 +2905,54 @@ describe('durable agent repositories', () => {
       { id: otherVersionId, skillId: secondSkillId, frontmatter: '{}', contentHash: 'other', skillMarkdown: 'Other', createdAt: now }
     ])
     await knex('agentUserSkillPreferences').insert({ ownerId: 7, skillId: firstSkillId, ordinal: 0 })
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
-        return {
-          profileResolutionSha256: 'd'.repeat(64),
-          googleSearchEnabled: false,
-          providerProfileVersionId: '00000000-0000-4000-8000-000000000086',
-          transportKind: 'test',
-          model: 'test',
-          executionMode: 'agent',
-          profilePolicyVersion: 1,
-          defaultGeneration: 1,
-          capabilityRevision: 'v1',
-          pricingRevision: 'v1',
-          promptVersion: 1,
-          quota: { tokens: 100, costMicros: 100 },
-          quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
-          reservationMilliseconds: 60_000
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          return {
+            profileResolutionSha256: 'd'.repeat(64),
+            googleSearchEnabled: false,
+            providerProfileVersionId: '00000000-0000-4000-8000-000000000086',
+            transportKind: 'test',
+            model: 'test',
+            executionMode: 'agent',
+            profilePolicyVersion: 1,
+            defaultGeneration: 1,
+            capabilityRevision: 'v1',
+            pricingRevision: 'v1',
+            promptVersion: 1,
+            quota: { tokens: 100, costMicros: 100 },
+            quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+            reservationMilliseconds: 60_000
+          }
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          return {
+            profileResolutionSha256: 'd'.repeat(64),
+            googleSearchEnabled: false,
+            providerProfileVersionId: '00000000-0000-4000-8000-000000000086',
+            transportKind: 'test',
+            model: 'test',
+            executionMode: 'agent',
+            profilePolicyVersion: 1,
+            defaultGeneration: 1,
+            capabilityRevision: 'v1',
+            pricingRevision: 'v1',
+            promptVersion: 1,
+            quota: { tokens: 100, costMicros: 100 },
+            quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+            reservationMilliseconds: 60_000
+          }
         }
       },
-      async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
-        return {
-          profileResolutionSha256: 'd'.repeat(64),
-          googleSearchEnabled: false,
-          providerProfileVersionId: '00000000-0000-4000-8000-000000000086',
-          transportKind: 'test',
-          model: 'test',
-          executionMode: 'agent',
-          profilePolicyVersion: 1,
-          defaultGeneration: 1,
-          capabilityRevision: 'v1',
-          pricingRevision: 'v1',
-          promptVersion: 1,
-          quota: { tokens: 100, costMicros: 100 },
-          quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
-          reservationMilliseconds: 60_000
+      {
+        preflight: preflightAgentRequest,
+        async execute() {
+          return { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
         }
-      }
-    }, {
-      preflight: preflightAgentRequest,
-      async execute() {
-        return { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 }
-      }
-    }, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'dedupe-test', globalConcurrency: 1, perUserConcurrency: 1 })
+      },
+      { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'dedupe-test', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
     await expect(
       runtime.submit({
         ownerId: 7,
@@ -2842,21 +3074,26 @@ describe('durable agent repositories', () => {
       let observedSkills: AgentEngineRequest['skills'] | null = null
       const dispatchedRunIds: string[] = []
       let offeredPageActions: string[] | null = null
-      runtime = new AgentProductRuntime(knex, { resolve, resolveCurrent: resolve }, {
-        preflight: preflightAgentRequest,
-        async execute(request, sink) {
-          dispatchedRunIds.push(request.run.id)
-          observedSkills = request.skills
-          const session = await actions.open(request)
-          try {
-            offeredPageActions = session?.functions.filter(action => action.name.startsWith('pages.')).map(action => action.name) ?? null
-          } finally {
-            session?.close()
+      runtime = new AgentProductRuntime(
+        knex,
+        { resolve, resolveCurrent: resolve },
+        {
+          preflight: preflightAgentRequest,
+          async execute(request, sink) {
+            dispatchedRunIds.push(request.run.id)
+            observedSkills = request.skills
+            const session = await actions.open(request)
+            try {
+              offeredPageActions = session?.functions.filter(action => action.name.startsWith('pages.')).map(action => action.name) ?? null
+            } finally {
+              session?.close()
+            }
+            await sink.text('Release guidance retained.')
+            return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 2 }
           }
-          await sink.text('Release guidance retained.')
-          return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 2 }
-        }
-      }, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: `skill-pin-${change}`, globalConcurrency: 1, perUserConcurrency: 1 })
+        },
+        { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: `skill-pin-${change}`, globalConcurrency: 1, perUserConcurrency: 1 }
+      )
       const admitted = await runtime.submit({
         ownerId: 7,
         sessionId: skillSessionId,
@@ -2974,47 +3211,55 @@ describe('durable agent repositories', () => {
           request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true })
         })
       })
-      const runtime = new AgentProductRuntime(knex, {
-        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
-          return {
-            profileResolutionSha256: 'f'.repeat(64),
-            googleSearchEnabled: false,
-            providerProfileVersionId: '00000000-0000-4000-8000-000000000098',
-            transportKind: 'test',
-            model: 'test',
-            executionMode: 'agent',
-            profilePolicyVersion: 1,
-            defaultGeneration: 1,
-            capabilityRevision: 'v1',
-            pricingRevision: 'v1',
-            promptVersion: 1,
-            quota: { tokens: 100, costMicros: 100 },
-            quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
-            reservationMilliseconds: 60_000
+      const runtime = new AgentProductRuntime(
+        knex,
+        {
+          async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+            return {
+              profileResolutionSha256: 'f'.repeat(64),
+              googleSearchEnabled: false,
+              providerProfileVersionId: '00000000-0000-4000-8000-000000000098',
+              transportKind: 'test',
+              model: 'test',
+              executionMode: 'agent',
+              profilePolicyVersion: 1,
+              defaultGeneration: 1,
+              capabilityRevision: 'v1',
+              pricingRevision: 'v1',
+              promptVersion: 1,
+              quota: { tokens: 100, costMicros: 100 },
+              quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+              reservationMilliseconds: 60_000
+            }
+          },
+          async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+            return {
+              profileResolutionSha256: 'f'.repeat(64),
+              googleSearchEnabled: false,
+              providerProfileVersionId: '00000000-0000-4000-8000-000000000098',
+              transportKind: 'test',
+              model: 'test',
+              executionMode: 'agent',
+              profilePolicyVersion: 1,
+              defaultGeneration: 1,
+              capabilityRevision: 'v1',
+              pricingRevision: 'v1',
+              promptVersion: 1,
+              quota: { tokens: 100, costMicros: 100 },
+              quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+              reservationMilliseconds: 60_000
+            }
           }
         },
-        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
-          return {
-            profileResolutionSha256: 'f'.repeat(64),
-            googleSearchEnabled: false,
-            providerProfileVersionId: '00000000-0000-4000-8000-000000000098',
-            transportKind: 'test',
-            model: 'test',
-            executionMode: 'agent',
-            profilePolicyVersion: 1,
-            defaultGeneration: 1,
-            capabilityRevision: 'v1',
-            pricingRevision: 'v1',
-            promptVersion: 1,
-            quota: { tokens: 100, costMicros: 100 },
-            quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
-            reservationMilliseconds: 60_000
-          }
+        { preflight: preflightAgentRequest, execute } as AgentEngine,
+        {
+          memorySigningSecret: 'agent-memory-test-signing-secret',
+          workerId: 'goal-budget-test',
+          globalConcurrency: 1,
+          perUserConcurrency: 1,
+          goals: { enabled: true, maxContinuations: 2, maxTokens: 10, maxToolCalls: 1, maxDurationMilliseconds: 1_000 }
         }
-      }, { preflight: preflightAgentRequest, execute } as AgentEngine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'goal-budget-test',
-      globalConcurrency: 1,
-      perUserConcurrency: 1,
-      goals: { enabled: true, maxContinuations: 2, maxTokens: 10, maxToolCalls: 1, maxDurationMilliseconds: 1_000 } })
+      )
       const admitted = await runtime.createGoal({
         ownerId: 7,
         sessionId: goalSessionId,
@@ -3071,17 +3316,25 @@ describe('durable agent repositories', () => {
       await sink.text('The provider stopped before this answer was complete.')
       return { inputTokens: 6, outputTokens: 3, totalTokens: 9, costMicros: 13, outputLimited: true } as const
     })
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
-        return admission
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          return admission
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          return admission
+        }
       },
-      async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
-        return admission
+      { preflight: preflightAgentRequest, execute },
+      {
+        memorySigningSecret: 'agent-memory-test-signing-secret',
+        workerId: 'goal-output-limited',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        goals: { enabled: true, maxContinuations: 2, maxTokens: 100, maxToolCalls: 10, maxDurationMilliseconds: 60_000 }
       }
-    }, { preflight: preflightAgentRequest, execute }, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'goal-output-limited',
-    globalConcurrency: 1,
-    perUserConcurrency: 1,
-    goals: { enabled: true, maxContinuations: 2, maxTokens: 100, maxToolCalls: 10, maxDurationMilliseconds: 60_000 } })
+    )
     const admitted = await runtime.createGoal({
       ownerId: 7,
       sessionId: goalSessionId,
@@ -3177,17 +3430,25 @@ describe('durable agent repositories', () => {
         providerState: { schemaVersion: 1, continuationDialect: 'gemini-generate-content-v1', thoughtBlocks: [] } as const
       }
     })
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
-        return admission
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          return admission
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          return admission
+        }
       },
-      async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
-        return admission
+      { preflight: preflightAgentRequest, execute },
+      {
+        memorySigningSecret: 'agent-memory-test-signing-secret',
+        workerId: 'goal-execution-limited',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        goals: { enabled: true, maxContinuations: 2, maxTokens: 100, maxToolCalls: 10, maxDurationMilliseconds: 60_000 }
       }
-    }, { preflight: preflightAgentRequest, execute }, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'goal-execution-limited',
-    globalConcurrency: 1,
-    perUserConcurrency: 1,
-    goals: { enabled: true, maxContinuations: 2, maxTokens: 100, maxToolCalls: 10, maxDurationMilliseconds: 60_000 } })
+    )
     const admitted = await runtime.createGoal({
       ownerId: 7,
       sessionId: goalSessionId,
@@ -3281,63 +3542,71 @@ describe('durable agent repositories', () => {
         totalTokens: 6,
         costMicros: 0
       })
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
-        return {
-          profileResolutionSha256: 'e'.repeat(64),
-          googleSearchEnabled: false,
-          providerProfileVersionId: profileVersionId,
-          transportKind: 'test',
-          model: 'test',
-          executionMode: 'agent',
-          profilePolicyVersion: 1,
-          defaultGeneration: 1,
-          capabilityRevision: 'v1',
-          pricingRevision: 'v1',
-          promptVersion: 1,
-          quota: { tokens: 100, costMicros: 100 },
-          quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
-          reservationMilliseconds: 60_000
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          return {
+            profileResolutionSha256: 'e'.repeat(64),
+            googleSearchEnabled: false,
+            providerProfileVersionId: profileVersionId,
+            transportKind: 'test',
+            model: 'test',
+            executionMode: 'agent',
+            profilePolicyVersion: 1,
+            defaultGeneration: 1,
+            capabilityRevision: 'v1',
+            pricingRevision: 'v1',
+            promptVersion: 1,
+            quota: { tokens: 100, costMicros: 100 },
+            quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+            reservationMilliseconds: 60_000
+          }
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          return {
+            profileResolutionSha256: 'e'.repeat(64),
+            googleSearchEnabled: false,
+            providerProfileVersionId: profileVersionId,
+            transportKind: 'test',
+            model: 'test',
+            executionMode: 'agent',
+            profilePolicyVersion: 1,
+            defaultGeneration: 1,
+            capabilityRevision: 'v1',
+            pricingRevision: 'v1',
+            promptVersion: 1,
+            quota: { tokens: 100, costMicros: 100 },
+            quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+            reservationMilliseconds: 60_000
+          }
         }
       },
-      async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
-        return {
-          profileResolutionSha256: 'e'.repeat(64),
-          googleSearchEnabled: false,
-          providerProfileVersionId: profileVersionId,
-          transportKind: 'test',
-          model: 'test',
-          executionMode: 'agent',
-          profilePolicyVersion: 1,
-          defaultGeneration: 1,
-          capabilityRevision: 'v1',
-          pricingRevision: 'v1',
-          promptVersion: 1,
-          quota: { tokens: 100, costMicros: 100 },
-          quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
-          reservationMilliseconds: 60_000
+      {
+        preflight: preflightAgentRequest,
+        async execute(_request, sink) {
+          await sink.event('model.turn', {
+            turn: 1,
+            outcome: 'answer_accepted',
+            inputTokens: 10,
+            outputTokens: 5,
+            costMicros: 0,
+            content: 'I found a stale runner configuration.',
+            contentTruncated: false,
+            actionCallIds: []
+          })
+          await sink.text('I found a stale runner configuration.')
+          return { inputTokens: 10, outputTokens: 5, totalTokens: 15, costMicros: 0 }
         }
+      },
+      {
+        memorySigningSecret: 'agent-memory-test-signing-secret',
+        workerId: 'title-test',
+        globalConcurrency: 4,
+        perUserConcurrency: 1,
+        utilityModel: { generateConversationTitle }
       }
-    }, {
-      preflight: preflightAgentRequest,
-      async execute(_request, sink) {
-        await sink.event('model.turn', {
-          turn: 1,
-          outcome: 'answer_accepted',
-          inputTokens: 10,
-          outputTokens: 5,
-          costMicros: 0,
-          content: 'I found a stale runner configuration.',
-          contentTruncated: false,
-          actionCallIds: []
-        })
-        await sink.text('I found a stale runner configuration.')
-        return { inputTokens: 10, outputTokens: 5, totalTokens: 15, costMicros: 0 }
-      }
-    }, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'title-test',
-    globalConcurrency: 4,
-    perUserConcurrency: 1,
-    utilityModel: { generateConversationTitle } })
+    )
     const admitted = await runtime.submit({
       ownerId: 9,
       sessionId: titledSessionId,
@@ -3572,17 +3841,25 @@ describe('durable agent repositories', () => {
         }
       }
     }
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
-        throw new Error('not used')
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          throw new Error('not used')
+        }
       },
-      async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
-        throw new Error('not used')
+      engine,
+      {
+        memorySigningSecret: 'agent-memory-test-signing-secret',
+        workerId: 'orchestration-test',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true }
       }
-    }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'orchestration-test',
-    globalConcurrency: 1,
-    perUserConcurrency: 1,
-    orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true } })
+    )
     expect(await runtime.runOnce()).toBe(true)
     expect(preflightRequests).toHaveLength(2)
     expect(preflightRequests.map(request => request.limits)).toEqual([
@@ -3608,7 +3885,10 @@ describe('durable agent repositories', () => {
     expect(await knex('agentEvents').where({ runId }).orderBy('sequence').pluck('type')).toEqual(
       expect.arrayContaining(['task.planCreated', 'task.created', 'subagent.started', 'subagent.completed', 'run.completed'])
     )
-    const thread = await projectAgentThread(knex, 7, sessionId, { memorySigningSecret: 'agent-memory-test-signing-secret', profileResolutionToken: () => 'token' })
+    const thread = await projectAgentThread(knex, 7, sessionId, {
+      memorySigningSecret: 'agent-memory-test-signing-secret',
+      profileResolutionToken: () => 'token'
+    })
     expect(thread.tasks).toHaveLength(2)
     await runtime.shutdown()
   })
@@ -3666,17 +3946,25 @@ describe('durable agent repositories', () => {
         return { inputTokens: 4, outputTokens: 2, totalTokens: 6, costMicros: 0 }
       }
     }
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve() {
-        throw new Error('not used')
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        },
+        async resolveCurrent() {
+          throw new Error('not used')
+        }
       },
-      async resolveCurrent() {
-        throw new Error('not used')
+      engine,
+      {
+        memorySigningSecret: 'agent-memory-test-signing-secret',
+        workerId: 'structured-output-limit',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true, maxConcurrentChildren: 1 }
       }
-    }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'structured-output-limit',
-    globalConcurrency: 1,
-    perUserConcurrency: 1,
-    orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true, maxConcurrentChildren: 1 } })
+    )
     expect(await runtime.runOnce()).toBe(true)
     const run = await knex('agentRuns').where({ id: runId }).first('status', 'completionOutcome', 'completionAssessment', 'totalTokens')
     if (limitedPurpose === 'planner') {
@@ -3740,17 +4028,25 @@ describe('durable agent repositories', () => {
         return { inputTokens: 4, outputTokens: 2, totalTokens: 6, costMicros: 0 }
       }
     }
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve() {
-        throw new Error('not used')
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        },
+        async resolveCurrent() {
+          throw new Error('not used')
+        }
       },
-      async resolveCurrent() {
-        throw new Error('not used')
+      engine,
+      {
+        memorySigningSecret: 'agent-memory-test-signing-secret',
+        workerId: 'compaction-child-output-budget',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true, maxConcurrentChildren: 1, maxAggregateChildOutputCharacters: 16 }
       }
-    }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'compaction-child-output-budget',
-    globalConcurrency: 1,
-    perUserConcurrency: 1,
-    orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true, maxConcurrentChildren: 1, maxAggregateChildOutputCharacters: 16 } })
+    )
     expect(await runtime.runOnce()).toBe(true)
     await runtime.shutdown()
     const turns = (await knex('agentEvents').where({ runId, type: 'model.turn' }).pluck('data')).map(value => JSON.parse(String(value)))
@@ -3813,17 +4109,25 @@ describe('durable agent repositories', () => {
         return { inputTokens: 4, outputTokens: 2, totalTokens: 6, costMicros: 0 }
       }
     }
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
-        throw new Error('not used')
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          throw new Error('not used')
+        }
       },
-      async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
-        throw new Error('not used')
+      engine,
+      {
+        memorySigningSecret: 'agent-memory-test-signing-secret',
+        workerId: 'orchestration-infeasible-test',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true, maxConcurrentChildren: 1 }
       }
-    }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'orchestration-infeasible-test',
-    globalConcurrency: 1,
-    perUserConcurrency: 1,
-    orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true, maxConcurrentChildren: 1 } })
+    )
 
     expect(await runtime.runOnce()).toBe(true)
     expect(purposes).toEqual(['planner', 'root'])
@@ -3890,17 +4194,25 @@ describe('durable agent repositories', () => {
         return { inputTokens: 4, outputTokens: 2, totalTokens: 6, costMicros: 0 }
       }
     }
-    const runtime = new AgentProductRuntime(knex, {
-      async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
-        throw new Error('not used')
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
+          throw new Error('not used')
+        }
       },
-      async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
-        throw new Error('not used')
+      engine,
+      {
+        memorySigningSecret: 'agent-memory-test-signing-secret',
+        workerId: 'orchestration-rejected-retry-test',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true }
       }
-    }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'orchestration-rejected-retry-test',
-    globalConcurrency: 1,
-    perUserConcurrency: 1,
-    orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: true } })
+    )
 
     expect(await runtime.runOnce()).toBe(true)
     expect(purposes).toEqual(['root'])

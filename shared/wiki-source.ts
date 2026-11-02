@@ -25,23 +25,92 @@ export type WikiSourcePreview = z.infer<typeof WikiSourcePreviewSchema>
 
 /** The reader uses the repository's DOMPurify HTML policy, narrowed to passive prose. */
 export const wikiSourcePreviewSanitizerPolicy = {
-  ALLOWED_TAGS: ['p', 'br', 'div', 'span', 'section', 'article', 'main', 'figure', 'figcaption', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'b', 'em', 'i', 'u', 's', 'del', 'mark', 'small', 'sub', 'sup', 'abbr', 'blockquote', 'pre', 'code', 'ul', 'ol', 'li', 'dl', 'dt', 'dd', 'hr', 'a', 'table', 'caption', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td'],
+  ALLOWED_TAGS: [
+    'p',
+    'br',
+    'div',
+    'span',
+    'section',
+    'article',
+    'main',
+    'figure',
+    'figcaption',
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    'strong',
+    'b',
+    'em',
+    'i',
+    'u',
+    's',
+    'del',
+    'mark',
+    'small',
+    'sub',
+    'sup',
+    'abbr',
+    'blockquote',
+    'pre',
+    'code',
+    'ul',
+    'ol',
+    'li',
+    'dl',
+    'dt',
+    'dd',
+    'hr',
+    'a',
+    'table',
+    'caption',
+    'thead',
+    'tbody',
+    'tfoot',
+    'tr',
+    'th',
+    'td'
+  ],
   ALLOWED_ATTR: ['href', 'title', 'colspan', 'rowspan', 'scope', 'id', 'headers', 'start', 'value', 'reversed', 'hidden', 'aria-hidden'],
   ALLOW_DATA_ATTR: false,
   ALLOW_ARIA_ATTR: false,
   ALLOWED_NAMESPACES: ['http://www.w3.org/1999/xhtml'],
-  ADD_FORBID_CONTENTS: ['svg', 'math', 'iframe', 'object', 'embed', 'template', 'script', 'style', 'audio', 'video', 'picture', 'form', 'button', 'textarea', 'select']
+  ADD_FORBID_CONTENTS: [
+    'svg',
+    'math',
+    'iframe',
+    'object',
+    'embed',
+    'template',
+    'script',
+    'style',
+    'audio',
+    'video',
+    'picture',
+    'form',
+    'button',
+    'textarea',
+    'select'
+  ]
 }
 
 /** Relative links resolve against the canonical locale/private page, not the overlay URL. */
 export const wikiSourcePreviewLink = (href: string, pageHref: string): string | null => {
-  if (!href || href.length > 2048 || /[\u0000-\u0020\u007f\\]/u.test(href)) return null
+  if (!href || href.length > 2048) return null
+  for (let index = 0; index < href.length; index++) {
+    const code = href.charCodeAt(index)
+    if (code <= 0x20 || code === 0x7f || code === 0x5c) return null
+  }
   try {
     const base = 'https://wiki-preview.invalid'
     const url = new URL(href, `${base}${pageHref}`)
     if (!['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol) || url.username || url.password) return null
     return url.origin === base ? `${url.pathname}${url.search}${url.hash}` : url.href
-  } catch { return null }
+  } catch {
+    return null
+  }
 }
 export type WikiSourceSelector = { id: number } | { locale: string; path: string; visibility: 'public' | 'private' }
 
@@ -59,5 +128,7 @@ export const wikiSourceSelectorFromHref = (href: string, origin: string): WikiSo
     const path = segments.join('/')
     if (!locale || !/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/i.test(locale) || !path || path.length > 1024) return null
     return { locale, path, visibility }
-  } catch { return null }
+  } catch {
+    return null
+  }
 }

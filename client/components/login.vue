@@ -14,6 +14,8 @@
       footer-href='/register'
       :footer-disabled='isLoading'
     )
+      template(#brand-subtitle)
+        p.login-credentials-subtitle(v-if='screen === `login` && selectedStrategy.strategy.useForm') {{ $t('auth:enterCredentials') }}
       v-alert.mb-0(
         v-model='errorShown'
         color="error"
@@ -48,10 +50,12 @@
                   img(v-if='stg.strategy.logo' :src='stg.strategy.logo' width='24' height='24' alt='')
                   v-icon(v-else-if='stg.strategy.icon') {{ stg.strategy.icon }}
               span.text-none {{stg.displayName}}
-      template(v-if='screen === `login` && selectedStrategy.strategy.useForm')
+      template(v-if='screen === `forgot`')
         .login-subtitle
-          h2(tabindex='-1', ref='loginHeading').text-body-large {{$t('auth:enterCredentials')}}
-        form.login-form(@submit.prevent='login', :aria-busy='isLoading')
+          h2(tabindex='-1', ref='loginHeading').text-body-large {{$t('auth:forgotPasswordTitle')}}
+        p#login-recovery-instructions.login-recovery-prose {{ $t('auth:forgotPasswordSubtitle') }}
+      transition(mode='out-in', :css='false', @leave='retireAuthForm', @after-enter='focusAuthForm')
+        form.login-form.login-form--credentials(v-if='screen === `login` && selectedStrategy.strategy.useForm', key='credentials', @submit.prevent='login', :aria-busy='isLoading')
           v-text-field(
             variant="outlined"
             prepend-inner-icon='mdi-email-outline'
@@ -64,10 +68,11 @@
             :type='isUsernameEmail ? `email` : `text`'
             autocomplete='username'
             :error-messages='fieldErrors.username'
+            hide-details='auto'
             :disabled='isLoading'
             required
             )
-          v-text-field.mt-2(
+          v-text-field(
             variant="outlined"
             prepend-inner-icon='mdi-lock-outline'
             bg-color='surface'
@@ -79,12 +84,13 @@
             :label='$t("auth:fields.password")'
             autocomplete='current-password'
             :error-messages='fieldErrors.password'
+            hide-details='auto'
             :disabled='isLoading'
             required
           )
             template(v-slot:append-inner)
               password-visibility-toggle(v-model:visible='showPassword', :field='$t(`common:password.fields.password`)', :disabled='isLoading')
-          v-btn.mt-2.text-none(
+          v-btn.login-submit.text-none(
             width='100%'
             size="large"
             color="primary"
@@ -92,7 +98,7 @@
             :loading='isLoading'
             :disabled='isLoading'
             ) {{ $t('auth:actions.login') }}
-          .login-links.mt-4
+          .login-links
             v-btn.login-link.text-none(
               type='button'
               variant="text"
@@ -100,11 +106,7 @@
               :disabled='isLoading'
               @click='forgotPassword'
               ) {{ $t('auth:forgotPasswordLink') }}
-      template(v-if='screen === `forgot`')
-        .login-subtitle
-          h2(tabindex='-1', ref='loginHeading').text-body-large {{$t('auth:forgotPasswordTitle')}}
-        .login-info {{ $t('auth:forgotPasswordSubtitle') }}
-        form.login-form(@submit.prevent='forgotPasswordSubmit', :aria-busy='isLoading')
+        form.login-form.login-form--recovery(v-else-if='screen === `forgot`', key='recovery', @submit.prevent='forgotPasswordSubmit', :aria-busy='isLoading')
           v-text-field(
             variant="outlined"
             prepend-inner-icon='mdi-email-outline'
@@ -116,6 +118,7 @@
             :label='$t(`auth:fields.email`)'
             type='email'
             autocomplete='email'
+            aria-describedby='login-recovery-instructions'
             :error-messages='fieldErrors.username'
             :disabled='isLoading'
             required
@@ -270,6 +273,7 @@
           ) {{ $t('auth:switchToLogin.link') }}
       template(#aside)
         LoginParticleLogo(v-if='logoEffect', :effect='logoEffect', @stage-visibility='largeLogoVisible = $event')
+        p.login-colophon {{ siteTitle }}
     v-dialog(v-model='isTFAShown', max-width='500', persistent, aria-labelledby='login-tfa-title', @keydown.esc='cancelContinuation')
       v-card.login-dialog-card(variant='flat', :aria-busy='isLoading')
         form.login-tfa.text-center.pa-5(novalidate, @submit.prevent='verifySecurityCode(false)')
@@ -534,7 +538,7 @@ export default defineComponent({
         this.selectedStrategyKey = this.filteredStrategies[0].key
       }
       this.$nextTick(() => {
-        focusComponent(this.$refs.loginHeading)
+        focusComponent(screen === 'login' && this.selectedStrategy.strategy.useForm ? this.$refs.iptEmail : this.$refs.loginHeading)
       })
     },
     selectedStrategyKey (newValue: string) {
@@ -569,6 +573,21 @@ export default defineComponent({
     if (this.redirectTimer !== null) window.clearTimeout(this.redirectTimer)
   },
   methods: {
+    retireAuthForm (element: Element, done: () => void): void {
+      if (!(element instanceof HTMLElement)) {
+        done()
+        return
+      }
+      element.style.display = 'none'
+      element.inert = true
+      // VField queues label measurement in rAF after its post-flush watcher.
+      // Keep retired labels connected until that frame can read their CSS scale.
+      requestAnimationFrame(() => requestAnimationFrame(done))
+    },
+    focusAuthForm (): void {
+      if (this.screen === 'forgot') focusComponent(this.$refs.iptForgotPwdEmail)
+      else if (this.screen === 'login') focusComponent(this.$refs.iptEmail)
+    },
     handleLogoError (event: Event): void {
       const image = event.currentTarget
       if (!(image instanceof HTMLImageElement)) return
@@ -787,9 +806,6 @@ export default defineComponent({
       if (this.isLoading) return
       this.clearError()
       this.screen = 'forgot'
-      this.$nextTick(() => {
-        focusComponent(this.$refs.iptForgotPwdEmail)
-      })
     },
     /**
      * FORGOT PASSWORD SUBMIT
@@ -934,6 +950,27 @@ export default defineComponent({
 
 <style lang="scss">
 .login {
+  &-credentials-subtitle {
+    margin: var(--wiki-space-2) 0 var(--wiki-space-5);
+    color: var(--wiki-text-muted);
+    font-size: .9375rem;
+    font-weight: 400;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  &-colophon {
+    display: none;
+  }
+
+  &-recovery-prose {
+    margin: 0 0 1.25rem;
+    color: var(--wiki-text-muted);
+    font-size: .9375rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
   &-subtitle {
     padding: var(--wiki-space-4) var(--wiki-space-1) var(--wiki-space-2);
     color: rgb(var(--v-theme-on-surface));
@@ -1057,6 +1094,36 @@ export default defineComponent({
       letter-spacing: .01em;
     }
 
+    &--credentials,
+    &--recovery {
+      --login-field-autofill-surface: var(--wiki-surface-sunken);
+      --wiki-field-label-bg: var(--wiki-surface-sunken);
+
+      .v-field {
+        background: var(--wiki-surface-sunken) !important;
+        background-image: none !important;
+        box-shadow: var(--wiki-shadow-inset);
+      }
+
+      .v-field:not(.v-field--focused):not(.v-field--error):not(.v-field--disabled) .v-field__outline {
+        color: var(--wiki-well-border);
+      }
+    }
+
+    &--credentials {
+      display: grid;
+      gap: var(--wiki-space-4);
+      // Leave room for the outlined label above the field's border.
+      padding-top: var(--wiki-space-2);
+
+      .v-input + .v-input {
+        margin-top: 0 !important;
+      }
+
+      > .login-submit {
+        margin-top: var(--wiki-space-1);
+      }
+    }
   }
 
   &-links {

@@ -69,9 +69,11 @@
           v-col(cols='12', md='6')
             v-select(v-model='metadataStatus', :label='$t(`editor:editorOkfPanel.status`)', variant='outlined', :items='statusItems', :disabled='!hasMetadata')
           v-col(cols='12', md='6')
-            v-text-field(v-model='metadataResource', :label='$t(`editor:editorOkfPanel.resource`)', variant='outlined', :disabled='!hasMetadata', :hint='$t(`editor:editorOkfPanel.canonicalResourceIdentifier`)', persistent-hint)
+            v-text-field(v-model='metadataResource', :label='$t(`editor:editorOkfPanel.resource`)', variant='outlined', :disabled='!hasMetadata', aria-describedby='editor-okf-resource-help')
+            .text-body-small.text-medium-emphasis#editor-okf-resource-help {{ $t(`editor:editorOkfPanel.canonicalResourceIdentifier`) }}
           v-col(cols='12', md='6')
-            v-text-field(v-model='metadataStaleAfter', :label='$t(`editor:editorOkfPanel.staleAfter`)', variant='outlined', :disabled='!hasMetadata', :hint='$t(`editor:editorOkfPanel.iso8601Timestamp`)', persistent-hint)
+            v-text-field(v-model='metadataStaleAfter', :label='$t(`editor:editorOkfPanel.staleAfter`)', variant='outlined', :disabled='!hasMetadata', aria-describedby='editor-okf-stale-help')
+            .text-body-small.text-medium-emphasis#editor-okf-stale-help {{ $t(`editor:editorOkfPanel.iso8601Timestamp`) }}
         .d-flex.align-center.mt-2.mb-2
           .text-title-small {{ $t(`editor:editorOkfPanel.sources`) }}
           v-spacer
@@ -111,10 +113,9 @@
             )
 
         .text-title-small.mt-4.mb-2 {{ $t(`editor:editorOkfPanel.extensionJson`) }}
-        .text-body-small.text-medium-emphasis.mb-2 {{ $t(`editor:editorOkfPanel.nonCoreMetadataKeys`) }}
-        v-textarea(v-model='extensionText', :label='$t(`editor:editorOkfPanel.extensions`)', variant='outlined', rows='7', auto-grow, spellcheck='false', :disabled='!hasMetadata', @update:model-value='extensionEditing = true')
-        v-alert.mb-2(v-if='extensionError', type='error', variant='tonal', density='compact', role='alert') {{ extensionError }}
-        v-btn(color='primary', variant='tonal', :disabled='!hasMetadata', @click='applyExtensions') {{ $t(`editor:editorOkfPanel.applyExtensions`) }}
+        .text-body-small.text-medium-emphasis.mb-2#editor-okf-extension-help {{ $t(`editor:editorOkfPanel.nonCoreMetadataKeys`) }}
+        v-textarea(ref='extensionInput', v-model='extensionText', :label='$t(`editor:editorOkfPanel.extensions`)', variant='outlined', rows='7', auto-grow, spellcheck='false', :disabled='!hasMetadata', :aria-invalid='Boolean(extensionError)', :aria-describedby='extensionError ? `editor-okf-extension-help editor-okf-extension-error` : `editor-okf-extension-help`', @update:model-value='editExtensions')
+        v-alert.mb-2#editor-okf-extension-error(v-if='extensionError', type='error', variant='tonal', density='compact', role='alert') {{ extensionError }}
 
     v-card.mb-4(variant='outlined')
       v-card-title.text-body-large {{ $t(`editor:editorOkfPanel.knowledgeProjection`) }}
@@ -190,7 +191,7 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent } from 'vue'
+import { defineComponent, getCurrentInstance } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import type { KnowledgeProjectionView, OkfMetadata, OkfSource, OkfTrustSummary } from '../../helpers/pages-api'
 
@@ -201,6 +202,14 @@ const CORE_METADATA_KEYS = new Set([
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 
 type ExtensionParseResult = { value: Record<string, unknown>; error: null } | { value: null; error: string }
+
+export type OkfDraftValidation = { valid: false } | { valid: true; commit: () => void }
+export interface EditorOkfDraftHandle {
+  readonly hasPendingChanges: boolean
+  readonly canCommit: boolean
+  validateDraft: () => OkfDraftValidation
+  focusInvalid: () => void
+}
 type OkfLoadRetry = {
   isAvailable: () => boolean
   run: () => Promise<void>
@@ -227,6 +236,16 @@ export function parseExtensionJson (text: string): ExtensionParseResult {
 
 export default defineComponent({
   name: 'EditorOkfPanel',
+  setup (_props, { expose }) {
+    // Keep the parent handle narrow without narrowing the template's own instance.
+    const panel = getCurrentInstance()!.proxy as unknown as EditorOkfDraftHandle
+    expose({
+      get hasPendingChanges () { return panel.hasPendingChanges },
+      get canCommit () { return panel.canCommit },
+      validateDraft: () => panel.validateDraft(),
+      focusInvalid: () => panel.focusInvalid()
+    } satisfies EditorOkfDraftHandle)
+  },
   inject: {
     okfLoadRetry: {
       from: 'okfLoadRetry',
@@ -324,6 +343,12 @@ export default defineComponent({
     },
     extensionSnapshot (): string {
       return JSON.stringify(this.extensionValues, null, 2)
+    },
+    hasPendingChanges (): boolean {
+      return this.hasMetadata && this.extensionText !== this.extensionSnapshot
+    },
+    canCommit (): boolean {
+      return !this.hasMetadata || parseExtensionJson(this.extensionText).error === null
     }
   },
   watch: {
@@ -417,14 +442,36 @@ export default defineComponent({
       this.extensionError = ''
       this.extensionEditing = false
     },
-    applyExtensions () {
+    editExtensions () {
+      this.extensionEditing = true
+      if (this.extensionError) {
+        const result = parseExtensionJson(this.extensionText)
+        this.extensionError = result.error ? this.$t(result.error) : ''
+      }
+    },
+    focusInvalid () {
+      const root = (this.$refs.extensionInput as { $el?: HTMLElement } | undefined)?.$el
+      const input = root?.querySelector('textarea')
+      input?.focus()
+      input?.scrollIntoView({ block: 'nearest' })
+    },
+    validateDraft (): OkfDraftValidation {
+      // Missing authority is not an invitation to manufacture metadata.
+      if (!this.hasMetadata) return { valid: true, commit: () => {} }
       const result = parseExtensionJson(this.extensionText)
       this.extensionError = result.error ? this.$t(result.error) : ''
-      if (!result.value || !this.authorityMetadata) return
-      const metadata: Record<string, unknown> = { ...this.authorityMetadata }
-      for (const key of Object.keys(this.extensionValues)) delete metadata[key]
-      this.replaceMetadata({ ...metadata, ...result.value } as OkfMetadata)
-      this.extensionEditing = false
+      if (!result.value) return { valid: false }
+      const extensions = result.value
+      return {
+        valid: true,
+        commit: () => {
+          if (!this.hasPendingChanges || !this.authorityMetadata) return
+          const metadata: Record<string, unknown> = { ...this.authorityMetadata }
+          for (const key of Object.keys(this.extensionValues)) delete metadata[key]
+          this.replaceMetadata({ ...metadata, ...extensions } as OkfMetadata)
+          this.extensionEditing = false
+        }
+      }
     }
   }
 })
@@ -433,7 +480,13 @@ export default defineComponent({
 <style lang='scss' scoped>
 .editor-okf-panel {
   min-height: 0;
-  padding: 20px;
+  padding: 16px 20px 20px;
+
+  :deep(input),
+  :deep(textarea),
+  .text-title-small {
+    scroll-margin-block: 16px;
+  }
 
   .v-card-title {
     color: rgb(var(--v-theme-on-surface));
@@ -451,7 +504,7 @@ export default defineComponent({
 
 @media (max-width: 600px) {
   .editor-okf-panel {
-    padding: 12px;
+    padding: 16px 12px 12px;
   }
 }
 </style>

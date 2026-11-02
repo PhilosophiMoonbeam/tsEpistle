@@ -1,11 +1,20 @@
 <template>
   <!-- biome-ignore lint/a11y/useKeyWithClickEvents: Delegated native buttons and anchors already synthesize keyboard clicks; another key handler would double-activate them. -->
   <!-- biome-ignore lint/a11y/noStaticElementInteractions: This noninteractive root delegates clicks only from rendered native copy buttons and source links. -->
-  <div ref="markdownRoot" class="agent-markdown" v-html="rendered" @click="copyCode" />
+  <div ref="markdownRoot" class="agent-markdown" v-html="rendered" @click="copyCode"
+    @pointerover="hoverCitation" @pointerout="leaveCitation" @focusin="focusCitation" @focusout="leaveCitation" />
+  <Teleport to="body">
+    <div v-if="citationPreview" :id="previewId" ref="previewCard" class="agent-markdown__citation-preview"
+      role="tooltip" :style="previewPosition" @pointerenter="holdPreview" @pointerleave="releasePreview">
+      <strong dir="auto">{{ citationPreview.label }}</strong>
+      <span v-if="citationPreview.state !== 'ready'" role="status">{{ previewStatus }}</span>
+      <p v-else dir="auto">{{ citationPreview.excerpt }}</p>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
 import i18next from 'i18next'
 import type { AgentCitation } from '../../../shared/agents/contracts.ts'
 import {
@@ -19,6 +28,7 @@ import { copyTextToClipboard } from '../../helpers/clipboard.ts'
 import { createAgentCitationResolver } from './agent-citations.ts'
 import { wikiSourceSelectorFromHref, type WikiSourceSelector } from '../../../shared/wiki-source.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
+import { fetchWikiSourcePreview, WikiSourceLoadError } from '../../helpers/wiki-source.ts'
 
 const t = useTranslate()
 const localeRevision = ref(0)
@@ -28,12 +38,14 @@ const {
   content,
   citations = [],
   streaming = false,
-  sourcePreviews = false
+  sourcePreviews = false,
+  previewContext = ''
 } = defineProps<{
   content: string
   citations?: readonly AgentCitation[]
   streaming?: boolean
   sourcePreviews?: boolean
+  previewContext?: string
 }>()
 
 const emit = defineEmits<{ previewSource: [selector: WikiSourceSelector] }>()
@@ -65,6 +77,103 @@ interface RenderedDomState {
 
 const markdownRoot = useTemplateRef<HTMLElement>('markdownRoot')
 const resetTimers = new Map<HTMLButtonElement, CopyReset>()
+const previewId = `agent-citation-${useId()}`
+const previewCard = useTemplateRef<HTMLElement>('previewCard')
+type PreviewState = 'loading' | 'ready' | 'unavailable' | 'denied' | 'stale'
+const citationPreview = ref<{ label: string; excerpt: string; state: PreviewState } | null>(null)
+const previewPosition = ref({ top: '0px', left: '0px' })
+const previewStatus = computed(() => t(`common:agentMarkdown.citationPreview${citationPreview.value?.state ?? 'unavailable'}`))
+let previewAnchor: HTMLAnchorElement | null = null
+let previewController: AbortController | null = null
+let previewGeneration = 0
+let previewCloseTimer: number | null = null
+let previewHovered = false
+let triggerHovered = false
+const clearPreviewTimer = (): void => {
+  if (previewCloseTimer !== null) window.clearTimeout(previewCloseTimer)
+  previewCloseTimer = null
+}
+const dismissCitationPreview = (): void => {
+  clearPreviewTimer()
+  previewController?.abort()
+  previewController = null
+  previewGeneration += 1
+  previewAnchor?.removeAttribute('aria-describedby')
+  previewAnchor = null
+  citationPreview.value = null
+  triggerHovered = false
+  previewHovered = false
+}
+const deferPreviewClose = (): void => {
+  clearPreviewTimer()
+  previewCloseTimer = window.setTimeout(() => {
+    if (!previewHovered && !triggerHovered && document.activeElement !== previewAnchor) dismissCitationPreview()
+  }, 180)
+}
+const positionCitationPreview = (): void => {
+  if (!previewAnchor?.isConnected) { dismissCitationPreview(); return }
+  const anchor = previewAnchor.getBoundingClientRect()
+  const card = previewCard.value?.getBoundingClientRect()
+  const width = card?.width ?? Math.min(320, window.innerWidth - 24)
+  const height = card?.height ?? 100
+  const top = anchor.bottom + height + 12 <= window.innerHeight
+    ? anchor.bottom + 6 : Math.max(8, anchor.top - height - 6)
+  previewPosition.value = {
+    top: `${top}px`,
+    left: `${Math.max(12, Math.min(anchor.left, window.innerWidth - width - 12))}px`
+  }
+}
+const openCitationPreview = async (anchor: HTMLAnchorElement): Promise<void> => {
+  clearPreviewTimer()
+  if (previewAnchor === anchor) return
+  dismissCitationPreview()
+  const selector = wikiSourceSelectorFromHref(anchor.href, window.location.origin)
+  if (!sourcePreviews || !selector) return
+  previewAnchor = anchor
+  triggerHovered = anchor.matches(':hover')
+  anchor.setAttribute('aria-describedby', previewId)
+  const controller = new AbortController()
+  previewController = controller
+  const generation = previewGeneration
+  const context = previewContext
+  citationPreview.value = { label: citations.find(citation => citation.evidenceId === anchor.dataset.citationId)?.label ?? t('common:agentMarkdown.citation'), excerpt: '', state: 'loading' }
+  positionCitationPreview()
+  void nextTick(positionCitationPreview)
+  const current = (): boolean => generation === previewGeneration && !controller.signal.aborted &&
+    context === previewContext && previewAnchor === anchor && anchor.isConnected
+  try {
+    const source = await fetchWikiSourcePreview(selector, '', controller.signal)
+    if (!current() || !citationPreview.value) return
+    citationPreview.value = { label: source.title, excerpt: source.excerpt, state: source.excerpt.trim() ? 'ready' : 'unavailable' }
+  } catch (error) {
+    if (!current() || !citationPreview.value) return
+    citationPreview.value.state = error instanceof WikiSourceLoadError && (error.status === 401 || error.status === 403)
+      ? 'denied' : error instanceof WikiSourceLoadError && (error.status === 409 || error.status === 410) ? 'stale' : 'unavailable'
+  }
+  if (current()) void nextTick(positionCitationPreview)
+}
+const citationAnchor = (target: EventTarget | null): HTMLAnchorElement | null =>
+  target instanceof Element ? target.closest<HTMLAnchorElement>('a[data-source-preview]') : null
+const hoverCitation = (event: PointerEvent): void => {
+  const anchor = citationAnchor(event.target)
+  if (!anchor || anchor.contains(event.relatedTarget as Node | null)) return
+  triggerHovered = true
+  void openCitationPreview(anchor)
+}
+const focusCitation = (event: FocusEvent): void => {
+  const anchor = citationAnchor(event.target)
+  if (anchor) void openCitationPreview(anchor)
+}
+const leaveCitation = (event: PointerEvent | FocusEvent): void => {
+  const anchor = citationAnchor(event.target)
+  if (!anchor || anchor.contains(event.relatedTarget as Node | null)) return
+  if (event.type === 'pointerout') triggerHovered = false
+  deferPreviewClose()
+}
+const holdPreview = (): void => { previewHovered = true; clearPreviewTimer() }
+const releasePreview = (): void => { previewHovered = false; deferPreviewClose() }
+const previewEscape = (event: KeyboardEvent): void => { if (event.key === 'Escape') dismissCitationPreview() }
+watch([() => content, () => citations, () => sourcePreviews, () => previewContext], dismissCitationPreview, { flush: 'sync', deep: true })
 const resetCopyLabel = (button: HTMLButtonElement): void => {
   button.textContent = t('common:actions.copy')
   button.setAttribute('aria-label', t('common:agentMarkdown.copyCodeClipboard'))
@@ -272,6 +381,7 @@ const decorateRenderedHtml = (html: string): string => {
 const renderMarkdown = (): string => {
   const html = renderSafeMarkdown(content, {
     resolveCitation: createAgentCitationResolver(citations),
+    normalizeCitationParagraphs: true,
     streaming,
     fenceMetadata: metadata => ({ 'data-language': metadata.language })
   })
@@ -460,6 +570,7 @@ const commitRender = (): void => {
     return
   }
   const domState = captureRenderedDomState()
+  dismissCitationPreview()
   cancelDiagramJobs()
   const version = ++renderVersion
   rendered.value = nextRendered
@@ -496,7 +607,7 @@ const copyCode = async (event: MouseEvent): Promise<void> => {
   const anchor = target.closest<HTMLAnchorElement>('a[data-source-preview]')
   if (anchor && event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
     const selector = wikiSourceSelectorFromHref(anchor.href, window.location.origin)
-    if (selector) { event.preventDefault(); emit('previewSource', selector); return }
+    if (selector) { event.preventDefault(); dismissCitationPreview(); emit('previewSource', selector); return }
   }
   const button = target.closest<HTMLButtonElement>('[data-copy-code]')
   if (!button) return
@@ -520,12 +631,19 @@ const copyCode = async (event: MouseEvent): Promise<void> => {
 }
 
 onMounted(() => {
+  document.addEventListener('keydown', previewEscape)
+  window.addEventListener('resize', dismissCitationPreview)
+  window.addEventListener('scroll', dismissCitationPreview, true)
   i18next.on('languageChanged', refreshLocale)
   i18next.on('loaded', refreshLocale)
   void nextTick(() => enhanceMermaidDiagrams(renderVersion))
   observeDiagramTheme()
 })
 onBeforeUnmount(() => {
+  dismissCitationPreview()
+  document.removeEventListener('keydown', previewEscape)
+  window.removeEventListener('resize', dismissCitationPreview)
+  window.removeEventListener('scroll', dismissCitationPreview, true)
   i18next.off('languageChanged', refreshLocale)
   i18next.off('loaded', refreshLocale)
   if (scheduledFrame !== null) window.cancelAnimationFrame(scheduledFrame)
@@ -875,16 +993,25 @@ onBeforeUnmount(() => {
 .agent-markdown :deep(tbody tr:nth-child(even)) {
   background: color-mix(in srgb, var(--wiki-surface-sunken) 58%, transparent);
 }
+
+.agent-markdown :deep([data-citation-flow='true']) {
+  display: inline;
+  vertical-align: baseline;
+}
+
 .agent-markdown :deep(a[data-agent-citation='true']),
 .agent-markdown :deep(strong[data-agent-citation='true']) {
   align-items: center;
-  background: color-mix(in srgb, var(--agent-citation-tint, var(--wiki-accent-warm)) 32%, var(--wiki-surface-raised));
+  background: var(--wiki-hud-surface);
+  -webkit-backdrop-filter: var(--wiki-hud-filter);
+  backdrop-filter: var(--wiki-hud-filter);
+  box-shadow: var(--wiki-glass-specular);
   border: 1px solid color-mix(in srgb, var(--agent-citation-tint, var(--wiki-accent-warm)) 50%, var(--wiki-surface-border));
   border-radius: var(--wiki-radius-pill);
   color: rgb(var(--v-theme-on-surface));
   display: inline-flex;
   font-family: var(--wiki-font-mono);
-  font-size: var(--wiki-label-size);
+  font-size: .72rem;
   font-weight: 720;
   justify-content: center;
   line-height: 1;
@@ -893,12 +1020,58 @@ onBeforeUnmount(() => {
   min-width: var(--wiki-space-5);
   padding-inline: var(--wiki-space-1);
   text-decoration: none;
-  vertical-align: .12em;
+  vertical-align: super;
 }
 
 .agent-markdown :deep(a[data-agent-citation='true']:hover),
 .agent-markdown :deep(strong[data-agent-citation='true']:hover) {
   border-color: color-mix(in srgb, var(--agent-citation-tint, var(--wiki-accent-warm)) 75%, var(--wiki-surface-border));
+}
+
+.agent-markdown__citation-preview {
+  background: var(--wiki-hud-surface);
+  -webkit-backdrop-filter: var(--wiki-hud-filter);
+  backdrop-filter: var(--wiki-hud-filter);
+  border: 1px solid var(--wiki-material-border);
+  border-radius: var(--wiki-control-radius);
+  box-shadow: var(--wiki-glass-specular), var(--wiki-shadow-md);
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-body);
+  font-size: .8125rem;
+  inline-size: min(20rem, calc(100vw - 24px));
+  line-height: 1.5;
+  padding: var(--wiki-space-3);
+  position: fixed;
+  z-index: 2400;
+  overflow-wrap: anywhere;
+}
+
+.agent-markdown__citation-preview strong {
+  display: block;
+  font-size: var(--wiki-label-size);
+  margin-block-end: var(--wiki-space-1);
+}
+
+.agent-markdown__citation-preview p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  margin: 0;
+  overflow: hidden;
+}
+
+@media (forced-colors: active) {
+  .agent-markdown__citation-preview {
+    border-color: CanvasText;
+    color: CanvasText;
+  }
+
+  .agent-markdown :deep([data-agent-citation='true']) {
+    background: Canvas;
+    border-color: LinkText;
+    color: LinkText;
+  }
 }
 
 @media (max-width: 599.98px) {

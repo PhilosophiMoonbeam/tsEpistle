@@ -6,14 +6,14 @@
       :disabled="disabled || !source || !text.trim()"
       :aria-label="t('copy')"
       :title="`${t('copy')} — ${keyHint}`"
-      :aria-describedby="hintId"
+      :aria-describedby="resolvedHintId"
       :aria-busy="state === 'copying'"
       @click.stop="copy"
     >
       <v-icon size="18" aria-hidden="true">{{ state === 'copied' ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
       <span>{{ state === 'copied' ? t('copied') : t('copy') }}</span>
     </button>
-    <span :id="hintId" class="cited-copy-action__hint">{{ keyHint }}</span>
+    <span :id="resolvedHintId" class="cited-copy-action__hint">{{ keyHint }}</span>
     <span class="cited-copy-action__receipt" role="status" aria-live="polite" aria-atomic="true">{{ feedback }}</span>
   </span>
 </template>
@@ -49,7 +49,7 @@ const emit = defineEmits<{
 const t = useTranslate('common:citedCopy')
 const root = ref<HTMLElement | null>(null)
 const generatedHintId = `cited-copy-hint-${useId()}`
-const hintId = computed(() => props.hintId ?? generatedHintId)
+const resolvedHintId = computed(() => props.hintId ?? generatedHintId)
 const state = ref<'idle' | 'copying' | 'copied' | 'failed'>('idle')
 const feedback = ref('')
 const keyHint = computed(() => t('selectedTextHint', {

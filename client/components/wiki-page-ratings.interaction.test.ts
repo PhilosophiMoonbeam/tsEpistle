@@ -40,6 +40,7 @@ const siteConfig: SiteConfig = {
     sourceUrl: `${packageMetadata.product.sourceRepository}/tree/${'a'.repeat(40)}`
   },
   featurePageRatings: true,
+  publicSocialSharing: false,
   availableEditors: ['markdown'],
   agentsEnabled: false,
   agentProviderEnabled: false,

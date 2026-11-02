@@ -19,12 +19,29 @@
 // The segmented native outline is the only crisp edge that may meet an
 // outlined floating label. This also supersedes the wiki-notched-field opt-in.
 .v-field--variant-outlined {
-  box-shadow: none;
+  background-color: var(--wiki-surface-sunken);
+  box-shadow: var(--wiki-shadow-inset);
 
   .v-field__outline {
     border: 0;
-    color: var(--wiki-control-edge, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 44%, transparent));
+    color: var(--wiki-field-rest-edge);
     --v-field-border-opacity: 1;
+  }
+
+  .v-field__outline__notch {
+    padding-inline: 6px;
+  }
+
+  .v-field-label--floating {
+    padding-inline: 5px;
+    margin-inline: -1px;
+    border-radius: 4px;
+    background: var(--wiki-field-label-bg, var(--wiki-surface-sunken));
+    z-index: 2;
+  }
+
+  &:not(.v-field--disabled):not(.v-field--focused):not(:has(:focus-visible)):hover > .v-field__outline {
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 42%, transparent);
   }
 }
 
@@ -90,6 +107,10 @@
     outline: none;
     box-shadow: 0 0 0 3px color-mix(in oklch, var(--wiki-focus-color) 18%, transparent);
 
+    &.v-field--variant-outlined {
+      box-shadow: 0 2px 8px -2px color-mix(in oklch, var(--wiki-focus-color) 28%, transparent);
+    }
+
     > .v-field__outline {
       --v-field-border-opacity: 1;
       --v-field-border-width: 2px;
@@ -144,8 +165,18 @@
 }
 
 @media (forced-colors: active) {
-  .v-input:not(.v-input--disabled) .v-field:not(.v-field--disabled):is(.v-field--focused, :has(:focus-visible)) {
+  .v-field {
+    background: Field;
     box-shadow: none;
+  }
+
+  .v-field--variant-outlined {
+    .v-field__outline { color: FieldText; }
+    .v-field-label--floating { background: Field; }
+  }
+
+  .v-input:not(.v-input--disabled) .v-field:not(.v-field--disabled):is(.v-field--focused, :has(:focus-visible)) {
+    box-shadow: none !important;
 
     > .v-field__outline {
       color: Highlight !important;

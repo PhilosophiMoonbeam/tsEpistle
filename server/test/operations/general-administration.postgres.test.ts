@@ -90,7 +90,11 @@ suite('PostgreSQL reviewed General settings', () => {
     expect(w.history[0]).toMatchObject({ actorId: 1, reason: 'Review workspace settings' })
     expect((await db('settings').where('key', 'seo').first()).value.analyticsId).toBe('private-analytics-value')
     expect((await db('settings').where('key', 'editShortcuts').first()).value.futureShortcut).toBe('retained')
-    expect((await db('settings').where('key', 'features').first()).value).toEqual({ featurePageComments: false, featureGlossary: true })
+    expect((await db('settings').where('key', 'features').first()).value).toEqual({
+      featurePageComments: false,
+      featureGlossary: true,
+      publicSocialSharing: false
+    })
     expect((await db('settings').where('key', 'auth').first()).value).toEqual({ audience: 'unchanged' })
   })
   it('durably toggles the actual nested glossary feature and retains unrelated feature values', async () => {
@@ -102,13 +106,36 @@ suite('PostgreSQL reviewed General settings', () => {
     await write({ featureGlossary: false })
     expect((await read()).policy.featureGlossary).toBe(false)
     expect((await read()).history[0]?.fields).toEqual(['featureGlossary'])
-    expect((await db('settings').where('key', 'features').first()).value).toEqual({ ...flags, featureGlossary: false })
+    expect((await db('settings').where('key', 'features').first()).value).toEqual({ ...flags, featureGlossary: false, publicSocialSharing: false })
     expect(await db('settings').where('key', 'featureGlossary')).toEqual([])
     await write({ featureGlossary: true })
     expect((await read()).policy.featureGlossary).toBe(true)
-    expect((await db('settings').where('key', 'features').first()).value).toEqual({ ...flags, featureGlossary: true })
+    expect((await db('settings').where('key', 'features').first()).value).toEqual({ ...flags, featureGlossary: true, publicSocialSharing: false })
   })
-  it.each([false, true])('preserves glossary and discussion choices when reviewed saves race (features row exists: %s)', async exists => {
+  it('persists a reviewed public-sharing opt-in and revocation without replacing unrelated features', async () => {
+    const flags = { featurePageComments: false, featurePageRatings: true, futureFeature: { retained: true } }
+    await db('settings')
+      .where('key', 'features')
+      .update({ value: JSON.stringify(flags) })
+    const before = await read()
+    expect(before.policy.publicSocialSharing).toBe(false)
+    await store.save(admin, {
+      policy: { ...before.policy, publicSocialSharing: true },
+      fingerprint: before.fingerprint,
+      reason: 'Allow public social sharing'
+    })
+    const enabled = await read()
+    expect(enabled.policy.publicSocialSharing).toBe(true)
+    expect(enabled.history[0]).toMatchObject({ actorId: 1, reason: 'Allow public social sharing', fields: ['publicSocialSharing'] })
+    expect((await db('settings').where('key', 'features').first()).value).toEqual({ ...flags, featureGlossary: true, publicSocialSharing: true })
+    await write({ publicSocialSharing: false })
+    const disabled = await read()
+    expect(disabled.policy.publicSocialSharing).toBe(false)
+    expect(disabled.history).toHaveLength(2)
+    expect(disabled.history[0]?.fields).toEqual(['publicSocialSharing'])
+    expect((await db('settings').where('key', 'features').first()).value).toEqual({ ...flags, featureGlossary: true, publicSocialSharing: false })
+  })
+  it.each([false, true])('preserves General sharing, glossary and discussion choices when reviewed saves race (features row exists: %s)', async exists => {
     if (!exists) await db('settings').where('key', 'features').delete()
     const discussion = createDiscussionSettingsStore({
       db,
@@ -120,9 +147,9 @@ suite('PostgreSQL reviewed General settings', () => {
       discussionReview = await discussion.read()
     const outcomes = await Promise.allSettled([
       store.save(admin, {
-        policy: { ...generalReview.policy, featureGlossary: false },
+        policy: { ...generalReview.policy, featureGlossary: false, publicSocialSharing: true },
         fingerprint: generalReview.fingerprint,
-        reason: 'Disable glossary temporarily'
+        reason: 'Review glossary and public sharing'
       }),
       discussion.write({ enabled: true, providers: discussionReview.providers }, discussionReview.fingerprint)
     ])
@@ -131,29 +158,42 @@ suite('PostgreSQL reviewed General settings', () => {
     const generalOutcome = outcomes[0]!
     if (generalOutcome.status === 'rejected') {
       expect(generalOutcome.reason).toMatchObject({ status: 409 })
-      await write({ featureGlossary: false })
+      await write({ featureGlossary: false, publicSocialSharing: true })
     }
-    expect((await db('settings').where('key', 'features').first()).value).toEqual({ featurePageComments: true, featureGlossary: false })
+    expect((await db('settings').where('key', 'features').first()).value).toEqual({
+      featurePageComments: true,
+      featureGlossary: false,
+      publicSocialSharing: true
+    })
     expect((await discussion.read()).enabled).toBe(true)
-    expect((await read()).policy.featureGlossary).toBe(false)
+    expect((await read()).policy).toMatchObject({ featureGlossary: false, publicSocialSharing: true })
   })
   it('rejects stale concurrent reviews and prevents an ABA review from becoming current again', async () => {
     const before = await read(),
-      payload = { policy: { ...before.policy, title: 'Next' }, fingerprint: before.fingerprint, reason: 'Concurrent reviewed write' }
+      payload = { policy: { ...before.policy, publicSocialSharing: true }, fingerprint: before.fingerprint, reason: 'Concurrent reviewed opt-in' }
     const results = await Promise.allSettled([store.save(admin, payload), store.save(admin, payload)])
     expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1)
     expect(results.find(r => r.status === 'rejected')).toMatchObject({ reason: { status: 409 } })
-    await write({ title: 'Original' })
+    await write({ publicSocialSharing: false })
     await expect(store.save(admin, payload)).rejects.toMatchObject({ status: 409 })
+    expect((await read()).policy.publicSocialSharing).toBe(false)
+    expect((await read()).history).toHaveLength(2)
   })
   it('rechecks account generation, membership and persisted system grants', async () => {
     await expect(store.inspect({ id: 3, permissions: ['manage:system'], authVersion: 0 } as never)).rejects.toMatchObject({ status: 403 })
-    const w = await read()
+    const w = await read(),
+      payload = { policy: { ...w.policy, publicSocialSharing: true }, fingerprint: w.fingerprint, reason: 'Enable public social sharing' },
+      before = await db('settings').orderBy('key')
     await db('users').where('id', 1).update({ authVersion: 1 })
-    await expect(store.save(admin, { policy: w.policy, fingerprint: w.fingerprint, reason: 'Stale account authority' })).rejects.toMatchObject({ status: 403 })
+    await expect(store.save(admin, payload)).rejects.toMatchObject({ status: 403 })
     await db('users').where('id', 1).update({ authVersion: 0 })
+    await db('userGroups').where({ userId: 1, groupId: 1 }).delete()
+    await expect(store.save(admin, payload)).rejects.toMatchObject({ status: 403 })
+    await db('userGroups').insert({ userId: 1, groupId: 1 })
     await db('groups').where('id', 1).update({ permissions: '[]' })
+    await expect(store.save(admin, payload)).rejects.toMatchObject({ status: 403 })
     await expect(read()).rejects.toMatchObject({ status: 403 })
+    expect(await db('settings').orderBy('key')).toEqual(before)
   })
   it('rejects invalid settings and live HTTPS downgrades before writing', async () => {
     const before = await db('settings').orderBy('key')
@@ -161,6 +201,7 @@ suite('PostgreSQL reviewed General settings', () => {
     await expect(write({ robots: ['index', 'noindex'] })).rejects.toMatchObject({ status: 400 })
     await expect(write({ title: 'Next' }, { reason: '' })).rejects.toMatchObject({ status: 400 })
     await expect(write({ featureGlossary: 'false' as never })).rejects.toMatchObject({ status: 400 })
+    await expect(write({ publicSocialSharing: 'true' as never })).rejects.toMatchObject({ status: 400 })
     expect(await db('settings').orderBy('key')).toEqual(before)
   })
   it('rolls back earlier row updates when a later settings write fails', async () => {
@@ -187,9 +228,9 @@ suite('PostgreSQL reviewed General settings', () => {
         return true
       }
     })
-    expect(await write({ title: 'Durable' })).toEqual({ activation: 'needs-attention' })
+    expect(await write({ title: 'Durable', publicSocialSharing: true })).toEqual({ activation: 'needs-attention' })
     const w = await read()
-    expect(w.policy.title).toBe('Durable')
+    expect(w.policy).toMatchObject({ title: 'Durable', publicSocialSharing: true })
     failed = false
     expect(await store.initialize(admin, w.fingerprint)).toEqual({ activation: 'applied' })
     expect((await read()).runtime.state).toBe('applied')
@@ -230,10 +271,16 @@ suite('PostgreSQL reviewed General settings', () => {
       logger: { warn: () => {} }
     } as typeof globalThis.WIKI
     try {
-      await patchLegacyGeneralConfiguration(admin, { title: 'Legacy updated', pageExtensions: 'TXT, md, txt', analyticsId: 'private-analytics-value' })
-      expect((await read()).policy).toMatchObject({ title: 'Legacy updated', pageExtensions: ['md', 'txt'] })
+      await patchLegacyGeneralConfiguration(admin, {
+        title: 'Legacy updated',
+        pageExtensions: 'TXT, md, txt',
+        analyticsId: 'private-analytics-value',
+        publicSocialSharing: true
+      })
+      expect((await read()).policy).toMatchObject({ title: 'Legacy updated', pageExtensions: ['md', 'txt'], publicSocialSharing: true })
       expect((await read()).history[0]).toMatchObject({ actorId: 1, fields: expect.arrayContaining(['title', 'pageExtensions']) })
       expect(config.title).toBe('Legacy updated')
+      expect(generalPolicyFromConfiguration(config).publicSocialSharing).toBe(true)
       await patchLegacyGeneralConfiguration(admin, { host: 'https://next.example.com' })
       expect(auth.strategyHost).toBe('https://next.example.com')
       expect(activations).toBe(1)
@@ -255,5 +302,19 @@ describe('General settings reload projection', () => {
     for (const configuration of [{}, { features: {} }, { featureGlossary: false }, { features: { featureGlossary: true } }])
       expect(generalPolicyFromConfiguration(configuration).featureGlossary).toBe(true)
     expect(generalPolicyFromConfiguration({ featureGlossary: true, features: { featureGlossary: false } }).featureGlossary).toBe(false)
+  })
+  it('enables public social sharing only for an explicit true in the nested features configuration', () => {
+    for (const configuration of [
+      {},
+      { features: {} },
+      { publicSocialSharing: true },
+      { seo: { publicSocialSharing: true } },
+      { editShortcuts: { publicSocialSharing: true } },
+      { features: true },
+      { features: [] },
+      ...[undefined, null, false, 'true', 'false', 1, 0, [], {}].map(publicSocialSharing => ({ features: { publicSocialSharing } }))
+    ])
+      expect(generalPolicyFromConfiguration(configuration).publicSocialSharing).toBe(false)
+    expect(generalPolicyFromConfiguration({ publicSocialSharing: false, features: { publicSocialSharing: true } }).publicSocialSharing).toBe(true)
   })
 })

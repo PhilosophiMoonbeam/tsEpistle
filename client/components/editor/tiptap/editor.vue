@@ -103,31 +103,19 @@
         )
           v-icon mdi-image-edit-outline
           v-tooltip(activator='parent', location='bottom') {{ $t('editor:markup.imageProperties') }}
-    .editor-tiptap-markdown-tools(
-      v-if='format === `markdown`'
-      role='toolbar'
-      :aria-label='$t(`editor:markup.insertTools`)'
-      v-roving-toolbar='{ onEscape: focusEditor }'
-    )
-      .editor-tiptap-insert-label(aria-hidden='true')
-        v-icon(size='18') mdi-plus-circle-outline
-        span {{ $t('editor:markup.insertGroup') }}
-      v-btn.editor-tiptap-insert-button.editor-tiptap-extension-trigger.editor-tool(variant='text', size='small', :aria-pressed='activeModal === `editorModalBlocks`', :aria-label='$t(`editor:markup.insertContentExtension`)', @click='toggleExtensionDialog')
-        v-icon(start) {{ tools.contentExtension.icon }}
-        | {{ $t('editor:markup.contentExtensionShort') }}
-      v-btn.editor-tiptap-insert-button.editor-tool(variant='text', size='small', :aria-label='$t(`editor:markup.insertAdmonition`)', @click='openAdmonitionDialog')
-        v-icon(start) mdi-alert-box-outline
-        | {{ $t('editor:markup.admonitionShort') }}
-      v-btn.editor-tiptap-insert-button.editor-tool(variant='text', size='small', :aria-label='$t(`editor:markup.insertDefinitionList`)', @click='insertDefinitionList')
-        v-icon(start) {{ tools.definitionList.icon }}
-        | {{ $t('editor:markup.definitionListShort') }}
-      v-menu(v-model='glyphMenuOpen', :close-on-content-click='false', location='bottom end', :offset='8', :activator-props='glyphMenuActivatorProps', :content-props='glyphMenuContentProps')
-        template(v-slot:activator='{ props }')
-          v-btn.editor-tiptap-insert-button.editor-tool(v-bind='props', variant='text', size='small', :aria-label='$t(`editor:markup.insertGlyph`)')
-            v-icon(start) mdi-emoticon-outline
-            | {{ $t('editor:markup.glyphShort') }}
-            v-icon(end, size='16') mdi-chevron-down
-        v-card.editor-tiptap-glyph-menu(elevation='5', width='420')
+        v-menu(ref='insertMenu', v-if='format === `markdown`', v-model='insertMenuOpen')
+          template(v-slot:activator='{ props }')
+            v-btn.editor-tiptap-insert-button.editor-tool(v-bind='props', variant='text', size='small', :disabled='!editor?.isEditable', :aria-label='$t(`editor:markup.insertTools`)')
+              v-icon(start) mdi-plus
+              | {{ $t('editor:markup.insertGroup') }}
+              v-icon(end, size='16') mdi-chevron-down
+          v-list.editor-tiptap-menu-list(density='compact')
+            v-list-item(@click='toggleExtensionDialog', :title='$t(`editor:markup.contentExtensionShort`)', :prepend-icon='tools.contentExtension.icon')
+            v-list-item(@click='openAdmonitionDialog', :title='$t(`editor:markup.admonitionShort`)', prepend-icon='mdi-alert-box-outline')
+            v-list-item(@click='insertDefinitionList', :title='$t(`editor:markup.definitionListShort`)', :prepend-icon='tools.definitionList.icon')
+            v-list-item(@click='openGlyphPicker', :title='$t(`editor:markup.glyphShort`)', prepend-icon='mdi-emoticon-outline')
+    v-menu(v-model='glyphMenuOpen', :activator='glyphActivator ?? undefined', :open-on-click='false', :close-on-content-click='false', location='bottom end', :offset='8', :content-props='glyphMenuContentProps', @after-leave='restoreGlyphFocus')
+      v-card.editor-tiptap-glyph-menu(elevation='5', width='420')
           .editor-tiptap-glyph-header
             div
               #editor-tiptap-glyph-title.text-body-large.font-weight-bold {{ $t(`editor:editor.iconsEmoji`) }}
@@ -329,20 +317,19 @@ type InsertLinkPayload = {
 }
 
 const CODE_BLOCK_LANGUAGES = Object.freeze([
-  { value: 'plaintext', label: 'Plain text' },
-  { value: 'javascript', label: 'JavaScript' },
-  { value: 'typescript', label: 'TypeScript' },
-  { value: 'html', label: 'HTML' },
-  { value: 'css', label: 'CSS' },
-  { value: 'json', label: 'JSON' },
-  { value: 'diagram', label: 'Draw.io diagram' },
-  { value: 'mermaid', label: 'Mermaid diagram' },
-  { value: 'plantuml', label: 'PlantUML diagram' },
-  { value: 'kroki', label: 'Kroki diagram' },
-  { value: 'wiki-extension', label: 'Wiki content extension' }
+  { value: 'plaintext', labelKey: 'language_plainText' },
+  { value: 'javascript', labelKey: 'language_javascript' },
+  { value: 'typescript', labelKey: 'language_typescript' },
+  { value: 'html', labelKey: 'language_html' },
+  { value: 'css', labelKey: 'language_css' },
+  { value: 'json', labelKey: 'language_json' },
+  { value: 'diagram', labelKey: 'language_drawIo' },
+  { value: 'mermaid', labelKey: 'language_mermaid' },
+  { value: 'plantuml', labelKey: 'language_plantUml' },
+  { value: 'kroki', labelKey: 'language_kroki' },
+  { value: 'wiki-extension', labelKey: 'language_wikiExtension' }
 ] as const)
 const ADMONITION_KIND_OPTIONS = Object.freeze([...ADMONITION_KINDS])
-const GLYPH_MENU_ACTIVATOR_PROPS = Object.freeze({ 'aria-haspopup': 'dialog' })
 const GLYPH_MENU_CONTENT_PROPS = Object.freeze({
   role: 'dialog',
   'aria-labelledby': 'editor-tiptap-glyph-title'
@@ -396,10 +383,11 @@ export default defineComponent({
       admonitionKinds: ADMONITION_KIND_OPTIONS,
       glyphs: VISUAL_MARKDOWN_GLYPHS,
       glyphMenuOpen: false,
+      insertMenuOpen: false,
+      glyphActivator: null as HTMLElement | null,
       glyphQuery: '',
       glyphCategory: 'all' as VisualMarkdownGlyphFilter,
-      codeBlockLanguages: CODE_BLOCK_LANGUAGES.map(item => ({ ...item, label: this.$t(`editor:tiptapEditor.language_${item.value}`) })),
-      glyphMenuActivatorProps: GLYPH_MENU_ACTIVATOR_PROPS,
+      codeBlockLanguages: CODE_BLOCK_LANGUAGES.map(item => ({ value: item.value, label: this.$t(`editor:tiptapEditor.${item.labelKey}`) })),
       glyphMenuContentProps: GLYPH_MENU_CONTENT_PROPS
     }
   },
@@ -481,7 +469,9 @@ export default defineComponent({
   },
   watch: {
     glyphMenuOpen (isOpen: boolean) {
-      if (!isOpen) this.glyphQuery = ''
+      if (!isOpen) {
+        this.glyphQuery = ''
+      }
     }
   },
   methods: {
@@ -647,6 +637,23 @@ export default defineComponent({
     },
     insertTable () {
       this.editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
+    },
+    openGlyphPicker () {
+      // The activator slot owns props.ref; a competing button ref is overwritten.
+      const menu = this.$refs.insertMenu as { activatorEl?: HTMLElement } | undefined
+      const trigger = menu?.activatorEl
+      if (!(trigger instanceof HTMLButtonElement) || !trigger.isConnected || trigger.disabled) return
+      this.glyphActivator = markRaw(trigger)
+      this.insertMenuOpen = false
+      this.$nextTick(() => { this.glyphMenuOpen = true })
+    },
+    restoreGlyphFocus () {
+      if (this.glyphMenuOpen) return
+      const menu = this.$refs.insertMenu as { activatorEl?: HTMLElement } | undefined
+      const trigger = menu?.activatorEl
+      if (trigger !== this.glyphActivator || !(trigger instanceof HTMLButtonElement) || !trigger.isConnected || trigger.disabled) return
+      // The leaving overlay no longer owns focus or runs its close restoration.
+      trigger.focus({ preventScroll: true })
     },
     openAdmonitionDialog () {
       this.admonitionError = ''
@@ -858,20 +865,22 @@ export default defineComponent({
     const source = new VisualEditorSource(editor, this.format, initialSource)
     this.editorSource = markRaw(source)
     this.disposeSlashMenu = installTiptapSlashMenu(editor, [
-      { id: 'paragraph', label: String(this.$t('editor:markup.paragraph')), keywords: 'text paragraph', run: chain => chain.setParagraph() },
+      { id: 'paragraph', label: String(this.$t('editor:markup.paragraph')), icon: 'mdi-format-paragraph', hint: '¶', keywords: 'text paragraph', run: chain => chain.setParagraph() },
       ...([1, 2, 3] as const).map(level => ({
         id: `heading-${level}`,
         label: String(this.$t('editor:markup.heading', { level })),
+        icon: `mdi-format-header-${level}`,
+        hint: `H${level}`,
         keywords: `heading h${level}`,
         run: (chain: ReturnType<Editor['chain']>) => chain.setHeading({ level })
       })),
-      { id: 'bullet-list', label: this.toolLabel('unorderedList'), keywords: 'bullet list unordered', run: chain => chain.toggleBulletList() },
-      { id: 'ordered-list', label: this.toolLabel('orderedList'), keywords: 'number ordered list', run: chain => chain.toggleOrderedList() },
-      { id: 'task-list', label: this.toolLabel('taskList'), keywords: 'check task to-do list', run: chain => chain.toggleTaskList() },
-      { id: 'blockquote', label: this.toolLabel('blockquote'), keywords: 'quote blockquote', run: chain => chain.toggleBlockquote() },
-      { id: 'code', label: this.toolLabel('codeBlock'), keywords: 'code block', run: chain => chain.setCodeBlock({ language: 'plaintext' }) },
-      { id: 'table', label: String(this.$t('editor:markup.insertTable')), keywords: 'table grid', run: chain => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }) },
-      { id: 'rule', label: this.toolLabel('horizontalBar'), keywords: 'horizontal rule divider', run: chain => chain.setHorizontalRule() }
+      { id: 'bullet-list', label: this.toolLabel('unorderedList'), icon: 'mdi-format-list-bulleted', hint: '-', keywords: 'bullet list unordered', run: chain => chain.toggleBulletList() },
+      { id: 'ordered-list', label: this.toolLabel('orderedList'), icon: 'mdi-format-list-numbered', hint: '1.', keywords: 'number ordered list', run: chain => chain.toggleOrderedList() },
+      { id: 'task-list', label: this.toolLabel('taskList'), icon: 'mdi-checkbox-marked-outline', hint: '[]', keywords: 'check task to-do list', run: chain => chain.toggleTaskList() },
+      { id: 'blockquote', label: this.toolLabel('blockquote'), icon: 'mdi-format-quote-close', hint: '>', keywords: 'quote blockquote', run: chain => chain.toggleBlockquote() },
+      { id: 'code', label: this.toolLabel('codeBlock'), icon: 'mdi-code-tags', hint: '```', keywords: 'code block', run: chain => chain.setCodeBlock({ language: 'plaintext' }) },
+      { id: 'table', label: String(this.$t('editor:markup.insertTable')), icon: 'mdi-table', hint: '| |', keywords: 'table grid', run: chain => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }) },
+      { id: 'rule', label: this.toolLabel('horizontalBar'), icon: 'mdi-minus', hint: '---', keywords: 'horizontal rule divider', run: chain => chain.setHorizontalRule() }
     ], String(this.$t('editor:markup.insertTools')), String(this.$t('editor:markup.noMatchingCommands')))
     const adapter = new EditorAdapterController({
       readText: () => source.readText(),
@@ -940,7 +949,8 @@ export default defineComponent({
     overflow-x: auto;
     overscroll-behavior-inline: contain;
     border-bottom: 1px solid var(--editor-border);
-    background: color-mix(in srgb, var(--editor-surface) 94%, var(--editor-primary) 6%) !important;
+    background: var(--wiki-chrome-surface) !important;
+    backdrop-filter: var(--wiki-chrome-filter);
     box-shadow: var(--wiki-shadow-xs);
     scrollbar-color: rgba(var(--v-theme-on-surface), .18) transparent;
     scrollbar-width: thin;
@@ -1007,27 +1017,36 @@ export default defineComponent({
     position: fixed;
     z-index: 20;
     width: min(280px, calc(100vw - 16px));
+    min-width: min(260px, calc(100vw - 16px));
     max-height: min(320px, calc(100dvh - 16px));
     overflow-y: auto;
-    padding: var(--wiki-space-1);
+    overscroll-behavior: contain;
+    padding: 6px;
     color: var(--editor-on-surface);
-    background: var(--editor-surface);
-    border: 1px solid var(--editor-border);
-    border-radius: var(--wiki-control-radius);
-    box-shadow: var(--wiki-shadow-sm);
+    background: var(--wiki-hud-surface);
+    backdrop-filter: var(--wiki-hud-filter);
+    border: var(--wiki-hud-border);
+    border-radius: 12px;
+    box-shadow: var(--wiki-glass-specular), var(--wiki-shadow-lg);
 
     &[hidden] { display: none; }
 
     button {
-      display: block;
+      display: flex;
+      align-items: center;
+      gap: 10px;
       width: 100%;
-      padding: var(--wiki-space-2) var(--wiki-space-3);
-      border-radius: var(--wiki-radius-xs);
+      padding: 8px 10px;
+      border: none;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      border-radius: 8px;
       text-align: start;
       overflow-wrap: anywhere;
 
       &.is-active, &:hover {
-        background: rgba(var(--v-theme-primary), .12);
+        background: var(--wiki-accent-subtle);
       }
       &:focus-visible {
         outline: 2px solid var(--editor-primary);
@@ -1039,41 +1058,20 @@ export default defineComponent({
       padding: var(--wiki-space-3);
       color: var(--editor-muted);
     }
-  }
-
-  &-markdown-tools {
-    display: flex;
-    flex: 0 0 auto;
-    align-items: center;
-    justify-content: safe center;
-    gap: var(--wiki-space-2);
-    min-height: var(--wiki-control-height);
-    padding: var(--wiki-space-1) var(--wiki-space-3);
-    overflow-x: auto;
-    overscroll-behavior-inline: contain;
-    border-bottom: 1px solid var(--editor-border);
-    background: color-mix(in srgb, var(--editor-surface) 97%, var(--editor-primary) 3%);
-    scrollbar-color: rgba(var(--v-theme-on-surface), .18) transparent;
-    scrollbar-width: thin;
-    -webkit-overflow-scrolling: touch;
-
-    @include until($tablet) {
-      justify-content: flex-start;
-      padding-inline: var(--wiki-space-2);
+    .editor-tiptap-slash-icon {
+      display: inline-grid;
+      place-items: center;
+      flex: 0 0 28px;
+      height: 28px;
+      border-radius: 8px;
+      color: var(--wiki-accent-ink);
+      background: var(--wiki-accent-subtle);
+      font-size: 18px;
     }
+    .editor-tiptap-slash-title { flex: 1; min-width: 0; }
+    .editor-tiptap-slash-hint { flex: none; font-family: monospace; color: var(--editor-muted); }
   }
 
-  &-insert-label {
-    display: inline-flex;
-    flex: 0 0 auto;
-    align-items: center;
-    gap: var(--wiki-space-1);
-    color: var(--editor-muted);
-    font-size: .72rem;
-    font-weight: 700;
-    letter-spacing: .08em;
-    text-transform: uppercase;
-  }
 
   &-insert-button {
     flex: 0 0 auto;
@@ -1134,12 +1132,13 @@ export default defineComponent({
       border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
       box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
 
-    &:focus-within {
-      border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 46%, var(--wiki-surface-border));
-      box-shadow:
-        var(--wiki-shadow-inset),
-        var(--wiki-shadow-md),
-        0 0 0 3px color-mix(in srgb, rgb(var(--v-theme-primary)) 9%, transparent);
+    &:has(.ProseMirror:focus-visible)::before {
+      content: '';
+      position: absolute;
+      inset-inline-start: 0;
+      inset-block-start: var(--wiki-space-6);
+      height: 2rem;
+      border-inline-start: 2px solid var(--wiki-focus-color);
     }
 
     @include until($widescreen) {
@@ -1163,6 +1162,11 @@ export default defineComponent({
     caret-color: var(--wiki-accent-warm);
     outline: none;
     overflow-wrap: anywhere;
+    // Suppress only the generated editable root, never selected nodes or controls.
+    &.ProseMirror:focus, &.ProseMirror:focus-visible {
+      outline: none !important;
+      box-shadow: none !important;
+    }
 
     ::selection {
       // Same selection token as the Markdown source editor (common/text-editor.ts).

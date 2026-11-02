@@ -12,11 +12,13 @@
       <v-alert v-if="issuanceUncertain" type="warning" variant="tonal">A key may have been created without returning its secret. Reload the key list and revoke any key you cannot use before creating another.</v-alert>
       <v-progress-linear v-if="loading" indeterminate aria-label="Loading MCP access keys" />
       <template v-if="catalog && isCurrent">
-        <v-text-field :model-value="catalog.endpoint" label="MCP endpoint" variant="outlined" density="comfortable" readonly hide-details />
+        <div class="profile-mcp__endpoint"><span class="profile-muted text-body-small">MCP endpoint</span><code dir="ltr">{{ catalog.endpoint }}</code></div>
         <v-alert v-if="canManageSystem" class="profile-mcp__admin-warning" type="warning" variant="tonal" role="note">{{ t('adminWarning', { defaultValue: 'Your account can manage the system and read all pages regardless of page rules, including private pages. Both Read only and Read and propose edits keys inherit these unrestricted page reads. Read only prevents edits; it does not restrict which pages the client can read.' }) }}</v-alert>
         <p v-else class="profile-muted text-body-small">{{ t('pageAccess', { defaultValue: 'Page reads follow your current permissions and page rules, including private-page restrictions. Choosing Read only limits tools, not a separate set of pages.' }) }}</p>
         <v-alert v-if="!catalog.enabled" type="info" variant="tonal">MCP access is disabled by the administrator. Existing keys can still be revoked.</v-alert>
         <v-alert v-else-if="!catalog.canIssue" type="info" variant="tonal">Your account cannot issue MCP keys with its current permissions. You can still revoke existing keys.</v-alert>
+        <div class="profile-mcp__layout" :class="{ 'profile-mcp__layout--inventory-only': !issuedKey && !(catalog.enabled && catalog.canIssue) }">
+        <div v-if="issuedKey || (catalog.enabled && catalog.canIssue)" class="profile-mcp__creation">
         <section v-if="issuedKey" class="profile-mcp__secret" aria-labelledby="profile-mcp-secret-title">
           <h3 id="profile-mcp-secret-title" class="text-title-small">Save your new key now</h3>
           <p class="text-body-small">This is the only time the key is shown. Store it in your MCP client's secret configuration and send it as a Bearer token. Do not paste it into a chat prompt.</p>
@@ -32,15 +34,17 @@
           <v-select v-model="access" :items="accessOptions" label="Key access" variant="outlined" density="comfortable" :disabled="busy" hide-details />
           <p class="profile-muted text-body-small">Read only never exposes edit tools. Read and propose edits remains bounded by your live permissions and client approval support.</p>
           <v-select v-model="expirationDays" :items="expirationOptions" label="Expires after" variant="outlined" density="comfortable" :disabled="busy" hide-details />
-          <div class="profile-mcp__actions"><v-btn color="primary" type="submit" prepend-icon="mdi-key-plus" :loading="mutating" :disabled="busy || !validName || issuanceUncertain">Create MCP key</v-btn></div>
+          <div class="profile-mcp__actions"><v-btn color="primary" type="submit" prepend-icon="mdi-key-plus" :variant="!busy && validName && !issuanceUncertain ? 'flat' : 'tonal'" :data-commitment="!busy && validName && !issuanceUncertain ? 'active' : undefined" :loading="mutating" :disabled="busy || !validName || issuanceUncertain">Create MCP key</v-btn></div>
         </form>
+        </div>
+        <div class="profile-mcp__configuration">
         <section class="profile-mcp__setup" aria-labelledby="profile-mcp-setup-title">
           <h3 id="profile-mcp-setup-title" class="text-title-small">{{ t('setupTitle', { defaultValue: 'Set up your MCP client' }) }}</h3>
           <p class="profile-muted text-body-small">{{ t('setupSafety', { defaultValue: 'These snippets always contain a token placeholder, never your issued key. Copy the key separately into the indicated secret input or the environment that launches your client, outside chat. Keep secrets out of shared files, source control, shell history, and screenshots.' }) }}</p>
           <v-select v-model="setupClient" class="profile-mcp__setup-client" :items="setupClients" :label="t('setupClient', { defaultValue: 'MCP client' })" variant="outlined" density="comfortable" hide-details />
           <p class="text-body-small">{{ setupInstructions }}</p>
-          <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: The overflow-x setup snippet needs keyboard focus for horizontal scrolling. -->
-          <pre class="profile-mcp__snippet" tabindex="0" :aria-label="t('setupJson', { defaultValue: 'MCP setup JSON with token placeholder' })"><code>{{ setupSnippet }}</code></pre>
+          <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users need to focus and select the literal snippet when clipboard access fails. -->
+          <pre class="profile-mcp__snippet wiki-surface-well" tabindex="0" :aria-label="t('setupJson', { defaultValue: 'MCP setup JSON with token placeholder' })"><code>{{ setupSnippet }}</code></pre>
           <div class="profile-mcp__actions"><v-btn variant="tonal" prepend-icon="mdi-content-copy" @click="copySetup">{{ t('copySetup', { defaultValue: 'Copy setup snippet' }) }}</v-btn></div>
           <p class="profile-muted text-body-small">{{ t('setupApproval', { defaultValue: 'These clients support remote HTTP with Bearer keys; no Wiki OAuth sign-in is configured here. Start with a permitted read. Read and propose edits also requires compatible client approval support, your current Wiki permissions, and human approval for every proposed change.' }) }}</p>
         </section>
@@ -62,6 +66,8 @@
               </li>
             </ul>
           </component>
+        </div>
+        </div>
         </div>
       </template>
     </div>
@@ -263,11 +269,16 @@ onBeforeUnmount(() => { disposed = true; generation++; clearTimeout(expiryTimer)
 
 <style scoped>
 .profile-mcp__body, .profile-mcp__form, .profile-mcp__secret, .profile-mcp__inventory, .profile-mcp__setup { display: grid; gap: var(--wiki-space-3); min-width: 0; }
+.profile-mcp__layout { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); align-items: start; gap: var(--wiki-space-5); min-width: 0; }
+.profile-mcp__layout--inventory-only { grid-template-columns: minmax(0, 1fr); }
+.profile-mcp__creation, .profile-mcp__configuration, .profile-mcp__endpoint { display: grid; gap: var(--wiki-space-3); min-width: 0; }
+.profile-mcp__endpoint code { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .profile-mcp__body > p, .profile-mcp__secret > p, .profile-mcp__secret > h3, .profile-mcp__inventory > h3, .profile-mcp__setup > p, .profile-mcp__setup > h3 { margin: 0; }
 .profile-mcp__actions { display: flex; flex-wrap: wrap; gap: var(--wiki-space-2); }
 .profile-mcp__secret { padding: var(--wiki-space-4); border: 1px solid var(--wiki-surface-border); border-radius: var(--profile-radius); background: var(--wiki-surface-base); }
-.profile-mcp__inventory, .profile-mcp__setup { border-top: 1px solid var(--wiki-surface-border); padding-top: var(--wiki-space-4); }
-.profile-mcp__snippet { margin: 0; padding: var(--wiki-space-3); max-width: 100%; overflow-x: auto; border: 1px solid var(--wiki-surface-border); border-radius: var(--profile-radius); background: var(--wiki-surface-base); font-size: 0.875rem; user-select: text; }
+.profile-mcp__inventory { border-top: 1px solid var(--wiki-surface-border); padding-top: var(--wiki-space-4); }
+.profile-mcp__snippet { margin: 0; padding: var(--wiki-space-3); min-width: 0; max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.875rem; user-select: text; }
+.profile-mcp__snippet code { white-space: inherit; overflow-wrap: inherit; }
 .profile-mcp__keys { padding: 0; margin: 0; list-style: none; }
 .profile-mcp__active > h4 { margin: 0; }
 .profile-mcp__history { min-width: 0; border-top: 1px solid var(--wiki-surface-border); padding-top: var(--wiki-space-3); }
@@ -275,5 +286,6 @@ onBeforeUnmount(() => { disposed = true; generation++; clearTimeout(expiryTimer)
 .profile-mcp__history[open] > .profile-mcp__history-summary { margin-bottom: var(--wiki-space-2); }
 .profile-mcp__key { display: flex; align-items: center; justify-content: space-between; gap: var(--wiki-space-2); padding-block: var(--wiki-space-3); border-bottom: 1px solid var(--wiki-surface-border); }
 .profile-mcp__key-copy { display: grid; min-width: 0; gap: var(--wiki-space-1); overflow-wrap: anywhere; }
+@media (max-width: 760px) { .profile-mcp__layout { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 420px) { .profile-mcp__key { align-items: start; flex-direction: column; } }
 </style>

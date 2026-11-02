@@ -8,18 +8,27 @@ import { afterEach } from '../../../server/test/bun-test.mts'
 import { compileTemplate } from '@vue/compiler-sfc'
 
 import { translateEnglish } from '../../test/english-translate.mts'
+import { useTranslate } from '../../helpers/use-translate.ts'
 const Vue = await import('vue')
 const { createVuetify } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')
 const vuetifyDirectives = await import('vuetify/directives')
 const mounted = []
 afterEach(() => {
-  for (const { app, host } of mounted.splice(0)) { app.unmount(); host.remove() }
+  for (const { app, host } of mounted.splice(0)) {
+    app.unmount()
+    host.remove()
+  }
 })
-const settle = async () => { await new Promise(resolve => setTimeout(resolve, 0)); await Vue.nextTick() }
+const settle = async () => {
+  await new Promise(resolve => setTimeout(resolve, 0))
+  await Vue.nextTick()
+}
 const deferred = () => {
   let resolve
-  const promise = new Promise(done => { resolve = done })
+  const promise = new Promise(done => {
+    resolve = done
+  })
   return { promise, resolve }
 }
 
@@ -41,6 +50,7 @@ const instantiate = new Function(
   'showNotification',
   'pushGraphError',
   'window',
+  'useTranslate',
   executable
 )
 
@@ -58,7 +68,7 @@ const engineRow = (key, { isEnabled = false, isAvailable = true, value = 'initia
   logo: '',
   website: '',
   isAvailable,
-  config: [{ key: 'mode', value: JSON.stringify({ type: 'string', value }) }]
+  config: [{ key: 'mode', value: JSON.stringify({ type: 'string', title: 'Retrieval mode', value }) }]
 })
 
 function createHarness(fetchImpl) {
@@ -89,9 +99,15 @@ function createHarness(fetchImpl) {
     loadingStop,
     showNotification,
     pushGraphError,
-    { fetch: fetchImpl, location: browserWindow.location, history: browserWindow.history, addEventListener() {}, removeEventListener() {} }
+    { fetch: fetchImpl, location: browserWindow.location, history: browserWindow.history, addEventListener() {}, removeEventListener() {} },
+    useTranslate
   )
-  instance = { ...component.data.call({ $t: translateEnglish }), $t: translateEnglish, $refs: {} }
+  const setupHost = document.createElement('div')
+  const setupApp = Vue.createApp({ setup: component.setup, render: () => null })
+  setupApp.config.globalProperties.$t = translateEnglish
+  const { tr } = setupApp.mount(setupHost)
+  setupApp.unmount()
+  instance = { ...component.data.call({ $t: translateEnglish }), tr, $t: translateEnglish, $refs: {}, $nextTick: callback => Vue.nextTick(callback) }
   for (const [key, method] of Object.entries(component.methods)) {
     if (typeof method === 'function') instance[key] = method.bind(instance)
   }
@@ -108,18 +124,36 @@ const template = compileTemplate({
   compilerOptions: { mode: 'function' }
 })
 if (template.errors.length) throw template.errors[0]
-const render = new Function('Vue', template.code)(Vue)
+// Animation timing is outside this DOM contract; keep conditional dock removal deterministic.
+const render = new Function('Vue', template.code)({
+  ...Vue,
+  Transition: Vue.defineComponent({
+    setup:
+      (_props, { slots }) =>
+      () =>
+        slots.default?.()
+  })
+})
 const mountSearch = harness => {
   const { component, instance } = harness
   const data = Object.fromEntries(Object.keys(component.data.call({ $t: translateEnglish })).map(key => [key, instance[key]]))
   const host = document.createElement('div')
   document.body.append(host)
   const app = Vue.createApp({
-    ...component, data: () => data, render,
+    ...component,
+    data: () => data,
+    render,
     // The method harness already loaded this snapshot; these cases own controls and dialogs, not startup.
-    created: undefined, mounted: undefined
+    created: undefined,
+    mounted: undefined
   })
-  app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives, defaults: { VDialog: { transition: false }, VWindow: { transition: false } } }))
+  app.use(
+    createVuetify({
+      components: vuetifyComponents,
+      directives: vuetifyDirectives,
+      defaults: { VDialog: { transition: false }, VWindow: { transition: false } }
+    })
+  )
   app.component('AdminHero', { render: () => null })
   app.config.globalProperties.$t = translateEnglish
   const vm = app.mount(host)
@@ -127,11 +161,77 @@ const mountSearch = harness => {
   return { vm, host }
 }
 
+const buttonNamed = (root, key) => {
+  const button = [...root.querySelectorAll('button')].find(button => button.textContent.trim() === translateEnglish(key))
+  expect(button).toBeDefined()
+  return button
+}
+const editMode = async (host, value) => {
+  const input = host.querySelector('.engine-setting input')
+  expect(input).not.toBeNull()
+  input.value = value
+  input.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+  await settle()
+  return input
+}
+const reviewDialog = () => {
+  const dialog = document.querySelector('[role="dialog"][aria-labelledby="search-review-title"]')
+  expect(dialog).not.toBeNull()
+  return dialog
+}
+
 describe('admin-search REST and root UI facade contracts', () => {
+  it('keeps field edits local until review confirmation, hides arbitrary values, and preserves Cancel/reset recovery', async () => {
+    const fetchImpl = vi.fn(async (_, options) =>
+      options.method === 'POST'
+        ? jsonResponse({ error: 'Write rejected' }, false)
+        : jsonResponse([engineRow('postgres', { isEnabled: true, value: 'saved-private-value' })])
+    )
+    const harness = createHarness(fetchImpl)
+    await harness.instance.loadEngines()
+    const { host } = mountSearch(harness)
+    await settle()
+    await editMode(host, 'draft-private-value')
+    buttonNamed(host, 'admin:search.reviewChanges').click()
+    await settle()
+    let dialog = reviewDialog()
+    expect(dialog.textContent).toContain('Retrieval mode')
+    expect(dialog.textContent).not.toContain('saved-private-value')
+    expect(dialog.textContent).not.toContain('draft-private-value')
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+
+    buttonNamed(dialog, 'admin:search.backToDraft').click()
+    await settle()
+    expect(host.querySelector('.engine-setting input').value).toBe('draft-private-value')
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    buttonNamed(host, 'admin:search.resetChanges').click()
+    await settle()
+    expect(host.querySelector('.engine-setting input').value).toBe('saved-private-value')
+    expect(host.querySelector('.search-savebar')).toBeNull()
+
+    await editMode(host, 'reviewed-replacement')
+    buttonNamed(host, 'admin:search.reviewChanges').click()
+    await settle()
+    dialog = reviewDialog()
+    buttonNamed(dialog, 'admin:search.saveConfiguration').click()
+    await settle()
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body).engines[0].config[0].value).toBe('{"v":"reviewed-replacement"}')
+    expect(reviewDialog().textContent).toContain('Write rejected')
+    expect(buttonNamed(reviewDialog(), 'admin:search.saveConfiguration').disabled).toBe(false)
+    buttonNamed(reviewDialog(), 'admin:search.backToDraft').click()
+    await settle()
+    expect(host.querySelector('.engine-setting input').value).toBe('reviewed-replacement')
+    buttonNamed(host, 'admin:search.resetChanges').click()
+    await settle()
+    expect(host.querySelector('.engine-setting input').value).toBe('saved-private-value')
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
   it('renders named engine choices and review dialogs with guarded controls', async () => {
-    const harness = createHarness(vi.fn(async () => jsonResponse([
-      engineRow('postgres', { isEnabled: true }), engineRow('external'), engineRow('offline', { isAvailable: false })
-    ])))
+    const harness = createHarness(
+      vi.fn(async () => jsonResponse([engineRow('postgres', { isEnabled: true }), engineRow('external'), engineRow('offline', { isAvailable: false })]))
+    )
     await harness.instance.loadEngines()
     const { vm, host } = mountSearch(harness)
     await settle()
@@ -165,7 +265,8 @@ describe('admin-search REST and root UI facade contracts', () => {
     await settle()
     const assertNamedDialog = category => {
       const dialog = [...document.querySelectorAll('[role="dialog"]')].find(element =>
-        document.getElementById(element.getAttribute('aria-labelledby'))?.textContent.match(category))
+        document.getElementById(element.getAttribute('aria-labelledby'))?.textContent.match(category)
+      )
       expect(dialog).not.toBeNull()
       const title = document.getElementById(dialog.getAttribute('aria-labelledby'))
       expect(title).not.toBeNull()
@@ -256,7 +357,7 @@ describe('admin-search REST and root UI facade contracts', () => {
     }
   })
 
-  it('requires the selected engine to be available before enabling Apply', async () => {
+  it('requires the selected engine to be available before enabling review', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse([engineRow('online', { isEnabled: true }), engineRow('offline', { isAvailable: false })]))
     const { instance } = createHarness(fetchImpl)
 
@@ -353,8 +454,10 @@ describe('admin-search REST and root UI facade contracts', () => {
       })
       const harness = createHarness(fetchImpl)
       await harness.instance.loadEngines()
-      if (operation === 'save') harness.instance.engine.config[0].value.value = 'edited'
-      else harness.instance.rebuildConfirm = true
+      if (operation === 'save') {
+        harness.instance.engine.config[0].value.value = 'edited'
+        harness.instance.review()
+      } else harness.instance.rebuildConfirm = true
 
       const pending = harness.instance[operation]()
       await harness.instance[operation]()
@@ -380,7 +483,7 @@ describe('admin-search REST and root UI facade contracts', () => {
     await exerciseAbort('rebuild', 'admin-search-rebuildindex')
   })
 
-  it('does not announce a save as successful when its post-save reload fails', async () => {
+  it('distinguishes an accepted write from a failed readback and requires reload before any repeat save', async () => {
     let engineLoads = 0
     const fetchImpl = vi.fn(async (_, options) => {
       if (options.method === 'POST') return jsonResponse({ message: 'Search engines saved' })
@@ -392,11 +495,19 @@ describe('admin-search REST and root UI facade contracts', () => {
     const harness = createHarness(fetchImpl)
     await harness.instance.loadEngines()
     harness.instance.engine.config[0].value.value = 'edited'
+    harness.instance.review()
 
     await harness.instance.save()
 
     expect(harness.instance.operationError).toContain('Reload unavailable')
     expect(harness.instance.saving).toBe(false)
+    expect(harness.instance.reviewOpen).toBe(false)
+    expect(harness.instance.reviewDraft).toBeNull()
+    expect(harness.instance.enginesLoaded).toBe(false)
+    expect(harness.instance.canSave).toBe(false)
+    expect(harness.instance.operationError).toMatch(/saved/i)
+    await harness.instance.save()
+    expect(fetchImpl.mock.calls.filter(([, options]) => options.method === 'POST')).toHaveLength(1)
     expect(harness.notifications).toEqual([])
     expect(harness.errors.map(error => error.message)).toEqual(['Reload unavailable'])
     expect(harness.loadingEvents).toEqual([
@@ -409,7 +520,7 @@ describe('admin-search REST and root UI facade contracts', () => {
     ])
   })
 
-  it('saves every engine with the current selection and announces only after the silent reload', async () => {
+  it('saves every engine from the captured review, not later draft or selection changes, and announces after readback', async () => {
     const initial = [engineRow('postgres', { isEnabled: true, value: 'old-postgres' }), engineRow('external', { value: 'old-external' })]
     const saved = [engineRow('postgres', { value: 'old-postgres' }), engineRow('external', { isEnabled: true, value: 'server-normalized' })]
     const requests = []
@@ -431,10 +542,13 @@ describe('admin-search REST and root UI facade contracts', () => {
     instance.engine.config[0].value.value = 'edited'
 
     expect(instance.canSave).toBe(true)
+    instance.review()
+    instance.engine.config[0].value.value = 'later-unreviewed'
+    instance.selectedEngine = 'postgres'
     const saving = instance.save()
     await readbackStarted.promise
     expect(instance.saving).toBe(true)
-    expect(instance.engine.config[0].value.value).toBe('edited')
+    expect(instance.engines.find(engine => engine.key === 'external').config[0].value.value).toBe('later-unreviewed')
     expect(harness.notifications).toEqual([])
     expect(harness.notificationState).toEqual([])
     readback.resolve(jsonResponse(saved))

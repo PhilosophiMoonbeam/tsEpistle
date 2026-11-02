@@ -8,7 +8,7 @@
           .history-toolbar-meta
             span {{ $t('history:pageHistory') }}
             span.history-path-fragment(dir='ltr') /{{ path }}
-            span(v-if='trailLoaded') {{ $t('history:revisionCount', { count: total }) }}
+            span(v-if='trailLoaded') {{ $t('history:revisionCount', { count: trail.length ? trailRows.length : 0 }) }}
         v-btn.history-live-action(
           variant='flat'
           color='primary'
@@ -1520,10 +1520,10 @@ export default {
 .history-comparison-surface {
   overflow: hidden;
   padding: var(--wiki-space-5);
-  border: 1px solid var(--wiki-surface-border);
+  border: 1px solid var(--wiki-material-border);
   border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-sm);
+  background: var(--wiki-surface-gradient);
+  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-sm);
 }
 
 .history-comparison-header {
@@ -1621,9 +1621,11 @@ export default {
 
 .history-diff {
   overflow-x: auto;
-  border: 1px solid var(--wiki-surface-border);
+  border: 1px solid var(--wiki-well-border);
   border-radius: var(--wiki-control-radius) !important;
-  background: var(--wiki-surface-raised);
+  background: var(--wiki-surface-sunken);
+  background-image: none;
+  box-shadow: var(--wiki-shadow-inset);
   direction: ltr;
   text-align: left;
 
@@ -1750,21 +1752,23 @@ export default {
   }
 
   .d2h-del {
-    background: color-mix(in srgb, rgb(var(--v-theme-error)) 12%, var(--wiki-surface-raised));
+    background: color-mix(in srgb, rgb(var(--v-theme-error)) 12%, var(--wiki-surface-sunken));
+    color: var(--wiki-error-ink);
   }
 
   .d2h-ins {
-    background: color-mix(in srgb, rgb(var(--v-theme-success)) 12%, var(--wiki-surface-raised));
+    background: color-mix(in srgb, rgb(var(--v-theme-success)) 12%, var(--wiki-surface-sunken));
+    color: var(--wiki-success-ink);
   }
 
   del,
   .d2h-del .d2h-change {
-    background: color-mix(in srgb, rgb(var(--v-theme-error)) 28%, var(--wiki-surface-raised));
+    background: color-mix(in srgb, rgb(var(--v-theme-error)) 28%, var(--wiki-surface-sunken));
   }
 
   ins,
   .d2h-ins .d2h-change {
-    background: color-mix(in srgb, rgb(var(--v-theme-success)) 28%, var(--wiki-surface-raised));
+    background: color-mix(in srgb, rgb(var(--v-theme-success)) 28%, var(--wiki-surface-sunken));
   }
 
   .d2h-emptyplaceholder,

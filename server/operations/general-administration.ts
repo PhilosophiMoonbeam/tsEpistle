@@ -74,6 +74,7 @@ export const generalPolicyFromConfiguration = (configuration: Record<string, unk
   result.banner = siteBannerOrDefault(configuration.banner)
   result.userDefaults = normalizePresentationDefaults(flat.userDefaults)
   result.featureGlossary = record(configuration.features).featureGlossary !== false
+  result.publicSocialSharing = record(configuration.features).publicSocialSharing === true
   return result
 }
 export const generalConfigurationPatch = (policy: GeneralPolicy, configuration: Record<string, unknown>): Record<string, unknown> => ({
@@ -85,7 +86,7 @@ export const generalConfigurationPatch = (policy: GeneralPolicy, configuration: 
   banner: policy.banner,
   pageExtensions: policy.pageExtensions,
   userDefaults: policy.userDefaults,
-  features: { ...record(configuration.features), featureGlossary: policy.featureGlossary },
+  features: { ...record(configuration.features), featureGlossary: policy.featureGlossary, publicSocialSharing: policy.publicSocialSharing },
   seo: { ...record(configuration.seo), description: policy.description, robots: policy.robots },
   editShortcuts: { ...record(configuration.editShortcuts), ...Object.fromEntries(Object.entries(policy).filter(([key]) => key.startsWith('edit'))) }
 })

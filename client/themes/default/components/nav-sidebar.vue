@@ -3,7 +3,7 @@
     offline-navigation(v-if='connectionUnavailable', :active-path='`/${locale}/${path}`', @navigate='$emit(`navigate`)')
     template(v-else)
       .nav-sidebar-switcher.d-flex(
-        v-if='navMode === `MIXED` || navMode === `STATIC`'
+        v-if='(navMode === `MIXED` || navMode === `STATIC`) && hasCustomLinks'
         :class='{ "nav-sidebar-switcher--static": navMode === `STATIC` }'
       )
         v-btn.nav-sidebar-home(
@@ -154,6 +154,7 @@
               v-avatar(size='24', variant='text')
                 v-icon mdi-text-box
             v-list-item-title(:title='item.title') {{ item.title }}
+    a.nav-sidebar-configure(v-if='canConfigureMenu', href='/a/navigation') + {{$t('common:sidebar.configureMenu')}}
 </template>
 
 <script lang='ts'>
@@ -213,7 +214,7 @@ export default defineComponent({
   },
   data() {
     return {
-      currentMode: 'custom' as NavigationMode,
+      preferredMode: 'custom' as NavigationMode,
       currentItems: [] as PageTreeRow[],
       navLoading: false,
       navError: '',
@@ -225,10 +226,24 @@ export default defineComponent({
       loadedCache: [] as number[],
       loadedBrowseLocationKey: null as string | null,
       browseRequestSequence: 0,
-      browseRequestController: null as AbortController | null
+      browseRequestController: null as AbortController | null,
+      browseRequestLocationKey: null as string | null,
+      browseRequestTarget: ''
     }
   },
   computed: {
+    hasCustomLinks (): boolean {
+      return this.customItems.some(item => item.k === 'link' && item.t.trim().length > 0)
+    },
+    currentMode (): NavigationMode {
+      if (this.navMode === 'TREE' || !this.hasCustomLinks) return 'browse'
+      return this.navMode === 'STATIC' ? 'custom' : this.preferredMode
+    },
+    canConfigureMenu (): boolean {
+      return this.connectionState === 'online' && pwaState.serverReachable === true && pwaState.serverHealthy === true &&
+        wikiStore.authRefreshSettled && !wikiStore.authRefreshPending && wikiStore.offlineIdentityReady === true && wikiStore.authRefreshOutcome === 'authenticated' &&
+        wikiStore.user.permissions.some(permission => permission === 'manage:navigation' || permission === 'manage:system')
+    },
     connectionState () { return pwaState.connectionState },
     connectionUnavailable () { return this.connectionState !== 'online' && pwaState.mode !== 'retirement' },
     path () {
@@ -248,19 +263,33 @@ export default defineComponent({
     }
   },
   watch: {
+    currentMode (mode: NavigationMode) {
+      if (mode === 'browse' && !this.connectionUnavailable &&
+        (this.loadedCache.length < 1 || this.loadedBrowseLocationKey !== this.pageLocationKey)) this.retryBrowse()
+    },
     connectionState (state: string) {
       if (this.connectionUnavailable) {
         this.browseRequestSequence += 1
         this.browseRequestController?.abort()
+        this.browseRequestController = null
+        this.browseRequestLocationKey = null
+        this.browseRequestTarget = ''
         this.navLoading = false
       } else if (state === 'online' && this.currentMode === 'browse') {
         this.retryBrowse()
       }
     },
     pageLocationKey (value: string, previous: string) {
-      if (value === previous || this.currentMode !== 'browse') return
-      if (this.expandParentByDefault) void this.loadFromCurrentPath()
-      else void this.fetchBrowseItems({ id: 0, title: `/ ${this.$t('common:sidebar.root')}` })
+      if (value === previous) return
+      if (this.browseRequestController && this.browseRequestLocationKey !== value) {
+        this.browseRequestSequence += 1
+        this.browseRequestController.abort()
+        this.browseRequestController = null
+        this.browseRequestLocationKey = null
+        this.browseRequestTarget = ''
+        this.navLoading = false
+      }
+      if (this.currentMode === 'browse') this.retryBrowse()
     }
   },
   methods: {
@@ -282,7 +311,7 @@ export default defineComponent({
       observeBrowserConnection()
       if (this.connectionUnavailable) return
       if (mode === 'browse') void retryServerConnection({ quiet: true, reusePending: true })
-      this.currentMode = mode
+      this.preferredMode = mode
       try {
         window.localStorage.setItem('navPref', mode)
       } catch {
@@ -296,16 +325,21 @@ export default defineComponent({
     async fetchBrowseItems (requestedItem?: NavigationTreeItem) {
       observeBrowserConnection()
       if (this.connectionUnavailable) return
+      const item = requestedItem || this.currentParent
+      const locale = this.locale
+      const pageLocationKey = this.pageLocationKey
+      const requestTarget = `parent:${item.id}`
+      if (this.browseRequestController && this.browseRequestLocationKey === pageLocationKey &&
+        this.browseRequestTarget === requestTarget) return
       const requestSequence = ++this.browseRequestSequence
       this.browseRequestController?.abort()
       const requestController = markRaw(new AbortController())
       this.browseRequestController = requestController
-      const locale = this.locale
-      const pageLocationKey = this.pageLocationKey
+      this.browseRequestLocationKey = pageLocationKey
+      this.browseRequestTarget = requestTarget
       loadingStart(wikiStore, 'browse-load')
       this.navLoading = true
       this.navError = ''
-      const item = requestedItem || this.currentParent
       try {
         let parents: NavigationTreeItem[]
         if (item.id === 0) {
@@ -324,19 +358,23 @@ export default defineComponent({
             mode: 'ALL'
           }
         )
-        if (requestSequence !== this.browseRequestSequence) return
+        if (requestController.signal.aborted || requestSequence !== this.browseRequestSequence || pageLocationKey !== this.pageLocationKey) return
         this.parents = parents
         this.currentParent = item
         this.currentItems = items
         this.loadedCache = _.union(this.loadedCache, [item.id])
         this.loadedBrowseLocationKey = pageLocationKey
       } catch (error) {
-        if (!requestController.signal.aborted && requestSequence === this.browseRequestSequence) {
+        if (!requestController.signal.aborted && requestSequence === this.browseRequestSequence && pageLocationKey === this.pageLocationKey) {
           if (error instanceof TypeError || (error instanceof DOMException && error.name === 'TimeoutError')) reportServerConnectionFailure()
           else this.navError = error instanceof Error ? error.message : this.$t('common:sidebar.navigationLoadError')
         }
       } finally {
-        if (this.browseRequestController === requestController) this.browseRequestController = null
+        if (this.browseRequestController === requestController) {
+          this.browseRequestController = null
+          this.browseRequestLocationKey = null
+          this.browseRequestTarget = ''
+        }
         if (requestSequence === this.browseRequestSequence) this.navLoading = false
         loadingStop(wikiStore, 'browse-load')
       }
@@ -344,14 +382,22 @@ export default defineComponent({
     async loadFromCurrentPath() {
       observeBrowserConnection()
       if (this.connectionUnavailable) return
-      const requestSequence = ++this.browseRequestSequence
-      this.browseRequestController?.abort()
-      const requestController = markRaw(new AbortController())
-      this.browseRequestController = requestController
+      if (!Number.isSafeInteger(wikiStore.page.id) || wikiStore.page.id < 1 || !this.path) {
+        await this.fetchBrowseItems({ id: 0, title: `/ ${this.$t('common:sidebar.root')}` })
+        return
+      }
       const locale = this.locale
       const path = this.path
       const pageId = wikiStore.page.id
       const pageLocationKey = this.pageLocationKey
+      if (this.browseRequestController && this.browseRequestLocationKey === pageLocationKey &&
+        this.browseRequestTarget === 'path') return
+      const requestSequence = ++this.browseRequestSequence
+      this.browseRequestController?.abort()
+      const requestController = markRaw(new AbortController())
+      this.browseRequestController = requestController
+      this.browseRequestLocationKey = pageLocationKey
+      this.browseRequestTarget = 'path'
       loadingStart(wikiStore, 'browse-load')
       this.navLoading = true
       this.navError = ''
@@ -366,7 +412,7 @@ export default defineComponent({
             visibility: wikiStore.page.visibility
           }
         )
-        if (requestSequence !== this.browseRequestSequence) return
+        if (requestController.signal.aborted || requestSequence !== this.browseRequestSequence || pageLocationKey !== this.pageLocationKey) return
         const curPage = _.find(items, ['pageId', pageId])
         if (!curPage) throw new Error(this.$t('common:sidebar.currentPageNotFound'))
         let curParentId = curPage.parent
@@ -388,12 +434,16 @@ export default defineComponent({
         this.currentItems = _.filter(items, ['parent', curPage.parent])
         this.loadedBrowseLocationKey = pageLocationKey
       } catch (error) {
-        if (!requestController.signal.aborted && requestSequence === this.browseRequestSequence) {
+        if (!requestController.signal.aborted && requestSequence === this.browseRequestSequence && pageLocationKey === this.pageLocationKey) {
           if (error instanceof TypeError || (error instanceof DOMException && error.name === 'TimeoutError')) reportServerConnectionFailure()
           else this.navError = error instanceof Error ? error.message : this.$t('common:sidebar.navigationLoadError')
         }
       } finally {
-        if (this.browseRequestController === requestController) this.browseRequestController = null
+        if (this.browseRequestController === requestController) {
+          this.browseRequestController = null
+          this.browseRequestLocationKey = null
+          this.browseRequestTarget = ''
+        }
         if (requestSequence === this.browseRequestSequence) this.navLoading = false
         loadingStop(wikiStore, 'browse-load')
       }
@@ -430,19 +480,13 @@ export default defineComponent({
   mounted () {
     observeBrowserConnection()
     this.resetBrowseRoot()
-    if (this.navMode === 'TREE') {
-      this.currentMode = 'browse'
-    } else if (this.navMode === 'STATIC') {
-      this.currentMode = 'custom'
-    } else {
-      try {
-        const storedPreference = window.localStorage.getItem('navPref')
-        this.currentMode = storedPreference === 'browse' || storedPreference === 'custom'
-          ? storedPreference
-          : this.customItems.some(item => item.k === 'link') ? 'custom' : 'browse'
-      } catch {
-        this.currentMode = this.customItems.some(item => item.k === 'link') ? 'custom' : 'browse'
-      }
+    try {
+      const storedPreference = window.localStorage.getItem('navPref')
+      this.preferredMode = storedPreference === 'browse' || storedPreference === 'custom'
+        ? storedPreference
+        : this.hasCustomLinks ? 'custom' : 'browse'
+    } catch {
+      this.preferredMode = this.hasCustomLinks ? 'custom' : 'browse'
     }
     if (this.currentMode === 'browse' && !this.connectionUnavailable) {
       if (this.expandParentByDefault) this.loadFromCurrentPath()
@@ -458,6 +502,16 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
+.nav-sidebar-configure {
+  display: block;
+  margin-block-start: auto;
+  padding: .75rem 1.25rem;
+  color: var(--wiki-text-muted);
+  font-size: .8125rem;
+  text-decoration: none;
+  &:hover { color: var(--wiki-primary-ink); text-decoration: underline; }
+  &:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: -2px; }
+}
 .nav-sidebar-directory-heading {
   display: flex;
   align-items: center;

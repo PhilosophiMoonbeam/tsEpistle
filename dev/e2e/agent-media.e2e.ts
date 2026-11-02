@@ -9,7 +9,10 @@ import { authenticateAsAdmin, expectLocatorWithinViewport, responsiveTest as tes
 // Route-backed Agent fixtures own these responses; real service-worker coverage lives in offline.e2e.ts.
 test.use({ serviceWorkers: 'block' })
 
-const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWPQSNnyHwAEOAJA4ywNkQAAAABJRU5ErkJggg==', 'base64')
+const png = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADUlEQVQImWPQSNnyHwAEOAJA4ywNkQAAAABJRU5ErkJggg==',
+  'base64'
+)
 const generatedId = '00000000-0000-4000-8000-000000000701'
 const generated: AgentMediaView = {
   id: generatedId,
@@ -25,8 +28,6 @@ async function openAgent(page: Page, waitForComposer = true): Promise<Locator> {
   await expect(page.locator('.nav-header')).toBeVisible({ timeout: 30_000 })
   // The actual header action becomes available after user and transport verification.
   const entrance = page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
-  const compact = (page.viewportSize()?.width ?? 1280) < 600
-  if (compact) await page.locator('.nav-header-mobile-actions').click()
   await expect(entrance).toBeVisible()
   await entrance.click()
   const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
@@ -99,7 +100,7 @@ const mediaTest = test.extend<{ mediaUploads: { url: string; media: AgentMediaVi
         expect(request.headers['x-wiki-csrf']).toBeTruthy()
         expect(request.headers['content-type']).toContain('multipart/form-data; boundary=')
         await new Promise<void>((resolve, reject) => {
-          parse(request, response, error => error ? reject(error) : resolve())
+          parse(request, response, error => (error ? reject(error) : resolve()))
         })
         const file = request.file
         if (!file) throw new Error('The media upload must contain a file.')
@@ -125,7 +126,7 @@ const mediaTest = test.extend<{ mediaUploads: { url: string; media: AgentMediaVi
     try {
       await use({ url: `http://127.0.0.1:${address.port}/media`, media })
     } finally {
-      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+      await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())))
     }
     if (errors.length) throw errors[0]
   }
@@ -135,12 +136,13 @@ test('Agent media stays hidden without administrator configuration', async ({ pa
   await authenticateAsAdmin(page)
   const fixture = await installEnabledAgentFixture(page)
   let releaseThread!: () => void
-  const threadResponse = new Promise<void>(resolve => { releaseThread = resolve })
+  const threadResponse = new Promise<void>(resolve => {
+    releaseThread = resolve
+  })
   const isInitialThreadRequest = (request: Request) => {
     const path = new URL(request.url()).pathname
     return (
-      (path === `/_api/agents/sessions/${fixture.sessionId}` && request.method() === 'GET') ||
-      (path === '/_api/agents/sessions' && request.method() === 'POST')
+      (path === `/_api/agents/sessions/${fixture.sessionId}` && request.method() === 'GET') || (path === '/_api/agents/sessions' && request.method() === 'POST')
     )
   }
   await page.route(/\/_api\/agents(?:\/|$)/, async route => {
@@ -158,22 +160,32 @@ test('Agent media stays hidden without administrator configuration', async ({ pa
     await expect(agent.locator('.agent-composer__editor')).toBeVisible()
     await expect(contextRow).toHaveCount(1)
     await expect(contextRow.locator('.agent-context, .agent-composer__goal-chip')).toHaveCount(0)
-    await expect.poll(() => contextRow.evaluate(element => {
-      const bounds = element.getBoundingClientRect()
-      return { width: bounds.width, height: bounds.height, layoutBoxes: element.getClientRects().length }
-    }), 'An empty context row must reserve no layout space while opening a conversation').toEqual({ width: 0, height: 0, layoutBoxes: 0 })
+    await expect
+      .poll(
+        () =>
+          contextRow.evaluate(element => {
+            const bounds = element.getBoundingClientRect()
+            return { width: bounds.width, height: bounds.height, layoutBoxes: element.getClientRects().length }
+          }),
+        'An empty context row must reserve no layout space while opening a conversation'
+      )
+      .toEqual({ width: 0, height: 0, layoutBoxes: 0 })
   } finally {
     releaseThread()
   }
   await expect(agent.locator('.agent-composer textarea')).toBeEnabled()
-  await expect(contextRow).toBeVisible()
-  await expect.poll(() => contextRow.evaluate(element => element.getBoundingClientRect().height),
-    'Populated context must retain visible layout space after the conversation opens').toBeGreaterThan(0)
-  const scopeControl = contextRow.getByRole('button', { name: 'Choose Agent search scope', exact: true })
-  await expect(scopeControl).toBeVisible()
-  await expectLocatorWithinViewport(scopeControl, 'Agent context search scope')
+  const sourceControl = agent.getByRole('button', { name: 'Sources', exact: true })
+  await expect(sourceControl).toBeVisible()
+  await expectLocatorWithinViewport(sourceControl, 'Agent source control')
+  await sourceControl.click()
+  const sources = page.getByRole('dialog', { name: 'Add sources', exact: true })
+  await expect(sources.locator('.agent-context__scope')).toBeVisible()
+  await sources.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(sourceControl).toBeFocused()
   await expect(agent.getByRole('button', { name: 'Attach files', exact: true })).toHaveCount(0)
-  await expect(agent.getByRole('button', { name: 'Choose creation tools', exact: true })).toHaveCount(0)
+  await agent.getByRole('button', { name: 'Capabilities', exact: true }).click()
+  await expect(page.getByRole('menuitemcheckbox', { name: /Image|Video|Music/ })).toHaveCount(0)
+  await page.keyboard.press('Escape')
   await expect(agent.getByRole('button', { name: 'Start dictation', exact: true })).toHaveCount(0)
   const screenshot = test.info().outputPath('agent-media-final-layout.png')
   await page.screenshot({ path: screenshot })
@@ -303,21 +315,29 @@ mediaTest('Agent media uploads, generates, edits, and transcribes within the exi
   await agent.getByRole('button', { name: 'Send', exact: true }).click()
   const generatedImage = agent.locator('.agent-message__media img[alt="Image created by Wiki Agent"]')
   await expect(generatedImage).toBeVisible()
-  await expect.poll(() => generatedImage.evaluate(element => {
-    const image = element as HTMLImageElement
-    return image.complete && image.naturalWidth > 0
-  }), 'The generated image must decode in the browser').toBe(true)
+  await expect
+    .poll(
+      () =>
+        generatedImage.evaluate(element => {
+          const image = element as HTMLImageElement
+          return image.complete && image.naturalWidth > 0
+        }),
+      'The generated image must decode in the browser'
+    )
+    .toBe(true)
   await expect(agent.getByRole('link', { name: 'generated-image.png · Download', exact: true })).toBeVisible()
   expect(sent).toHaveLength(1)
   expect(sent[0]?.generationTools).toEqual(['image'])
   expect(sent[0]?.responseMode).toBeUndefined()
   expect(sent[0]?.attachmentIds).toEqual([uploaded[1]?.id])
   const editImage = agent.getByRole('button', { name: 'Edit image', exact: true })
-  if (!await editImage.evaluate(button => {
-    const bounds = button.getBoundingClientRect()
-    const target = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
-    return target !== null && button.contains(target)
-  })) {
+  if (
+    !(await editImage.evaluate(button => {
+      const bounds = button.getBoundingClientRect()
+      const target = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+      return target !== null && button.contains(target)
+    }))
+  ) {
     // Read older output through the transcript instead of clicking through fixed chrome.
     await agent.getByRole('region', { name: 'Conversation transcript', exact: true }).focus()
     for (let step = 0; step < 4; step += 1) await page.keyboard.press('ArrowUp')
@@ -519,22 +539,18 @@ test('Agent combines selected creation tools in a normal conversation', async ({
   const agent = await openAgent(page)
   thread = (await (await initialThread).json()) as AgentThreadState
   const input = agent.locator('.agent-composer textarea')
-  const trigger = agent.getByRole('button', { name: 'Choose creation tools', exact: true })
-  await expectLocatorWithinViewport(trigger, 'Creation tools control')
+  const trigger = agent.getByRole('button', { name: 'Capabilities', exact: true })
+  await expectLocatorWithinViewport(trigger, 'Capabilities control')
   await expect(agent.getByRole('button', { name: 'Attach files', exact: true })).toHaveCount(0)
   await trigger.click()
-  const menu = page.locator('[aria-label="Creation tools"]')
+  const menu = page.locator('.agent-composer__skill-menu-content [aria-label="Capabilities"]')
   await expect(menu.getByText('Images', { exact: true })).toHaveCount(0)
   await expect(menu.getByText('Text', { exact: true })).toHaveCount(0)
   const videoTool = menu.getByRole('menuitemcheckbox', { name: 'Video', exact: true })
   const musicTool = menu.getByRole('menuitemcheckbox', { name: 'Music', exact: true })
   await videoTool.click()
-  await expect(menu).toHaveCount(0)
-  // Use the owned native menu key while Vuetify guards post-selection pointer reopening.
-  await trigger.press('ArrowDown')
+  await expect(menu).toBeVisible()
   await musicTool.click()
-  await expect(menu).toHaveCount(0)
-  await trigger.press('ArrowDown')
   await expect(videoTool).toHaveAttribute('aria-checked', 'true')
   await expect(musicTool).toHaveAttribute('aria-checked', 'true')
   await expectLocatorWithinViewport(menu, 'Creation tools menu')
@@ -563,18 +579,26 @@ test('Agent combines selected creation tools in a normal conversation', async ({
     await transcript.press('Home')
     await player.scrollIntoViewIfNeeded()
     await expectLocatorWithinViewport(player, `${kind} player`)
-    await expect.poll(() => player.evaluate(element => {
-      const transcript = element.closest('.inline-agent__transcript')
-      const dock = transcript?.querySelector('.inline-agent__conversation-dock')
-      if (!transcript || !dock) return false
-      const playerBounds = element.getBoundingClientRect()
-      const transcriptBounds = transcript.getBoundingClientRect()
-      const dockBounds = dock.getBoundingClientRect()
-      return playerBounds.left >= transcriptBounds.left - 1
-        && playerBounds.right <= transcriptBounds.right + 1
-        && playerBounds.top >= transcriptBounds.top - 1
-        && playerBounds.bottom <= Math.min(transcriptBounds.bottom, dockBounds.top) + 1
-    }), `${kind} controls must remain in the transcript reading area above the composer`).toBe(true)
+    await expect
+      .poll(
+        () =>
+          player.evaluate(element => {
+            const transcript = element.closest('.inline-agent__transcript')
+            const dock = transcript?.parentElement?.querySelector('.inline-agent__conversation-dock')
+            if (!transcript || !dock) return false
+            const playerBounds = element.getBoundingClientRect()
+            const transcriptBounds = transcript.getBoundingClientRect()
+            const dockBounds = dock.getBoundingClientRect()
+            return (
+              playerBounds.left >= transcriptBounds.left - 1 &&
+              playerBounds.right <= transcriptBounds.right + 1 &&
+              playerBounds.top >= transcriptBounds.top - 1 &&
+              playerBounds.bottom <= Math.min(transcriptBounds.bottom, dockBounds.top) + 1
+            )
+          }),
+        `${kind} controls must remain in the transcript reading area above the composer`
+      )
+      .toBe(true)
   }
   expect(sent[0]?.generationTools).toEqual(['video', 'music'])
   expect(sent[0]?.responseMode).toBeUndefined()
@@ -582,10 +606,10 @@ test('Agent combines selected creation tools in a normal conversation', async ({
   await expect(videoTool).toHaveAttribute('aria-checked', 'true')
   await expect(musicTool).toHaveAttribute('aria-checked', 'true')
   await musicTool.click()
-  await trigger.click()
   await expect(musicTool).toHaveAttribute('aria-checked', 'false')
   await expect(videoTool).toHaveAttribute('aria-checked', 'true')
   await videoTool.click()
+  await page.keyboard.press('Escape')
   await input.fill('Now explain the scene without creating any more media.')
   await agent.getByRole('button', { name: 'Send', exact: true }).click()
   await expect.poll(() => sent.length).toBe(2)

@@ -1,24 +1,19 @@
 <template>
   <v-container fluid class="admin-taxonomy">
     <admin-hero :title="$t('admin:tags.title')" :description="$t('admin:tags.sharedVocabularyPeopleAgents')" icon="mdi-tag-multiple-outline">
+      <template #status>
+        <dl v-if="tags.length || (!loading && !loadError)" class="taxonomy-totals">
+          <div><dt>{{ $t('admin:tags.activeTags') }}</dt><dd>{{ tags.filter(t => state(t) === 'active').length }}</dd></div>
+          <div><dt>{{ $t('admin:tags.aliases') }}</dt><dd>{{ tags.filter(t => state(t) === 'alias').length }}</dd></div>
+          <div><dt>{{ $t('admin:tags.unusedActive') }}</dt><dd>{{ tags.filter(t => state(t) === 'active' && !t.pageCount).length }}</dd></div>
+        </dl>
+      </template>
       <template #actions>
         <v-btn :aria-disabled="hasUnsavedChanges || undefined" variant="text" prepend-icon="mdi-refresh" :loading="loading" :disabled="busy" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ hasUnsavedChanges ? $t('admin:tags.saveResetTagChanges') : $t('admin:tags.reloadSavedTags') }}</v-tooltip></v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-plus" :disabled="busy" @click="openCreate">{{ $t('admin:tags.createTag') }}</v-btn>
       </template>
     </admin-hero>
 
-    <section class="taxonomy-intro" aria-labelledby="taxonomy-intro-title">
-      <div>
-        <span class="taxonomy-kicker">{{ $t('admin:tags.sharedVocabulary') }}</span>
-        <h2 id="taxonomy-intro-title">{{ $t('admin:tags.giveKnowledgeCommonLanguage') }}</h2>
-        <p>{{ $t('admin:tags.defineMeaningfulLabelsUnderstand') }}</p>
-      </div>
-      <dl>
-        <div><dt>{{ $t('admin:tags.activeTags') }}</dt><dd>{{ tags.filter(t => state(t) === 'active').length }}</dd></div>
-        <div><dt>{{ $t('admin:tags.aliases') }}</dt><dd>{{ tags.filter(t => state(t) === 'alias').length }}</dd></div>
-        <div><dt>{{ $t('admin:tags.unusedActive') }}</dt><dd>{{ tags.filter(t => state(t) === 'active' && !t.pageCount).length }}</dd></div>
-      </dl>
-    </section>
 
     <v-alert v-if="success" type="success" variant="tonal" class="mb-4" role="status" closable @click:close="success = ''">{{ success }}</v-alert>
     <v-alert v-for="warning in warnings" :key="warning" type="warning" variant="tonal" class="mb-4">{{ warning }}</v-alert>
@@ -41,7 +36,7 @@
           <p>{{ tags.length ? $t('admin:tags.tryAnotherTermVocabulary') : $t('admin:tags.createTagBeforeAssigning') }}</p>
           <v-btn v-if="tags.length" size="small" variant="text" :disabled="busy" @click="search = ''; view = 'all'">{{ $t('admin:tags.clearFilters') }}</v-btn>
         </div>
-        <div v-else class="taxonomy-records">
+        <div v-else class="taxonomy-records wiki-surface-well">
           <button v-for="entry in visible" :key="entry.id" type="button" class="taxonomy-record" :class="{ 'is-selected': selectedId === entry.id }" :aria-pressed="selectedId === entry.id" :aria-label="$t(selectedId === entry.id ? 'admin:tags.selectedRecordLabel' : 'admin:tags.recordLabel', { name: entry.title || entry.tag, state: stateLabel(entry), interpolation: { escapeValue: false } })" :disabled="mutationBusy" @click="select(entry.id)">
             <v-icon :icon="selectedId === entry.id ? 'mdi-check' : state(entry) === 'alias' ? 'mdi-arrow-u-right-top' : state(entry) === 'archived' ? 'mdi-archive-outline' : 'mdi-pound'" size="18" aria-hidden="true" />
             <span><strong><bdi>{{ entry.tag }}</bdi></strong><small v-if="entry.title && entry.title !== entry.tag"><bdi>{{ entry.title }}</bdi></small></span>
@@ -91,7 +86,7 @@
               <v-text-field v-model="draft.tag" :label="$t('admin:tags.tagName')" variant="outlined" maxlength="255" counter="255" :disabled="busy" :hint="$t('admin:tags.namesTrimmedSavedLowercase')" persistent-hint />
               <v-text-field v-model="draft.title" :label="$t('admin:tags.displayLabel')" variant="outlined" maxlength="255" counter="255" :disabled="busy" :hint="$t('admin:tags.optionalExampleAgentMemory')" persistent-hint class="mt-4" />
               <v-alert v-if="actionError" type="error" variant="tonal" class="mt-4">{{ actionError }}</v-alert>
-              <div class="taxonomy-save"><span role="status">{{ dirty ? $t('admin:tags.unsavedDefinition') : $t('admin:tags.matchesSavedDefinition') }}</span><div><v-btn type="button" variant="text" :disabled="!dirty || busy" @click="resetDraft">{{ $t('admin:tags.reset') }}</v-btn><v-btn type="submit" variant="flat" color="primary" :disabled="!dirty || !validDefinition || busy" :loading="reviewing">{{ $t('admin:tags.reviewChanges') }}</v-btn></div></div>
+              <div class="taxonomy-save"><span role="status">{{ dirty ? $t('admin:tags.unsavedDefinition') : $t('admin:tags.matchesSavedDefinition') }}</span><div><v-btn type="button" variant="text" :disabled="!dirty || busy" @click="resetDraft">{{ $t('admin:tags.reset') }}</v-btn><v-btn type="submit" variant="tonal" color="primary" :data-commitment="dirty && validDefinition && !busy ? 'active' : undefined" :disabled="!dirty || !validDefinition || busy" :loading="reviewing">{{ $t('admin:tags.reviewChanges') }}</v-btn></div></div>
             </form>
             <v-alert v-else type="info" variant="tonal">{{ current.isArchived ? $t('admin:tags.nameRetiredRestoreLifecycle') : $t('admin:tags.preservedNameEditCanonical') }}</v-alert>
             <div class="taxonomy-dates"><div><span>{{ $t('admin:tags.created') }}</span><time :datetime="current.createdAt">{{ date(current.createdAt) }}</time></div><div><span>{{ $t('admin:tags.lastChanged') }}</span><time :datetime="current.updatedAt">{{ date(current.updatedAt) }}</time></div></div>
@@ -142,7 +137,7 @@
           <dl v-if="preview.change.action === 'edit'" class="taxonomy-definition-review"><div><dt>{{ $t('admin:tags.savedDisplayLabel') }}</dt><dd><bdi>{{ preview.source.title || $t('admin:tags.none') }}</bdi></dd></div><div><dt>{{ $t('admin:tags.proposedDisplayLabel') }}</dt><dd><bdi>{{ preview.change.title || $t('admin:tags.none') }}</bdi></dd></div></dl>
           <h4 v-if="preview.rules.length" class="mt-6">{{ $t('admin:tags.tagBasedAccessRule') }}</h4><p v-if="preview.rules.length" class="taxonomy-muted">{{ $t('admin:tags.publicPageMatchCounts') }}</p>
           <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded overflow region needs a tab stop for keyboard scrolling. -->
-          <section v-if="preview.rules.length" class="taxonomy-impact-table" tabindex="0" :aria-label="$t('admin:tags.accessRuleImpact')"><table><thead><tr><th scope="col">{{ $t('admin:tags.groupRule') }}</th><th scope="col">{{ $t('admin:tags.before') }}</th><th scope="col">{{ $t('admin:tags.after') }}</th><th scope="col">{{ $t('admin:tags.change') }}</th></tr></thead><tbody><tr v-for="(rule, i) in preview.rules" :key="i"><td><strong><bdi>{{ rule.groupName }}</bdi></strong><small>{{ rule.deny ? $t('admin:tags.deny') : $t('admin:tags.allow') }} · #{{ rule.path }}</small><small>{{ rule.roles.join(', ') }} · {{ rule.locales.length ? rule.locales.join(', ') : $t('admin:tags.allLanguages') }}</small></td><td>{{ rule.before }}</td><td>{{ rule.after }}</td><td>{{ rule.added || rule.removed ? `+${rule.added} / −${rule.removed}` : $t('admin:tags.unchanged') }}</td></tr></tbody></table></section>
+          <section v-if="preview.rules.length" class="taxonomy-impact-table wiki-surface-well" tabindex="0" :aria-label="$t('admin:tags.accessRuleImpact')"><table><thead><tr><th scope="col">{{ $t('admin:tags.groupRule') }}</th><th scope="col">{{ $t('admin:tags.before') }}</th><th scope="col">{{ $t('admin:tags.after') }}</th><th scope="col">{{ $t('admin:tags.change') }}</th></tr></thead><tbody><tr v-for="(rule, i) in preview.rules" :key="i"><td><strong><bdi>{{ rule.groupName }}</bdi></strong><small>{{ rule.deny ? $t('admin:tags.deny') : $t('admin:tags.allow') }} · #{{ rule.path }}</small><small>{{ rule.roles.join(', ') }} · {{ rule.locales.length ? rule.locales.join(', ') : $t('admin:tags.allLanguages') }}</small></td><td>{{ rule.before }}</td><td>{{ rule.after }}</td><td>{{ rule.added || rule.removed ? `+${rule.added} / −${rule.removed}` : $t('admin:tags.unchanged') }}</td></tr></tbody></table></section>
           <v-checkbox v-if="preview.accessChanges" :model-value="acknowledgeAccess" @update:model-value="acknowledgeAccess = $event === true" :label="$t('admin:tags.iUnderstandTheseTag')" hide-details class="mt-4" :disabled="applying || reviewing || reviewStale" />
           <details v-if="preview.pages.length" class="taxonomy-review-pages"><summary>{{ $t('admin:tags.affectedPagesCount', { count: preview.pages.length }) }}</summary><ul><li v-for="page in preview.pages" :key="page.id"><strong><bdi>{{ page.title || page.path }}</bdi></strong><span><bdi>{{ page.locale }} / {{ page.path }}</bdi> {{ $t('admin:tags.revision', { visibility: page.visibility === 'private' ? $t('admin:tags.private') : $t('admin:tags.workspace'), sourceRevision: page.sourceRevision, interpolation: { escapeValue: false } }) }}</span></li></ul></details>
           <v-alert v-if="reviewError || reviewStale" :type="reviewStale ? 'warning' : 'error'" variant="tonal" class="mt-5"><span v-if="reviewStale">{{ $t('admin:tags.impactReviewStaleRefresh') }}</span><span v-if="reviewError"> {{ reviewError }}</span><div><v-btn size="small" variant="text" class="mt-2" :disabled="applying || reviewing" :loading="reviewing" @click="review(preview.change)">{{ $t('admin:tags.refreshImpactReview') }}</v-btn></div></v-alert>
@@ -577,53 +572,15 @@ export default {
   text-transform: uppercase;
 }
 
-.taxonomy-intro {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 32px;
-  padding: 24px 0 32px;
-  min-width: 0;
-
-  h2 {
-    margin: 8px 0;
-    font-family: var(--wiki-font-display, var(--wiki-font-heading, sans-serif));
-    font-size: clamp(1.5rem, 2.6vw, 2.1rem);
-    font-weight: 600;
-    letter-spacing: -.035em;
-    line-height: 1.2;
-    overflow-wrap: anywhere;
-  }
-
-  p {
-    max-width: 680px;
-    margin: 0;
-    color: var(--taxonomy-muted);
-    font-size: .9375rem;
-    line-height: 1.7;
-    overflow-wrap: anywhere;
-  }
-
-  dl {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(72px, 1fr));
-    gap: 24px;
-    margin: 0;
-  }
-
-  dt {
-    color: var(--taxonomy-muted);
-    font-size: .8125rem;
-    line-height: 1.35;
-  }
-
-  dd {
-    margin: 6px 0 0;
-    font-size: 1.75rem;
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-    line-height: 1;
-  }
+.taxonomy-totals { display: flex; flex-wrap: wrap; gap: .35rem 1rem; margin: 0; }
+.taxonomy-totals > div { display: flex; align-items: baseline; gap: .35rem; font-size: .75rem; }
+.taxonomy-totals dt { color: var(--taxonomy-muted); }
+.taxonomy-totals dd { margin: 0; font-weight: 650; font-variant-numeric: tabular-nums; }
+.taxonomy-empty, .taxonomy-welcome, .taxonomy-definition-review {
+  background: var(--wiki-surface-sunken);
+  background-image: none;
+  border: 1px solid var(--wiki-well-border);
+  box-shadow: var(--wiki-shadow-inset);
 }
 
 .taxonomy-workspace {
@@ -637,16 +594,17 @@ export default {
 .taxonomy-directory,
 .taxonomy-detail {
   min-width: 0;
-  border: 1px solid var(--taxonomy-border);
+  border: 1px solid var(--wiki-material-border);
   border-radius: var(--wiki-panel-radius, 12px);
-  background: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
+  background: var(--wiki-surface-gradient);
+  box-shadow: var(--wiki-specular-border);
 }
 
 .taxonomy-directory {
   grid-template-columns: minmax(0, 1fr);
   display: grid;
-  gap: 12px;
-  padding: 24px;
+  gap: 8px;
+  padding: 12px;
 }
 
 .taxonomy-directory-heading {
@@ -679,8 +637,9 @@ export default {
 
 .taxonomy-records {
   display: grid;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
+  padding: 4px;
 }
 
 .taxonomy-record {
@@ -1438,19 +1397,6 @@ summary:focus-visible,
 }
 
 @media (max-width: 599.98px) {
-  .taxonomy-intro {
-    grid-template-columns: 1fr;
-    gap: 24px;
-    padding-block: 16px 24px;
-
-    dl {
-      gap: 12px;
-    }
-
-    dd {
-      font-size: 1.5rem;
-    }
-  }
 
   .taxonomy-directory {
     padding: 16px;

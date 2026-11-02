@@ -323,6 +323,10 @@ const provenanceLabelForPolicy = (entry: OfflinePagePolicyRecord | null): string
 const provenanceLabel = (record: OfflineSnapshotRecord): string => provenanceLabelForPolicy(policyForRecord(record))
 const availabilityLabel = (record: OfflineSnapshotRecord): string =>
   policyForRecord(record)?.availability ?? 'unknown'
+const savedStatusLabel = (record: OfflineSnapshotRecord): string =>
+  policyForRecord(record)?.availability === 'available'
+    ? t('common:offlineLibrary.savedSourceAvailable')
+    : t('common:offlineLibrary.savedDevice')
 const storageChecking = computed(() => props.storageState === 'uninspected' || props.storageState === 'checking')
 const storageUnavailable = computed(() => !storageChecking.value && (!props.storage || props.storageState !== 'available'))
 const resultRecords = computed(() => {
@@ -1541,6 +1545,22 @@ const formatDate = (value: string): string => {
   return `${formatted} (${helpers.timeZoneLabel(value)})`
 }
 
+const capturedDateTime = (value: string): string | undefined =>
+  Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : undefined
+
+const exactCapturedTime = (value: string): string => {
+  const instant = capturedDateTime(value)
+  return instant ? `${formatDate(value)} · ${instant}` : formatDate(value)
+}
+
+const relativeCapturedTime = (value: string): string => {
+  // Reuse the expiry clock so relative capture times also advance while open.
+  void clock.value
+  if (!Number.isFinite(Date.parse(value))) return t('common:offlineLibrary.dateUnavailable')
+  const relative = helpers.formatMoment(value, 'from')
+  return typeof relative === 'string' && relative ? relative : t('common:offlineLibrary.dateUnavailable')
+}
+
 const expiryLabel = (record: OfflineSnapshotRecord): string => {
   if (!record.snapshot.expiresAt) return t('common:offlineLibrary.noKnownExpiry')
   const expiry = Date.parse(record.snapshot.expiresAt)
@@ -1823,11 +1843,19 @@ onBeforeUnmount(() => {
       <li v-for="record in resultRecords" :key="recordKey(record)" class="page-list-item">
         <article class="page-card" :data-selected="selectedKey === recordKey(record)" :data-offline-record-key="recordDomKey(record)">
           <div class="page-card-main">
-            <span class="page-card-kicker">{{ record.snapshot.locale }} <span aria-hidden="true">/</span> {{ formatBytes(record.byteSize) }}</span>
+            <span class="page-card-path"><bdi>{{ record.snapshot.locale }}</bdi><span aria-hidden="true">/</span><bdi>{{ record.snapshot.path }}</bdi></span>
             <strong class="page-card-title">{{ record.snapshot.title || $t('common:offlineLibrary.untitledPage') }}</strong>
             <span v-if="record.snapshot.description" class="page-card-description">{{ record.snapshot.description }}</span>
+            <span class="page-card-summary">
+              <span class="page-card-status">{{ savedStatusLabel(record) }}</span>
+              <time
+                :datetime="capturedDateTime(record.snapshot.capturedAt)"
+                :title="exactCapturedTime(record.snapshot.capturedAt)"
+                :aria-label="$t('common:offlineLibrary.saved', { capturedAt: exactCapturedTime(record.snapshot.capturedAt), interpolation: { escapeValue: false } })"
+              >{{ $t('common:offlineLibrary.saved', { capturedAt: relativeCapturedTime(record.snapshot.capturedAt), interpolation: { escapeValue: false } }) }}</time>
+            </span>
             <span class="page-card-meta">
-              <span>{{ $t('common:offlineLibrary.saved', { capturedAt: formatDate(record.snapshot.capturedAt), interpolation: { escapeValue: false } }) }}</span>
+              <span>{{ formatBytes(record.byteSize) }}</span>
               <span>{{ $t('common:offlineLibrary.savedVersion') }} <bdi>{{ record.snapshot.sourceRevision }}</bdi></span>
               <span>{{ $t('common:offlineLibrary.provenance2', { record: provenanceLabel(record), interpolation: { escapeValue: false } }) }}</span>
               <span>{{ $t('common:offlineLibrary.availability2', { record: availabilityLabel(record), interpolation: { escapeValue: false } }) }}</span>
@@ -1836,7 +1864,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="page-card-actions">
             <button class="secondary-button" type="button" :data-offline-record-key="recordDomKey(record)" :aria-label="$t('common:offlineLibrary.openSavedPage', { title: record.snapshot.title || 'Untitled page', interpolation: { escapeValue: false } })" @click="openRecord(record, $event)">{{ $t('common:offlineLibrary.openPage') }}</button>
-            <button v-if="showSettings" class="text-button" type="button" :disabled="removingKey === recordKey(record) || policyMutationLoading || refreshing" @click="removeRecord(record)">
+            <button v-if="showSettings" class="remove-button" type="button" :disabled="removingKey === recordKey(record) || policyMutationLoading || refreshing" @click="removeRecord(record)">
               {{ removingKey === recordKey(record) ? $t('common:offlineLibrary.removing') : $t('common:offlineLibrary.removePage') }}
             </button>
           </div>
@@ -2000,6 +2028,13 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
 
 .offline-library h2 { font-size: clamp(1.55rem, 4vw, 2.25rem); }
 .offline-library h3 { font-size: clamp(1.35rem, 3.5vw, 1.9rem); }
+
+#downloaded-pages-title {
+  font-family: var(--offline-body);
+  font-size: 1.25rem;
+  letter-spacing: normal;
+  line-height: 1.4;
+}
 
 .count-note {
   flex: 0 0 auto;
@@ -2344,7 +2379,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
   min-inline-size: 0;
 }
 
-.page-card-kicker,
+.page-card-summary,
 .page-card-meta,
 .page-card-expiry {
   color: var(--offline-faint);
@@ -2380,6 +2415,46 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
   flex-wrap: wrap;
   gap: .25rem .75rem;
 }
+
+.page-card-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .2rem;
+  justify-self: start;
+  max-inline-size: 100%;
+  padding: .2rem .45rem;
+  border: 1px solid var(--offline-border);
+  border-radius: .35rem;
+  background: var(--wiki-surface-sunken);
+  color: var(--offline-muted);
+  font-family: var(--offline-mono);
+  font-size: .75rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.page-card-path bdi { min-inline-size: 0; overflow-wrap: anywhere; }
+
+.page-card-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .35rem .75rem;
+}
+
+.page-card-status {
+  padding: .15rem .5rem;
+  border: 1px solid var(--offline-border);
+  border-radius: 1rem;
+  background: var(--offline-paper-raised);
+  color: var(--offline-ink);
+  font-family: var(--offline-body);
+  font-weight: 600;
+}
+
+.page-card-summary time,
+.page-card-meta > span { min-inline-size: 0; overflow-wrap: anywhere; }
 
 .page-card-expiry[data-expiring='soon'] { color: var(--offline-warm); }
 
@@ -2420,6 +2495,23 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid 
   text-decoration-color: color-mix(in srgb, currentColor 42%, transparent);
   text-underline-offset: .2em;
   overflow-wrap: anywhere;
+}
+
+.remove-button {
+  min-block-size: 44px;
+  min-inline-size: 44px;
+  max-inline-size: 100%;
+  padding: .5rem .8rem;
+  border: 1px solid transparent;
+  border-radius: .45rem;
+  background: transparent;
+  color: var(--wiki-error-ink);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.remove-button:hover:not(:disabled) {
+  border-color: currentColor;
 }
 
 .offline-reader {

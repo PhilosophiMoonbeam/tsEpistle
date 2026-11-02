@@ -27,7 +27,7 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, markRaw, nextTick } from 'vue'
+import { defineComponent, markRaw, nextTick, watch } from 'vue'
 import Comments from './comments.vue'
 import WikiPageLinks from './wiki-page-links.vue'
 import WikiPageRatings from './wiki-page-ratings.vue'
@@ -41,6 +41,7 @@ import {
   parseWikiNavigationDocument
 } from '../helpers/wiki-navigation'
 import { wikiStore } from '../store/index.ts'
+import { capturePageWorkingSetScope, recordPageVisit } from '../helpers/page-working-set.ts'
 
 interface NavigationOptions {
   popState?: boolean
@@ -73,6 +74,18 @@ const isTrustedWikiPageResponse = (response: Response, responseUrl: URL): boolea
     !hasAttachmentDisposition(response.headers.get('content-disposition'))
 }
 
+// Authority comes from the current verified session, not working-set storage.
+const verifiedNavigationIdentity = (): string | null => {
+  if (wikiStore.authRefreshPending || !wikiStore.authRefreshSettled ||
+    (wikiStore.authRefreshOutcome !== 'authenticated' && wikiStore.authRefreshOutcome !== 'anonymous')) return null
+  return JSON.stringify([
+    wikiStore.authRefreshOutcome,
+    wikiStore.user.id,
+    wikiStore.user.authVersion,
+    wikiStore.offlineIdentityEpoch
+  ])
+}
+
 export default defineComponent({
   name: 'WikiPage',
   components: { Comments, Page, WikiPageLinks, WikiPageRatings },
@@ -90,15 +103,20 @@ export default defineComponent({
       commentsHtml: '',
       navigationKey: 0,
       navigationPending: false,
+      readerDisposed: false,
       currentUrl: window.location.href,
       activePageView: pageViewForUrl(window.location.href, currentPage.pageFeatures.linksVisible),
       previousScrollRestoration: null as History['scrollRestoration'] | null,
       navigationSequence: 0,
+      navigationAuthorizationGeneration: 0,
       navigationAbortController: null as AbortController | null,
       removeNavigationHandler: null as (() => void) | null
     }
   },
   computed: {
+    navigationIdentity(): string | null {
+      return verifiedNavigationIdentity()
+    },
     pageTransitions(): boolean {
       return wikiStore.site.pageTransitions
     },
@@ -120,7 +138,20 @@ export default defineComponent({
       return this.currentPage.pageFeatures.lastEditorVisible
     }
   },
+  watch: {
+    navigationIdentity: {
+      flush: 'sync',
+      handler() {
+        this.navigationAuthorizationGeneration += 1
+        this.navigationSequence += 1
+        this.navigationAbortController?.abort()
+        this.navigationAbortController = null
+        this.navigationPending = false
+      }
+    }
+  },
   mounted() {
+    void this.recordInitialVisit()
     window.addEventListener('hashchange', this.handleHashChange)
     window.addEventListener('wiki:navigation', this.handleReaderLocation)
     void nextTick().then(() => {
@@ -139,6 +170,9 @@ export default defineComponent({
     this.saveCurrentHistoryScroll()
   },
   beforeUnmount() {
+    this.readerDisposed = true
+    this.navigationAuthorizationGeneration += 1
+    this.navigationSequence += 1
     this.navigationAbortController?.abort()
     this.removeNavigationHandler?.()
     document.removeEventListener('click', this.handleDocumentClick)
@@ -150,6 +184,40 @@ export default defineComponent({
     }
   },
   methods: {
+    async recordInitialVisit(): Promise<void> {
+      const pageId = this.currentPage.props.pageId
+      const { id: accountId, authVersion } = wikiStore.user
+      const identityEpoch = wikiStore.offlineIdentityEpoch
+      const initializingIdentity = accountId === 0 && authVersion === 0 && !wikiStore.user.authenticated &&
+        wikiStore.authRefreshPending && !wikiStore.authRefreshSettled && wikiStore.authRefreshOutcome === null
+      const authorizationGeneration = this.navigationAuthorizationGeneration
+      let installedIdentity: string | null = null
+      const stopIdentityWatch = initializingIdentity ? watch(() => wikiStore.user, user => {
+        // Bind the profile installed before outcome observers can mutate it.
+        if (installedIdentity === null) installedIdentity = JSON.stringify([user.id, user.authVersion, wikiStore.offlineIdentityEpoch])
+      }, { flush: 'sync' }) : null
+      // Verification retires authorization and sequence together; only actual
+      // navigation must invalidate this visit while startup whoami settles.
+      const sequence = this.navigationSequence - this.navigationAuthorizationGeneration
+      const verification = wikiStore.waitForAuthRefresh()
+      let outcome: Awaited<typeof verification>
+      try {
+        outcome = await verification
+      } finally {
+        stopIdentityWatch?.()
+      }
+      if (this.readerDisposed || sequence !== this.navigationSequence - this.navigationAuthorizationGeneration ||
+        pageId !== this.currentPage.props.pageId) return
+      if (initializingIdentity) {
+        // Cold whoami installs the first account and may retire a persisted vault.
+        // Only its first verified publication belongs to this initial reader.
+        if ((outcome !== 'authenticated' && outcome !== 'anonymous') || outcome !== wikiStore.authRefreshOutcome ||
+          verifiedNavigationIdentity() === null || this.navigationAuthorizationGeneration !== authorizationGeneration + 1 ||
+          installedIdentity !== JSON.stringify([wikiStore.user.id, wikiStore.user.authVersion, wikiStore.offlineIdentityEpoch])) return
+      } else if (accountId !== wikiStore.user.id || authVersion !== wikiStore.user.authVersion ||
+        identityEpoch !== wikiStore.offlineIdentityEpoch) return
+      recordPageVisit(pageId, capturePageWorkingSetScope())
+    },
     async prepareFeedbackDraft(content: string): Promise<void> {
       if (!this.feedbackDiscussionEnabled || !content.trim()) return
       const pageId = this.currentPage.props.pageId
@@ -237,6 +305,12 @@ export default defineComponent({
     },
     async navigate(destination: URL, options: NavigationOptions = {}): Promise<void> {
       if (destination.href === this.currentUrl) return
+      const identity = verifiedNavigationIdentity()
+      if (identity === null || this.readerDisposed) return
+      const authorizationGeneration = this.navigationAuthorizationGeneration
+      const isCurrentAuthorization = (): boolean =>
+        !this.readerDisposed && authorizationGeneration === this.navigationAuthorizationGeneration &&
+        identity === verifiedNavigationIdentity()
 
       const current = new URL(this.currentUrl)
       if (destination.pathname === current.pathname && pageQueryWithoutGlossary(destination) === pageQueryWithoutGlossary(current)) {
@@ -248,6 +322,7 @@ export default defineComponent({
         }
         this.currentUrl = destination.href
         await nextTick()
+        if (!isCurrentAuthorization()) return
         if (!glossaryOnly) this.restoreScroll(destination, options.scrollY)
         if (!glossaryOnly) this.focusHashThread()
         window.dispatchEvent(new CustomEvent('wiki:navigation', {
@@ -257,6 +332,7 @@ export default defineComponent({
       }
 
       const sequence = ++this.navigationSequence
+      const workingSetScope = capturePageWorkingSetScope()
       this.navigationAbortController?.abort()
       const controller = new AbortController()
       this.navigationAbortController = markRaw(controller)
@@ -272,7 +348,7 @@ export default defineComponent({
           },
           signal: controller.signal
         })
-        if (sequence !== this.navigationSequence) return
+        if (sequence !== this.navigationSequence || !isCurrentAuthorization()) return
 
         const responseUrl = new URL(response.url)
         if (!isTrustedWikiPageResponse(response, responseUrl)) {
@@ -282,7 +358,7 @@ export default defineComponent({
 
         const parsed = parseWikiNavigationDocument(await response.text(), responseUrl)
         if (parsed && destination.hash && !parsed.url.hash) parsed.url.hash = destination.hash
-        if (sequence !== this.navigationSequence) return
+        if (sequence !== this.navigationSequence || !isCurrentAuthorization()) return
         if (!parsed || parsed.language !== document.documentElement.lang) {
           this.hardNavigate(responseUrl, options.popState)
           return
@@ -301,16 +377,17 @@ export default defineComponent({
         this.updateDocumentMetadata(parsed.documentTitle, parsed.description, parsed.url)
 
         await nextTick()
-        if (controller.signal.aborted || sequence !== this.navigationSequence) return
+        if (controller.signal.aborted || sequence !== this.navigationSequence || !isCurrentAuthorization()) return
         await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
-        if (controller.signal.aborted || sequence !== this.navigationSequence) return
+        if (controller.signal.aborted || sequence !== this.navigationSequence || !isCurrentAuthorization()) return
+        recordPageVisit(parsed.payload.props.pageId, workingSetScope)
         this.restoreScroll(parsed.url, options.scrollY)
         this.focusHashThread()
         window.dispatchEvent(new CustomEvent('wiki:navigation', {
           detail: { url: parsed.url.href, title: parsed.payload.props.title }
         }))
       } catch (error) {
-        if (controller.signal.aborted || sequence !== this.navigationSequence) return
+        if (controller.signal.aborted || sequence !== this.navigationSequence || !isCurrentAuthorization()) return
         this.hardNavigate(destination, options.popState)
       } finally {
         loadingStop(wikiStore, NAVIGATION_LOADING_KEY)

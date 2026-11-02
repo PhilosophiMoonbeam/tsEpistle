@@ -188,6 +188,7 @@ export default defineComponent({
 
     let loginElement: HTMLElement | null = null
     let cardElement: HTMLElement | null = null
+    let colophonElement: HTMLElement | null = null
     let desktopQuery: MediaQueryList | null = null
     let motionQuery: MediaQueryList | null = null
     let resizeObserver: ResizeObserver | null = null
@@ -235,25 +236,34 @@ export default defineComponent({
       const loginStyle = window.getComputedStyle(loginElement)
       const paddingTop = Number.parseFloat(loginStyle.paddingTop) || 0
       const paddingRight = Number.parseFloat(loginStyle.paddingRight) || 0
+      const paddingLeft = Number.parseFloat(loginStyle.paddingLeft) || 0
       const paddingBottom = Number.parseFloat(loginStyle.paddingBottom) || 0
 
-      // The physical surface is full bleed within the visible right-hand login area.
-      const fieldLeft = cardRect.right + FIELD_GUTTER_PX
-      const fieldRight = Math.min(loginRect.right, viewportWidth)
+      // Keep the physical canvas full bleed on the stage side, including in RTL.
+      const rtl = loginStyle.direction === 'rtl'
+      const fieldLeft = rtl ? Math.max(loginRect.left, 0) : cardRect.right + FIELD_GUTTER_PX
+      const fieldRight = rtl ? cardRect.left - FIELD_GUTTER_PX : Math.min(loginRect.right, viewportWidth)
       const fieldTop = Math.max(loginRect.top, 0)
       const fieldBottom = Math.min(loginRect.bottom, viewportHeight)
       const fieldWidth = fieldRight - fieldLeft
       const fieldHeight = fieldBottom - fieldTop
 
-      // Preserve the old padded field's fitted logo size and center as a logical rect.
-      const paddedFieldWidth = fieldWidth - paddingRight
-      const paddedFieldHeight = fieldHeight - paddingTop - paddingBottom
+      // Fit only inside the padded content region above the measured colophon.
+      // The physical renderer remains full bleed; localized colophon wrapping
+      // changes the logical logo fit without changing renderer startup.
+      const colophonRect = colophonElement?.getBoundingClientRect()
+      const contentBottom = colophonRect && colophonRect.height > 0
+        ? Math.min(fieldBottom - paddingBottom, colophonRect.top - FIELD_GUTTER_PX)
+        : fieldBottom - paddingBottom
+      const stagePadding = rtl ? paddingLeft : paddingRight
+      const paddedFieldWidth = fieldWidth - stagePadding
+      const paddedFieldHeight = contentBottom - fieldTop - paddingTop
       const availableWidth = paddedFieldWidth * (1 - 2 * FIELD_CLEARANCE)
       const availableHeight = paddedFieldHeight * (1 - 2 * FIELD_CLEARANCE)
       const scale = Math.min(availableWidth / effect.width, availableHeight / effect.height)
       const contentWidth = effect.width * scale
       const contentHeight = effect.height * scale
-      const contentLeft = (paddedFieldWidth - contentWidth) / 2
+      const contentLeft = (rtl ? stagePadding : 0) + (paddedFieldWidth - contentWidth) / 2
       const contentTop = paddingTop + (paddedFieldHeight - contentHeight) / 2
 
       if (
@@ -555,6 +565,9 @@ export default defineComponent({
 
       loginElement = parent
       cardElement = directCard
+      colophonElement = Array.from(parent.children).find(
+        (element): element is HTMLElement => element instanceof HTMLElement && element.classList.contains('login-colophon')
+      ) ?? null
       previousAura = loginElement.style.getPropertyValue('--login-logo-aura')
       previousAuraPriority = loginElement.style.getPropertyPriority('--login-logo-aura')
       applyAura()
@@ -577,6 +590,7 @@ export default defineComponent({
       resizeObserver = new ResizeObserver(measure)
       resizeObserver.observe(loginElement)
       resizeObserver.observe(cardElement)
+      if (colophonElement) resizeObserver.observe(colophonElement)
       resizeObserver.observe(document.documentElement)
 
       intersectionObserver = new IntersectionObserver(entries => {
@@ -607,6 +621,7 @@ export default defineComponent({
       terminalEffect = null
       loginElement = null
       cardElement = null
+      colophonElement = null
       desktopQuery = null
       motionQuery = null
       resizeObserver = null

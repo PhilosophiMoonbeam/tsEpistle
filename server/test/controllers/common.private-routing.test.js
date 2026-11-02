@@ -1,3 +1,5 @@
+import { evaluateGroupAccess } from '../../helpers/group-access.ts'
+
 vi.mockModule('express', import.meta.url, () => {
   const router = { get: vi.fn(), post: vi.fn(), all: vi.fn(), use: vi.fn() }
   const expressMock = { Router: () => router, __router: router }
@@ -298,6 +300,7 @@ describe('common page routing', () => {
     expect(global.WIKI.models.pages.getPageFromDb).toHaveBeenCalledWith(7)
     expect(allowed.render).toHaveBeenCalledWith('page', expect.objectContaining({
       page: privatePage,
+      publicSharingEligible: false,
       effectivePermissions: expect.objectContaining({ pages: { read: true, write: true, manage: true } })
     }))
   })
@@ -327,6 +330,83 @@ describe('common page routing', () => {
     }, res, vi.fn())
 
     expect(res.render).toHaveBeenCalledWith('page', expect.objectContaining({ page: optedOutPage }))
+  })
+
+  it.each([
+    ['public unsearchable', true],
+    ['path denied', false],
+    ['tag alias denied', false],
+    ['locale not granted', false],
+    ['missing read permission', false],
+    ['protected administrator', false],
+    ['protected unlocked reader', false],
+    ['policy disabled', false],
+    ['unpublished writer', false],
+    ['scheduled writer', false],
+    ['expired writer', false]
+  ])('admits external sharing independently of the successful current reader: %s', async (scenario, eligible) => {
+    const protectedPage = scenario.startsWith('protected')
+    const page = {
+      ...privatePage,
+      path: 'guides/shared',
+      visibility: 'public',
+      ownerId: null,
+      isSearchable: false,
+      isPublished: scenario !== 'unpublished writer',
+      publishStartDate: scenario === 'scheduled writer' ? '2999-01-01T00:00:00Z' : null,
+      publishEndDate: scenario === 'expired writer' ? '2000-01-01T00:00:00Z' : null,
+      tags: [{ tag: 'retired-secret' }]
+    }
+    const rules = [{ match: 'START', path: 'guides', deny: false, roles: ['read:pages'], locales: scenario === 'locale not granted' ? ['fr'] : ['en'] }]
+    if (scenario === 'path denied') rules.push({ match: 'EXACT', path: page.path, deny: true, roles: ['read:pages'], locales: ['en'] })
+    if (scenario === 'tag alias denied') rules.push({ match: 'TAG', path: 'secret', deny: true, roles: ['read:pages'], locales: ['en'] })
+    const user = scenario === 'protected unlocked reader'
+      ? { id: 9, permissions: ['read:pages'] }
+      : { id: 1, permissions: ['manage:system', 'read:pages'] }
+    global.WIKI.config.features.publicSocialSharing = scenario !== 'policy disabled'
+    global.WIKI.models.pages.getPage.mockResolvedValue(page)
+    global.WIKI.auth.getEffectivePermissions.mockReturnValue({
+      pages: { read: true, write: true, manage: true },
+      history: { read: true },
+      source: { read: true }
+    })
+    global.WIKI.auth.loadPageRuleAuthority.mockImplementation(async requester => ({
+      requester,
+      permissions: requester.id === 2 ? scenario === 'missing read permission' ? [] : ['read:pages'] : user.permissions,
+      groups: [{ id: 2, pageRules: rules }],
+      tagAliases: { 'retired-secret': 'secret', secret: 'secret' }
+    }))
+    global.WIKI.auth.checkPageAccess.mockImplementation((requester, permissions, context, authority) =>
+      authority.requester === requester && evaluateGroupAccess(authority.permissions, permissions, authority.groups, context, authority.tagAliases, false).allowed
+    )
+    global.WIKI.models.knex.mockImplementation(table => {
+      const query = {
+        where: vi.fn(() => query),
+        first: vi.fn(async () => {
+          if (table === 'pageAccessPasswords') return protectedPage ? { pageId: page.id, version: 1 } : undefined
+          if (table === 'pageUnlockGrants' && scenario === 'protected unlocked reader') return { id: 'current-session-grant' }
+          return undefined
+        }),
+        delete: vi.fn(async () => 0)
+      }
+      return query
+    })
+    const { view } = await handlers()
+    const res = response()
+    await view({
+      ...request(user),
+      path: '/en/guides/shared',
+      originalUrl: '/en/guides/shared',
+      sessionID: 'current-reader-session'
+    }, res, vi.fn())
+    expect(res.render).toHaveBeenCalledWith('page', expect.objectContaining({
+      page: expect.objectContaining({ id: page.id, title: page.title }),
+      publicSharingEligible: eligible
+    }))
+    const guestCalls = global.WIKI.auth.loadPageRuleAuthority.mock.calls.filter(([requester]) => requester.id === 2)
+    const shouldCheckGuest = !protectedPage && scenario !== 'policy disabled' && !scenario.endsWith('writer')
+    expect(guestCalls).toHaveLength(shouldCheckGuest ? 1 : 0)
+    if (shouldCheckGuest) expect(guestCalls[0][0]).toEqual({ id: 2, ownershipUserId: null })
   })
 
 

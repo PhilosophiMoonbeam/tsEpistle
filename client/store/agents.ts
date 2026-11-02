@@ -15,7 +15,19 @@ import type { WikiSource } from '../../shared/wiki-source.ts'
 import { defineStore } from 'pinia'
 import { markRaw } from 'vue'
 import { translate } from '../modules/localization.ts'
-import { AgentMemoryContextProjectionSchema, AgentManualMemorySavedReceiptSchema, type AgentConversationFolderView, type AgentCurrentPageHint, type AgentEvent, type AgentEventType, type AgentMemoryContextProjection, type AgentMemoryReceiptDelivery, type AgentMemoryTargetCount, type AgentThreadState } from '../../shared/agents/contracts.ts'
+import {
+  AgentMemoryContextProjectionSchema,
+  AgentManualMemorySavedReceiptSchema,
+  type AgentConversationFolderView,
+  type AgentCurrentPageHint,
+  type AgentEvent,
+  type AgentEventType,
+  type AgentMemoryContextProjection,
+  type AgentMemoryReceiptDelivery,
+  type AgentMemoryTargetCount,
+  type AgentPresetId,
+  type AgentThreadState
+} from '../../shared/agents/contracts.ts'
 import {
   AgentApiError,
   cancelAgentGoal,
@@ -45,6 +57,11 @@ import {
   type VisibleAgentSkill
 } from '../helpers/agents-api.ts'
 
+export interface AgentSendOptions {
+  /** Display-only identity of the clicked starter; never inferred from its content. */
+  readonly presetId?: AgentPresetId
+}
+
 export interface AgentMemoryMutationCapture {
   readonly ownerId: number
   readonly sessionId: string | null
@@ -57,9 +74,7 @@ const nextMemorySession = (context: AgentMemoryContextProjection): AgentMemoryCo
   const compare = (target: 'user' | 'agent'): 'unknown' | 'unchanged' | 'changed' => {
     const frozen = context.frozen[target]
     const saved = context.latestSaved[target]
-    return frozen.state === 'available' && saved.state === 'available'
-      ? frozen.snapshotId === saved.snapshotId ? 'unchanged' : 'changed'
-      : 'unknown'
+    return frozen.state === 'available' && saved.state === 'available' ? (frozen.snapshotId === saved.snapshotId ? 'unchanged' : 'changed') : 'unknown'
   }
   return { user: compare('user'), agent: compare('agent') }
 }
@@ -72,14 +87,26 @@ const sameMemoryCount = (left: AgentMemoryTargetCount, right: AgentMemoryTargetC
 const preserveAgentRunProgress = (projected: AgentThreadState, current: AgentThreadState | null): AgentThreadState => {
   const incoming = projected.session.currentRun
   const observed = current?.session.currentRun
-  if (!current || !incoming || !observed || incoming.id !== observed.id || projected.session.id !== current.session.id ||
+  if (
+    !current ||
+    !incoming ||
+    !observed ||
+    incoming.id !== observed.id ||
+    projected.session.id !== current.session.id ||
     projected.memoryContext.ownerId !== current.memoryContext.ownerId ||
-    (incoming.attempt >= observed.attempt && incoming.eventSequence >= observed.eventSequence)) return projected
+    (incoming.attempt >= observed.attempt && incoming.eventSequence >= observed.eventSequence)
+  )
+    return projected
   return {
     ...projected,
-    session: { ...projected.session, currentRun: {
-      ...incoming, attempt: Math.max(incoming.attempt, observed.attempt), eventSequence: Math.max(incoming.eventSequence, observed.eventSequence)
-    } }
+    session: {
+      ...projected.session,
+      currentRun: {
+        ...incoming,
+        attempt: Math.max(incoming.attempt, observed.attempt),
+        eventSequence: Math.max(incoming.eventSequence, observed.eventSequence)
+      }
+    }
   }
 }
 
@@ -182,7 +209,10 @@ const readThreadWithDeadline = async (
   const { promise: aborted, reject } = Promise.withResolvers<never>()
   const onAbort = (): void => reject(signal.reason)
   signal.addEventListener('abort', onAbort, { once: true })
-  const timer = window.setTimeout(() => controller.abort(new AgentApiError(408, 'The conversation read timed out. Try again.')), Math.max(0, deadline - Date.now()))
+  const timer = window.setTimeout(
+    () => controller.abort(new AgentApiError(408, 'The conversation read timed out. Try again.')),
+    Math.max(0, deadline - Date.now())
+  )
   try {
     const thread = await Promise.race([getAgentThread(fetchFromWindow, csrfToken, sessionId, signal), aborted])
     if (Date.now() >= deadline) throw new AgentApiError(408, 'The conversation read timed out. Try again.')
@@ -296,8 +326,14 @@ export const useAgentsStore = defineStore('agents', {
     sessionMutationBusy: state => state.sessionMutationToken !== null,
     sourceContext: state => {
       const sessionId = state.thread?.session.id
-      if (state.workspaceDisposed || state.workspaceOwnerId === null || !sessionId ||
-        state.thread?.memoryContext.ownerId !== state.workspaceOwnerId || state.thread.memoryContext.sessionId !== sessionId) return null
+      if (
+        state.workspaceDisposed ||
+        state.workspaceOwnerId === null ||
+        !sessionId ||
+        state.thread?.memoryContext.ownerId !== state.workspaceOwnerId ||
+        state.thread.memoryContext.sessionId !== sessionId
+      )
+        return null
       return projectAgentSourceContext(
         state.drafts[sessionId] ?? emptyAgentDraft(),
         { kind: 'draft', ownerId: state.workspaceOwnerId, draftId: sessionId, sessionId },
@@ -328,14 +364,29 @@ export const useAgentsStore = defineStore('agents', {
     memoryReceipt: (state): AgentMemoryReceiptDelivery | null => {
       const capture = state.memoryReceiptCapture
       const delivery = state.eligibleMemoryReceipt
-      if (!capture || !delivery || delivery.phase !== 'live' || delivery.generation !== state.workspaceVersion || state.workspaceDisposed || state.networkPaused ||
-        capture.ownerId !== state.workspaceOwnerId || capture.sessionId !== (state.thread?.session.id ?? null) ||
-        capture.generation !== state.workspaceVersion || capture.ownerGeneration !== state.ownerGeneration ||
+      if (
+        !capture ||
+        !delivery ||
+        delivery.phase !== 'live' ||
+        delivery.generation !== state.workspaceVersion ||
+        state.workspaceDisposed ||
+        state.networkPaused ||
+        capture.ownerId !== state.workspaceOwnerId ||
+        capture.sessionId !== (state.thread?.session.id ?? null) ||
+        capture.generation !== state.workspaceVersion ||
+        capture.ownerGeneration !== state.ownerGeneration ||
         capture.selectionVersion !== state.sessionTransitionVersion ||
-        (state.thread !== null && state.thread.memoryContext.ownerId !== state.workspaceOwnerId)) return null
+        (state.thread !== null && state.thread.memoryContext.ownerId !== state.workspaceOwnerId)
+      )
+        return null
       const receipt = delivery.receipt
-      if (receipt.runId !== null && (receipt.runId !== state.thread?.session.currentRun?.id ||
-        receipt.attempt !== state.thread.session.currentRun.attempt || receipt.data.snapshotId !== state.thread.memoryContext.frozen.snapshotId)) return null
+      if (
+        receipt.runId !== null &&
+        (receipt.runId !== state.thread?.session.currentRun?.id ||
+          receipt.attempt !== state.thread.session.currentRun.attempt ||
+          receipt.data.snapshotId !== state.thread.memoryContext.frozen.snapshotId)
+      )
+        return null
       return delivery
     }
   },
@@ -345,21 +396,32 @@ export const useAgentsStore = defineStore('agents', {
       this.memoryReceiptCapture = null
     },
     captureMemoryMutationContext(): AgentMemoryMutationCapture | null {
-      if (this.workspaceDisposed || this.workspaceOwnerId === null || this.networkPaused ||
-        (this.thread !== null && (this.thread.memoryContext.ownerId !== this.workspaceOwnerId || this.thread.memoryContext.sessionId !== this.thread.session.id))) return null
+      if (
+        this.workspaceDisposed ||
+        this.workspaceOwnerId === null ||
+        this.networkPaused ||
+        (this.thread !== null &&
+          (this.thread.memoryContext.ownerId !== this.workspaceOwnerId || this.thread.memoryContext.sessionId !== this.thread.session.id))
+      )
+        return null
       return {
-        ownerId: this.workspaceOwnerId, sessionId: this.thread?.session.id ?? null,
-        generation: this.workspaceVersion, ownerGeneration: this.ownerGeneration,
+        ownerId: this.workspaceOwnerId,
+        sessionId: this.thread?.session.id ?? null,
+        generation: this.workspaceVersion,
+        ownerGeneration: this.ownerGeneration,
         selectionVersion: this.sessionTransitionVersion
       }
     },
     isMemoryMutationContextCurrent(capture: AgentMemoryMutationCapture): boolean {
-      return this.isOwnerContextCurrent(capture.generation, capture.ownerId, capture.ownerGeneration) &&
-        this.sessionTransitionVersion === capture.selectionVersion && (this.thread?.session.id ?? null) === capture.sessionId && !this.networkPaused
+      return (
+        this.isOwnerContextCurrent(capture.generation, capture.ownerId, capture.ownerGeneration) &&
+        this.sessionTransitionVersion === capture.selectionVersion &&
+        (this.thread?.session.id ?? null) === capture.sessionId &&
+        !this.networkPaused
+      )
     },
     assertThreadContext(thread: AgentThreadState): void {
-      if (thread.memoryContext.sessionId !== thread.session.id ||
-        (this.workspaceOwnerId !== null && thread.memoryContext.ownerId !== this.workspaceOwnerId))
+      if (thread.memoryContext.sessionId !== thread.session.id || (this.workspaceOwnerId !== null && thread.memoryContext.ownerId !== this.workspaceOwnerId))
         throw new AgentApiError(502, 'Agent returned a foreign memory context.')
     },
     projectSavedMemory(targets: readonly AgentMemoryTargetCount[]): boolean {
@@ -398,10 +460,15 @@ export const useAgentsStore = defineStore('agents', {
       const parsed = AgentManualMemorySavedReceiptSchema.safeParse(value)
       if (!parsed.success || !this.isMemoryMutationContextCurrent(capture)) return false
       const receipt = parsed.data
-      if (receipt.ownerId !== capture.ownerId || receipt.sessionId !== capture.sessionId ||
+      if (
+        receipt.ownerId !== capture.ownerId ||
+        receipt.sessionId !== capture.sessionId ||
         receipt.operation !== (expected.entryId === null ? 'add' : 'replace') ||
-        (expected.entryId !== null && receipt.entryId !== expected.entryId) || receipt.entryVersion !== expected.entryVersion ||
-        !receipt.targets.some(row => row.target === expected.target)) return false
+        (expected.entryId !== null && receipt.entryId !== expected.entryId) ||
+        receipt.entryVersion !== expected.entryVersion ||
+        !receipt.targets.some(row => row.target === expected.target)
+      )
+        return false
       const key = JSON.stringify([receipt.ownerId, receipt.entryId])
       if (this.manualMemoryIdentityOverflow || receipt.entryVersion <= (this.manualMemoryVersions[key] ?? 0)) return false
       if (!(key in this.manualMemoryVersions) && Object.keys(this.manualMemoryVersions).length >= RECEIPT_IDENTITY_LIMIT) {
@@ -416,22 +483,37 @@ export const useAgentsStore = defineStore('agents', {
     },
     projectRunMemoryReceipt(event: AgentEvent, phase: 'replay' | 'live', capture: AgentMemoryMutationCapture | null): void {
       if (event.type !== 'memory.contextIncluded' && event.type !== 'memory.saved') return
-      const operation = JSON.stringify([event.runId, event.attempt, event.type,
-        event.type === 'memory.contextIncluded' ? event.data.deliveryId : event.data.operationId])
+      const operation = JSON.stringify([
+        event.runId,
+        event.attempt,
+        event.type,
+        event.type === 'memory.contextIncluded' ? event.data.deliveryId : event.data.operationId
+      ])
       if (this.seenMemoryOperations.includes(operation)) return
       if (this.seenMemoryOperations.length >= RECEIPT_IDENTITY_LIMIT) this.receiptIdentityOverflow = true
       else this.seenMemoryOperations.push(operation)
       const context = this.memoryContext
       const run = this.thread?.session.currentRun
-      if (phase !== 'live' || this.receiptIdentityOverflow || !capture || !this.isMemoryMutationContextCurrent(capture) || !context || !run || run.attempt < 1 ||
-        event.runId !== run.id || event.attempt !== run.attempt || event.data.ownerId !== capture.ownerId ||
-        event.data.sessionId !== capture.sessionId || event.data.snapshotId !== context.frozen.snapshotId) return
+      if (
+        phase !== 'live' ||
+        this.receiptIdentityOverflow ||
+        !capture ||
+        !this.isMemoryMutationContextCurrent(capture) ||
+        !context ||
+        !run ||
+        run.attempt < 1 ||
+        event.runId !== run.id ||
+        event.attempt !== run.attempt ||
+        event.data.ownerId !== capture.ownerId ||
+        event.data.sessionId !== capture.sessionId ||
+        event.data.snapshotId !== context.frozen.snapshotId
+      )
+        return
       if (event.type === 'memory.contextIncluded') {
         const expected = [context.frozen.user, context.frozen.agent].filter(
           (row): row is AgentMemoryTargetCount & { state: 'available' } => row.state === 'available' && row.characters > 0
         )
-        if (event.data.targets.length !== expected.length ||
-          !expected.every(row => event.data.targets.some(target => sameMemoryCount(row, target)))) return
+        if (event.data.targets.length !== expected.length || !expected.every(row => event.data.targets.some(target => sameMemoryCount(row, target)))) return
       } else {
         if (!this.projectSavedMemory(event.data.targets)) return
       }
@@ -547,11 +629,9 @@ export const useAgentsStore = defineStore('agents', {
         const explicitSessionId = isAgentSessionId(routeSessionId) ? routeSessionId : requestedResumeId
         const candidates = [
           ...new Set(
-            [
-              explicitSessionId,
-              retainOpenWorkspace && this.thread === previousThread ? previousThread.session.id : null,
-              recent?.sessionId ?? null
-            ].filter((id): id is string => id !== null)
+            [explicitSessionId, retainOpenWorkspace && this.thread === previousThread ? previousThread.session.id : null, recent?.sessionId ?? null].filter(
+              (id): id is string => id !== null
+            )
           )
         ]
         let unavailableDraft = explicitSessionId === null || explicitSessionId === previousThread?.session.id ? unavailableComposition : undefined
@@ -580,9 +660,12 @@ export const useAgentsStore = defineStore('agents', {
           }
         }
         if (initialized && isCurrent()) {
-          const context = previousThread?.session.id === this.thread?.session.id
-            ? previousContext
-            : recent !== null && recent.sessionId === this.thread?.session.id ? recent.context : undefined
+          const context =
+            previousThread?.session.id === this.thread?.session.id
+              ? previousContext
+              : recent !== null && recent.sessionId === this.thread?.session.id
+                ? recent.context
+                : undefined
           initialized = await this.reconcileConversationContext(context)
           if (initialized && isCurrent()) {
             this.workspaceClosedAt = null
@@ -622,7 +705,8 @@ export const useAgentsStore = defineStore('agents', {
       }
     },
     clearConversationSelection(sessionId?: string): void {
-      if (sessionId === undefined || (this.workspaceOwnerId !== null && readAgentChatRecent(this.workspaceOwnerId)?.sessionId === sessionId)) clearAgentChatRecent()
+      if (sessionId === undefined || (this.workspaceOwnerId !== null && readAgentChatRecent(this.workspaceOwnerId)?.sessionId === sessionId))
+        clearAgentChatRecent()
       if (sessionId === undefined || this.continuitySessionId === sessionId) {
         this.continuitySessionId = null
         this.workspaceClosedAt = null
@@ -680,16 +764,20 @@ export const useAgentsStore = defineStore('agents', {
         this.drafts[sessionId] === undefined
       let unavailable = false
       try {
-        const sources = (await Promise.all(previous.sources.map(async selector => {
-          try {
-            const source = await fetchWikiSource({ id: selector.id }, '', controller.signal)
-            if (!sameAgentChatPage(source, selector)) throw new Error('Source identity changed.')
-            return source
-          } catch {
-            if (!controller.signal.aborted) unavailable = true
-            return null
-          }
-        }))).filter((source): source is WikiSource => source !== null)
+        const sources = (
+          await Promise.all(
+            previous.sources.map(async selector => {
+              try {
+                const source = await fetchWikiSource({ id: selector.id }, '', controller.signal)
+                if (!sameAgentChatPage(source, selector)) throw new Error('Source identity changed.')
+                return source
+              } catch {
+                if (!controller.signal.aborted) unavailable = true
+                return null
+              }
+            })
+          )
+        ).filter((source): source is WikiSource => source !== null)
         if (!isCurrent()) return false
         this.drafts[sessionId] = { ...emptyAgentDraft(), sources, includeCurrentPage: previous.includeCurrentPage }
         this.contextTransferNotice = unavailable ? 'A previous source could not be restored. Check access and add it again if needed.' : ''
@@ -789,7 +877,12 @@ export const useAgentsStore = defineStore('agents', {
       this.sessionTransitionKind = null
     },
     closeWorkspace() {
-      if (!this.workspaceDisposed && this.workspaceClosedAt === null && this.workspaceOwnerId !== null && this.thread?.session.id === this.continuitySessionId) {
+      if (
+        !this.workspaceDisposed &&
+        this.workspaceClosedAt === null &&
+        this.workspaceOwnerId !== null &&
+        this.thread?.session.id === this.continuitySessionId
+      ) {
         this.workspaceClosedAt = Date.now()
         this.persistConversationContext()
       }
@@ -902,11 +995,16 @@ export const useAgentsStore = defineStore('agents', {
       try {
         const knowledgeContext = AgentKnowledgeContextSchema.safeParse(message.knowledgeContext)
         if (!knowledgeContext.success) throw new Error('Historical source context is unavailable.')
-        const restored = await Promise.all(knowledgeContext.data.sources.map(async selector => {
-          const source = await fetchWikiSource({ id: selector.id }, '', controller.signal)
-          if (agentSourceIdentityKey(source) !== agentSourceIdentityKey(selector)) throw new Error('Source identity changed.')
-          return { source: { ...source, ...selector }, access: source.sourceRevision === selector.sourceRevision ? 'accessible' as const : 'stale' as const }
-        }))
+        const restored = await Promise.all(
+          knowledgeContext.data.sources.map(async selector => {
+            const source = await fetchWikiSource({ id: selector.id }, '', controller.signal)
+            if (agentSourceIdentityKey(source) !== agentSourceIdentityKey(selector)) throw new Error('Source identity changed.')
+            return {
+              source: { ...source, ...selector },
+              access: source.sourceRevision === selector.sourceRevision ? ('accessible' as const) : ('stale' as const)
+            }
+          })
+        )
         if (!isCurrent()) return null
         this.updateDraft(sessionId, {
           text: message.content,
@@ -916,9 +1014,10 @@ export const useAgentsStore = defineStore('agents', {
           includeCurrentPage: message.currentPage != null,
           currentPageOverride: message.currentPage ? { ...message.currentPage } : null
         })
-        this.contextTransferNotice = message.currentPage === undefined || restored.some(row => row.access !== 'accessible')
-          ? 'A previous source could not be restored. Check access and add it again if needed.'
-          : ''
+        this.contextTransferNotice =
+          message.currentPage === undefined || restored.some(row => row.access !== 'accessible')
+            ? 'A previous source could not be restored. Check access and add it again if needed.'
+            : ''
         return message.content
       } catch {
         if (isCurrent()) this.contextTransferNotice = 'A previous source could not be restored. Check access and add it again if needed.'
@@ -1062,9 +1161,10 @@ export const useAgentsStore = defineStore('agents', {
         const refreshed = await readThreadWithDeadline(this.csrfToken, sessionId, controller, deadline)
         if (!isCurrent()) return refreshResult(false, false)
         this.assertThreadContext(refreshed)
-        const context = this.memorySavedGeneration !== memorySavedGeneration && this.thread?.memoryContext.ownerId === ownerId
-          ? { ...refreshed.memoryContext, latestSaved: this.thread.memoryContext.latestSaved }
-          : refreshed.memoryContext
+        const context =
+          this.memorySavedGeneration !== memorySavedGeneration && this.thread?.memoryContext.ownerId === ownerId
+            ? { ...refreshed.memoryContext, latestSaved: this.thread.memoryContext.latestSaved }
+            : refreshed.memoryContext
         context.nextSession = nextMemorySession(context)
         this.thread = markRaw(preserveAgentRunProgress({ ...refreshed, memoryContext: AgentMemoryContextProjectionSchema.parse(context) }, this.thread))
         this.initializedWorkspaceVersion = workspaceVersion
@@ -1415,14 +1515,18 @@ export const useAgentsStore = defineStore('agents', {
       invokedSkillVersionIds: readonly string[] = [],
       mode: 'message' | 'goal' = 'message',
       media?: AgentMediaSubmission,
-      onAccepted?: () => void
+      onAccepted?: () => void,
+      options?: AgentSendOptions
     ): Promise<boolean> {
       if (!this.isWorkspaceReady() || this.contextTransferController !== null) return false
       const thread = this.thread
       const trimmed = content.trim()
+      const clickedPresetId = mode === 'message' ? options?.presetId : undefined
       const draftSnapshot = JSON.parse(JSON.stringify(this.drafts[thread?.session.id ?? ''] ?? emptyAgentDraft())) as AgentDraft
       const currentPage = draftSnapshot.includeCurrentPage
-        ? (draftSnapshot.currentPageOverride === undefined ? this.contextPage ?? this.launchPage : draftSnapshot.currentPageOverride)
+        ? draftSnapshot.currentPageOverride === undefined
+          ? (this.contextPage ?? this.launchPage)
+          : draftSnapshot.currentPageOverride
         : null
       const clickedCurrentPage = currentPage ? { ...currentPage } : null
       if (
@@ -1511,7 +1615,8 @@ export const useAgentsStore = defineStore('agents', {
           } else {
             await submitAgentMessage(fetchFromWindow, this.csrfToken, sessionId, {
               ...request,
-              content: trimmed,
+              content: clickedPresetId === undefined ? trimmed : content,
+              ...(clickedPresetId === undefined ? {} : { presetId: clickedPresetId }),
               ...(clickedMedia ? { attachmentIds: clickedMedia.attachmentIds, generationTools: clickedMedia.generationTools } : {})
             })
           }
@@ -1894,7 +1999,11 @@ export const useAgentsStore = defineStore('agents', {
         try {
           await deleteAgentSession(fetchFromWindow, this.csrfToken, sessionId)
         } catch (error) {
-          if (this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) && error instanceof AgentApiError && (error.status === 404 || error.status === 410))
+          if (
+            this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
+            error instanceof AgentApiError &&
+            (error.status === 404 || error.status === 410)
+          )
             this.clearConversationSelection(sessionId)
           if (this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration)) {
             const refreshed = await this.reloadSessions()
@@ -1908,7 +2017,8 @@ export const useAgentsStore = defineStore('agents', {
           !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
           !this.isSessionTransitionCurrent(version) ||
           !this.isSessionMutationOwned(mutationToken)
-        ) return true
+        )
+          return true
         delete this.drafts[sessionId]
         this.clearConversationSelection(sessionId)
         // Let the initiating UI acknowledge this commit before the thread transition invalidates it.
@@ -2048,8 +2158,16 @@ export const useAgentsStore = defineStore('agents', {
       const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
       const run = this.thread?.session.currentRun
-      if (!sessionId || ownerId === null || this.thread?.memoryContext.ownerId !== ownerId ||
-        this.thread.memoryContext.sessionId !== sessionId || !run?.canCancel || run.id !== runId || !this.isWorkspaceCurrent(workspaceVersion)) return
+      if (
+        !sessionId ||
+        ownerId === null ||
+        this.thread?.memoryContext.ownerId !== ownerId ||
+        this.thread.memoryContext.sessionId !== sessionId ||
+        !run?.canCancel ||
+        run.id !== runId ||
+        !this.isWorkspaceCurrent(workspaceVersion)
+      )
+        return
       this.networkPaused = false
       let receiptContext = this.captureMemoryMutationContext()
       this.listenForVisibility()
@@ -2061,8 +2179,7 @@ export const useAgentsStore = defineStore('agents', {
       const generation = this.connectionGeneration + 1
       this.connectionGeneration = generation
       const isCurrent = (): boolean =>
-        this.isConnectionCurrent(generation, workspaceVersion, sessionId, runId) &&
-        this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration)
+        this.isConnectionCurrent(generation, workspaceVersion, sessionId, runId) && this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration)
       if (this.eventRunId !== runId) {
         this.eventRunId = runId
         this.eventSequence = 0
@@ -2092,18 +2209,38 @@ export const useAgentsStore = defineStore('agents', {
             else this.seenEventIds.push(event.id)
             const currentThread = this.thread
             const currentRun = currentThread?.session.currentRun
-            if (event.type === 'run.attemptStarted' && event.attempt > 0 && event.data.runId === runId &&
-              event.data.attempt === event.attempt && currentThread && currentRun?.id === runId && event.attempt >= currentRun.attempt) {
-              this.thread = markRaw({ ...currentThread, session: { ...currentThread.session, currentRun: {
-                ...currentRun, attempt: event.attempt, eventSequence: Math.max(currentRun.eventSequence, event.sequence)
-              } } })
+            if (
+              event.type === 'run.attemptStarted' &&
+              event.attempt > 0 &&
+              event.data.runId === runId &&
+              event.data.attempt === event.attempt &&
+              currentThread &&
+              currentRun?.id === runId &&
+              event.attempt >= currentRun.attempt
+            ) {
+              this.thread = markRaw({
+                ...currentThread,
+                session: {
+                  ...currentThread.session,
+                  currentRun: {
+                    ...currentRun,
+                    attempt: event.attempt,
+                    eventSequence: Math.max(currentRun.eventSequence, event.sequence)
+                  }
+                }
+              })
             }
             // Settings mutations retain this authorized stream. Renew only after
             // their transition is settled; a pending selection still fences it.
-            if (receiptContext && !this.isMemoryMutationContextCurrent(receiptContext) &&
+            if (
+              receiptContext &&
+              !this.isMemoryMutationContextCurrent(receiptContext) &&
               this.isOwnerContextCurrent(receiptContext.generation, receiptContext.ownerId, receiptContext.ownerGeneration) &&
-              receiptContext.sessionId === sessionId && this.sessionMutationToken === null &&
-              this.sessionTransitionController === null && this.sessionTransitionKind !== 'read') {
+              receiptContext.sessionId === sessionId &&
+              this.sessionMutationToken === null &&
+              this.sessionTransitionController === null &&
+              this.sessionTransitionKind !== 'read'
+            ) {
               receiptContext = this.captureMemoryMutationContext()
             }
             this.projectRunMemoryReceipt(event, phase, receiptContext)

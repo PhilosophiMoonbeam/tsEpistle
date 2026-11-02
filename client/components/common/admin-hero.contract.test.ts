@@ -34,29 +34,59 @@ afterEach(() => {
   resetBody()
 })
 
-const mountHero = (initialProps: { title: string; description?: string; eyebrow?: string; headingId?: string; icon?: string }, slots: Record<string, () => VNode> = {}) => {
+const mountHero = (
+  initialProps: { title: string; description?: string; eyebrow?: string; headingId?: string; icon?: string },
+  slots: Record<string, () => VNode> = {}
+) => {
   const props = Vue.reactive({ ...initialProps })
   const host = document.createElement('div')
   document.body.append(host)
   const app = Vue.createApp({ setup: () => () => Vue.h(AdminHero, props, slots) })
   // Only adapt the icon dependency; the actual compiled hero chooses the branch and hides decoration.
-  app.component('v-icon', Vue.defineComponent({ setup: (_, { slots }) => () => Vue.h('span', { class: 'hero-test-icon' }, slots.default?.()) }))
+  app.component(
+    'v-icon',
+    Vue.defineComponent({
+      setup:
+        (_, { slots }) =>
+        () =>
+          Vue.h('span', { class: 'hero-test-icon' }, slots.default?.())
+    })
+  )
   app.mount(host)
-  cleanups.push(() => { app.unmount(); host.remove() })
+  cleanups.push(() => {
+    app.unmount()
+    host.remove()
+  })
   return { host, props }
 }
 
 describe('AdminHero public contract', () => {
-  test('renders caller status and an accessible action that remains actionable', () => {
+  test('preserves caller disclosure state and live actions when operational header data changes', async () => {
     const reload = vi.fn()
-    const { host } = mountHero({ title: 'API access' }, {
-      status: () => Vue.h('span', { role: 'status' }, 'API-key access enabled'),
-      actions: () => Vue.h('button', { type: 'button', onClick: reload }, 'Reload workspace')
-    })
+    const { host, props } = mountHero(
+      { title: 'API access' },
+      {
+        status: () => Vue.h('span', { role: 'status' }, 'API-key access enabled'),
+        extra: () => Vue.h('details', [Vue.h('summary', 'Connection details'), Vue.h('input', { 'aria-label': 'Connection note' })]),
+        actions: () => Vue.h('button', { type: 'button', onClick: reload }, 'Reload workspace')
+      }
+    )
 
     expect(host.querySelector('[role="status"]')?.textContent).toBe('API-key access enabled')
     const button = host.querySelector<HTMLButtonElement>('button')!
     expect(button.textContent).toBe('Reload workspace')
+    const disclosure = host.querySelector('details')!
+    disclosure.open = true
+    const note = disclosure.querySelector('input')!
+    note.value = 'Keep this local note'
+    note.focus()
+    props.title = 'API access updated'
+    await Vue.nextTick()
+    expect(host.querySelector('h1')?.textContent).toBe('API access updated')
+    expect(host.querySelector('details')).toBe(disclosure)
+    expect(disclosure.open).toBe(true)
+    expect(note.value).toBe('Keep this local note')
+    expect(document.activeElement).toBe(note)
     button.click()
     expect(reload).toHaveBeenCalledTimes(1)
   })

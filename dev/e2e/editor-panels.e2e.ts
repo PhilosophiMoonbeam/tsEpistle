@@ -190,7 +190,7 @@ for (const format of ['visual-markdown', 'visual-html'] as const) {
         await editor.getByRole('heading').first().click()
         // A real draft edit retires the editor's first-focus reconciliation.
         await page.keyboard.insertText('x')
-        await expect(page.getByRole('button', { name: /^Save \(/ }).first()).toBeVisible()
+        await expect(page.getByRole('button', { name: 'Save and close', exact: true })).toHaveAttribute('data-commitment', 'active')
         const selectionReady = await editor.evaluateHandle(root => {
           const doc = root.ownerDocument
           const controller = new AbortController()
@@ -248,7 +248,8 @@ for (const format of ['visual-markdown', 'visual-html'] as const) {
         await page.goto(`/e${readerPath}`, { waitUntil: 'networkidle' })
         await expect(editor).toBeVisible({ timeout: 15_000 })
         await expect.poll(() => editor.textContent()).toBe(originalText)
-        await expect(page.getByRole('button', { name: 'Saved', exact: true })).toBeVisible()
+        await expect(page.locator('.editor-save-status')).toHaveText('Saved')
+        await expect(page.getByRole('button', { name: 'Saved', exact: true })).toHaveCount(0)
         await expect(page.getByRole('status').filter({ hasText: /^Unsaved changes$/u })).toHaveCount(0)
         await closeVisualEditor(page, readerPath)
       } finally {
@@ -358,7 +359,12 @@ routedEditorTest('asset browser keeps folder, upload, and insertion actions cont
   const dialog = page.getByRole('dialog', { name: 'Assets', exact: true })
   await expect(dialog.getByRole('row', { name: 'Select brand-mark.png', exact: true })).toBeVisible()
   await assertControlsContained(page)
-  for (const name of ['Browse files', 'Create folder', 'Cancel', 'Insert', 'Upload']) {
+  const browse = dialog.locator('.filepond--label-action')
+  await expect(browse).toHaveCount(1)
+  await expect(browse).toHaveText('Browse')
+  await browse.scrollIntoViewIfNeeded()
+  await expect(browse).toBeInViewport({ ratio: 1 })
+  for (const name of ['Create folder', 'Cancel', 'Insert', 'Upload']) {
     await dialog.getByRole('button', { name, exact: true }).scrollIntoViewIfNeeded()
     await expect(dialog.getByRole('button', { name, exact: true })).toBeVisible()
     const reachable = await dialog.getByRole('button', { name, exact: true }).evaluate(element => {
@@ -368,10 +374,11 @@ routedEditorTest('asset browser keeps folder, upload, and insertion actions cont
     })
     expect(reachable, `${name} is fully reachable above the editor navigation`).toBe(true)
   }
-  await dialog.getByRole('button', { name: 'Browse files', exact: true }).scrollIntoViewIfNeeded()
+  await browse.scrollIntoViewIfNeeded()
   const chooser = page.waitForEvent('filechooser')
-  await dialog.getByRole('button', { name: 'Browse files', exact: true }).click()
+  await browse.click()
   await (await chooser).setFiles({ name: 'queued-reference-document.txt', mimeType: 'text/plain', buffer: Buffer.from('Local queue only.') })
+  await expect(dialog.getByRole('button', { name: 'Upload 1', exact: true })).toBeEnabled()
 
   await expect(dialog.locator('.filepond--file')).toBeVisible()
   await assertControlsContained(page)
@@ -387,7 +394,9 @@ routedEditorTest('asset browser keeps folder, upload, and insertion actions cont
 })
 routedEditorTest('page identity asset results stay within the viewport and scroll internally', async ({ page }) => {
   await openEditor(page, { largeAssetFixture: true })
-  await page.getByRole('button', { name: 'Page', exact: true }).click()
+  const propertiesAction = page.getByRole('button', { name: 'Page Properties', exact: true })
+  await expect(propertiesAction).toHaveCount(1)
+  await propertiesAction.click()
   const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
   await expect(properties).toBeVisible()
   await properties.getByRole('button', { name: 'Select', exact: true }).click()
@@ -433,8 +442,10 @@ routedEditorTest('page identity asset results stay within the viewport and scrol
     )
     .toBe(true)
 
-  for (const name of ['Browse files', 'Upload']) {
-    const action = picker.getByRole('button', { name, exact: true })
+  const browse = picker.locator('.filepond--label-action')
+  await expect(browse).toHaveCount(1)
+  await expect(browse).toHaveText('Browse')
+  for (const action of [browse, picker.getByRole('button', { name: 'Upload', exact: true })]) {
     await action.scrollIntoViewIfNeeded()
     await expect(action).toBeInViewport({ ratio: 1 })
   }
@@ -700,7 +711,7 @@ routedEditorTest('page properties keeps tag drafts honest across suggestion, fai
     }
   })
 
-  await page.getByRole('button', { name: 'Page', exact: true }).click()
+  await page.getByRole('button', { name: 'Page Properties', exact: true }).click()
   const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
   await expect(properties).toBeVisible()
   const tags = properties.getByRole('combobox', { name: /tags/i }).first()
@@ -785,7 +796,7 @@ routedEditorTest('page properties keeps tag drafts honest across suggestion, fai
   await expect(blurredRemove).toBeVisible()
   await properties.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(properties).not.toBeVisible()
-  await page.getByRole('button', { name: 'Page', exact: true }).click()
+  await page.getByRole('button', { name: 'Page Properties', exact: true }).click()
   const reopened = page.getByRole('dialog', { name: 'Page Properties', exact: true })
   await expect(reopened.getByRole('button', { name: /remove.*existing-tag/i })).toHaveCount(0)
   await expect(reopened.getByRole('button', { name: /remove.*manual/i })).toHaveCount(0)
@@ -803,7 +814,7 @@ routedEditorTest('page properties applies a new tag without reviving a canceled 
     if (new URL(request.url()).pathname.includes('/taxonomy')) taxonomyRequests.push(request.url())
   })
   await openEditor(page, { onTagSearch: route => route.fulfill({ json: [] }) })
-  await page.getByRole('button', { name: 'Page', exact: true }).click()
+  await page.getByRole('button', { name: 'Page Properties', exact: true }).click()
   const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
   await expect(properties).toBeVisible()
   const tags = properties.getByRole('combobox', { name: /tags/i }).first()
@@ -814,7 +825,7 @@ routedEditorTest('page properties applies a new tag without reviving a canceled 
   await properties.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(properties).not.toBeVisible()
 
-  await page.getByRole('button', { name: 'Page', exact: true }).click()
+  await page.getByRole('button', { name: 'Page Properties', exact: true }).click()
   const reopened = page.getByRole('dialog', { name: 'Page Properties', exact: true })
   await expect(reopened.getByRole('button', { name: 'Remove tag cancelled-transient', exact: true })).toHaveCount(0)
   await reopened.getByRole('combobox', { name: /tags/i }).fill('  Draft-Tag  ')
@@ -823,7 +834,7 @@ routedEditorTest('page properties applies a new tag without reviving a canceled 
   await reopened.getByRole('combobox', { name: /tags/i }).press('Tab')
   await reopened.getByRole('button', { name: 'Apply', exact: true }).click()
   await expect(reopened).not.toBeVisible()
-  await page.getByRole('button', { name: 'Page', exact: true }).click()
+  await page.getByRole('button', { name: 'Page Properties', exact: true }).click()
   const committed = page.getByRole('dialog', { name: 'Page Properties', exact: true })
   await expect(committed.getByRole('button', { name: /remove.*draft-tag/i })).toBeVisible()
   await expect(committed.getByRole('button', { name: 'Remove tag cancelled-transient', exact: true })).toHaveCount(0)
@@ -858,7 +869,7 @@ routedEditorTest('page properties ignores a late suggestion response for an olde
   })
 
   try {
-    await page.getByRole('button', { name: 'Page', exact: true }).click()
+    await page.getByRole('button', { name: 'Page Properties', exact: true }).click()
     const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
     const tags = properties.getByRole('combobox', { name: /tags/i }).first()
     await tags.click()

@@ -27,6 +27,10 @@ const payload = (spaNavigation = true): WikiPagePayload => ({
     authorId: 7,
     editor: 'markdown',
     isPublished: true,
+    effectiveIsPublished: true,
+    publicSharingEligible: true,
+    publishStartDate: null,
+    publishEndDate: null,
     visibility: 'public',
     toc: 'W10=',
     sidebar: 'W10=',
@@ -62,6 +66,31 @@ describe('wiki page navigation payloads', () => {
     expect(decodeWikiPagePayload(encodePayload(payload())).props.path).toBe('guides/routing')
   })
 
+  test('requires Boolean anonymous-sharing proof without discarding older page content', () => {
+    const current = payload()
+    expect(decodeWikiPagePayload(encodePayload(current)).props.publicSharingEligible).toBe(true)
+    const { publicSharingEligible: _proof, ...legacyProps } = current.props
+    const legacy = { ...current, props: legacyProps }
+    const decoded = decodeWikiPagePayload(window.btoa(JSON.stringify(legacy)))
+    expect(decoded.props).toEqual({ ...legacyProps, publicSharingEligible: false })
+    const html = pageDocument(current).replace(encodePayload(current), window.btoa(JSON.stringify(legacy)))
+    const parsed = parseWikiNavigationDocument(html, 'https://wiki.test/en/guides/routing')
+    expect(parsed?.payload.props.publicSharingEligible).toBe(false)
+    expect(parsed?.contentHtml).toContain('<h2>New page</h2>')
+    for (const proof of [null, 'true', 1, {}]) {
+      expect(() =>
+        decodeWikiPagePayload(
+          window.btoa(
+            JSON.stringify({
+              ...current,
+              props: { ...current.props, publicSharingEligible: proof }
+            })
+          )
+        )
+      ).toThrow()
+    }
+  })
+
   test('preserves server-normalized page features and rating site gate', () => {
     const expectedFeatures: WikiPagePayload['pageFeatures'] = {
       schemaVersion: 1,
@@ -83,11 +112,15 @@ describe('wiki page navigation payloads', () => {
 
   test('defaults legacy feature metadata and fails closed for malformed settings', () => {
     const current = payload()
-    const legacy = decodeWikiPagePayload(window.btoa(JSON.stringify({
-      version: current.version,
-      spaNavigation: current.spaNavigation,
-      props: current.props
-    })))
+    const legacy = decodeWikiPagePayload(
+      window.btoa(
+        JSON.stringify({
+          version: current.version,
+          spaNavigation: current.spaNavigation,
+          props: current.props
+        })
+      )
+    )
     expect(legacy.pageFeatures).toEqual({
       schemaVersion: 1,
       linksVisible: false,
@@ -96,11 +129,15 @@ describe('wiki page navigation payloads', () => {
     })
     expect(legacy.ratingsSiteEnabled).toBe(false)
 
-    const malformed = decodeWikiPagePayload(window.btoa(JSON.stringify({
-      ...current,
-      pageFeatures: null,
-      ratingsSiteEnabled: true
-    })))
+    const malformed = decodeWikiPagePayload(
+      window.btoa(
+        JSON.stringify({
+          ...current,
+          pageFeatures: null,
+          ratingsSiteEnabled: true
+        })
+      )
+    )
     expect(malformed.pageFeatures).toEqual({
       schemaVersion: 1,
       linksVisible: false,
@@ -114,10 +151,12 @@ describe('wiki page navigation payloads', () => {
     expect(() => decodeWikiPagePayload(missingProps)).toThrow()
 
     const current = payload()
-    const stringIdentity = window.btoa(JSON.stringify({
-      ...current,
-      props: { ...current.props, pageId: '42' }
-    }))
+    const stringIdentity = window.btoa(
+      JSON.stringify({
+        ...current,
+        props: { ...current.props, pageId: '42' }
+      })
+    )
     expect(() => decodeWikiPagePayload(stringIdentity)).toThrow()
   })
 

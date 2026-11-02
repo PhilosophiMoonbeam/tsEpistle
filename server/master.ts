@@ -95,7 +95,7 @@ interface MasterConfig extends Record<string, unknown> {
   }
   bodyParserLimit?: string
   editors?: { available?: unknown }
-  features: { featureGlossary?: boolean; featurePageRatings?: boolean }
+  features: { featureGlossary?: boolean; featurePageRatings?: boolean; publicSocialSharing?: boolean }
   company: string
   contentLicense: string
   description: string
@@ -656,6 +656,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       logoIcons: branding.logoIcons,
       availableEditors: normalizeAvailableEditors(wiki.config.editors?.available),
       featurePageRatings: wiki.config.features.featurePageRatings === true,
+      publicSocialSharing: wiki.config.features?.publicSocialSharing === true,
       recommendedEditor: normalizeEditorPolicy(wiki.config.editors).recommended,
       product: wiki.product,
       pwaMode,

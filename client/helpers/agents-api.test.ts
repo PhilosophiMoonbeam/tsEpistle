@@ -38,8 +38,11 @@ afterEach(() => {
 })
 
 const unknownMemoryContext = (sessionId: string) => ({
-  ownerId: 1, sessionId, frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
-  latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } }, nextSession: { user: 'unknown', agent: 'unknown' }
+  ownerId: 1,
+  sessionId,
+  frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+  latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } },
+  nextSession: { user: 'unknown', agent: 'unknown' }
 })
 
 describe('agents client boundary', () => {
@@ -51,7 +54,7 @@ describe('agents client boundary', () => {
     await expect(Promise.resolve(createAgentThread(fetcher, 'csrf', { retention: 'saved' }))).rejects.toThrow()
   })
 
-  it('creates retention-only sessions and validates nullable media capabilities without coercing flags', async () => {
+  it('validates nullable media capabilities and explicit finite preset metadata on reopened messages without coercion', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000080'
     const now = '2026-08-17T00:00:00.000Z'
     const mediaCapabilities = {
@@ -108,6 +111,29 @@ describe('agents client boundary', () => {
     }
     for (const invalid of invalidCapabilities) {
       fetcher.mockImplementation(async () => Response.json({ ...thread, session: { ...thread.session, mediaCapabilities: invalid } }))
+      await expect(getAgentThread(fetcher, 'csrf', sessionId)).rejects.toMatchObject({ status: 502 })
+    }
+    const message = {
+      id: '00000000-0000-4000-8000-000000000085',
+      runId: null,
+      ordinal: 1,
+      role: 'user',
+      status: 'complete',
+      content: '  Full original request.\n\nKeep this whitespace.  ',
+      citations: [],
+      createdAt: now,
+      updatedAt: now
+    }
+    for (const presetId of ['page-summary', 'wiki-overview', 'page-connections', 'wiki-connections', 'catch-up', undefined] as const) {
+      const tagged = { ...message, ...(presetId === undefined ? {} : { presetId }) }
+      fetcher.mockImplementation(async () => Response.json({ ...thread, messages: [tagged] }))
+      const reopened = await getAgentThread(fetcher, 'csrf', sessionId)
+      expect(reopened.messages[0]?.content).toBe('  Full original request.\n\nKeep this whitespace.  ')
+      expect(reopened.messages[0]?.presetId).toBe(presetId)
+      if (presetId === undefined) expect(Object.hasOwn(reopened.messages[0]!, 'presetId')).toBe(false)
+    }
+    for (const presetId of [null, '', 'summary', 'PAGE-SUMMARY', 1, ['page-summary'], { id: 'page-summary' }]) {
+      fetcher.mockImplementation(async () => Response.json({ ...thread, messages: [{ ...message, presetId }] }))
       await expect(getAgentThread(fetcher, 'csrf', sessionId)).rejects.toMatchObject({ status: 502 })
     }
   })
@@ -414,19 +440,40 @@ describe('agents client boundary', () => {
     }
     const responses = [
       Response.json({ user: { entries: [entry], characters: 24, limit: 1_375 }, agent: { entries: [], characters: 0, limit: 2_200 } }),
-      Response.json({
-        changed: true, message: 'Saved', target: 'user', entries: [entry.content], characters: 24, limit: 1_375,
-        receipt: {
-          schemaVersion: 1, origin: 'manual', ownerId: 1, sessionId: null, runId: null, attempt: null, snapshotId: null,
-          entryId: entry.id, entryVersion: 1, operation: 'add', changed: true,
-          targets: [{ target: 'user', characters: 24, limit: 1375, snapshotId: 'a'.repeat(64) }]
-        }
-      }, { status: 201 })
+      Response.json(
+        {
+          changed: true,
+          message: 'Saved',
+          target: 'user',
+          entries: [entry.content],
+          characters: 24,
+          limit: 1_375,
+          receipt: {
+            schemaVersion: 1,
+            origin: 'manual',
+            ownerId: 1,
+            sessionId: null,
+            runId: null,
+            attempt: null,
+            snapshotId: null,
+            entryId: entry.id,
+            entryVersion: 1,
+            operation: 'add',
+            changed: true,
+            targets: [{ target: 'user', characters: 24, limit: 1375, snapshotId: 'a'.repeat(64) }]
+          }
+        },
+        { status: 201 }
+      )
     ]
     const fetcher = vi.fn(async () => responses.shift()!)
 
     expect(await getAgentMemories(fetcher, 'csrf')).toMatchObject({ user: { entries: [entry] } })
-    expect(await createAgentMemory(fetcher, 'csrf', { target: 'user', content: entry.content, context: { sessionId: null } })).toMatchObject({ changed: true, target: 'user', receipt: { entryId: entry.id } })
+    expect(await createAgentMemory(fetcher, 'csrf', { target: 'user', content: entry.content, context: { sessionId: null } })).toMatchObject({
+      changed: true,
+      target: 'user',
+      receipt: { entryId: entry.id }
+    })
     expect(fetcher).toHaveBeenNthCalledWith(
       2,
       '/_api/agents/memories',
@@ -524,12 +571,30 @@ describe('agents client boundary', () => {
     const boundary = { schemaVersion: 1, ...context, replayThroughSequence: 8 }
     listeners.get('open')?.(new MessageEvent('open'))
     listeners.get('stream.ready')?.(new MessageEvent('stream.ready', { data: JSON.stringify(boundary) }))
-    const admission = { id: 'admission', runId: context.runId, sequence: 8, attempt: 0, schemaVersion: 1, type: 'run.queued', data: {}, createdAt: '2026-10-28T00:00:00Z' }
+    const admission = {
+      id: 'admission',
+      runId: context.runId,
+      sequence: 8,
+      attempt: 0,
+      schemaVersion: 1,
+      type: 'run.queued',
+      data: {},
+      createdAt: '2026-10-28T00:00:00Z'
+    }
     listeners.get('run.queued')?.(new MessageEvent('run.queued', { lastEventId: '8', data: JSON.stringify(admission) }))
     const receipt = {
-      ...admission, id: 'receipt', sequence: 9, attempt: 1, type: 'memory.contextIncluded',
-      data: { ownerId: 1, sessionId: context.sessionId, snapshotId: context.sessionId, deliveryId: 'dispatch-1',
-        targets: [{ target: 'user', characters: 24, limit: 1375, snapshotId: 'a'.repeat(64) }] }
+      ...admission,
+      id: 'receipt',
+      sequence: 9,
+      attempt: 1,
+      type: 'memory.contextIncluded',
+      data: {
+        ownerId: 1,
+        sessionId: context.sessionId,
+        snapshotId: context.sessionId,
+        deliveryId: 'dispatch-1',
+        targets: [{ target: 'user', characters: 24, limit: 1375, snapshotId: 'a'.repeat(64) }]
+      }
     }
     listeners.get('memory.contextIncluded')?.(new MessageEvent('memory.contextIncluded', { lastEventId: '9', data: JSON.stringify(receipt) }))
     expect(ready).toHaveBeenCalledWith(boundary)
@@ -538,7 +603,12 @@ describe('agents client boundary', () => {
     listeners.get('memory.contextIncluded')?.(new MessageEvent('memory.contextIncluded', { lastEventId: '9', data: JSON.stringify(receipt) }))
     const later = { ...receipt, id: 'receipt-next', sequence: 10, data: { ...receipt.data, deliveryId: 'dispatch-2' } }
     listeners.get('memory.contextIncluded')?.(new MessageEvent('memory.contextIncluded', { lastEventId: '10', data: JSON.stringify(later) }))
-    expect(event.mock.calls).toEqual([[admission, 'replay'], [receipt, 'live'], [receipt, 'replay'], [later, 'live']])
+    expect(event.mock.calls).toEqual([
+      [admission, 'replay'],
+      [receipt, 'live'],
+      [receipt, 'replay'],
+      [later, 'live']
+    ])
     expect(reset).toHaveBeenCalledTimes(2)
     listeners.get('error')?.(new MessageEvent('error'))
     expect(reset).toHaveBeenCalledTimes(3)
@@ -546,12 +616,26 @@ describe('agents client boundary', () => {
     expect(source.close).toHaveBeenCalledTimes(1)
   })
 
-  it.each(['missing-ready', 'foreign-owner', 'foreign-session', 'foreign-run', 'ahead-cursor', 'bad-json', 'frame-id', 'frame-type', 'event-run', 'memory-attempt', 'private-text'])('fails closed for malformed or foreign SSE %s', kind => {
+  it.each([
+    'missing-ready',
+    'foreign-owner',
+    'foreign-session',
+    'foreign-run',
+    'ahead-cursor',
+    'bad-json',
+    'frame-id',
+    'frame-type',
+    'event-run',
+    'memory-attempt',
+    'private-text'
+  ])('fails closed for malformed or foreign SSE %s', kind => {
     const listeners = new Map<string, (event: MessageEvent) => void>()
     class FakeEventSource {
       readonly close = vi.fn()
       constructor(readonly url: string) {}
-      addEventListener(type: string, listener: EventListener) { listeners.set(type, listener as (event: MessageEvent) => void) }
+      addEventListener(type: string, listener: EventListener) {
+        listeners.set(type, listener as (event: MessageEvent) => void)
+      }
     }
     vi.stubGlobal('EventSource', FakeEventSource)
     const event = vi.fn()
@@ -559,7 +643,9 @@ describe('agents client boundary', () => {
     const context = { ownerId: 1, sessionId: 'session-1', runId: 'run-1' }
     const source = subscribeAgentRun(context, 7, { event, error, ready: vi.fn(), reset: vi.fn() })
     const boundary = {
-      schemaVersion: 1, ...context, replayThroughSequence: kind === 'ahead-cursor' ? 6 : 7,
+      schemaVersion: 1,
+      ...context,
+      replayThroughSequence: kind === 'ahead-cursor' ? 6 : 7,
       ...(kind === 'foreign-owner' ? { ownerId: 2 } : {}),
       ...(kind === 'foreign-session' ? { sessionId: 'other' } : {}),
       ...(kind === 'foreign-run' ? { runId: 'other' } : {})
@@ -567,18 +653,33 @@ describe('agents client boundary', () => {
     if (kind !== 'missing-ready') listeners.get('stream.ready')?.(new MessageEvent('stream.ready', { data: JSON.stringify(boundary) }))
     const memory = kind === 'memory-attempt' || kind === 'private-text'
     const payload = {
-      id: 'event-8', runId: kind === 'event-run' ? 'other' : context.runId, sequence: 8,
-      attempt: kind === 'memory-attempt' ? 0 : 1, schemaVersion: 1, type: memory ? 'memory.saved' : 'run.started',
+      id: 'event-8',
+      runId: kind === 'event-run' ? 'other' : context.runId,
+      sequence: 8,
+      attempt: kind === 'memory-attempt' ? 0 : 1,
+      schemaVersion: 1,
+      type: memory ? 'memory.saved' : 'run.started',
       createdAt: '2026-10-28T00:00:00Z',
-      data: memory ? { ownerId: 1, sessionId: context.sessionId, snapshotId: context.sessionId,
-        origin: 'memory.manage', operationId: 'tool-1', operation: 'add', changed: true,
-        targets: [{ target: 'user', characters: 24, limit: 1375, snapshotId: 'a'.repeat(64) }],
-        ...(kind === 'private-text' ? { content: 'private memory' } : {}) } : {}
+      data: memory
+        ? {
+            ownerId: 1,
+            sessionId: context.sessionId,
+            snapshotId: context.sessionId,
+            origin: 'memory.manage',
+            operationId: 'tool-1',
+            operation: 'add',
+            changed: true,
+            targets: [{ target: 'user', characters: 24, limit: 1375, snapshotId: 'a'.repeat(64) }],
+            ...(kind === 'private-text' ? { content: 'private memory' } : {})
+          }
+        : {}
     }
-    listeners.get(kind === 'frame-type' ? 'message.delta' : payload.type)?.(new MessageEvent(payload.type, {
-      lastEventId: kind === 'frame-id' ? '08' : '8',
-      data: kind === 'bad-json' ? '{' : JSON.stringify(payload)
-    }))
+    listeners.get(kind === 'frame-type' ? 'message.delta' : payload.type)?.(
+      new MessageEvent(payload.type, {
+        lastEventId: kind === 'frame-id' ? '08' : '8',
+        data: kind === 'bad-json' ? '{' : JSON.stringify(payload)
+      })
+    )
     expect(event).not.toHaveBeenCalled()
     expect(error).toHaveBeenCalledTimes(1)
     expect(source.close).toHaveBeenCalledTimes(1)
@@ -689,6 +790,27 @@ describe('agents client boundary', () => {
     }
     await submitAgentMessage(fetcher, 'csrf', '00000000-0000-4000-8000-000000000023', input)
     expect(fetcher).toHaveBeenCalledWith(expect.stringContaining('/messages'), expect.objectContaining({ body: JSON.stringify(input) }))
+  })
+
+  it('rejects invalid preset metadata before any message can be committed', async () => {
+    const fetcher = vi.fn(async () => {
+      throw new Error('Invalid presets must not reach the server')
+    })
+    const input = {
+      clientRequestId: '00000000-0000-4000-8000-000000000024',
+      expectedSessionVersion: 1,
+      profileResolutionToken: 'token',
+      content: 'Summarize this page'
+    }
+    for (const presetId of [null, '', 'summary', 'PAGE-SUMMARY', 1, ['page-summary']]) {
+      await expect(
+        submitAgentMessage(fetcher, 'csrf', '00000000-0000-4000-8000-000000000023', {
+          ...input,
+          presetId
+        } as unknown as Parameters<typeof submitAgentMessage>[3])
+      ).rejects.toMatchObject({ status: 400 })
+    }
+    expect(fetcher).not.toHaveBeenCalled()
   })
 
   it('creates a goal only through the dedicated typed endpoint', async () => {
@@ -938,9 +1060,7 @@ describe('agents client boundary', () => {
       historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false },
       suggestions: []
     }
-    const fetcher = vi.fn(
-      async () => new Response(JSON.stringify(threadResponse), { status: 200, headers: { 'content-type': 'application/json' } })
-    )
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(threadResponse), { status: 200, headers: { 'content-type': 'application/json' } }))
     const updated = await updateAgentSession(fetcher, 'csrf-token', sessionId, {
       expectedSessionVersion: 2,
       title: 'Renamed topic',

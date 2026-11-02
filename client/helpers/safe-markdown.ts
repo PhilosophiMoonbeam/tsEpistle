@@ -21,6 +21,7 @@ export type SafeMarkdownFenceAttributes = Readonly<Record<string, string | numbe
 export interface SafeMarkdownOptions {
   readonly resolveCitation?: SafeMarkdownCitationResolver
   readonly streaming?: boolean
+  readonly normalizeCitationParagraphs?: boolean
   readonly fenceMetadata?: (metadata: SafeMarkdownFenceMetadata) => SafeMarkdownFenceAttributes | null | undefined
 }
 
@@ -88,13 +89,14 @@ const isSafeMarkdownCitation = (value: unknown): value is SafeMarkdownCitation =
 }
 
 markdown.inline.ruler.before('text', 'agent_citation', (state, silent) => {
+  // Let CommonMark scan brackets in authored link labels without treating citations as nested links.
+  if (silent || state.linkLevel > 0) return false
   const match = state.src.slice(state.pos).match(citationMarker)
   if (!match) return false
   const resolver = (state.env as MarkdownEnvironment | undefined)?.safeMarkdown?.resolveCitation
   if (!resolver) return false
   const citation = resolver(match[1])
   if (!citation || !Number.isSafeInteger(citation.number) || citation.number < 1) return false
-  if (silent) return true
   const token = state.push('agent_citation', 'a', 0)
   token.meta = {
     ...citation,
@@ -114,8 +116,9 @@ markdown.renderer.rules.agent_citation = (tokens, index) => {
   if (!isSafeMarkdownCitation(citation)) return ''
   const attrs = renderCitationAttributes(citation)
   const label = `Citation ${citation.number}: ${citation.label}`
-  if (!citation.href) return `<strong ${attrs} aria-label="${escapeHtml(label)}">[${escapeHtml(String(citation.number))}]</strong>`
-  return `<a ${attrs} href="${escapeHtml(citation.href)}" rel="noopener noreferrer" target="_blank" aria-label="${escapeHtml(`${label} (opens in a new tab)`)}">${escapeHtml(String(citation.number))}</a>`
+  if (!citation.href)
+    return `<span data-citation-flow="true"><strong ${attrs} aria-label="${escapeHtml(label)}">[${escapeHtml(String(citation.number))}]</strong></span>`
+  return `<span data-citation-flow="true"><a ${attrs} href="${escapeHtml(citation.href)}" rel="noopener noreferrer" target="_blank" aria-label="${escapeHtml(`${label} (opens in a new tab)`)}">${escapeHtml(String(citation.number))}</a></span>`
 }
 
 const addFenceMetadata = (rendered: string, options: SafeMarkdownOptions | undefined, metadata: SafeMarkdownFenceMetadata): string => {
@@ -165,10 +168,49 @@ const trimTrailingStreamingMarker = (tokens: readonly Token[]): void => {
   last.content = (last.content ?? '').replace(incompleteCitationMarker, '')
 }
 
+// Operate on resolved inline tokens, never on authored markdown. Only root-level
+// prose participates: list, quote, table and code boundaries remain untouched.
+const normalizeCitationParagraphs = (tokens: Token[]): void => {
+  for (let index = 0; index < tokens.length - 2; index += 1) {
+    const open = tokens[index]
+    const inline = tokens[index + 1]
+    const close = tokens[index + 2]
+    const children = inline?.children
+    if (
+      open?.type !== 'paragraph_open' ||
+      open.level !== 0 ||
+      inline?.type !== 'inline' ||
+      close?.type !== 'paragraph_close' ||
+      !children?.some(token => token.type === 'agent_citation') ||
+      !children.every(token => token.type === 'agent_citation' || (token.type === 'text' && !token.content.trim()) || token.type === 'softbreak')
+    )
+      continue
+    const previous = tokens[index - 2]
+    const previousClose = tokens[index - 1]
+    const nextOpen = tokens[index + 3]
+    const next = tokens[index + 4]
+    const target =
+      previous?.type === 'inline' && previousClose?.level === 0 && (previousClose.type === 'paragraph_close' || previousClose.type === 'heading_close')
+        ? previous
+        : index === 0 &&
+            next?.type === 'inline' &&
+            nextOpen?.level === 0 &&
+            (nextOpen.type === 'paragraph_open' || nextOpen.type === 'heading_open') &&
+            next.children?.some(token => token.type !== 'agent_citation' && token.type !== 'softbreak' && (token.type !== 'text' || token.content.trim()))
+          ? next
+          : null
+    if (!target?.children) continue
+    target.children.push(...children.filter(token => token.type === 'agent_citation'))
+    tokens.splice(index, 3)
+    index = Math.max(-1, index - 4)
+  }
+}
+
 export const renderSafeMarkdown = (content: string, options?: SafeMarkdownOptions): string => {
   const environment: MarkdownEnvironment = { safeMarkdown: options }
   const tokens = markdown.parse(content, environment)
   if (options?.streaming) trimTrailingStreamingMarker(tokens)
+  if (options?.normalizeCitationParagraphs && options.resolveCitation) normalizeCitationParagraphs(tokens)
   const rendered = markdown.renderer.render(tokens, markdown.options, environment)
   return DOMPurify.sanitize(rendered, {
     ALLOW_DATA_ATTR: false,
@@ -189,6 +231,7 @@ export const renderSafeMarkdown = (content: string, options?: SafeMarkdownOption
       'li',
       'ol',
       'p',
+      'span',
       'pre',
       'strong',
       'table',
@@ -203,6 +246,7 @@ export const renderSafeMarkdown = (content: string, options?: SafeMarkdownOption
       'aria-label',
       'data-agent-citation',
       'data-citation-id',
+      'data-citation-flow',
       'data-citation-number',
       'data-diagram',
       'data-fence-id',

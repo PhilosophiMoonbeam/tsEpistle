@@ -108,6 +108,51 @@ describe('modal focus scope', () => {
     expect(document.activeElement).toBe(trigger)
   })
 
+  test('keeps modal content interactive when its owned SDK portal is attached inside the modal', () => {
+    const dom = new JSDOM(
+      `<!doctype html><html><body>
+      <main><button id="trigger">Open Agent</button></main>
+      <section id="workspace" tabindex="-1">
+        <div id="card"><header><button id="more">More</button></header><textarea id="composer"></textarea></div>
+        <div class="v-overlay-container"><div class="v-overlay--active" id="menu"><button id="action">Temporary chat</button></div></div>
+      </section>
+    </body></html>`,
+      { pretendToBeVisual: true }
+    )
+    doms.push(dom)
+    const document = dom.window.document
+    const root = document.querySelector<HTMLElement>('#workspace')!
+    const menu = document.querySelector<HTMLElement>('#menu')!
+    const card = document.querySelector<HTMLElement>('#card')!
+    const composer = document.querySelector<HTMLElement>('#composer')!
+    const more = document.querySelector<HTMLElement>('#more')!
+    const action = document.querySelector<HTMLElement>('#action')!
+    for (const element of [root, more, composer, action]) {
+      element.getClientRects = () => [{ width: 1, height: 1 }] as unknown as DOMRectList
+    }
+    const scope = createModalFocusScope({
+      root,
+      restoreTarget: null,
+      additionalRoots: () => [menu],
+      onEscape: () => {}
+    })
+    try {
+      expect(document.querySelector<HTMLElement>('main')!.inert).toBe(true)
+      expect(card.inert).not.toBe(true)
+      expect(card.getAttribute('aria-hidden')).toBeNull()
+      expect(composer.closest('[inert], [aria-hidden="true"]')).toBeNull()
+      more.focus()
+      expect(document.activeElement).toBe(more)
+      action.focus()
+      expect(document.activeElement).toBe(action)
+      const escapeEvent = new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      action.dispatchEvent(escapeEvent)
+      expect(escapeEvent.defaultPrevented).toBe(false)
+    } finally {
+      scope.deactivate({ restoreFocus: false })
+    }
+  })
+
   test('only blurred opt-in scopes suppress background glass and restore it across nested previews and plain dialogs', async () => {
     const dom = new JSDOM(
       `<!doctype html><html><head><style>
@@ -287,9 +332,7 @@ describe('modal focus scope', () => {
       element.getClientRects = () => [{ width: 1, height: 1 }] as unknown as DOMRectList
     }
     const scope = createModalFocusScope({ root, restoreTarget: null, onEscape: () => {} })
-    const reverseTab = () => back.dispatchEvent(
-      new dom.window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true })
-    )
+    const reverseTab = () => back.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }))
 
     back.focus()
     reverseTab()

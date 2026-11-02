@@ -62,7 +62,14 @@ const identityTagRows: TagIndexRow[] = [
   { id: 104, tag: '東京', title: 'Unicode concept', createdAt: '2026-09-10T12:00:00.000Z', updatedAt: '2026-09-10T12:00:00.000Z', pageCount: null },
   { id: 105, tag: '—東京', title: 'Punctuated Unicode concept', createdAt: '2026-09-11T12:00:00.000Z', updatedAt: '2026-09-11T12:00:00.000Z', pageCount: null },
   { id: 106, tag: '123', title: 'Numeric concept', createdAt: '2026-09-12T12:00:00.000Z', updatedAt: '2026-09-12T12:00:00.000Z', pageCount: null },
-  { id: 107, tag: '１２３', title: 'Full-width numeric concept', createdAt: '2026-09-13T12:00:00.000Z', updatedAt: '2026-09-13T12:00:00.000Z', pageCount: null },
+  {
+    id: 107,
+    tag: '１２３',
+    title: 'Full-width numeric concept',
+    createdAt: '2026-09-13T12:00:00.000Z',
+    updatedAt: '2026-09-13T12:00:00.000Z',
+    pageCount: null
+  },
   { id: 108, tag: '!!!', title: 'Punctuation concept', createdAt: '2026-09-14T12:00:00.000Z', updatedAt: '2026-09-14T12:00:00.000Z', pageCount: null },
   { id: 109, tag: '???', title: 'Other punctuation concept', createdAt: '2026-09-15T12:00:00.000Z', updatedAt: '2026-09-15T12:00:00.000Z', pageCount: null }
 ]
@@ -200,7 +207,30 @@ async function expectTagIndexGeometry(page: Page, surface: string) {
   expect(geometry.longCopyScrollWidth, `${surface} long labels must remain contained in their item`).toBeLessThanOrEqual(geometry.longCopyClientWidth + 1)
   expect(geometry.longItemRight, `${surface} long labels must remain inside the tag index rail`).toBeLessThanOrEqual(geometry.indexRight + 1)
   expect(geometry.documentWidth, `${surface} must not overflow its viewport`).toBeLessThanOrEqual(geometry.viewportWidth + 1)
+}
 
+async function expectTagToolbarGeometry(page: Page, fieldCount: number) {
+  const toolbar = page.locator('.tags-results-toolbar')
+  const controls = toolbar.locator('.v-field, .tags-sort-direction .v-btn')
+  await expect(controls).toHaveCount(fieldCount + 2)
+  const coarse = await page.evaluate(() => matchMedia('(pointer: coarse)').matches)
+  await expect
+    .poll(() =>
+      controls.evaluateAll(elements =>
+        elements.map(element => {
+          const bounds = element.getBoundingClientRect()
+          return { top: bounds.top, height: bounds.height }
+        })
+      )
+    )
+    .toEqual(
+      Array.from({ length: fieldCount + 2 }, () => ({
+        top: expect.any(Number),
+        height: coarse ? 44 : 40
+      }))
+    )
+  const tops = await controls.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().top))
+  expect(Math.max(...tops) - Math.min(...tops), 'Search, selects, and direction actions share one desktop baseline').toBeLessThanOrEqual(1)
 }
 
 async function openTags(page: Page, path = '/t', options: TagApiOptions = {}) {
@@ -257,7 +287,9 @@ async function expectTagFooterReachability(page: Page, resultName: RegExp, surfa
     expect(initialGeometry.footer.bottom, `${surface} footer must fit without scrolling`).toBeLessThanOrEqual(initialGeometry.viewportHeight + 1)
   } else {
     if (shortResult) {
-      expect(initialGeometry.bottomContent.documentBottom, `${surface} mobile or tablet content itself extends beyond the viewport`).toBeGreaterThan(initialGeometry.viewportHeight)
+      expect(initialGeometry.bottomContent.documentBottom, `${surface} mobile or tablet content itself extends beyond the viewport`).toBeGreaterThan(
+        initialGeometry.viewportHeight
+      )
     }
     expect(initialGeometry.footer.top, `${surface} footer must stay below the viewport before the document end`).toBeGreaterThan(initialGeometry.viewportHeight)
     const middleScroll = Math.max(0, Math.floor((initialGeometry.scrollHeight - initialGeometry.viewportHeight) / 2))
@@ -418,6 +450,7 @@ routedTagTest('public tag library supports local filtering, AND selection, and m
   const mobileViewport = { width: 390, height: 844 }
 
   await page.setViewportSize(desktopViewport)
+  await expectTagToolbarGeometry(page, 3)
   await indexSearch.focus()
   await expect(indexSearch).toBeFocused()
   await page.setViewportSize(mobileViewport)
@@ -503,7 +536,7 @@ routedTagTest('public tag library supports local filtering, AND selection, and m
 })
 
 routedTagTest('public tag index keeps selected desktop labels readable and contained', async ({ page }) => {
-  await openTags(page)
+  await openTags(page, '/t', { siteLangs: [] })
 
   await page.setViewportSize({ width: 1024, height: 900 })
   await expect(await revealTagButton(page, ordinaryTagLabel)).toBeVisible()
@@ -523,6 +556,7 @@ routedTagTest('public tag index keeps selected desktop labels readable and conta
 
   await page.setViewportSize({ width: 1440, height: 900 })
   await expectTagIndexGeometry(page, 'selected tag index at 1440px')
+  await expectTagToolbarGeometry(page, 2)
 
   await page.locator('.tags-clear-selection').click()
   await expect(page).toHaveURL(/\/t(?:\?|$)/)
@@ -697,14 +731,16 @@ test('public tag results keep the latest selection when responses resolve out of
   const response = await staleResponse
   expect(await response.finished(), 'stale response body must finish successfully').toBeNull()
   // Headers alone do not prove the browser has parsed the JSON and rendered it.
-  await page.evaluate(() => new Promise<void>(resolve => {
-    window.setTimeout(() => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())), 0)
-  }))
+  await page.evaluate(
+    () =>
+      new Promise<void>(resolve => {
+        window.setTimeout(() => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())), 0)
+      })
+  )
   await expect(page.getByRole('link', { name: /latest result/i })).toBeVisible()
   await expect(page.getByRole('link', { name: /stale result/i })).toHaveCount(0)
   await expectResponsiveLayout(page, 'latest tag result response')
 })
-
 
 routedTagTest('tag following saves device offline preferences independently of browse selection', async ({ page }) => {
   await openTags(page)
@@ -773,10 +809,16 @@ test('tag follow feedback finishes cleanly and respects reduced motion', async (
   await expect(follow).toHaveAttribute('aria-pressed', 'true')
   await expect(followIcon).toHaveAttribute('data-follow-animation-seen', 'true')
   await expect(followIcon).toHaveAttribute('data-follow-animation-finished', 'true')
-  await expect.poll(() => followIcon.evaluate(element => {
-    const active = element.getAnimations().some(animation => animation.playState !== 'finished' && animation.playState !== 'idle')
-    return !active && new DOMMatrixReadOnly(getComputedStyle(element).transform).isIdentity
-  }), { message: 'follow feedback must settle without leaving a transform or active animation' }).toBe(true)
+  await expect
+    .poll(
+      () =>
+        followIcon.evaluate(element => {
+          const active = element.getAnimations().some(animation => animation.playState !== 'finished' && animation.playState !== 'idle')
+          return !active && new DOMMatrixReadOnly(getComputedStyle(element).transform).isIdentity
+        }),
+      { message: 'follow feedback must settle without leaving a transform or active animation' }
+    )
+    .toBe(true)
   await expect(follow).toBeEnabled({ timeout: 30_000 })
 
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -788,9 +830,12 @@ test('tag follow feedback finishes cleanly and respects reduced motion', async (
   await expect(follow).toHaveAttribute('aria-pressed', 'false')
   await expect(follow).toBeEnabled({ timeout: 30_000 })
   await expect(followIcon).toHaveCSS('animation-name', 'none')
-  await page.evaluate(() => new Promise<void>(resolve => {
-    window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()))
-  }))
+  await page.evaluate(
+    () =>
+      new Promise<void>(resolve => {
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()))
+      })
+  )
   await expect(followIcon).not.toHaveAttribute('data-follow-animation-seen')
 })
 

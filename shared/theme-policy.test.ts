@@ -1,4 +1,5 @@
 import { describe, expect, test } from '../server/test/bun-test.mts'
+import { cloneThemeColors, DEFAULT_THEME_COLORS } from './theme-colors.ts'
 import { ThemePolicySchema, themeChangedFields, themePolicyFromConfiguration } from './theme-policy.ts'
 
 describe('theme navigation feedback policy', () => {
@@ -37,5 +38,49 @@ describe('theme navigation feedback policy', () => {
     expect(themeChangedFields(saved, { ...saved, pageTransitions: false })).toEqual(['pageTransitions'])
     expect(themeChangedFields(saved, { ...saved, showPageProgress: true })).toEqual(['showPageProgress'])
     expect(themeChangedFields(saved, { ...saved, pageTransitions: false, showPageProgress: true })).toEqual(['pageTransitions', 'showPageProgress'])
+  })
+})
+
+describe('saved reader presentation', () => {
+  test('uses the reading defaults for absent or malformed legacy settings', () => {
+    const expected = { textSize: 17, lineHeight: 1.68, copyWidth: 76 }
+    expect(themePolicyFromConfiguration({}).reading).toEqual(expected)
+    for (const reading of [
+      null,
+      {},
+      { textSize: 20, lineHeight: 1.8 },
+      { textSize: '20', lineHeight: 1.8, copyWidth: 90 },
+      { textSize: 13, lineHeight: 1.8, copyWidth: 90 },
+      { textSize: 20, lineHeight: 2.1, copyWidth: 90 },
+      { textSize: 20, lineHeight: 1.8, copyWidth: 111 }
+    ]) {
+      expect(themePolicyFromConfiguration({ theming: { reading } }).reading).toEqual(expected)
+    }
+  })
+
+  test('preserves saved custom reading values and palette colors across serialization', () => {
+    const reading = { textSize: 20, lineHeight: 1.85, copyWidth: 92 }
+    const colors = cloneThemeColors(DEFAULT_THEME_COLORS)
+    colors.light.primary = '#27405A'
+    colors.dark.surface = '#303B4C'
+    const policy = themePolicyFromConfiguration({
+      theming: { reading, colors }
+    })
+    expect(policy.reading).toEqual(reading)
+    const palette = policy.palettes.find(item => item.id === policy.activePaletteId)!
+    expect(palette.colors.light.primary).toBe('#27405A')
+    expect(palette.colors.dark.surface).toBe('#303B4C')
+    expect(themePolicyFromConfiguration(JSON.parse(JSON.stringify({ theming: policy })))).toEqual(policy)
+  })
+
+  test('keeps valid reader layout boundaries rather than resetting saved preferences', () => {
+    for (const reading of [
+      { textSize: 14, lineHeight: 1.4, copyWidth: 48 },
+      { textSize: 24, lineHeight: 2, copyWidth: 110 }
+    ]) {
+      const policy = themePolicyFromConfiguration({ theming: { reading } })
+      expect(ThemePolicySchema.parse(policy).reading).toEqual(reading)
+      expect(themeChangedFields(policy, { ...policy, reading: { ...reading, copyWidth: 76 } })).toEqual(['reading'])
+    }
   })
 })

@@ -1,15 +1,46 @@
 <template lang='pug'>
   v-app.tags.tags-library
-    nav-header
+    nav-header(:navigation-breakpoint='1280')
+      template(v-slot:navigationToggle)
+        v-btn.tags-navigation-control(
+          v-if='navMode !== `NONE`'
+          ref='navToggle'
+          icon
+          variant='text'
+          :aria-expanded='navigationOpen'
+          aria-controls='tags-navigation-drawer'
+          :aria-label='navigationOpen ? $t(`common:sidebar.closeNavigation`) : $t(`common:sidebar.openNavigation`)'
+          @click='toggleNavigation'
+        )
+          v-icon(aria-hidden='true') {{navigationOpen ? 'mdi-close' : 'mdi-menu'}}
+    v-navigation-drawer.tags-navigation(
+      v-if='navMode !== `NONE`'
+      id='tags-navigation-drawer'
+      tag='nav'
+      color='surface'
+      :mobile-breakpoint='1280'
+      :width='wideViewport ? 256 : 244'
+      :location='$vuetify.locale.isRtl ? `right` : `left`'
+      v-model='navigationOpen'
+      :aria-label='$t(`common:sidebar.mainMenu`)'
+      @update:model-value='navigationVisibilityChanged'
+      @keydown.esc='navigationEscape'
+    )
+      nav-sidebar(
+        color=''
+        :items='sidebarDecoded'
+        :nav-mode='navMode'
+        :expand-parent-by-default='navExpandParent'
+        @navigate='sidebarNavigationStarted'
+      )
     v-main.tags-main
       v-container.tags-shell(fluid)
         header.tags-intro
           .tags-intro-copy
-            .tags-eyebrow
-              v-icon(size='18' aria-hidden='true') mdi-tag-outline
-              span {{$t('tags:libraryEyebrow', { defaultValue: 'Editorial library' })}}
-            h1#tags-library-title {{$t('common:header.browseTags')}}
-            p {{$t('tags:libraryDescription', { defaultValue: 'Tags group related pages into a shared library. Select one or more tags to find pages that match every choice.' })}}
+            .tags-intro-title
+              h1#tags-library-title {{$t('common:header.browseTags')}}
+              span.tags-library-count(v-if='!tagsLoading && !tagsError') {{$t('tags:availableTagCount', { count: tags.length })}}
+            p {{$t('tags:libraryDescription', { defaultValue: 'Select tags to find pages that match every choice.' })}}
 
         section.tags-selection(
           v-if='hasSelection'
@@ -48,19 +79,15 @@
         .tags-workspace(:class='{ "tags-workspace--selected": hasSelection }')
           section.tags-index(
             id='tags-index-region'
-            aria-labelledby='tags-index-title'
+            :aria-label='$t(`tags:indexTitle`, { defaultValue: `Tag index` })'
             :aria-busy='tagsLoading ? `true` : `false`'
           )
             .tags-index-heading
-              .tags-index-heading-copy
-                .tags-eyebrow
-                  v-icon(size='16' aria-hidden='true') mdi-format-list-bulleted
-                  span {{$t('tags:indexEyebrow', { defaultValue: 'Browse the vocabulary' })}}
-                h2#tags-index-title {{$t('tags:indexTitle', { defaultValue: 'Tag index' })}}
               v-text-field.tags-index-search(
                 v-model='tagSearch'
                 :label='$t(`tags:searchTags`, { defaultValue: `Search tags` })'
                 variant='outlined'
+                density='compact'
                 hide-details
                 clearable
                 prepend-inner-icon='mdi-magnify'
@@ -190,19 +217,19 @@
                 prepend-icon='mdi-file-search-outline'
                 @click='viewPages'
               ) {{$t('tags:viewPages', { defaultValue: 'View pages' })}}
-            .tags-results-toolbar
+            .tags-results-toolbar(:class='{ "tags-results-toolbar--with-locale": locales.length > 1 }')
               v-text-field.tags-results-search(
                 v-model='innerSearch'
                 :label='$t(`tags:searchWithinResultsPlaceholder`, { defaultValue: `Search these pages` })'
                 variant='outlined'
+                density='compact'
                 hide-details
                 clearable
                 prepend-inner-icon='mdi-magnify'
                 autocomplete='off'
               )
-              .tags-results-options
+              .tags-results-options(:class='{ "tags-results-options--with-locale": locales.length > 1 }')
                 .tags-results-field(v-if='locales.length > 1')
-                  span.tags-field-label#tags-language-label {{$t(`tags:locale`, { defaultValue: `Language` })}}
                   v-select(
                     id='tags-language'
                     :items='locales'
@@ -211,19 +238,18 @@
                     item-value='code'
                     variant='outlined'
                     hide-details
-                    density='comfortable'
-                    aria-labelledby='tags-language-label'
+                    density='compact'
+                    :label='$t(`tags:locale`, { defaultValue: `Language` })'
                   )
                 .tags-results-field
-                  span.tags-field-label#tags-order-label {{$t(`tags:orderBy`, { defaultValue: `Sort by` })}}
                   v-select(
                     id='tags-order'
                     :items='orderByItems'
                     v-model='orderBy'
                     variant='outlined'
                     hide-details
-                    density='comfortable'
-                    aria-labelledby='tags-order-label'
+                    density='compact'
+                    :label='$t(`tags:orderBy`, { defaultValue: `Sort by` })'
                   )
                 v-btn-toggle.tags-sort-direction(
                   v-model='orderByDirection'
@@ -313,6 +339,8 @@ import { fetchPages, fetchPageTags, type PageListRow, type PageTagRow } from '..
 import { pageHref as buildPageHref } from '../helpers/admin-pages'
 import { setLoading } from '../helpers/root-ui-store'
 import AsyncState from '@/components/common/async-state.vue'
+import NavSidebar, { type SidebarItem } from '@/themes/default/components/nav-sidebar.vue'
+import { decodeBase64Json } from '../helpers/base64'
 import { pathFromTagSelection, tagSelectionFromPath } from '../helpers/tag-navigation'
 import { tagColorBucket } from '../../shared/tag-colors.ts'
 import { wikiStore } from '@/store/index.ts'
@@ -366,7 +394,14 @@ function normalizeQueryValue (value: unknown): string | undefined {
 
 export default {
   components: {
-    AsyncState
+    AsyncState,
+    NavSidebar
+  },
+  props: {
+    sidebar: { type: String, required: true },
+    shellLocale: { type: String, required: true },
+    navMode: { type: String, required: true },
+    navExpandParent: { type: Boolean, default: true }
   },
   setup () {
     return {
@@ -376,6 +411,7 @@ export default {
   },
   data() {
     return {
+      navigationOpen: typeof window !== 'undefined' && window.matchMedia('(min-width: 1280px)').matches,
       tags: [] as PageTagRow[],
       selection: [] as string[],
       tagSearch: '',
@@ -412,6 +448,12 @@ export default {
     }
   },
   computed: {
+    sidebarDecoded (): SidebarItem[] {
+      return decodeBase64Json<SidebarItem[]>(this.sidebar)
+    },
+    wideViewport (): boolean {
+      return this.$vuetify.display.width >= 1280
+    },
     hasSelection (): boolean {
       return this.selection.length > 0
     },
@@ -492,6 +534,10 @@ export default {
     }
   },
   watch: {
+    wideViewport (wide: boolean) {
+      this.navigationOpen = wide
+      this.navigationVisibilityChanged(wide)
+    },
     tagCountConnectionOnline (online: boolean) {
       if (!online) this.tagsCountsCurrent = false
       else if (!this.tagsLoading) void this.loadTags({ preserveTags: true })
@@ -560,6 +606,10 @@ export default {
   },
   created () {
     wikiStore.page.mode = 'tags'
+    wikiStore.page.locale = this.shellLocale
+    wikiStore.page.path = ''
+    wikiStore.page.id = 0
+    wikiStore.page.visibility = 'public'
     this.selection = tagSelectionFromPath(this.$route.path)
     this.indexExpanded = this.selection.length === 0 || this.$vuetify.display.mdAndUp
   },
@@ -592,6 +642,41 @@ export default {
     this.offlineStorage = null
   },
   methods: {
+    toggleNavigation () {
+      this.navigationOpen = !this.navigationOpen
+      if (this.navigationOpen) this.$nextTick(() => this.focusNavigation())
+    },
+    focusNavigation () {
+      if (!this.navigationOpen || this.disposed) return
+      document.querySelector<HTMLElement>('#tags-navigation-drawer .nav-sidebar button:not(:disabled), #tags-navigation-drawer .nav-sidebar a[href]')?.focus()
+    },
+    sidebarNavigationStarted () {
+      if (!this.wideViewport) {
+        this.navigationOpen = false
+        this.navigationVisibilityChanged(false)
+      }
+    },
+    navigationEscape (event: KeyboardEvent) {
+      if (event.defaultPrevented || event.isComposing || this.wideViewport || !this.navigationOpen) return
+      event.preventDefault()
+      event.stopPropagation()
+      this.navigationOpen = false
+      this.navigationVisibilityChanged(false)
+    },
+    navigationVisibilityChanged (shown: boolean) {
+      this.$nextTick(() => {
+        if (this.disposed) return
+        if (shown) {
+          if (!this.wideViewport) this.focusNavigation()
+          return
+        }
+        const focused = document.activeElement
+        if (focused && focused !== document.body && !focused.closest('#tags-navigation-drawer')) return
+        const toggle = this.$refs.navToggle as HTMLElement | { $el?: unknown } | undefined
+        const element = toggle instanceof HTMLElement ? toggle : toggle?.$el
+        if (element instanceof HTMLElement) element.focus({ preventScroll: true })
+      })
+    },
     syncRouteState () {
       this.selection = tagSelectionFromPath(this.$route.path)
       this.locale = normalizeQueryValue(this.$route.query.lang) ?? 'any'
@@ -915,7 +1000,16 @@ export default {
 
 .tags-main {
   min-width: 0;
-  background: rgb(var(--v-theme-background));
+  background: var(--wiki-canvas-bg);
+}
+
+.tags-navigation .v-navigation-drawer__content {
+  overscroll-behavior: contain;
+}
+
+.tags-navigation-control {
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .tags-shell {
@@ -940,6 +1034,24 @@ export default {
   min-width: 0;
 }
 
+.tags-intro-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wiki-space-3);
+  margin-bottom: var(--wiki-space-2);
+}
+
+.tags-library-count {
+  padding: .25rem .625rem;
+  border: 1px solid var(--wiki-well-border);
+  border-radius: var(--wiki-radius-xs);
+  background: var(--wiki-surface-sunken);
+  box-shadow: var(--wiki-shadow-inset);
+  color: var(--wiki-text-muted);
+  font-size: .875rem;
+}
+
 .tags-eyebrow {
   display: inline-flex;
   align-items: center;
@@ -953,7 +1065,7 @@ export default {
 }
 
 .tags-intro h1 {
-  margin: var(--wiki-space-2) 0 var(--wiki-space-3);
+  margin: 0;
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-display);
   font-size: clamp(2rem, 4vw, 3rem);
@@ -974,9 +1086,10 @@ export default {
 .tags-selection,
 .tags-index {
   min-width: 0;
-  border: 1px solid var(--wiki-surface-border);
+  border: 1px solid var(--wiki-material-border);
   border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
+  background: var(--wiki-surface-gradient);
+  box-shadow: var(--wiki-specular-border);
 }
 
 .tags-selection {
@@ -993,7 +1106,6 @@ export default {
 }
 
 .tags-selection-heading h2,
-.tags-index-heading h2,
 .tags-results-header h2 {
   margin: 0;
   color: rgb(var(--v-theme-on-surface));
@@ -1084,7 +1196,7 @@ export default {
 
 .tags-workspace--selected {
   display: grid;
-  grid-template-columns: 336px minmax(0, 1fr);
+  grid-template-columns: clamp(15rem, 24vw, 21rem) minmax(0, 1fr);
   gap: var(--wiki-space-6);
   align-items: start;
 }
@@ -1118,13 +1230,6 @@ export default {
 .tags-offline-recovery { display: inline-block; margin-inline-start: 1rem; }
 .tags-follow-status { min-height: 1.25rem; }
 
-.tags-index-heading-copy {
-  min-width: 0;
-}
-
-.tags-index-heading h2 {
-  margin-top: var(--wiki-space-2);
-}
 
 .tags-index-search,
 .tags-results-search {
@@ -1412,9 +1517,15 @@ export default {
   min-height: var(--wiki-control-height);
 }
 
+.tags-results {
+  container: tags-results / inline-size;
+}
+
 .tags-results-toolbar {
+  --tags-toolbar-height: 44px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
   gap: var(--wiki-space-3);
   min-width: 0;
   margin-bottom: var(--wiki-space-4);
@@ -1422,31 +1533,87 @@ export default {
 
 .tags-results-options {
   display: grid;
-  grid-template-columns: minmax(0, .8fr) minmax(0, 1.15fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: var(--wiki-space-2);
   min-width: 0;
+}
+
+.tags-results-options--with-locale {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
 }
 
 .tags-results-field {
-  display: grid;
   min-width: 0;
-  gap: var(--wiki-space-2);
 }
 
-.tags-field-label {
-  color: var(--wiki-text-muted);
-  font-size: .8125rem;
-  line-height: 1.35;
+.tags-results-toolbar .v-input {
+  --v-input-control-height: var(--tags-toolbar-height);
+  --wiki-field-label-bg: var(--wiki-surface-sunken);
+}
+
+.tags-results-toolbar .v-field {
+  height: var(--tags-toolbar-height);
+  min-height: var(--tags-toolbar-height);
+  background: var(--wiki-surface-sunken);
+  background-image: none;
+  box-shadow: var(--wiki-shadow-inset);
+}
+
+.tags-results-toolbar .v-field__input {
+  min-height: var(--tags-toolbar-height);
+  padding-block: 8px;
+}
+
+.tags-results-toolbar .v-select__selection-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tags-sort-direction {
-  min-height: var(--wiki-control-height);
+  height: var(--tags-toolbar-height);
+  min-height: var(--tags-toolbar-height);
   border-radius: var(--wiki-control-radius);
 }
 
 .tags-sort-direction .v-btn {
-  min-width: var(--wiki-control-height);
-  min-height: var(--wiki-control-height);
+  height: var(--tags-toolbar-height);
+  min-width: var(--tags-toolbar-height);
+  min-height: var(--tags-toolbar-height);
+}
+
+@container tags-results (min-width: 36rem) {
+  .tags-results-toolbar:not(.tags-results-toolbar--with-locale) {
+    --tags-toolbar-height: 40px;
+    grid-template-columns: minmax(0, 1fr) minmax(15rem, 1fr);
+  }
+}
+
+@container tags-results (min-width: 46rem) {
+  .tags-results-toolbar--with-locale {
+    --tags-toolbar-height: 40px;
+    grid-template-columns: minmax(12rem, 1fr) minmax(28rem, 2fr);
+  }
+}
+
+@container tags-results (max-width: 28rem) {
+  .tags-results-options,
+  .tags-results-options--with-locale {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tags-sort-direction {
+    width: 100%;
+  }
+  .tags-sort-direction .v-btn {
+    flex: 1 1 50%;
+  }
+}
+
+@media (pointer: coarse) {
+  .tags-results-toolbar.tags-results-toolbar {
+    --tags-toolbar-height: 44px;
+  }
 }
 
 .tags-results-status {

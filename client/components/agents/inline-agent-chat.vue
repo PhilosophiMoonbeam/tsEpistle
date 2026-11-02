@@ -58,11 +58,10 @@
       <v-toolbar class="inline-agent__toolbar" color="transparent" density="compact" tag="header">
         <div class="inline-agent__toolbar-main">
           <div class="inline-agent__mobile-navigation">
-            <v-tooltip location="bottom" :text="historyToggleBlocked ? $t('common:agentWorkspace.waitForMemory') : $t('common:agentWorkspace.history')">
+            <v-tooltip ref="historyTooltip" location="bottom" :text="historyToggleBlocked ? $t('common:agentWorkspace.waitForMemory') : $t('common:agentWorkspace.history')">
               <template #activator="{ props: tooltipProps }">
                 <v-btn
                   v-bind="tooltipProps"
-                  ref="historyTrigger"
                   class="inline-agent__history-toggle"
                   icon="mdi-history"
                   variant="text"
@@ -74,11 +73,10 @@
                 />
               </template>
             </v-tooltip>
-            <v-tooltip location="bottom" :text="memoryMutationBusy ? $t('common:agentWorkspace.waitForMemory') : $t('common:agentWorkspace.memory')">
+            <v-tooltip ref="memoryTooltip" location="bottom" :text="memoryMutationBusy ? $t('common:agentWorkspace.waitForMemory') : $t('common:agentWorkspace.memory')">
               <template #activator="{ props: tooltipProps }">
                 <v-btn
                   v-bind="tooltipProps"
-                  ref="memoryTrigger"
                   class="inline-agent__memory-toggle"
                   icon="mdi-brain"
                   variant="text"
@@ -116,21 +114,18 @@
               />
             </template>
           </v-tooltip>
-          <v-menu v-model="panelMenuOpen" ref="panelMenu" content-class="agent-owned-overlay" location="bottom end" attach=".inline-agent">
+          <v-menu v-model="panelMenuOpen" ref="panelMenu" content-class="agent-owned-overlay" location="bottom end" attach=".inline-agent" @after-enter="finishPanelMenuKeyboardFocus">
             <template #activator="{ props: menuProps }">
-              <v-tooltip location="bottom" :text="$t('common:agentWorkspace.moreActions')">
-                <template #activator="{ props: tooltipProps }">
-                  <v-btn
-                    v-bind="{ ...menuProps, ...tooltipProps }"
-                    ref="panelMenuTrigger"
-                    class="inline-agent__more-menu"
-                    icon="mdi-dots-vertical"
-                    variant="text"
-                    :aria-label="$t('common:agentWorkspace.moreActions')"
-                    :aria-expanded="panelMenuOpen"
-                  />
-                </template>
-              </v-tooltip>
+              <v-btn
+                v-bind="menuProps"
+                class="inline-agent__more-menu"
+                icon="mdi-dots-vertical"
+                variant="text"
+                :aria-label="$t('common:agentWorkspace.moreActions')"
+                :aria-expanded="panelMenuOpen"
+                @keydown.capture="preparePanelMenuKeyboardFocus"
+              />
+              <v-tooltip :activator="panelMenu?.activatorEl" location="bottom" :text="$t('common:agentWorkspace.moreActions')" />
             </template>
             <v-list density="compact">
               <v-list-item
@@ -142,14 +137,6 @@
                 :aria-expanded="memoryOpen"
                 :disabled="memoryMutationBusy"
                 @click="toggleMemory"
-              />
-              <v-list-item
-                v-if="!admissionBlocked"
-                class="inline-agent__panel-menu-item"
-                link
-                prepend-icon="mdi-connection"
-                title="My tools"
-                @click="personalMcpOpen = true"
               />
               <!-- Temporary retention lives in the menu so the chat name can stand
                    alone in the header; the click switches temporary mode directly
@@ -195,7 +182,7 @@
           </v-tooltip>
         </fieldset>
       </v-toolbar>
-      <header v-if="!approvalId" class="inline-agent__context-header">
+      <header v-if="!approvalId" ref="contextHeader" class="inline-agent__context-header" :class="{ 'inline-agent__context-header--feedback': memoryFeedbackActive }">
         <AgentContextSummary
           :sources="sourceContext"
           :memory="memoryContext"
@@ -206,6 +193,7 @@
           @open-sources="openContextSources"
           @open-memory="openContextMemory"
         />
+        <ControlBorderBeam v-if="memoryFeedback && memoryFeedbackActive" :key="memoryFeedback.sequence" class="inline-agent__memory-beam" />
       </header>
 
 
@@ -347,7 +335,7 @@
                     color="primary"
                     variant="text"
                     :aria-disabled="!canSubmit || promptSubmissionPending ? 'true' : undefined"
-                    @click="sendStarter(starter.prompt)"
+                    @click="sendStarter(starter.prompt, starter.presetId)"
                   >
                     <span class="inline-agent__starter-heading">
                       <v-icon
@@ -367,6 +355,7 @@
               <AgentThread
                 v-else-if="thread"
                 :thread="thread"
+                :preview-context="previewAuthority"
                 :user-picture="userPicture"
                 :image-editing-enabled="providerEnabled && agentToolAcceptsImages(mediaCapabilities, 'image') && thread?.session.executionMode === 'agent'"
                 :connection="connection"
@@ -382,6 +371,7 @@
                 @ask-source="source => preparePrompt($t('common:inlineAgentChat.helpMeUnderstand', { title: source.title, interpolation: { escapeValue: false } }), source)"
                 @decision="handleDecision"
               />
+            </section>
               <div ref="conversationDock" class="inline-agent__conversation-dock">
                 <div
                   v-if="thread?.goal"
@@ -424,7 +414,6 @@
                     @click="scrollToLatest"
                   >
                     <span class="inline-agent__follow-jump-frame">
-                      <span class="inline-agent__follow-jump-halo" aria-hidden="true" />
                       <span class="inline-agent__follow-jump-face">
                         <v-icon icon="mdi-arrow-down" size="16" aria-hidden="true" />
                         <span>{{ $t('common:agentWorkspace.latest') }}</span>
@@ -436,11 +425,8 @@
                 <!-- biome-ignore lint/a11y/noStaticElementInteractions: This wrapper tracks bubbled child-control engagement, not a separate actionable surface. -->
                 <footer
                   class="inline-agent__composer"
-                  :class="{ 'inline-agent__composer--scrolled': !transcriptFollowing, 'inline-agent__composer--focused': composerFocused }"
                   @focusin="handleComposerFocusIn"
                   @focusout="handleComposerFocusOut"
-                  @keydown="handleComposerFocusIn"
-                  @pointerdown="handleComposerFocusIn"
                 >
                   <div class="inline-agent__composer-inner">
                     <p
@@ -488,41 +474,28 @@
                       :invocation-limit="invocationLimit"
                       :status-label="connectionLabel"
                       :status-tone="connectionTone"
-                      :source-context="sourceContext"
-                      :memory-context="memoryContext"
-                      :context-loading="loading"
-                      :context-sources-disabled="contextControlsDisabled"
-                      :context-memory-disabled="contextMemoryDisabled"
-                      @open-sources="openContextSources"
-                      @open-memory="openContextMemory"
                       @send="sendPrompt"
                       @stop="stopRun"
                       @manage-skills="openSkillManager"
+                      :personal-tools-enabled="!admissionBlocked"
+                      @open-personal-tools="personalMcpOpen = true"
                       @retry-skills="reloadSkillCatalog"
                       @update-skill-preferences="updateSkillPreferences"
                     >
-                      <template #context-controls>
-                        <button
-                          ref="memoryPill"
-                          type="button"
-                          class="inline-agent__memory-pill"
-                          :class="{ 'inline-agent__memory-pill--feedback': memoryFeedbackActive }"
-                          :disabled="memoryMutationBusy || admissionBlocked || (!memoryOpen && contextMemoryDisabled)"
-                          :aria-expanded="memoryOpen"
-                          aria-controls="agent-memory-panel"
-                          :title="memoryMutationBusy ? $t('common:agentWorkspace.waitForMemory') : undefined"
-                          @click="toggleMemory"
-                        >
-                          <v-icon icon="mdi-brain" size="18" aria-hidden="true" />
-                          <span>{{ $t('common:agentWorkspace.memory') }}</span>
-                          <ControlBorderBeam v-if="memoryFeedback && memoryFeedbackActive" :key="memoryFeedback.sequence" class="inline-agent__memory-beam" />
+                      <template #source-control>
+                        <button ref="sourceControl" type="button" class="inline-agent__source-control wiki-purpose-control" :disabled="contextControlsDisabled" @click="openContextSources($event.currentTarget as HTMLElement)">
+                          <v-icon icon="mdi-file-document-plus-outline" size="18" aria-hidden="true" />
+                          {{ $t('common:agentContextPicker.sources') }}
                         </button>
+                      </template>
+                      <template #context-controls>
                         <AgentContextPicker
                           v-if="thread"
                           ref="contextPicker"
                           :key="thread.session.id"
                           :draft="activeDraft"
                           :current-page="draftPage ?? currentPage"
+                          :source-trigger="sourceControl"
                           :current-page-title="activeDraft.currentPageOverride == null ? pageTitle : undefined"
                           :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention) || !workspaceReady"
                           :connection-blocked="connectionBlocked"
@@ -536,7 +509,6 @@
                   </div>
                 </footer>
               </div>
-            </section>
 
           </div>
 
@@ -698,7 +670,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { agentToolAcceptsImages, type AgentMediaSubmission } from '../../helpers/agent-media.ts'
-import type { AgentMediaView, AgentCurrentPageHint, AgentMemoryReceiptDelivery } from '../../../shared/agents/contracts.ts'
+import type { AgentMediaView, AgentCurrentPageHint, AgentMemoryReceiptDelivery, AgentPresetId } from '../../../shared/agents/contracts.ts'
 import { pwaState, retryServerConnection } from '../../helpers/pwa.ts'
 import { useAgentsStore, type AgentMemoryMutationCapture } from '../../store/agents.ts'
 import { wikiStore } from '../../store/index.ts'
@@ -746,15 +718,18 @@ const { connection, decidingApprovalId, error, goalBusy, initializationAdmission
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
 const conversationDock = useTemplateRef<HTMLElement>('conversationDock')
-const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void>; reattachMedia: (media: AgentMediaView) => Promise<boolean>; hasUnsentMedia: () => boolean; hasPendingSubmission: () => boolean; isMediaBusy: () => boolean }>('composer')
+const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void>; reattachMedia: (media: AgentMediaView) => Promise<boolean>; hasUnsentMedia: () => boolean; hasPendingSubmission: () => boolean; isMediaBusy: () => boolean; isInputComposing: () => boolean }>('composer')
 const contextPicker = useTemplateRef<{ openSources: (opener: HTMLElement) => void }>('contextPicker')
 const memoryManager = useTemplateRef<{ focusSection: (target: 'user' | 'agent') => void }>('memoryManager')
 type ComponentRoot = { $el?: unknown }
-const historyTrigger = useTemplateRef<ComponentRoot | HTMLElement>('historyTrigger')
-const memoryTrigger = useTemplateRef<ComponentRoot | HTMLElement>('memoryTrigger')
-const memoryPill = useTemplateRef<HTMLElement>('memoryPill')
+type ActivatorOverlay = { activatorEl?: HTMLElement }
+type MenuOverlay = ActivatorOverlay & { contentEl?: HTMLElement }
+const historyTooltip = useTemplateRef<ActivatorOverlay>('historyTooltip')
+const memoryTooltip = useTemplateRef<ActivatorOverlay>('memoryTooltip')
+const sourceControl = useTemplateRef<HTMLElement>('sourceControl')
+const contextHeader = useTemplateRef<HTMLElement>('contextHeader')
 const memoryFeedbackStatusRegion = useTemplateRef<HTMLElement>('memoryFeedbackStatusRegion')
-const panelMenuTrigger = useTemplateRef<ComponentRoot | HTMLElement>('panelMenuTrigger')
+const panelMenu = useTemplateRef<MenuOverlay>('panelMenu')
 const historyPanel = useTemplateRef<HTMLElement>('historyPanel')
 const memoryPanel = useTemplateRef<HTMLElement>('memoryPanel')
 const panelScrim = useTemplateRef<HTMLElement>('panelScrim')
@@ -810,6 +785,10 @@ const lastActivePanel = ref<PanelKind | null>(null)
 // A narrow viewport keeps an in-flight memory mutation visible until switching is safe.
 let deferredHistoryOpen = false
 const panelMenuOpen = ref(false)
+let panelMenuFocusEdge: 'first' | 'last' | null = null
+watch(panelMenuOpen, open => {
+  if (!open) panelMenuFocusEdge = null
+}, { flush: 'sync' })
 const memoryMutationBusy = ref(false)
 const initializationError = ref('')
 const connectionRetrying = ref(false)
@@ -820,7 +799,6 @@ const composerFocused = ref(false)
 let transcriptReadingIntent = false
 const handleComposerFocusIn = (): void => {
   composerFocused.value = true
-  transcriptReadingIntent = false
 }
 const handleComposerFocusOut = (event: FocusEvent): void => {
   const nextTarget = event.relatedTarget
@@ -833,7 +811,7 @@ const handleTranscriptEngagement = (event: FocusEvent | PointerEvent | WheelEven
   transcriptReadingIntent = true
   composerFocused.value = false
 }
-const transcriptFollowing = ref(true)
+const transcriptFollowing = ref(false)
 const transcriptBottomDistance = ref(0)
 let transcriptObserver: MutationObserver | null = null
 let dockObserver: ResizeObserver | null = null
@@ -856,9 +834,9 @@ let actionGeneration = 0
 const isComponentCurrent = (generation: number, ownerId: number): boolean =>
   !disposed && !closingForExpiry && componentGeneration === generation && props.ownerId === ownerId
 const starterReasonId = `${panelIdPrefix}-starter-reason`
-const sendStarter = (prompt: string): void => {
+const sendStarter = (prompt: string, presetId: AgentPresetId): void => {
   if (!canSubmit.value || promptSubmissionPending.value) return
-  void sendPrompt(prompt)
+  void sendPrompt(prompt, [], 'message', undefined, undefined, presetId)
 }
 
 const panelMode = ref<'wide' | 'docked' | 'modal'>('wide')
@@ -1005,7 +983,26 @@ const temporaryExpiry = computed(() => {
   const date = new Date(value)
   return Number.isNaN(date.valueOf()) ? '' : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 })
-const sessionTitle = computed(() => thread.value?.session.title || (isTemporary.value ? t('common:inlineAgentChat.temporaryChat') : t('common:inlineAgentChat.newChat')))
+const sessionTitle = computed(() => {
+  if (loading.value) return t('common:inlineAgentChat.openingConversation')
+  if (thread.value?.session.title?.trim()) return thread.value.session.title
+  if (hasConversation.value) return t('common:inlineAgentChat.untitledConversation')
+  if (!workspaceReady.value) return t(connectionBlocked.value ? 'common:inlineAgentChat.connectionRequired' : 'common:inlineAgentChat.tryAgain')
+  return t(isTemporary.value ? 'common:inlineAgentChat.temporaryChat' : 'common:inlineAgentChat.newChat')
+})
+const previewEpoch = ref(0)
+const previewAuthority = computed(() => String(previewEpoch.value))
+// Connecting and terminal refreshes change preview readiness, not transcript ownership.
+const transcriptAuthority = ref(0)
+watch([() => props.csrfToken, () => props.ownerId, () => agents.ownerGeneration, () => agents.workspaceVersion, () => agents.sessionTransitionVersion], () => {
+  previewEpoch.value += 1
+  transcriptAuthority.value += 1
+  if (transcriptFrame !== null) window.cancelAnimationFrame(transcriptFrame)
+  transcriptFrame = null
+  transcriptFrameShouldFollow = false
+  transcriptGrowthPending = false
+}, { flush: 'sync' })
+watch([workspaceReady, connectionBlocked], () => { previewEpoch.value += 1 }, { flush: 'sync' })
 
 const connectionLabel = computed(() => admissionBlocked.value
   ? t('common:inlineAgentChat.tryAgain')
@@ -1075,7 +1072,7 @@ const clearMemoryFeedback = (): void => {
 const showMemoryFeedback = (acknowledgement: MemoryAcknowledgement): boolean => {
   if (!memoryFeedbackMounted || disposed || props.approvalId || document.visibilityState !== 'visible' ||
     acknowledgement.capture.ownerId !== props.ownerId || !agents.isMemoryMutationContextCurrent(acknowledgement.capture) ||
-    !isVisibleTrigger(memoryPill.value)) return false
+    !isVisibleTrigger(contextHeader.value)) return false
   const receipt = acknowledgement.delivery.receipt
   if (receipt.runId !== null && (receipt.runId !== thread.value?.session.currentRun?.id ||
     receipt.attempt !== thread.value.session.currentRun.attempt ||
@@ -1161,10 +1158,10 @@ watch(() => includesCurrentPage.value && !props.approvalId, active => {
 /* Labels and descriptions are locale keys; prompts are model input and stay as written. */
 const starters = computed(() => [
   ...(includesCurrentPage.value
-    ? [{ label: 'common:agentWorkspace.starterPage', description: 'common:agentWorkspace.starterPageHint', prompt: t('common:inlineAgentChat.summarizeCurrentWikiPage'), icon: 'mdi-text-box-search-outline' }]
-    : [{ label: 'common:agentWorkspace.starterExplore', description: 'common:agentWorkspace.starterExploreHint', prompt: t('common:inlineAgentChat.giveMeOverviewMain'), icon: 'mdi-compass-outline' }]),
-  { label: 'common:agentWorkspace.starterConnect', description: 'common:agentWorkspace.starterConnectHint', prompt: includesCurrentPage.value ? t('common:inlineAgentChat.findWikiPagesRelated') : t('common:inlineAgentChat.helpMeExploreConnections'), icon: 'mdi-vector-link' },
-  { label: 'common:agentWorkspace.starterCatchUp', description: 'common:agentWorkspace.starterCatchUpHint', prompt: t('common:inlineAgentChat.summarize10MostRecently'), icon: 'mdi-history' }
+    ? [{ presetId: 'page-summary' as AgentPresetId, label: 'common:agentWorkspace.starterPage', description: 'common:agentWorkspace.starterPageHint', prompt: t('common:inlineAgentChat.summarizeCurrentWikiPage'), icon: 'mdi-text-box-search-outline' }]
+    : [{ presetId: 'wiki-overview' as AgentPresetId, label: 'common:agentWorkspace.starterExplore', description: 'common:agentWorkspace.starterExploreHint', prompt: t('common:inlineAgentChat.giveMeOverviewMain'), icon: 'mdi-compass-outline' }]),
+  { presetId: (includesCurrentPage.value ? 'page-connections' : 'wiki-connections') as AgentPresetId, label: 'common:agentWorkspace.starterConnect', description: 'common:agentWorkspace.starterConnectHint', prompt: includesCurrentPage.value ? t('common:inlineAgentChat.findWikiPagesRelated') : t('common:inlineAgentChat.helpMeExploreConnections'), icon: 'mdi-vector-link' },
+  { presetId: 'catch-up' as AgentPresetId, label: 'common:agentWorkspace.starterCatchUp', description: 'common:agentWorkspace.starterCatchUpHint', prompt: t('common:inlineAgentChat.summarize10MostRecently'), icon: 'mdi-history' }
 ])
 
 const patchDraft = (patch: Partial<AgentDraft>): void => { if (thread.value) agents.updateDraft(thread.value.session.id, patch) }
@@ -1184,10 +1181,17 @@ const handleCompositionChange = (sessionId: string, patch: Pick<AgentDraft, 'mod
 
 const preparePrompt = async (prompt: string, source?: WikiSource, scope?: AgentSearchScope): Promise<void> => {
   const generation = componentGeneration
+  if (!promptPreparationAllowed()) return
   const ownerId = props.ownerId
-  if (!await ensureInitialized() || !isComponentCurrent(generation, ownerId)) return
+  const ownerGeneration = agents.ownerGeneration
+  const workspaceVersion = agents.workspaceVersion
+  const originalSessionId = thread.value?.session.id
+  if (!await ensureInitialized() || !isComponentCurrent(generation, ownerId) ||
+    agents.ownerGeneration !== ownerGeneration || agents.workspaceVersion !== workspaceVersion ||
+    (originalSessionId && thread.value?.session.id !== originalSessionId) || !promptPreparationAllowed()) return
   const sessionId = thread.value?.session.id
   if (!sessionId) return
+  const initialDraft = agents.drafts[sessionId]
   if (scope) agents.updateDraft(sessionId, { scope })
   if (source) {
     const sources = agents.drafts[sessionId]?.sources ?? []
@@ -1196,8 +1200,12 @@ const preparePrompt = async (prompt: string, source?: WikiSource, scope?: AgentS
       agents.updateDraft(sessionId, { sources: [...sources, source] })
     }
   }
+  const preparedDraft = agents.drafts[sessionId]
   await nextTick()
-  if (!isComponentCurrent(generation, ownerId) || thread.value?.session.id !== sessionId) return
+  if (!isComponentCurrent(generation, ownerId) || thread.value?.session.id !== sessionId ||
+    agents.ownerGeneration !== ownerGeneration || agents.workspaceVersion !== workspaceVersion ||
+    agents.drafts[sessionId] !== preparedDraft || agents.drafts[sessionId]?.text !== initialDraft?.text ||
+    !promptPreparationAllowed()) return
   const existing = agents.drafts[sessionId]?.text ?? ''
   await composer.value?.setDraft(existing.trim() && existing.trim() !== prompt.trim() ? source ? existing : `${existing}\n\n${prompt}` : prompt)
 }
@@ -1417,9 +1425,10 @@ const sendPrompt = async (
   invokedSkillVersionIds: readonly string[] = [],
   mode: 'message' | 'goal' = 'message',
   completion?: (success: boolean) => void,
-  media?: AgentMediaSubmission
+  media?: AgentMediaSubmission,
+  presetId?: AgentPresetId
 ): Promise<boolean> => {
-  const prompt = content.trim()
+  const prompt = presetId ? content : content.trim()
   if (disposed || closingForExpiry) { completion?.(false); return false }
   if (connectionBlocked.value) {
     waitingForConnection.value = true
@@ -1432,31 +1441,42 @@ const sendPrompt = async (
   const generation = promptGeneration + 1
   promptGeneration = generation
   const ownerId = props.ownerId
+  const component = componentGeneration
   promptSubmissionPending.value = true
   let completionDelivered = false
+  let submissionSessionId: string | undefined
+  let submissionWorkspaceVersion = agents.workspaceVersion
+  let submissionOwnerGeneration = agents.ownerGeneration
   const complete = (success: boolean): void => {
-    if (completionDelivered || !isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return
+    if (completionDelivered || !isComponentCurrent(component, ownerId) || promptGeneration !== generation) return
+    const currentSubmission = (!submissionSessionId || thread.value?.session.id === submissionSessionId) &&
+      agents.workspaceVersion === submissionWorkspaceVersion && agents.ownerGeneration === submissionOwnerGeneration
     completionDelivered = true
-    completion?.(success)
+    if (success && currentSubmission) {
+      transcriptReadingIntent = false
+      transcriptFollowing.value = true
+      void reconcileTranscriptGrowth(true)
+    }
+    completion?.(success && currentSubmission)
   }
   try {
     const initialized = await ensureInitialized()
-    if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
+    if (!isComponentCurrent(component, ownerId) || promptGeneration !== generation) return false
     if (!initialized || !canSubmit.value || (mode === 'goal' && !props.goalsEnabled)) { completion?.(false); return false }
-    transcriptReadingIntent = false
-    transcriptFollowing.value = true
-    const success = await agents.send(prompt, invokedSkillVersionIds, mode, media, () => complete(true))
-    if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
+    submissionSessionId = thread.value?.session.id
+    submissionWorkspaceVersion = agents.workspaceVersion
+    submissionOwnerGeneration = agents.ownerGeneration
+    const success = await agents.send(prompt, invokedSkillVersionIds, mode, media, () => complete(true), presetId ? { presetId } : undefined)
+    if (!isComponentCurrent(component, ownerId) || promptGeneration !== generation) return false
     complete(success)
-    if (success) await reconcileTranscriptGrowth(true)
     return success
   } catch (value) {
-    if (!isComponentCurrent(componentGeneration, ownerId) || promptGeneration !== generation) return false
+    if (!isComponentCurrent(component, ownerId) || promptGeneration !== generation) return false
     agents.error = value instanceof Error ? value.message : t('common:inlineAgentChat.messageCouldNotSent')
     complete(false)
     return false
   } finally {
-    if (isComponentCurrent(componentGeneration, ownerId) && promptGeneration === generation) promptSubmissionPending.value = false
+    if (isComponentCurrent(component, ownerId) && promptGeneration === generation) promptSubmissionPending.value = false
   }
 }
 const networkActionAllowed = (): boolean => {
@@ -1494,6 +1514,7 @@ const focusConversation = async (): Promise<void> => {
 }
 const scrollToLatest = async (): Promise<void> => {
   composerFocused.value = false
+  transcriptReadingIntent = false
   const container = transcript.value
   if (!container) return
   container.scrollTo({ top: container.scrollHeight, behavior: reducedMotion() ? 'auto' : 'smooth' })
@@ -1536,6 +1557,13 @@ const mediaReplacementAllowed = (): boolean => {
   panelMenuOpen.value = false
   setSessionNotice(t('common:agentWorkspace.waitForMediaBeforeNewChat'))
   return false
+}
+const promptPreparationAllowed = (): boolean => {
+  if (composer.value?.isInputComposing() || composer.value?.hasPendingSubmission()) {
+    setSessionNotice(t('common:inlineAgentChat.finishDraftInteraction'))
+    return false
+  }
+  return mediaReplacementAllowed()
 }
 const hasDisposableDraft = (): boolean => {
   const current = thread.value
@@ -1605,13 +1633,37 @@ const isVisibleTrigger = (element: HTMLElement | null): element is HTMLElement =
   const style = window.getComputedStyle(element)
   return style.display !== 'none' && style.visibility !== 'hidden'
 }
+const preparePanelMenuKeyboardFocus = (event: KeyboardEvent): void => {
+  if (panelMenuOpen.value || event.defaultPrevented || event.isComposing) return
+  if (event.key === 'ArrowDown') panelMenuFocusEdge = 'first'
+  else if (event.key === 'ArrowUp') panelMenuFocusEdge = 'last'
+}
+const finishPanelMenuKeyboardFocus = (): void => {
+  const edge = panelMenuFocusEdge
+  panelMenuFocusEdge = null
+  const menu = panelMenu.value
+  const content = menu?.contentEl
+  if (!edge || disposed || !panelMenuOpen.value || !content?.isConnected || !menu?.activatorEl?.isConnected) return
+  const active = document.activeElement
+  // The SDK's bounded opening retries can finish before the popup is focusable.
+  // Keep its normal navigation; only complete a missed handoff after entry.
+  if (active !== menu.activatorEl && active !== content && !(active instanceof HTMLElement && active.matches('.v-list') && content.contains(active))) return
+  const items = content.querySelectorAll<HTMLElement>('.inline-agent__panel-menu-item[tabindex]:not([disabled]):not([aria-disabled="true"]):not(.v-list-item--disabled)')
+  const step = edge === 'first' ? 1 : -1
+  for (let index = step > 0 ? 0 : items.length - 1; index >= 0 && index < items.length; index += step) {
+    const item = items[index]
+    if (!isVisibleTrigger(item) || item.closest('[inert], [aria-hidden="true"]')) continue
+    item.focus({ preventScroll: true })
+    return
+  }
+}
 const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLElement | null => {
   if (component instanceof HTMLElement) return component
   return component?.$el instanceof HTMLElement ? component.$el : null
 }
 const triggerForPanel = (kind: PanelKind): HTMLElement | null => {
-  const direct = componentElement(kind === 'history' ? historyTrigger.value : memoryTrigger.value)
-  const panels = componentElement(panelMenuTrigger.value)
+  const direct = (kind === 'history' ? historyTooltip.value : memoryTooltip.value)?.activatorEl ?? null
+  const panels = panelMenu.value?.activatorEl ?? null
   const usePanelMenu = kind === 'memory' && window.matchMedia(mobilePanelQuery).matches
   return (usePanelMenu ? [panels, direct] : [direct, panels]).find(isVisibleTrigger) ?? null
 }
@@ -1800,17 +1852,14 @@ const recoverClearUnfiledHistory = async (): Promise<void> => {
     if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) clearingUnfiledHistory.value = false
   }
 }
-const updateApprovalJump = (container: HTMLElement, dockBounds: DOMRect | undefined): void => {
+const updateApprovalJump = (container: HTMLElement): void => {
   const proposalId = pendingApprovalId.value
   if (!proposalId) { approvalJumpVisible.value = false; return }
   const approval = container.querySelector<HTMLElement>(`#agent-approval-${proposalId}`)
   if (!approval) { approvalJumpVisible.value = false; return }
   const viewport = container.getBoundingClientRect()
-  const visibleBottom = dockBounds && dockBounds.height > 0 && dockBounds.top > viewport.top
-    ? Math.min(viewport.bottom, dockBounds.top)
-    : viewport.bottom
   approvalJumpVisible.value = isAgentApprovalOutsideViewport(
-    { top: viewport.top, bottom: visibleBottom },
+    { top: viewport.top, bottom: viewport.bottom },
     approval.getBoundingClientRect()
   )
 }
@@ -1834,8 +1883,11 @@ const handleTranscriptScroll = (): void => {
   scheduleTranscriptFrame()
 }
 const reconcileTranscriptGrowth = async (shouldFollow: boolean): Promise<void> => {
+  const sessionId = thread.value?.session.id
+  const component = componentGeneration
+  const authority = transcriptAuthority.value
   await nextTick()
-  if (disposed) return
+  if (disposed || component !== componentGeneration || sessionId !== thread.value?.session.id || authority !== transcriptAuthority.value) return
   transcriptGrowthPending = true
   transcriptFrameShouldFollow ||= shouldFollow
   scheduleTranscriptFrame()
@@ -1847,9 +1899,12 @@ const handleGoalExpanded = async (expanded: boolean): Promise<void> => {
 }
 const scheduleTranscriptFrame = (): void => {
   if (disposed || transcriptFrame !== null) return
+  const sessionId = thread.value?.session.id
+  const component = componentGeneration
+  const authority = transcriptAuthority.value
   transcriptFrame = window.requestAnimationFrame(() => {
     transcriptFrame = null
-    if (disposed) return
+    if (disposed || component !== componentGeneration || sessionId !== thread.value?.session.id || authority !== transcriptAuthority.value) return
     const container = transcript.value
     const shouldFollow = transcriptFrameShouldFollow
     const growthPending = transcriptGrowthPending
@@ -1868,22 +1923,16 @@ const scheduleTranscriptFrame = (): void => {
     // Reading upwards also disengages follow inside the near-bottom threshold.
     // No-motion frames (including button ripples) must not re-arm it mid-click.
     if (transcriptReadingIntent && scrollTop < transcriptScrollTopMemory - 1) transcriptFollowing.value = false
-    else if (distance < 160 && (!transcriptReadingIntent || scrollTop > transcriptScrollTopMemory + 1)) transcriptFollowing.value = true
     const restoreFollowing = transcriptFollowing.value && !transcriptReadingIntent && scrollTop < transcriptScrollTopMemory - 1
     transcriptScrollTopMemory = scrollTop
 
-    if ((growthPending || restoreFollowing) && (!hasConversation.value || ((shouldFollow || restoreFollowing) && transcriptFollowing.value))) {
-      const top = !hasConversation.value && !(window.matchMedia('(max-width: 639.98px)').matches && composerFocused.value)
-        ? 0
-        : Math.max(0, scrollHeight - clientHeight)
+    if ((growthPending || restoreFollowing) && (shouldFollow || restoreFollowing) && transcriptFollowing.value) {
+      const top = hasConversation.value ? Math.max(0, scrollHeight - clientHeight) : 0
       container.scrollTo({ top, behavior: 'auto' })
-      transcriptFollowing.value = true
       transcriptScrollTopMemory = top
       transcriptBottomDistance.value = Math.max(0, scrollHeight - top - clientHeight)
     }
-    const dockBounds = conversationDock.value?.getBoundingClientRect()
-    container.style.setProperty('--agent-dock-height', `${dockBounds?.height ?? 0}px`)
-    updateApprovalJump(container, dockBounds)
+    updateApprovalJump(container)
   })
 }
 const scheduleTranscriptReconcile = (): void => {
@@ -1910,9 +1959,7 @@ watch(() => {
   const response = messages.findLast(message => message.role === 'assistant' && (message.content || message.media?.length))
   return [thread.value?.session.id, response?.id, response?.status === 'complete'] as const
 }, ([sessionId, responseId, complete], previous) => {
-  // A new session starts at the latest answer. An arriving answer must not
-  // pull a reader away from earlier messages, including during streaming.
-  if (sessionId !== previous[0]) transcriptFollowing.value = true
+  // Session entry positioning is owned by the session watcher below.
   if (sessionId !== previous[0] || (responseId && (responseId !== previous[1] || (complete && !previous[2])))) {
     void reconcileTranscriptGrowth(transcriptFollowing.value)
   }
@@ -2127,6 +2174,19 @@ watch(narrowPanel, async () => {
 })
 watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
   if (sessionId !== previousSessionId) {
+    transcriptReadingIntent = Boolean(thread.value?.messages.length)
+    transcriptFollowing.value = false
+    transcriptFrameShouldFollow = false
+    if (transcriptFrame !== null) window.cancelAnimationFrame(transcriptFrame)
+    transcriptFrame = null
+    const component = componentGeneration
+    void nextTick(() => {
+      if (disposed || component !== componentGeneration || thread.value?.session.id !== sessionId) return
+      const container = transcript.value
+      if (container) container.scrollTop = 0
+      transcriptScrollTopMemory = 0
+      scheduleTranscriptFrame()
+    })
     resolveDraftDiscard(false, false)
     goalExpanded.value = false
     clearSessionNotice()
@@ -2139,11 +2199,10 @@ watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
     panelFocusKind = null
     if (panelMode.value !== 'wide') historyOpen.value = false
   }
-  transcriptFollowing.value = true
   void nextTick(async () => {
+    if (disposed || thread.value?.session.id !== sessionId) return
     const container = transcript.value
     if (hasConversation.value) {
-      if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'auto' })
       if (restoreWorkspaceFocus) container?.focus({ preventScroll: true })
     } else {
       if (container) container.scrollTop = 0
@@ -2151,7 +2210,7 @@ watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
     }
     handleTranscriptScroll()
   })
-})
+}, { immediate: true })
 watch(() => thread.value?.goal?.id, (goalId, previousGoalId) => {
   if (goalId !== previousGoalId) goalExpanded.value = false
 })
@@ -2285,6 +2344,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__context-header {
+  position: relative;
   flex: 0 0 auto;
   min-width: 0;
   padding: var(--wiki-space-1) var(--wiki-space-3);
@@ -2316,9 +2376,11 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 /* Contextual glass signals that the underlying page is included in the chat. */
 .inline-agent--contextual .inline-agent__toolbar {
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 64%, transparent) !important;
-  -webkit-backdrop-filter: blur(36px) saturate(160%);
-  backdrop-filter: blur(36px) saturate(160%);
+  background: var(--wiki-hud-surface) !important;
+  -webkit-backdrop-filter: var(--wiki-hud-filter);
+  backdrop-filter: var(--wiki-hud-filter);
+  border: var(--wiki-hud-border);
+  box-shadow: var(--wiki-glass-specular), var(--wiki-shadow-md);
   animation: none;
 }
 /* Either left-side panel brings the remaining swap toggle flush to the panel. */
@@ -2477,28 +2539,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
     visibility 0s linear 0s;
 }
 
-.inline-agent__memory-pill {
-  --wiki-control-radius: var(--wiki-radius-pill);
-  --wiki-beam-violet: var(--wiki-accent-spectral);
-  --wiki-beam-cool: var(--wiki-accent-warm);
-  position: relative;
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: var(--wiki-space-2);
-  min-block-size: max(44px, var(--wiki-control-height));
-  padding: var(--wiki-space-1) var(--wiki-space-3);
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-radius-pill);
-  background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-.inline-agent__memory-pill:disabled { cursor: not-allowed; opacity: .6; }
-.inline-agent__memory-pill:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
-.inline-agent__memory-pill--feedback { border-color: var(--wiki-accent-spectral); }
+.inline-agent__context-header--feedback { outline: 1px solid var(--wiki-accent-spectral); outline-offset: -1px; }
+.inline-agent__source-control { display: inline-flex; align-items: center; justify-content: center; gap: var(--wiki-space-1); min-width: 44px; min-height: 44px; padding-inline: var(--wiki-space-2); border: 0; background: transparent; color: inherit; font: inherit; font-size: var(--wiki-label-size); border-radius: var(--wiki-radius-pill); cursor: pointer; }
+.inline-agent__source-control:disabled { cursor: not-allowed; opacity: .65; }
+.inline-agent__source-control:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: -2px; }
 .inline-agent__memory-beam :deep(.control-border-beam__trail) { animation: agent-memory-receipt-beam 600ms linear 1; }
 @keyframes agent-memory-receipt-beam {
   0% { --wiki-beam-dash-offset: -13; opacity: 0; }
@@ -2509,8 +2553,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent__memory-beam { display: none; }
 }
 @media (forced-colors: active) {
-  .inline-agent__memory-pill { border-color: ButtonText; background: Canvas; color: ButtonText; box-shadow: none; }
-  .inline-agent__memory-pill--feedback { outline: 2px solid Highlight; outline-offset: -2px; }
+  .inline-agent__source-control { border: 1px solid ButtonText; background: Canvas; color: ButtonText; box-shadow: none; }
+  .inline-agent__context-header--feedback { outline: 2px solid Highlight; outline-offset: -2px; }
   .inline-agent__memory-beam { display: none; }
 }
 
@@ -2659,15 +2703,15 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent--contextual .inline-agent__body {
-  background: var(--wiki-agent-contextual-surface);
-  -webkit-backdrop-filter: var(--wiki-agent-contextual-filter);
-  backdrop-filter: var(--wiki-agent-contextual-filter);
+  background: var(--wiki-hud-surface);
+  -webkit-backdrop-filter: var(--wiki-hud-filter);
+  backdrop-filter: var(--wiki-hud-filter);
   animation: none;
 }
 @keyframes agentOpaqueGlassRetire {
   from, to {
-    -webkit-backdrop-filter: var(--wiki-agent-contextual-filter);
-    backdrop-filter: var(--wiki-agent-contextual-filter);
+    -webkit-backdrop-filter: var(--wiki-hud-filter);
+    backdrop-filter: var(--wiki-hud-filter);
   }
 }
 @supports not ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
@@ -2707,8 +2751,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
-  /* The sticky dock already reserves its own height in this column. Extra
-     padding after it raises the composer and can cover welcome actions. */
   padding: var(--wiki-space-3) var(--wiki-space-1);
   overflow-y: auto;
   outline: none;
@@ -2716,7 +2758,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   scrollbar-gutter: stable both-edges;
   scroll-behavior: auto;
   scroll-padding-block: var(--wiki-space-4);
-  scroll-padding-block-end: calc(var(--agent-dock-height, 0px) + var(--wiki-space-4));
 }
 .inline-agent__transcript--following {
   /* Automatic follow owns the scroll position while streaming. When reading
@@ -2724,17 +2765,16 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   overflow-anchor: none;
 }
 .inline-agent__conversation-dock {
-  position: sticky;
+  position: relative;
   z-index: 3;
-  inset-block-end: 0;
   display: flex;
   width: 100%;
   box-sizing: border-box;
   flex-direction: column;
   flex: 0 0 auto;
-  margin: auto auto 0;
-  padding-block-start: var(--wiki-space-3);
-  pointer-events: none;
+  margin: 0;
+  padding-block-start: 0;
+  background: var(--wiki-surface-raised);
 }
 .inline-agent__conversation-dock > .inline-agent__goal-dock,
 .inline-agent__conversation-dock > .inline-agent__composer {
@@ -2742,17 +2782,12 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__goal-dock {
-  position: sticky;
+  position: relative;
   z-index: 2;
-  inset-block-end: 0;
   width: min(100%, var(--agent-conversation-width));
   margin: calc(var(--wiki-space-3) / 2) auto 0;
   padding-block: var(--wiki-space-1) calc(var(--wiki-space-3) / 2);
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    color-mix(in srgb, var(--inline-agent-workspace-base) 94%, transparent) var(--wiki-space-2)
-  );
+  background: var(--wiki-surface-raised);
 }
 
 .inline-agent__goal-dock :deep(.agent-goal) {
@@ -2771,10 +2806,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   margin-inline: auto;
 }
 .inline-agent__transcript :deep(.agent-message__media video) {
-  /* Intrinsic video dimensions can exceed a short scrollport. Keep the
-     player inside the reading space above the sticky dock, including the
-     transcript's scroll padding, without removing its native controls. */
-  max-height: min(480px, max(var(--wiki-control-height), calc(100cqh - var(--agent-dock-height, 0px) - var(--wiki-space-4) * 2)));
+  /* The footer is outside the scrollport; reserve only the reading padding. */
+  max-height: min(480px, max(var(--wiki-control-height), calc(100cqh - var(--wiki-space-4) * 2)));
   object-fit: contain;
 }
 
@@ -2811,9 +2844,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__jump-dock {
-  position: absolute;
-  inset-block-end: 100%;
-  inset-inline-end: max(0px, calc((100% - var(--agent-conversation-width)) / 2));
+  position: relative;
   display: flex;
   align-items: center;
   width: min(100%, var(--agent-conversation-width));
@@ -2821,10 +2852,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   flex: 0 0 auto;
   justify-content: flex-end;
   margin-inline: auto;
-  padding: var(--wiki-space-4);
+  padding: 0 var(--wiki-space-4) 12px;
   border: 0;
-  background: transparent;
-  pointer-events: none;
+  background: var(--wiki-surface-raised);
 }
 
 .inline-agent__jump-dock > .v-btn {
@@ -2841,10 +2871,10 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__follow-jump {
   animation: agentFollowJumpIn var(--wiki-motion-fast) var(--wiki-motion-ease);
-  opacity: .8;
+  opacity: 1;
   box-sizing: border-box;
-  min-width: 36px;
-  min-height: 36px;
+  min-width: 44px;
+  min-height: 44px;
   height: auto;
   padding: 0;
   border-radius: var(--wiki-control-radius);
@@ -2857,43 +2887,29 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__follow-jump :deep(.v-btn__content) {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0;
 }
 
 .inline-agent__follow-jump-frame {
   position: relative;
   display: inline-flex;
-  min-height: 36px;
+  min-height: 44px;
   align-items: center;
   justify-content: center;
 }
 
-.inline-agent__follow-jump-halo {
-  position: absolute;
-  inset: -2px;
-  border-radius: var(--wiki-control-radius);
-  background: linear-gradient(
-    90deg,
-    var(--wiki-accent-warm),
-    var(--wiki-ambient-accent),
-    var(--wiki-accent-spectral)
-  );
-  filter: blur(4px);
-  opacity: .42;
-  pointer-events: none;
-}
 
 .inline-agent__follow-jump-face {
   position: relative;
   display: inline-flex;
-  min-height: 36px;
+  min-height: 44px;
   box-sizing: border-box;
   align-items: center;
   gap: var(--wiki-space-1);
   padding-inline: var(--wiki-space-2);
-  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 38%, var(--wiki-surface-border));
-  border-radius: var(--wiki-control-radius);
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 38%, var(--wiki-surface-border));
+  border-radius: var(--wiki-radius-pill);
   background: var(--wiki-surface-raised);
   box-shadow: var(--wiki-shadow-md);
   color: rgb(var(--v-theme-on-surface));
@@ -3142,19 +3158,11 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   z-index: 1;
   box-sizing: border-box;
   flex: 0 0 auto;
-  padding: var(--wiki-space-4) clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8)) max(var(--wiki-space-4), env(safe-area-inset-bottom));
+  padding: 0 clamp(var(--wiki-space-2), 3vw, var(--wiki-space-8)) max(var(--wiki-space-2), env(safe-area-inset-bottom));
   border-top: 0;
-  background: transparent;
+  background: var(--wiki-surface-raised);
   box-shadow: none;
   opacity: 1;
-  transition: opacity var(--wiki-motion-fast) var(--wiki-motion-ease);
-}
-.inline-agent__composer--scrolled:not(.inline-agent__composer--focused) {
-  opacity: .2;
-}
-.inline-agent__composer--scrolled:not(.inline-agent__composer--focused) :deep(.agent-composer) {
-  border-color: var(--wiki-surface-border-strong);
-  box-shadow: var(--wiki-shadow-md), var(--wiki-shadow-inset);
 }
 .inline-agent__composer-inner {
   width: min(100%, var(--agent-conversation-width));
@@ -3684,15 +3692,15 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent__loading-mark {
     background: Highlight;
   }
-  .inline-agent__follow-jump-halo,
   .inline-agent__follow-jump :deep(.v-btn__underlay),
   .inline-agent__follow-jump :deep(.v-btn__overlay) {
     display: none;
   }
 
   .inline-agent__follow-jump-face,
-  .inline-agent__composer--scrolled:not(.inline-agent__composer--focused),
-  .inline-agent__composer--scrolled:not(.inline-agent__composer--focused) :deep(.agent-composer) {
+  .inline-agent__composer,
+  .inline-agent__conversation-dock,
+  .inline-agent__composer :deep(.agent-composer) {
     border-color: ButtonText;
     background: Canvas;
     box-shadow: none;

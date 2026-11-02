@@ -418,10 +418,10 @@
     > .content {
       margin: 0;
       padding: var(--wiki-space-4, 1rem);
-      border: 1px solid var(--wiki-surface-border);
+      border: 1px solid var(--wiki-material-border);
       border-radius: var(--wiki-panel-radius, 12px);
-      background: var(--wiki-surface-raised);
-      box-shadow: var(--wiki-shadow-inset);
+      background: var(--wiki-surface-gradient);
+      box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
     }
   }
 
@@ -693,10 +693,11 @@
   .prismjs {
     overflow-x: auto;
     margin: var(--wiki-space-6, 1.5rem) 0;
-    border: 1px solid var(--wiki-surface-border);
+    border: 1px solid var(--wiki-well-border);
     border-radius: var(--wiki-panel-radius, 12px);
     background: var(--wiki-surface-sunken);
-    box-shadow: var(--wiki-shadow-sm);
+    background-image: none;
+    box-shadow: var(--wiki-shadow-inset);
     scrollbar-gutter: stable;
 
     > code {
@@ -737,15 +738,16 @@
     position: relative;
     overflow: hidden;
     margin: var(--wiki-space-6, 1.5rem) 0;
-    border: 1px solid var(--wiki-surface-border);
+    border: 1px solid var(--wiki-well-border);
     border-radius: var(--wiki-panel-radius, 12px);
     background: var(--wiki-surface-sunken);
-    box-shadow: var(--wiki-shadow-sm);
+    background-image: none;
+    box-shadow: var(--wiki-shadow-inset);
 
     > .codeblock-title {
       padding: var(--wiki-space-2, .5rem) var(--wiki-space-4, 1rem);
       border-bottom: 1px solid var(--wiki-surface-border);
-      background: var(--wiki-surface-raised);
+      background: var(--wiki-surface-sunken);
       color: var(--wiki-text-muted);
       font-family: var(--wiki-font-mono);
       font-size: var(--wiki-label-size);
@@ -757,6 +759,7 @@
 
     > pre,
     > .prismjs,
+    > .code-toolbar > pre,
     > .code-toolbar > .prismjs {
       margin: 0;
       border: 0;
@@ -968,12 +971,13 @@
     overflow-x: auto;
     width: 100%;
     margin: var(--wiki-space-6, 1.5rem) 0;
-    border: 1px solid var(--wiki-surface-border);
+    border: 1px solid var(--wiki-well-border);
     border-collapse: separate;
     border-spacing: 0;
     border-radius: var(--wiki-panel-radius, 12px);
-    background: rgb(var(--v-theme-surface));
-    box-shadow: var(--wiki-shadow-xs);
+    background: var(--wiki-surface-sunken);
+    background-image: none;
+    box-shadow: var(--wiki-shadow-inset);
 
     &.dense {
       td, th {
@@ -983,7 +987,7 @@
     }
 
     th {
-      background: color-mix(in srgb, var(--wiki-accent-spectral) 7%, var(--wiki-surface-raised));
+      background: color-mix(in srgb, var(--wiki-accent-spectral) 7%, var(--wiki-surface-sunken));
       color: rgb(var(--v-theme-on-surface));
       font-size: var(--wiki-label-size);
       font-weight: var(--wiki-label-weight);
@@ -1190,10 +1194,10 @@
   details {
     overflow: hidden;
     margin: var(--wiki-space-6, 1.5rem) 0;
-    border: 1px solid var(--wiki-surface-border);
+    border: 1px solid var(--wiki-material-border);
     border-radius: var(--wiki-panel-radius, 12px);
-    background: var(--wiki-surface-raised);
-    box-shadow: var(--wiki-shadow-inset);
+    background: var(--wiki-surface-gradient);
+    box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
 
     > summary {
       // Replace the native black triangle with a themed chevron that turns
@@ -1315,11 +1319,11 @@
     position: relative;
     margin: var(--wiki-space-8, 2rem) 0;
     padding: var(--wiki-space-4, 1rem);
-    border: 1px solid var(--wiki-surface-border);
+    border: 1px solid var(--wiki-material-border);
     border-inline-start: .1875rem solid color-mix(in srgb, var(--wiki-ambient-accent) 64%, transparent);
     border-radius: var(--wiki-panel-radius, 12px);
-    background: var(--wiki-surface-raised);
-    box-shadow: var(--wiki-shadow-inset);
+    background: var(--wiki-surface-gradient);
+    box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
   }
 
   .content-extension--qr {
@@ -1762,9 +1766,11 @@
   .content-extension-diagram__source {
     margin: 0;
     padding: 1rem;
-    border: 1px solid var(--wiki-surface-border);
+    border: 1px solid var(--wiki-well-border);
     border-radius: var(--wiki-control-radius);
-    background-color: var(--wiki-surface-sunken);
+    background: var(--wiki-surface-sunken);
+    background-image: none;
+    box-shadow: var(--wiki-shadow-inset);
     font-family: var(--wiki-font-mono);
     font-size: .85rem;
     white-space: pre;
@@ -2011,7 +2017,7 @@
       border-block-end-color: CanvasText !important;
     }
 
-    :where(blockquote, pre, table, details, .content-extension) {
+    :where(blockquote, pre, .prismjs, .codeblock-framed, table, details, .content-extension) {
       border-color: CanvasText !important;
       box-shadow: none !important;
     }
@@ -2129,8 +2135,11 @@ html[data-wiki-code-theme='native'] :is(.v-main .contents, .editor-page-canvas.c
     overflow-x: auto;
     margin-block-start: .75rem;
     padding: 1rem;
-    border: 1px solid var(--wiki-surface-border);
+    border: 1px solid var(--wiki-well-border);
     border-radius: var(--wiki-panel-radius, 12px);
+    background: var(--wiki-surface-sunken);
+    background-image: none;
+    box-shadow: var(--wiki-shadow-inset);
     font: .875rem / 1.65 var(--wiki-font-mono);
     white-space: pre;
     text-align: start;

@@ -29,6 +29,25 @@ describe('Agent answer citations', () => {
     expect(formatted).not.toContain('[[cite:')
   })
 
+  it('copies resolved prose citations without interpreting literal code or escaped markers', () => {
+    const content = [
+      'Claim.[[cite:page:42:section:2]] Unknown.[[cite:unverified]]',
+      String.raw`\[\[cite:page:43\]\]`,
+      '`[[cite:page:43]]`',
+      '```text\n[[cite:page:43]]\n```',
+      '~~~text\n[[cite:page:43]]\n~~~'
+    ].join('\n\n')
+    const copied = formatAgentCitationMarkers(content, citations)
+    const container = document.createElement('div')
+    container.innerHTML = renderSafeMarkdown(copied)
+
+    expect([...container.querySelectorAll('a')].map(anchor => anchor.getAttribute('href'))).toEqual(['/en/guide#installation'])
+    expect(container.querySelector('a')?.getAttribute('title')).toBe('Citation 1: Guide › Installation')
+    expect([...container.querySelectorAll('code')].map(code => code.textContent)).toEqual(['[[cite:page:43]]', '[[cite:page:43]]\n', '[[cite:page:43]]\n'])
+    expect(container.querySelectorAll('p')[1]?.textContent).toBe('[[cite:page:43]]')
+    expect(container.textContent).not.toContain('unverified')
+  })
+
   it('rejects the same unsafe citation links in displayed and copied answers without renumbering sources', () => {
     const unsafeHrefs = ['/en/"quoted', "/en/'quoted", '//outside.example/guide', 'javascript:alert(1)', '/en/guide\u0000']
     const sources: readonly AgentCitation[] = [

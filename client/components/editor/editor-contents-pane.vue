@@ -13,7 +13,7 @@ nav.editor-contents-pane(:aria-label='$t(`editor:contents.title`, { defaultValue
   .editor-contents-pane-list(:aria-busy='busy')
     p(v-if='!headings.length') {{ $t('editor:contents.empty', { defaultValue: 'No headings yet' }) }}
     ol(v-else)
-      li(v-for='heading in visibleHeadings', :key='heading.line')
+      li(v-for='heading in visibleHeadings', :key='heading.line', :data-level='heading.level')
         button(type='button', :disabled='busy', :aria-current='heading.line === currentHeading ? `location` : undefined', :style='{ paddingInlineStart: `${0.5 + (heading.level - 1) * 0.65}rem` }', @click='$emit(`jump`, heading.line)') {{ heading.title || $t('editor:contents.untitled', { defaultValue: 'Untitled heading' }) }}
 </template>
 
@@ -42,25 +42,32 @@ const currentHeading = computed(() => {
   max-width: 35vw;
   min-height: 0;
   overflow: hidden;
-  border-inline-end: 1px solid rgba(var(--v-theme-on-surface), .12);
-  background: rgb(var(--v-theme-surface));
+  background: transparent;
   color: rgb(var(--v-theme-on-surface));
   font-size: .85rem;
 }
 .editor-contents-pane-header { display: flex; align-items: center; justify-content: space-between; padding: .4rem .75rem; }
 .editor-contents-pane-controls { display: flex; flex-wrap: wrap; gap: .5rem; padding: .5rem; }
 .editor-contents-pane-controls label { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
-.editor-contents-pane-controls select { border: 1px solid currentColor; border-radius: .25rem; padding: .1rem .3rem; }
+.editor-contents-pane-controls select { border: 1px solid transparent; background: var(--wiki-surface-sunken); color: inherit; border-radius: .4rem; padding: .2rem .4rem; }
 .editor-contents-pane-list { overflow: auto; min-height: 0; overscroll-behavior: contain; }
 ol { list-style: none; margin: 0; padding: 0; }
 p { padding: .75rem; color: var(--wiki-text-muted); }
-button { text-align: start; border-radius: .25rem; padding: .35rem .5rem; }
+button { text-align: start; border: none; background: transparent; color: inherit; font: inherit; border-radius: .4rem; padding: .4rem .5rem; }
 li button { width: 100%; overflow-wrap: anywhere; }
-button:hover, button[aria-current] { background: rgba(var(--v-theme-primary), .12); }
+li[data-level='1'] button { font-weight: 700; font-size: .95rem; }
+li[data-level='2'] button { font-weight: 600; }
+li[data-level='3'] button { font-weight: 500; }
+li[data-level='4'] button, li[data-level='5'] button, li[data-level='6'] button { color: var(--wiki-text-muted); }
+button:hover, button[aria-current] { background: var(--wiki-accent-subtle); }
 button[aria-current] { color: var(--wiki-accent-ink); font-weight: 600; }
 button:focus-visible, select:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: -2px; }
 button:disabled { opacity: .6; }
 @media (max-width: 600px) {
   .editor-contents-pane { flex-basis: 9rem; max-width: 35vw; }
+}
+@media (forced-colors: active) {
+  .editor-contents-pane-controls select { border-color: ButtonText; background: Canvas; color: CanvasText; }
+  button[aria-current] { color: HighlightText; background: Highlight; forced-color-adjust: none; }
 }
 </style>

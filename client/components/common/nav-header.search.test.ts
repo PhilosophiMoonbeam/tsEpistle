@@ -28,7 +28,11 @@ const selected: Record<string, true> = {
   handleSearchFocusCommand: true,
   handleSearchShortcut: true,
   searchEnter: true,
-  searchMove: true
+  searchMove: true,
+  closePageActionMenus: true,
+  openAgent: true,
+  revealReadingChrome: true,
+  setReadingChromeHidden: true
 }
 const declarations = methodsNode.properties.filter(node => ts.isMethodDeclaration(node) && selected[node.name.getText(sourceFile)])
 if (declarations.length !== Object.keys(selected).length) throw new Error('A header search handler was not found')
@@ -53,12 +57,21 @@ type HeaderState = {
   hideSearch: boolean
   dense: boolean
   canEnterAgent: boolean
+  onlineActionReady: boolean
+  readingChromeHidden: boolean
+  beforeSearchExit?: () => boolean
+  pageActionsAreOpen: boolean
+  mobilePageActionsAreOpen: boolean
+  pageActionsPage: unknown
+  mobilePageActionsPage: unknown
+  pageActionsFocusFrame: number | null
   $vuetify: { display: { smAndDown: boolean; mdAndUp: boolean } }
   $refs: Record<string, unknown>
   $nextTick: () => Promise<void>
   searchFocus: () => void
   searchClose: () => void
   searchToggle: () => void
+  openAgent: () => Promise<void>
   focusSearchField: () => Promise<void>
   handleSearchFocusCommand: () => void
   handleSearchShortcut: (event: KeyboardEvent) => void
@@ -68,9 +81,12 @@ type HeaderState = {
 }
 
 const fixture = (mobile = false) => {
-  const dom = new JSDOM('<!doctype html><html><body><button id="toggle">Search</button><input id="desktop"><input id="mobile"></body></html>', {
-    pretendToBeVisual: true
-  })
+  const dom = new JSDOM(
+    '<!doctype html><html><body><button id="toggle">Search</button><button id="agent">Agent</button><input id="desktop"><input id="mobile"></body></html>',
+    {
+      pretendToBeVisual: true
+    }
+  )
   const document = dom.window.document
   const entered: string[] = []
   const moved: string[] = []
@@ -79,12 +95,14 @@ const fixture = (mobile = false) => {
     'HTMLElement',
     'emitSearchEnter',
     'emitSearchMove',
+    'emitSearchExit',
     `${compiled}\nreturn {...methods, onSearchBreakpoint: watchers['$vuetify.display.smAndDown'].handler}`
   )(
     document,
     dom.window.HTMLElement,
     () => entered.push(state.searchMode),
-    (direction: string) => moved.push(direction)
+    (direction: string) => moved.push(direction),
+    () => {}
   )
   const state: HeaderState = {
     ...methods,
@@ -97,11 +115,19 @@ const fixture = (mobile = false) => {
     hideSearch: false,
     dense: false,
     canEnterAgent: true,
+    onlineActionReady: true,
+    readingChromeHidden: false,
+    pageActionsAreOpen: false,
+    mobilePageActionsAreOpen: false,
+    pageActionsPage: null,
+    mobilePageActionsPage: null,
+    pageActionsFocusFrame: null,
     $vuetify: { display: { smAndDown: mobile, mdAndUp: !mobile } },
     $refs: {
       searchField: { $el: document.body, focus: () => document.getElementById('desktop')!.focus() },
       searchFieldMobile: { focus: () => document.getElementById('mobile')!.focus() },
-      searchToggle: { $el: document.getElementById('toggle') }
+      searchToggle: { $el: document.getElementById('toggle') },
+      agentOpener: { $el: document.getElementById('agent') }
     },
     $nextTick: async () => {}
   }
@@ -111,6 +137,37 @@ const fixture = (mobile = false) => {
 }
 
 describe('header search keyboard entry', () => {
+  it('establishes the persistent direct Agent opener before moving into the mobile input', async () => {
+    const { state, document } = fixture(true)
+    const focused: string[] = []
+    document.addEventListener('focusin', event => focused.push((event.target as HTMLElement).id))
+    await state.openAgent()
+    await state.$nextTick()
+    expect(state.searchMode).toBe('ask')
+    expect(state.searchIsFocused).toBe(true)
+    expect(focused).toEqual(['agent', 'mobile'])
+    expect(document.activeElement?.id).toBe('mobile')
+  })
+
+  it('preserves guarded drafts and abandons Agent entry when connection authority changes during Search teardown', async () => {
+    const { state, document } = fixture(true)
+    state.beforeSearchExit = () => false
+    await state.openAgent()
+    expect(state.searchMode).toBe('search')
+    expect(state.searchIsFocused).toBe(true)
+    expect(state.search).toBe('pizza')
+    expect(document.activeElement).toBe(document.body)
+    state.beforeSearchExit = () => true
+    const tick = Promise.withResolvers<void>()
+    state.$nextTick = () => tick.promise
+    const opening = state.openAgent()
+    state.onlineActionReady = false
+    tick.resolve()
+    await opening
+    expect(state.searchMode).toBe('search')
+    expect(document.activeElement).toBe(document.body)
+  })
+
   it('toggles Agent open and closed without opening Search, including reopening after close', async () => {
     for (const mobile of [false, true]) {
       for (const modifier of ['ctrlKey', 'metaKey']) {

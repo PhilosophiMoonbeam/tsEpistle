@@ -1,27 +1,17 @@
 <template>
   <v-container fluid class="recovery-workspace">
-    <admin-hero :title="$t('admin:pagesRecycleBin.pageRecovery')" :description="$t('admin:pagesRecycleBin.restoreDeletedPageRetained')" icon="mdi-history">
+    <admin-hero :title="rt('pageRecovery')" :description="rt('restoreDeletedPageRetained')" icon="mdi-history">
+      <template #status><span v-if="items.length || (!listLoading && !errorMessage)" class="recovery-count" role="status">{{ rt('visible', { itemsCount: items.length, interpolation: { escapeValue: false } }) }}</span></template>
       <template #actions>
-        <v-btn variant="text" prepend-icon="mdi-arrow-left" to="/pages">{{ $t('admin:pagesRecycleBin.pageRegister') }}</v-btn>
-        <v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="listLoading" :disabled="listLoading || restoring" @click="loadFirstPage">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:pagesRecycleBin.reloadDeletedPageRecords') }}</v-tooltip></v-btn>
+        <v-btn variant="text" prepend-icon="mdi-arrow-left" to="/pages">{{ rt('pageRegister') }}</v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-refresh" :loading="listLoading" :disabled="listLoading || restoring" @click="loadFirstPage">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ rt('reloadDeletedPageRecords') }}</v-tooltip></v-btn>
       </template>
     </admin-hero>
 
-    <section class="recovery-intro" aria-labelledby="recovery-intro-title">
-      <div>
-        <span class="recovery-kicker">{{ $t('admin:pagesRecycleBin.preservedHistoryAdministratorWorkspace') }}</span>
-        <h2 id="recovery-intro-title">{{ $t('admin:pagesRecycleBin.carefulReturnNotUndo') }}</h2>
-        <p>{{ $t('admin:pagesRecycleBin.eachEntryPointsExact') }}</p>
-      </div>
-      <aside class="recovery-limit">
-        <v-icon icon="mdi-shield-lock-outline" aria-hidden="true" />
-        <p><strong>{{ $t('admin:pagesRecycleBin.whatRecoveryBringsBack') }}</strong><br />{{ $t('admin:pagesRecycleBin.pageSourceOriginalPage') }}</p>
-      </aside>
-    </section>
 
     <v-alert v-if="notice" type="success" variant="tonal" class="mb-5" role="status">
       {{ notice }}
-      <router-link v-if="restoredPage" class="recovery-result-link" :to="`/pages/${restoredPage.id}`">{{ $t('admin:pagesRecycleBin.openRestoredPageAdministration') }}</router-link>
+      <router-link v-if="restoredPage" class="recovery-result-link" :to="`/pages/${restoredPage.id}`">{{ rt('openRestoredPageAdministration') }}</router-link>
     </v-alert>
     <v-alert v-if="restoredPage" :type="renderReady ? 'success' : renderError ? 'warning' : 'info'" variant="tonal" class="mb-5" role="status" :aria-busy="renderLoading">
       <template v-if="renderReady">
@@ -39,19 +29,18 @@
       <section class="recovery-ledger" aria-labelledby="recovery-ledger-title">
         <div class="recovery-panel-heading">
           <div>
-            <span class="recovery-kicker">{{ $t('admin:pagesRecycleBin.n01DeletedRecords') }}</span>
-            <h3 id="recovery-ledger-title">{{ $t('admin:pagesRecycleBin.chooseSnapshot') }}</h3>
+            <span class="recovery-kicker">{{ rt('n01DeletedRecords') }}</span>
+            <h3 id="recovery-ledger-title">{{ rt('chooseSnapshot') }}</h3>
           </div>
-          <span class="recovery-count" aria-live="polite">{{ $t('admin:pagesRecycleBin.visible', { itemsCount: items.length, interpolation: { escapeValue: false } }) }}</span>
         </div>
         <div v-if="listLoading && !items.length" class="recovery-empty" role="status">
           <v-progress-circular indeterminate color="primary" size="24" aria-hidden="true" />
-          <span>{{ $t('admin:pagesRecycleBin.readingRetainedDeletionHistory') }}</span>
+          <span>{{ rt('readingRetainedDeletionHistory') }}</span>
         </div>
         <div v-else-if="!items.length && !listLoading && !errorMessage" class="recovery-empty">
           <v-icon icon="mdi-archive-check-outline" size="34" aria-hidden="true" />
-          <strong>{{ $t('admin:pagesRecycleBin.recoveryBinClear') }}</strong>
-          <span>{{ $t('admin:pagesRecycleBin.onlyPageDeletionsWhose') }}</span>
+          <strong>{{ rt('recoveryBinClear') }}</strong>
+          <span>{{ rt('onlyPageDeletionsWhose') }}</span>
         </div>
         <div v-else class="recovery-records">
           <button
@@ -65,78 +54,83 @@
           >
             <span class="record-mark" aria-hidden="true"><v-icon :icon="item.restoreMode === 'quarantine' ? 'mdi-lock-alert-outline' : 'mdi-file-restore-outline'" /></span>
             <span class="record-copy">
-              <strong>{{ item.title || $t('admin:pagesRecycleBin.untitledPage') }}</strong>
+              <strong>{{ item.title || rt('untitledPage') }}</strong>
               <span class="record-location">{{ item.localeCode }} / {{ item.path }}</span>
-              <span class="record-meta">{{ $t('admin:pagesRecycleBin.pageDeletionVersion', { pageId: item.pageId, deletionVersionId: item.deletionVersionId, interpolation: { escapeValue: false } }) }}</span>
+              <span class="record-meta">{{ rt('pageDeletionVersion', { pageId: item.pageId, deletionVersionId: item.deletionVersionId, interpolation: { escapeValue: false } }) }}</span>
             </span>
             <span class="record-status" :class="item.restoreMode === 'quarantine' ? 'is-caution' : ''">
-              {{ item.restoreMode === 'quarantine' ? $t('admin:pagesRecycleBin.quarantine') : item.protection.isProtected ? $t('admin:pagesRecycleBin.passwordProtected') : $t('admin:pagesRecycleBin.accessRetained') }}
+              {{ item.restoreMode === 'quarantine' ? rt('quarantine') : item.protection.isProtected ? rt('passwordProtected') : rt('accessRetained') }}
             </span>
           </button>
-          <v-btn v-if="hasMore" class="recovery-more" variant="text" :loading="olderLoading" :disabled="olderLoading || listLoading" prepend-icon="mdi-chevron-down" @click="loadOlder">{{ $t('admin:pagesRecycleBin.loadOlderRecords') }}</v-btn>
+          <v-btn v-if="hasMore" class="recovery-more" variant="text" :loading="olderLoading" :disabled="olderLoading || listLoading" prepend-icon="mdi-chevron-down" @click="loadOlder">{{ rt('loadOlderRecords') }}</v-btn>
         </div>
-        <p class="recovery-footnote">{{ $t('admin:pagesRecycleBin.listContainsOnlyLatest') }}</p>
+        <p class="recovery-footnote">{{ rt('listContainsOnlyLatest') }}</p>
       </section>
 
       <section class="recovery-inspector" aria-labelledby="recovery-inspector-title" :aria-busy="inspectLoading || restoring">
         <div class="recovery-panel-heading">
           <div>
-            <span class="recovery-kicker">{{ $t('admin:pagesRecycleBin.n02SourceReturnPlan') }}</span>
-            <h3 id="recovery-inspector-title">{{ $t('admin:pagesRecycleBin.inspectBeforeRestoring') }}</h3>
+            <span class="recovery-kicker">{{ rt('n02SourceReturnPlan') }}</span>
+            <h3 id="recovery-inspector-title">{{ rt('inspectBeforeRestoring') }}</h3>
           </div>
           <span v-if="inspected" class="snapshot-index">#{{ inspected.pageId }} / v{{ inspected.deletionVersionId }}</span>
         </div>
+        <details class="recovery-help">
+          <summary>{{ rt('whatRecoveryBringsBack') }}</summary>
+          <p>{{ rt('pageSourceOriginalPage') }}</p>
+          <p>{{ rt('eachEntryPointsExact') }}</p>
+        </details>
         <div v-if="inspectLoading" class="recovery-empty" role="status">
           <v-progress-circular indeterminate color="primary" size="24" aria-hidden="true" />
-          <span>{{ $t('admin:pagesRecycleBin.openingSelectedHistoricalSource') }}</span>
+          <span>{{ rt('openingSelectedHistoricalSource') }}</span>
         </div>
         <div v-else-if="!inspected" class="recovery-empty recovery-empty--selection">
           <v-icon icon="mdi-text-box-search-outline" size="36" aria-hidden="true" />
-          <strong>{{ $t('admin:pagesRecycleBin.noSnapshotSelected') }}</strong>
-          <span>{{ $t('admin:pagesRecycleBin.selectRecordInspectSource') }}</span>
+          <strong>{{ rt('noSnapshotSelected') }}</strong>
+          <span>{{ rt('selectRecordInspectSource') }}</span>
         </div>
         <template v-else>
           <v-alert v-if="inspected.restoreMode === 'quarantine'" type="warning" variant="tonal" density="comfortable" class="recovery-warning">
-            {{ $t('admin:pagesRecycleBin.deletionHasNoReliable') }}
+            {{ rt('deletionHasNoReliable') }}
           </v-alert>
           <v-alert v-else-if="inspected.ownerResolutionRequired" type="warning" variant="tonal" density="comfortable" class="recovery-warning">
-            {{ $t('admin:pagesRecycleBin.formerPrivatePageOwner') }}
+            {{ rt('formerPrivatePageOwner') }}
           </v-alert>
           <dl class="recovery-facts">
-            <div><dt>{{ $t('admin:pagesRecycleBin.deletedLocation') }}</dt><dd>{{ inspected.localeCode }} / {{ inspected.path }}</dd></div>
-            <div><dt>{{ $t('admin:pagesRecycleBin.originalIdentity') }}</dt><dd>{{ $t('admin:pagesRecycleBin.pageSourceRevision', { pageId: inspected.pageId, sourceRevision: inspected.sourceRevision, interpolation: { escapeValue: false } }) }}</dd></div>
-            <div><dt>{{ $t('admin:pagesRecycleBin.deleted') }}</dt><dd>{{ inspected.deletedAt ? formatDate(inspected.deletedAt) : $t('admin:pagesRecycleBin.deletionTimeNotRetained') }}</dd></div>
-            <div><dt>{{ $t('admin:pagesRecycleBin.accessState') }}</dt><dd>{{ accessDescription(inspected) }}</dd></div>
-            <div><dt>{{ $t('admin:pagesRecycleBin.tags') }}</dt><dd>{{ inspected.tags.length ? inspected.tags.map(tag => `#${tag}`).join(' · ') : $t('admin:pagesRecycleBin.noneRecorded') }}</dd></div>
+            <div><dt>{{ rt('deletedLocation') }}</dt><dd>{{ inspected.localeCode }} / {{ inspected.path }}</dd></div>
+            <div><dt>{{ rt('originalIdentity') }}</dt><dd>{{ rt('pageSourceRevision', { pageId: inspected.pageId, sourceRevision: inspected.sourceRevision, interpolation: { escapeValue: false } }) }}</dd></div>
+            <div><dt>{{ rt('deleted') }}</dt><dd>{{ inspected.deletedAt ? formatDate(inspected.deletedAt) : rt('deletionTimeNotRetained') }}</dd></div>
+            <div><dt>{{ rt('accessState') }}</dt><dd>{{ accessDescription(inspected) }}</dd></div>
+            <div><dt>{{ rt('tags') }}</dt><dd>{{ inspected.tags.length ? inspected.tags.map(tag => `#${tag}`).join(' · ') : rt('noneRecorded') }}</dd></div>
           </dl>
-          <details class="source-inspection">
-            <summary>{{ $t('admin:pagesRecycleBin.readRetainedPageSource') }} <span>{{ $t('admin:pagesRecycleBin.characters', { length: inspected.content.length.toLocaleString(), interpolation: { escapeValue: false } }) }}</span></summary>
+          <details class="source-inspection wiki-surface-well">
+            <summary>{{ rt('readRetainedPageSource') }} <span>{{ rt('characters', { length: inspected.content.length.toLocaleString(), interpolation: { escapeValue: false } }) }}</span></summary>
             <pre>{{ inspected.content }}</pre>
           </details>
           <div class="recovery-plan">
             <div class="plan-heading">
-              <span class="recovery-kicker">{{ $t('admin:pagesRecycleBin.n03Destination') }}</span>
-              <strong>{{ $t('admin:pagesRecycleBin.returnOriginalPageIdentity') }}</strong>
+              <span class="recovery-kicker">{{ rt('n03Destination') }}</span>
+              <strong>{{ rt('returnOriginalPageIdentity') }}</strong>
             </div>
             <div class="plan-fields">
-              <v-text-field v-model="restorePath" :label="$t('admin:pagesRecycleBin.destinationPath')" variant="outlined" density="comfortable" autocomplete="off" hide-details />
-              <v-text-field v-model="restoreLocale" :label="$t('admin:pagesRecycleBin.localeCode')" variant="outlined" density="comfortable" autocomplete="off" hide-details />
+              <v-text-field v-model="restorePath" :label="rt('destinationPath')" variant="outlined" density="comfortable" autocomplete="off" hide-details />
+              <v-text-field v-model="restoreLocale" :label="rt('localeCode')" variant="outlined" density="comfortable" autocomplete="off" hide-details />
               <v-text-field
                 v-if="inspected.ownerResolutionRequired"
                 v-model="ownerIdInput"
-                :label="$t('admin:pagesRecycleBin.recoveryOwnerAccountId')"
+                :label="rt('recoveryOwnerAccountId')"
                 type="number"
                 min="1"
                 step="1"
                 variant="outlined"
                 density="comfortable"
                 autocomplete="off"
-                :hint="$t('admin:pagesRecycleBin.useExistingAccountId')"
+                :hint="rt('useExistingAccountId')"
                 persistent-hint
               />
             </div>
-            <p class="recovery-draft-note"><v-icon icon="mdi-eye-off-outline" size="18" aria-hidden="true" /> {{ $t('admin:pagesRecycleBin.restoredPagesRemainUnpublished') }}</p>
-            <v-btn color="primary" variant="flat" prepend-icon="mdi-file-restore-outline" :disabled="restoring || inspectLoading" @click="openConfirmation">{{ $t('admin:pagesRecycleBin.reviewRestore') }}</v-btn>
+            <p class="recovery-draft-note"><v-icon icon="mdi-eye-off-outline" size="18" aria-hidden="true" /> {{ rt('restoredPagesRemainUnpublished') }}</p>
+            <v-btn color="primary" variant="flat" prepend-icon="mdi-file-restore-outline" :disabled="restoring || inspectLoading" @click="openConfirmation">{{ rt('reviewRestore') }}</v-btn>
           </div>
         </template>
       </section>
@@ -144,23 +138,23 @@
 
     <v-dialog v-model="confirmOpen" max-width="620" :persistent="restoring">
       <v-card class="recovery-confirm">
-        <v-card-title>{{ $t('admin:pagesRecycleBin.confirmPageRecovery') }}</v-card-title>
+        <v-card-title>{{ rt('confirmPageRecovery') }}</v-card-title>
         <v-card-text v-if="inspected">
-          <p>{{ $t('admin:pagesRecycleBin.restorePage') }} <strong>#{{ inspected.pageId }}</strong> {{ $t('admin:pagesRecycleBin.deletionVersion') }} <strong>#{{ inspected.deletionVersionId }}</strong> {{ $t('admin:pagesRecycleBin.at') }} <code>{{ restoreLocale }} / {{ restorePath }}</code>?</p>
+          <p>{{ rt('restorePage') }} <strong>#{{ inspected.pageId }}</strong> {{ rt('deletionVersion') }} <strong>#{{ inspected.deletionVersionId }}</strong> {{ rt('at') }} <code>{{ restoreLocale }} / {{ restorePath }}</code>?</p>
           <ul>
-            <li>{{ $t('admin:pagesRecycleBin.originalPageIdRetained') }}</li>
-            <li>{{ $t('admin:pagesRecycleBin.existingCommentsWatchersApprovals') }}</li>
-            <li>{{ $t('admin:pagesRecycleBin.restoredPageStaysUnpublished') }}</li>
-            <li v-if="inspected.restoreMode === 'quarantine'">{{ $t('admin:pagesRecycleBin.olderSnapshotReturnsPrivate') }}</li>
-            <li v-else-if="inspected.protection.isProtected">{{ $t('admin:pagesRecycleBin.retainedPasswordProtectionRestored') }}</li>
-            <li v-else>{{ $t('admin:pagesRecycleBin.recordedVisibilityOwnershipRetained') }}</li>
+            <li>{{ rt('originalPageIdRetained') }}</li>
+            <li>{{ rt('existingCommentsWatchersApprovals') }}</li>
+            <li>{{ rt('restoredPageStaysUnpublished') }}</li>
+            <li v-if="inspected.restoreMode === 'quarantine'">{{ rt('olderSnapshotReturnsPrivate') }}</li>
+            <li v-else-if="inspected.protection.isProtected">{{ rt('retainedPasswordProtectionRestored') }}</li>
+            <li v-else>{{ rt('recordedVisibilityOwnershipRetained') }}</li>
           </ul>
-          <v-alert v-if="inspected.ownerResolutionRequired" type="info" variant="tonal" density="compact">{{ $t('admin:pagesRecycleBin.recoveryOwnerAccountWill', { value: ownerIdInput || '—', interpolation: { escapeValue: false } }) }}</v-alert>
+          <v-alert v-if="inspected.ownerResolutionRequired" type="info" variant="tonal" density="compact">{{ rt('recoveryOwnerAccountWill', { value: ownerIdInput || '—', interpolation: { escapeValue: false } }) }}</v-alert>
         </v-card-text>
         <v-card-actions>
           <v-spacer />
           <v-btn variant="text" :disabled="restoring" @click="confirmOpen = false">{{ $t('common:actions.cancel') }}</v-btn>
-          <v-btn color="primary" variant="flat" :loading="restoring" :disabled="restoring" @click="restoreSelected">{{ $t('admin:pagesRecycleBin.restoreUnpublished') }}</v-btn>
+          <v-btn color="primary" variant="flat" :loading="restoring" :disabled="restoring" @click="restoreSelected">{{ rt('restoreUnpublished') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -172,6 +166,7 @@ import { translate } from '../../modules/localization.ts'
 import { defineComponent } from 'vue'
 import { pageHref } from '../../helpers/admin-pages.ts'
 import { waitForPageRender, type PageRenderTarget } from '../../helpers/pages-api.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
 import {
   DELETED_PAGE_RECOVERY_PAGE_SIZE,
   DeletedPageRecoveryInspectSchema,
@@ -235,6 +230,9 @@ const apiRequest = async (url: string, init: RequestInit = {}): Promise<unknown>
 
 export default defineComponent({
   name: 'AdminPagesRecycleBin',
+  setup() {
+    return { rt: useTranslate('admin:pagesRecycleBin') }
+  },
   data(): RecycleBinState {
     return {
       items: [],
@@ -278,13 +276,13 @@ export default defineComponent({
         : value
     },
     accessDescription(item: DeletedPageRecoveryItem): string {
-      if (item.restoreMode === 'quarantine') return this.$t('admin:pagesRecycleBin.unknownHistoricalProtectionQuarantine')
+      if (item.restoreMode === 'quarantine') return this.rt('unknownHistoricalProtectionQuarantine')
       const visibility = item.visibility === 'private'
         ? item.ownerId === null
-          ? this.$t('admin:pagesRecycleBin.formerOwnerUnavailable')
-          : this.$t('admin:pagesRecycleBin.privateOwner', { ownerId: item.ownerId, interpolation: { escapeValue: false } })
-        : this.$t('admin:pagesRecycleBin.workspaceVisibility')
-      return item.protection.isProtected ? this.$t('admin:pagesRecycleBin.passwordProtectionRetainedV', { visibility, version: item.protection.version, interpolation: { escapeValue: false } }) : visibility
+          ? this.rt('formerOwnerUnavailable')
+          : this.rt('privateOwner', { ownerId: item.ownerId, interpolation: { escapeValue: false } })
+        : this.rt('workspaceVisibility')
+      return item.protection.isProtected ? this.rt('passwordProtectionRetainedV', { visibility, version: item.protection.version, interpolation: { escapeValue: false } }) : visibility
     },
     async loadFirstPage(): Promise<void> {
       if (this.disposed) return
@@ -301,13 +299,13 @@ export default defineComponent({
       try {
         const payload = await apiRequest(`/_api/pages/deleted?limit=${DELETED_PAGE_RECOVERY_PAGE_SIZE}`)
         const parsed = DeletedPageRecoveryListSchema.safeParse(payload)
-        if (!parsed.success) throw new Error(this.$t('admin:pagesRecycleBin.recoveryBinReturnedInvalid'))
+        if (!parsed.success) throw new Error(this.rt('recoveryBinReturnedInvalid'))
         if (this.disposed || request !== this.listRequest) return
         this.items = parsed.data.items
         this.hasMore = parsed.data.hasMore
         this.nextBeforeVersionId = parsed.data.nextBeforeVersionId
       } catch (error) {
-        if (request === this.listRequest) this.errorMessage = error instanceof Error ? error.message : this.$t('admin:pagesRecycleBin.recoveryBinCouldNot')
+        if (request === this.listRequest) this.errorMessage = error instanceof Error ? error.message : this.rt('recoveryBinCouldNot')
       } finally {
         if (request === this.listRequest) this.listLoading = false
       }
@@ -320,13 +318,13 @@ export default defineComponent({
       try {
         const payload = await apiRequest(`/_api/pages/deleted?limit=${DELETED_PAGE_RECOVERY_PAGE_SIZE}&beforeVersionId=${this.nextBeforeVersionId}`)
         const parsed = DeletedPageRecoveryListSchema.safeParse(payload)
-        if (!parsed.success) throw new Error(this.$t('admin:pagesRecycleBin.recoveryBinReturnedInvalid'))
+        if (!parsed.success) throw new Error(this.rt('recoveryBinReturnedInvalid'))
         if (request !== this.listRequest) return
         this.items = [...this.items, ...parsed.data.items]
         this.hasMore = parsed.data.hasMore
         this.nextBeforeVersionId = parsed.data.nextBeforeVersionId
       } catch (error) {
-        if (request === this.listRequest) this.errorMessage = error instanceof Error ? error.message : this.$t('admin:pagesRecycleBin.olderRecoveryRecordsCould')
+        if (request === this.listRequest) this.errorMessage = error instanceof Error ? error.message : this.rt('olderRecoveryRecordsCould')
       } finally {
         this.olderLoading = false
       }
@@ -344,13 +342,13 @@ export default defineComponent({
       try {
         const payload = await apiRequest(`/_api/pages/deleted/${item.pageId}/${item.deletionVersionId}`)
         const parsed = DeletedPageRecoveryInspectSchema.safeParse(payload)
-        if (!parsed.success) throw new Error(this.$t('admin:pagesRecycleBin.deletedPageInspectionReturned'))
+        if (!parsed.success) throw new Error(this.rt('deletedPageInspectionReturned'))
         if (request !== this.inspectRequest) return
         this.inspected = parsed.data
         this.restorePath = parsed.data.path
         this.restoreLocale = parsed.data.localeCode
       } catch (error) {
-        if (request === this.inspectRequest) this.errorMessage = error instanceof Error ? error.message : this.$t('admin:pagesRecycleBin.deletedPageCouldNot')
+        if (request === this.inspectRequest) this.errorMessage = error instanceof Error ? error.message : this.rt('deletedPageCouldNot')
       } finally {
         if (request === this.inspectRequest) this.inspectLoading = false
       }
@@ -359,7 +357,7 @@ export default defineComponent({
       if (!this.inspected || this.restoring) return
       const ownerId = Number(this.ownerIdInput)
       if (this.inspected.ownerResolutionRequired && (!/^[1-9]\d*$/.test(this.ownerIdInput) || !Number.isSafeInteger(ownerId))) {
-        this.errorMessage = this.$t('admin:pagesRecycleBin.enterValidRecoveryOwner')
+        this.errorMessage = this.rt('enterValidRecoveryOwner')
         return
       }
       this.errorMessage = ''
@@ -383,13 +381,13 @@ export default defineComponent({
         })
         if (this.disposed) return
         const parsed = DeletedPageRecoveryResultSchema.safeParse(payload)
-        if (!parsed.success || parsed.data.pageId !== pageId) throw new Error(this.$t('admin:pagesRecycleBin.recoveryOperationReturnedInvalid'))
+        if (!parsed.success || parsed.data.pageId !== pageId) throw new Error(this.rt('recoveryOperationReturnedInvalid'))
         this.confirmOpen = false
         await this.loadFirstPage()
         if (this.disposed) return
         this.notice = parsed.data.quarantined
-          ? this.$t('admin:pagesRecycleBin.pageWasRestoredInto', { pageId: parsed.data.pageId, interpolation: { escapeValue: false } })
-          : this.$t('admin:pagesRecycleBin.pageWasRestoredRetained', { pageId: parsed.data.pageId, interpolation: { escapeValue: false } })
+          ? this.rt('pageWasRestoredInto', { pageId: parsed.data.pageId, interpolation: { escapeValue: false } })
+          : this.rt('pageWasRestoredRetained', { pageId: parsed.data.pageId, interpolation: { escapeValue: false } })
         this.renderController?.abort()
         this.renderLoading = false
         this.renderReady = false
@@ -406,7 +404,7 @@ export default defineComponent({
         if (this.disposed) return
         this.confirmOpen = false
         await this.loadFirstPage()
-        this.errorMessage = error instanceof Error ? error.message : this.$t('admin:pagesRecycleBin.deletedPageCouldNot2')
+        this.errorMessage = error instanceof Error ? error.message : this.rt('deletedPageCouldNot2')
       } finally {
         this.restoring = false
       }
@@ -446,21 +444,18 @@ export default defineComponent({
 
 <style scoped lang="scss">
 .recovery-workspace { max-width: 1680px; padding-bottom: 4rem !important; }
-.recovery-intro { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(18rem, .75fr); align-items: end; gap: 2.5rem; padding: 2.5rem .5rem 2rem; }
+.recovery-help { margin: .65rem 1rem; font-size: .8125rem; line-height: 1.5; }
+.recovery-help summary { cursor: pointer; min-height: 36px; align-content: center; color: var(--wiki-primary-ink); font-weight: 600; }
+.recovery-help summary:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: var(--wiki-focus-offset); }
+.recovery-help p { margin: .35rem 0; color: var(--wiki-text-muted); }
 .recovery-kicker { display: block; color: rgb(var(--v-theme-on-surface-variant)); font-size: .68rem; font-weight: 700; letter-spacing: .16em; line-height: 1.4; text-transform: uppercase; }
-.recovery-intro h2 { margin: .65rem 0 .8rem; font: 500 clamp(1.8rem, 3vw, 2.8rem)/1.08 var(--wiki-font-display); letter-spacing: -.035em; }
-.recovery-intro > div > p { max-width: 48rem; color: rgb(var(--v-theme-on-surface-variant)); line-height: 1.65; }
-.recovery-limit { display: grid; grid-template-columns: 2rem 1fr; gap: .75rem; align-items: start; padding: 1.05rem 1.2rem; border-inline-start: 3px solid rgb(var(--v-theme-primary)); background: rgba(var(--v-theme-primary), .06); }
-.recovery-limit .v-icon { color: var(--wiki-primary-ink); }
-.recovery-limit p { margin: 0; font-size: .88rem; line-height: 1.55; }
-.recovery-limit strong { display: inline-block; margin-bottom: .25rem; }
 .recovery-grid { display: grid; grid-template-columns: minmax(19rem, .78fr) minmax(0, 1.4fr); gap: 1.1rem; align-items: start; }
-.recovery-ledger, .recovery-inspector { min-width: 0; overflow: hidden; border: 1px solid rgba(var(--v-border-color), .22); border-radius: 14px; background: rgb(var(--v-theme-surface)); }
-.recovery-panel-heading { display: flex; justify-content: space-between; align-items: end; gap: 1rem; padding: 1.25rem 1.35rem 1rem; border-bottom: 1px solid rgba(var(--v-border-color), .14); }
-.recovery-panel-heading h3 { margin: .35rem 0 0; font-size: 1.15rem; font-weight: 600; }
+.recovery-ledger, .recovery-inspector { min-width: 0; overflow: hidden; border: 1px solid var(--wiki-material-border); border-radius: 12px; background: var(--wiki-surface-gradient); box-shadow: var(--wiki-specular-border); }
+.recovery-panel-heading { display: flex; justify-content: space-between; align-items: end; gap: .75rem; padding: .75rem 1rem; border-bottom: 1px solid var(--wiki-surface-border); }
+.recovery-panel-heading h3 { margin: .2rem 0 0; font-size: 1rem; font-weight: 600; }
 .recovery-count, .snapshot-index { color: rgb(var(--v-theme-on-surface-variant)); font-size: .78rem; font-variant-numeric: tabular-nums; }
-.recovery-records { padding: .45rem; }
-.recovery-record { display: grid; width: 100%; grid-template-columns: 2.2rem minmax(0, 1fr); gap: .7rem; align-items: start; padding: .95rem .9rem; border: 1px solid transparent; border-bottom-color: rgba(var(--v-border-color), .11); border-radius: 10px; background: transparent; color: inherit; text-align: start; cursor: pointer; transition: background-color .16s ease, border-color .16s ease; }
+.recovery-records { padding: .25rem; background: var(--wiki-surface-sunken); background-image: none; box-shadow: var(--wiki-shadow-inset); }
+.recovery-record { display: grid; width: 100%; grid-template-columns: 2rem minmax(0, 1fr); gap: .35rem .6rem; align-items: start; padding: .55rem .65rem; border: 1px solid transparent; border-bottom-color: var(--wiki-well-border); border-radius: 6px; background: transparent; color: inherit; text-align: start; cursor: pointer; transition: background-color .16s ease, border-color .16s ease; }
 .recovery-record:hover { background: rgba(var(--v-theme-primary), .035); }
 .recovery-record:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 1px; }
 .recovery-record.is-selected { border-color: rgba(var(--v-theme-primary), .36); background: rgba(var(--v-theme-primary), .075); }
@@ -471,7 +466,7 @@ export default defineComponent({
 .record-status { grid-column: 2; justify-self: start; padding: .2rem .48rem; border-radius: 999px; background: rgba(var(--v-theme-success), .1); color: rgb(var(--v-theme-success)); font-size: .68rem; font-weight: 700; letter-spacing: .03em; }
 .record-status.is-caution { background: rgba(var(--v-theme-warning), .12); color: rgb(var(--v-theme-on-surface)); }
 .recovery-more { width: 100%; margin-top: .35rem; }
-.recovery-empty { display: flex; min-height: 11rem; flex-direction: column; justify-content: center; align-items: center; gap: .7rem; padding: 2rem; color: rgb(var(--v-theme-on-surface-variant)); text-align: center; }
+.recovery-empty { display: flex; min-height: 11rem; flex-direction: column; justify-content: center; align-items: center; gap: .7rem; padding: 1.25rem; background: var(--wiki-surface-sunken); background-image: none; box-shadow: var(--wiki-shadow-inset); color: var(--wiki-text-muted); text-align: center; }
 .recovery-empty strong { color: rgb(var(--v-theme-on-surface)); }
 .recovery-empty span { max-width: 25rem; font-size: .86rem; line-height: 1.55; }
 .recovery-empty--selection { min-height: 19rem; }
@@ -486,8 +481,8 @@ export default defineComponent({
 .source-inspection { margin: 0 1.25rem 1.1rem; border: 1px solid rgba(var(--v-border-color), .19); border-radius: 9px; }
 .source-inspection summary { display: flex; justify-content: space-between; gap: 1rem; padding: .8rem 1rem; cursor: pointer; font-size: .83rem; font-weight: 600; }
 .source-inspection summary span { color: rgb(var(--v-theme-on-surface-variant)); font-size: .73rem; font-weight: 400; }
-.source-inspection pre { max-height: 30rem; overflow: auto; margin: 0; padding: 1rem; border-top: 1px solid rgba(var(--v-border-color), .16); background: rgba(var(--v-theme-on-surface), .035); color: rgb(var(--v-theme-on-surface)); font: .8rem/1.6 var(--font-family-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
-.recovery-plan { margin: 0 1.25rem; padding: 1.1rem 1.15rem; border-radius: 11px; background: rgba(var(--v-theme-on-surface), .035); }
+.source-inspection pre { max-height: 30rem; overflow: auto; margin: 0; padding: 1rem; border-top: 1px solid var(--wiki-well-border); background: var(--wiki-surface-sunken); color: rgb(var(--v-theme-on-surface)); font: .8rem/1.6 var(--font-family-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
+.recovery-plan { margin: 0 1.25rem; padding: 1.1rem 1.15rem; border: 1px solid var(--wiki-well-border); border-radius: 11px; background: var(--wiki-surface-sunken); background-image: none; box-shadow: var(--wiki-shadow-inset); }
 .plan-heading { display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-bottom: 1rem; }
 .plan-heading strong { font-size: .86rem; font-weight: 600; }
 .plan-fields { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(8rem, .65fr); gap: .8rem; }
@@ -498,6 +493,6 @@ export default defineComponent({
 .recovery-confirm li + li { margin-top: .35rem; }
 .recovery-result-link { display: inline-block; margin-inline-start: .75rem; color: inherit; font-weight: 700; }
 @media (prefers-reduced-motion: reduce) { .recovery-record { transition: none; } }
-@media (max-width: 980px) { .recovery-grid { grid-template-columns: minmax(0, 1fr); } .recovery-intro { grid-template-columns: 1fr; gap: 1rem; } }
-@media (max-width: 600px) { .recovery-intro { padding: 1.5rem .25rem; } .recovery-facts { grid-template-columns: 1fr; margin-inline: 1rem; } .plan-fields { grid-template-columns: 1fr; } .plan-fields > :last-child:nth-child(3) { grid-column: auto; } .plan-heading { align-items: start; flex-direction: column; } .recovery-warning, .source-inspection, .recovery-plan { margin-inline: .8rem; } }
+@media (max-width: 980px) { .recovery-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) { .recovery-facts { grid-template-columns: 1fr; margin-inline: 1rem; } .plan-fields { grid-template-columns: 1fr; } .plan-fields > :last-child:nth-child(3) { grid-column: auto; } .plan-heading { align-items: start; flex-direction: column; } .recovery-warning, .source-inspection, .recovery-plan { margin-inline: .8rem; } }
 </style>

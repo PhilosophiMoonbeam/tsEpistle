@@ -2,7 +2,7 @@
 
 .storage-workspace,
 .storage-dialog {
-  --storage-line: rgba(var(--v-theme-on-surface), .16);
+  --storage-line: var(--wiki-surface-border);
   --storage-muted: var(--wiki-text-muted);
   --storage-accent: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
   --storage-wash: rgba(var(--v-theme-on-surface), .035);
@@ -14,13 +14,6 @@
     overflow-wrap: anywhere
   }
 
-  h2 {
-    font-family: var(--wiki-font-display);
-    font-size: clamp(2rem, 3vw, 3.1rem);
-    font-weight: 500;
-    line-height: 1.13;
-    letter-spacing: -.035em
-  }
 
   h3 {
     font-size: 1.08rem;
@@ -53,7 +46,8 @@
 }
 
 .storage-workspace {
-  padding: 24px 32px 80px
+  @include workspace.admin-draft-clearance;
+  padding: .5rem 32px 24px
 }
 
 .storage-kicker {
@@ -67,18 +61,11 @@
 .storage-status {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   flex-wrap: wrap;
-  gap: 12px;
-  padding: 22px 0;
-  font-size: .77rem;
+  gap: 4px 16px;
+  font-size: .75rem;
   color: var(--storage-muted);
 
-  span {
-    display: flex;
-    align-items: center;
-    gap: 9px
-  }
 
   i {
     width: 7px;
@@ -90,20 +77,34 @@
       background: rgb(var(--v-theme-warning))
     }
   }
+
+  span {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px
+  }
+
+  strong {
+    color: rgb(var(--v-theme-on-surface));
+    font-weight: 650;
+    font-variant-numeric: tabular-nums
+  }
 }
 
 .storage-tabs {
   display: flex;
-  gap: 30px;
+  gap: 24px;
   border-bottom: 1px solid var(--storage-line);
-  margin-bottom: 36px;
+  margin-bottom: 12px;
   overflow: auto;
 
   button {
     font-size: .88rem;
     white-space: nowrap;
     cursor: pointer;
-    padding: 14px 0;
+    min-height: 44px;
+    padding: 10px 0;
     border-bottom: 2px solid transparent;
 
     &[aria-current=page] {
@@ -114,38 +115,25 @@
   }
 }
 
-.storage-heading {
-  max-width: 740px;
-  margin-bottom: 32px;
-
-  h2 {
-    margin: 13px 0 18px
-  }
-
-  p {
-    font-size: .94rem;
-    max-width: 640px
-  }
-}
 
 .storage-overview {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 290px;
-  gap: 56px;
+  gap: 24px;
   align-items: start
 }
 
 .storage-aside {
-  padding: 25px;
-  background: var(--storage-wash);
-  border: 1px solid var(--storage-line);
-  border-radius: 5px;
+  padding: 20px;
+  background: var(--wiki-surface-gradient, var(--wiki-surface-raised));
+  border: 1px solid var(--wiki-material-border, var(--storage-line));
+  border-radius: var(--wiki-panel-radius);
+  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
 
   h3 {
-    margin: 12px 0 16px;
-    font-family: var(--wiki-font-display);
-    font-size: 1.45rem;
-    font-weight: 500
+    margin: 0 0 12px;
+    font-size: 1rem;
+    font-weight: 650
   }
 
   p {
@@ -164,51 +152,18 @@
 
 .storage-aside-rule {
   border-top: 1px solid var(--storage-line);
-  margin: 25px 0
+  margin: 18px 0
 }
 
 
-.storage-metrics {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 28px;
-  padding: 30px 0;
-  margin-bottom: 12px;
-  border-bottom: 1px solid var(--storage-line);
-
-  span {
-    display: block;
-    font-size: .79rem;
-    color: var(--storage-muted)
-  }
-
-  strong {
-    display: block;
-    font-size: 2.7rem;
-    font-weight: 500;
-    line-height: 1.4;
-    letter-spacing: -.035em;
-    font-variant-numeric: tabular-nums
-  }
-
-  small {
-    font-size: 1.2rem;
-    color: var(--storage-muted);
-    font-weight: 400
-  }
-
-  p {
-    font-size: .75rem
-  }
-}
 
 .storage-section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 18px;
-  margin: 20px 0;
+  gap: 12px;
+  margin: 12px 0;
 
   >span {
     font-size: .74rem;
@@ -220,6 +175,15 @@
     min-width: 180px;
     max-width: 420px
   }
+}
+
+.storage-overview > section > .storage-section-head:first-child,
+.storage-workspace > .storage-section-head {
+  margin-top: 0
+}
+
+.storage-section-help {
+  margin: 8px 0 12px
 }
 
 .storage-destination {
@@ -329,11 +293,10 @@
 }
 
 .storage-empty {
-  padding: 38px 28px;
+  padding: 24px;
   text-align: center;
-  border: 1px dashed var(--storage-line);
-  border-radius: 5px;
-  margin: 22px 0;
+  border-radius: var(--wiki-panel-radius);
+  margin: 12px 0;
 
   >.v-icon {
     color: var(--storage-muted);
@@ -354,14 +317,14 @@
 .storage-target-layout {
   display: grid;
   grid-template-columns: 250px minmax(0, 1fr);
-  gap: 35px;
+  gap: 20px;
   align-items: start
 }
 
 .storage-catalog {
   min-width: 0;
   position: sticky;
-  top: 24px;
+  top: var(--admin-sticky-offset, 24px);
 
   nav {
     margin: 18px 0
@@ -425,10 +388,13 @@
 }
 
 .storage-target-detail {
-  padding: 28px 32px 10px;
-  border: 1px solid var(--storage-line);
-  border-radius: 5px;
-  min-width: 0
+  padding: 20px 24px 10px;
+  background: var(--wiki-surface-gradient, var(--wiki-surface-raised));
+  border: 1px solid var(--wiki-material-border, var(--storage-line));
+  border-radius: var(--wiki-panel-radius);
+  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
+  min-width: 0;
+  --wiki-field-label-bg: var(--wiki-surface-raised)
 }
 
 .storage-target-head {
@@ -437,7 +403,7 @@
   gap: 22px;
   justify-content: space-between;
   border-bottom: 1px solid var(--storage-line);
-  padding-bottom: 25px;
+  padding-bottom: 16px;
 
   >div {
     min-width: 0;
@@ -445,10 +411,9 @@
   }
 
   h3 {
-    font-family: var(--wiki-font-display);
-    font-size: 2rem;
-    font-weight: 500;
-    margin: 8px 0 12px
+    font-size: 1.25rem;
+    font-weight: 650;
+    margin: 6px 0 8px
   }
 
   p {
@@ -617,8 +582,10 @@
 .storage-receipt {
   min-width: 0;
   padding: 26px 30px;
-  border: 1px solid var(--storage-line);
-  border-radius: 5px;
+  background: var(--wiki-surface-gradient, var(--wiki-surface-raised));
+  border: 1px solid var(--wiki-material-border, var(--storage-line));
+  border-radius: var(--wiki-panel-radius);
+  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
 
   >.storage-section-head {
     margin-top: 0
@@ -912,8 +879,9 @@
 }
 
 .storage-review-target {
-  padding: 18px 0;
-  border-top: 1px solid var(--storage-line);
+  padding: 16px;
+  margin-block: 12px;
+  border-radius: var(--wiki-control-radius);
 
   h3 {
     font-size: 1rem
@@ -990,12 +958,12 @@
 
 @media(max-width:760px) {
   .storage-workspace {
-    padding: 18px 16px 50px
+    padding: .5rem 16px 24px
   }
 
   .storage-tabs {
     gap: 23px;
-    margin-bottom: 26px
+    margin-bottom: 12px
   }
 
   .storage-target-layout,
@@ -1017,7 +985,7 @@
     }
   }
 
-  .storage-catalog>.storage-note {
+  .storage-catalog>.storage-note:not(.storage-section-help) {
     display: none
   }
 
@@ -1029,9 +997,6 @@
     max-height: 330px
   }
 
-  .storage-heading {
-    margin-bottom: 26px
-  }
 
 
   .storage-running {
@@ -1079,13 +1044,6 @@
     font-size: .76rem
   }
 
-  .storage-metrics {
-    gap: 18px
-  }
-
-  .storage-metrics strong {
-    font-size: 2.3rem
-  }
 
   .storage-dialog .v-card-text {
     padding: 12px 20px 20px

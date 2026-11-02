@@ -106,11 +106,20 @@ const mixHex = (base: string, mix: string, amount: number): string => {
 
 type ColorChannels = readonly [number, number, number]
 
-const hexChannels = (hex: string): ColorChannels =>
-  [Number.parseInt(hex.slice(1, 3), 16) / 255, Number.parseInt(hex.slice(3, 5), 16) / 255, Number.parseInt(hex.slice(5, 7), 16) / 255]
+const hexChannels = (hex: string): ColorChannels => [
+  Number.parseInt(hex.slice(1, 3), 16) / 255,
+  Number.parseInt(hex.slice(3, 5), 16) / 255,
+  Number.parseInt(hex.slice(5, 7), 16) / 255
+]
 
 const channelsHex = (channels: ColorChannels): string =>
-  `#${channels.map(channel => Math.round(Math.max(0, Math.min(1, channel)) * 255).toString(16).padStart(2, '0')).join('')}`.toUpperCase()
+  `#${channels
+    .map(channel =>
+      Math.round(Math.max(0, Math.min(1, channel)) * 255)
+        .toString(16)
+        .padStart(2, '0')
+    )
+    .join('')}`.toUpperCase()
 
 // CSS Color 4's OKLab transforms. These only sample the shared material backing;
 // foreground selection remains in the existing ink/purpose solvers below.
@@ -122,7 +131,11 @@ const rgbToOklab = (rgb: ColorChannels): ColorChannels => {
   const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
   const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
   const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
-  return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s]
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s
+  ]
 }
 
 const oklabToRgb = ([lightness, a, b]: ColorChannels): ColorChannels => {
@@ -133,11 +146,18 @@ const oklabToRgb = ([lightness, a, b]: ColorChannels): ColorChannels => {
     const absolute = Math.abs(channel)
     return absolute <= 0.0031308 ? channel * 12.92 : Math.sign(channel) * (1.055 * absolute ** (1 / 2.4) - 0.055)
   }
-  return [encode(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s), encode(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s), encode(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s)]
+  return [
+    encode(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+    encode(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    encode(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s)
+  ]
 }
 
-const interpolateChannels = (base: ColorChannels, mix: ColorChannels, amount: number): ColorChannels =>
-  [base[0] + (mix[0] - base[0]) * amount, base[1] + (mix[1] - base[1]) * amount, base[2] + (mix[2] - base[2]) * amount]
+const interpolateChannels = (base: ColorChannels, mix: ColorChannels, amount: number): ColorChannels => [
+  base[0] + (mix[0] - base[0]) * amount,
+  base[1] + (mix[1] - base[1]) * amount,
+  base[2] + (mix[2] - base[2]) * amount
+]
 
 const mixOklch = (base: ColorChannels, mix: ColorChannels, amount: number): ColorChannels => {
   const first = rgbToOklab(base)
@@ -174,7 +194,7 @@ const gamutMapOklab = (lab: ColorChannels): ColorChannels => {
   let minimumInGamut = true
   while (maximum - minimum > 0.0001) {
     const current = (minimum + maximum) / 2
-    const candidate: ColorChannels = [lab[0], lab[1] * current / chroma, lab[2] * current / chroma]
+    const candidate: ColorChannels = [lab[0], (lab[1] * current) / chroma, (lab[2] * current) / chroma]
     const rgb = oklabToRgb(candidate)
     if (minimumInGamut && inGamut(rgb)) {
       minimum = current
@@ -193,26 +213,20 @@ const gamutMapOklab = (lab: ColorChannels): ColorChannels => {
   return clipped
 }
 
-const sampleMineralGradient = (colors: ThemeModeColors, surfaceBright: string, dark: boolean): string[] => {
-  // The CSS raised blend is fractional sRGB, not a pre-rounded hex swatch.
-  const raisedRgb = interpolateChannels(hexChannels(colors.surface), hexChannels(surfaceBright), 0.06)
-  // Keep these percentages in sync with --wiki-surface-gradient in base.scss.
+const sampleMineralGradient = (colors: ThemeModeColors, materialTop: string, materialBottom: string, dark: boolean): string[] => {
+  // Keep both endpoints and percentages synchronized with base.scss.
   const stops = [
-    mixOklch(raisedRgb, hexChannels(colors.primary), dark ? 0.06 : 0.04),
-    rgbToOklab(raisedRgb),
-    mixOklch(raisedRgb, hexChannels(colors.secondary), dark ? 0.05 : 0.03)
+    mixOklch(hexChannels(materialTop), hexChannels(colors.primary), dark ? 0.05 : 0.04),
+    mixOklch(hexChannels(materialBottom), hexChannels(colors.secondary), dark ? 0.04 : 0.03)
   ]
-  const samples = new Set<string>([channelsHex(raisedRgb)])
-  for (let segment = 0; segment < stops.length - 1; segment++) {
-    const startRgb = oklabToRgb(stops[segment])
-    const endRgb = oklabToRgb(stops[segment + 1])
-    // Sample both modern OKLab and legacy sRGB gradient interpolation, including
-    // interior luminance extrema. The 58%/62% center changes area, not colors.
-    for (let step = 0; step <= 32; step++) {
-      const amount = step / 32
-      samples.add(channelsHex(gamutMapOklab(interpolateChannels(stops[segment], stops[segment + 1], amount))))
-      samples.add(channelsHex(gamutMapOklab(rgbToOklab(interpolateChannels(startRgb, endRgb, amount)))))
-    }
+  const startRgb = oklabToRgb(stops[0])
+  const endRgb = oklabToRgb(stops[1])
+  const samples = new Set<string>()
+  // Include interior extrema in modern OKLab and legacy sRGB interpolation.
+  for (let step = 0; step <= 32; step++) {
+    const amount = step / 32
+    samples.add(channelsHex(gamutMapOklab(interpolateChannels(stops[0], stops[1], amount))))
+    samples.add(channelsHex(gamutMapOklab(rgbToOklab(interpolateChannels(startRgb, endRgb, amount)))))
   }
   return [...samples]
 }
@@ -297,9 +311,18 @@ const createThemeColorMap = (colors: ThemeModeColors, dark: boolean): Record<str
   const surfaceLight = mixHex(colors.surface, dark ? '#FFFFFF' : '#000000', dark ? 0.06 : 0.03)
   const surfaceVariant = mixHex(colors.background, colors.surface, 0.5)
   const surfaceRaised = mixHex(colors.surface, surfaceBright, 0.06)
-  const surfaceSunken = mixHex(colors.background, colors.surface, 0.28)
-  const mineralSurfaces = sampleMineralGradient(colors, surfaceBright, dark)
-  const surfaces = [colors.background, colors.surface, surfaceRaised, surfaceSunken, ...mineralSurfaces]
+  // Only the canonical base pair receives the prescribed exact material roles.
+  // A valid saved palette is never rewritten or mistaken for a fresh default.
+  const canonical = colors.background.toUpperCase() === (dark ? '#12100E' : '#F9F6EE') && colors.surface.toUpperCase() === (dark ? '#1A1714' : '#FFFDF9')
+  const materialTop = canonical ? (dark ? '#221E1A' : '#FFFDF9') : surfaceRaised
+  const materialBottom = canonical ? (dark ? '#1A1714' : '#F9F6EE') : dark ? colors.surface : colors.background
+  const surfaceSunken = canonical ? (dark ? '#0D0B09' : '#F1ECE1') : mixHex(colors.background, colors.surface, 0.28)
+  const glassBottom = canonical ? (dark ? '#161310' : '#F9F6EE') : colors.background
+  const mineralSurfaces = sampleMineralGradient(colors, materialTop, materialBottom, dark)
+  const surfaces = [colors.background, colors.surface, surfaceRaised, surfaceSunken, materialTop, materialBottom, glassBottom, ...mineralSurfaces]
+  const commitmentEnd = mixHex(colors.primary, '#000000', 0.08)
+  const commitmentSurfaces = Array.from({ length: 33 }, (_, step) => mixHex(colors.primary, commitmentEnd, step / 32))
+  const commitmentInk = chooseReadableColor(['#171512', '#000000', '#FFFFFF'], commitmentSurfaces, 4.5)
   const disabledPrimaryRaised = mineralSurfaces.map(surface => mixHex(surface, colors.primary, 0.8))
   const disabledPrimarySunken = mixHex(surfaceSunken, colors.primary, 0.8)
   const colorMap: Record<string, string> = {
@@ -307,6 +330,12 @@ const createThemeColorMap = (colors: ThemeModeColors, dark: boolean): Record<str
     'surface-bright': surfaceBright,
     'surface-light': surfaceLight,
     'surface-variant': surfaceVariant,
+    'material-top': materialTop,
+    'material-bottom': materialBottom,
+    'surface-sunken': surfaceSunken,
+    'glass-bottom': glassBottom,
+    'commitment-end': commitmentEnd,
+    'commitment-ink': commitmentInk,
     'on-surface-variant': contrastForeground(surfaceVariant),
     'on-primary-disabled-raised': chooseReadableColor(['#000000', '#FFFFFF'], disabledPrimaryRaised, 21),
     'on-primary-disabled-sunken': contrastForeground(disabledPrimarySunken),

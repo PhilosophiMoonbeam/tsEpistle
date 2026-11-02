@@ -35,7 +35,7 @@
 
 
     <div class="agent-workspace">
-      <div class="agent-sections" :aria-label="t('agentAdministrationSections')" role="tablist" aria-orientation="horizontal">
+      <div ref="sectionNavigation" class="agent-sections" :aria-label="t('agentAdministrationSections')" role="tablist" aria-orientation="horizontal">
         <button
           v-for="(section, index) in sectionItems"
           :id="`agent-tab-${section.value}`"
@@ -524,7 +524,7 @@
           <v-btn variant="text" :disabled="saving || !profileDirty" prepend-icon="mdi-restore" @click="resetProfileDraft">{{ t('reset') }}</v-btn>
           <v-btn v-if="profileStepIndex > 0" variant="outlined" prepend-icon="mdi-arrow-left" :disabled="saving" @click="previousProfileStep">{{ t('back') }}</v-btn>
           <v-btn v-if="!editingProfile && profileStepIndex < profileSteps.length - 1" variant="tonal" color="primary" append-icon="mdi-arrow-right" :disabled="saving || !profileStepValid" form="provider-profile-form" type="submit">{{ t('continue') }}</v-btn>
-          <v-btn v-else color="primary" prepend-icon="mdi-check-decagram-outline" :loading="saving" :disabled="saving || !profileDraftValid || !profileDirty" type="button" @click="saveProfile">{{ t('saveVerify') }}</v-btn>
+          <v-btn v-else color="primary" variant="tonal" :data-commitment="profileDirty && profileDraftValid && !saving ? 'active' : undefined" prepend-icon="mdi-check-decagram-outline" :loading="saving" :disabled="saving || !profileDraftValid || !profileDirty" type="button" @click="saveProfile">{{ t('saveVerify') }}</v-btn>
         </div>
       </v-card>
     </v-dialog>
@@ -572,7 +572,7 @@
           <template v-else>{{ t('loading') }}</template>
         </div>
         <v-alert v-if="grantProfile?.isGlobalDefault && grantsDirty" class="mx-6 mt-4 mb-0" type="warning" variant="tonal" density="compact">{{ t('savingAnyAccessChange') }}</v-alert>
-        <v-card-actions><span class="compact-dialog__audit"><v-icon icon="mdi-text-box-check-outline" size="16" aria-hidden="true" />{{ t('accessChangesAudited') }}</span><v-spacer /><v-btn :disabled="actionBusyKey === 'grants'" @click="requestGrantsClose">{{ t('common:actions.cancel') }}</v-btn><v-btn color="primary" :loading="actionBusyKey === 'grants'" :disabled="Boolean(actionBusyKey) || !grantsDirty || (grantDraft.exposureMode === 'groups' && (grantDraft.groupIds.length === 0 || resourceState.groups.loading || Boolean(resourceState.groups.error)))" @click="saveGrants">{{ grantProfile?.isGlobalDefault ? t('saveClearDefault') : t('saveAccess') }}</v-btn></v-card-actions>
+        <v-card-actions><span class="compact-dialog__audit"><v-icon icon="mdi-text-box-check-outline" size="16" aria-hidden="true" />{{ t('accessChangesAudited') }}</span><v-spacer /><v-btn :disabled="actionBusyKey === 'grants'" @click="requestGrantsClose">{{ t('common:actions.cancel') }}</v-btn><v-btn color="primary" variant="tonal" :data-commitment="grantsDirty && !actionBusyKey && !(grantDraft.exposureMode === 'groups' && (grantDraft.groupIds.length === 0 || resourceState.groups.loading || Boolean(resourceState.groups.error))) ? 'active' : undefined" :loading="actionBusyKey === 'grants'" :disabled="Boolean(actionBusyKey) || !grantsDirty || (grantDraft.exposureMode === 'groups' && (grantDraft.groupIds.length === 0 || resourceState.groups.loading || Boolean(resourceState.groups.error)))" @click="saveGrants">{{ grantProfile?.isGlobalDefault ? t('saveClearDefault') : t('saveAccess') }}</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
 
@@ -675,6 +675,7 @@ interface ProfileDraft { mediaInputs: AgentMediaInputs; displayName: string; tra
 const { csrfToken, embedded = false } = defineProps<{ csrfToken: string; embedded?: boolean }>()
 const { smAndDown } = useDisplay()
 const tab = ref('overview')
+const sectionNavigation = ref<HTMLElement | null>(null)
 const decisionRefreshKey = ref(0), routingRefreshKey = ref(0), mcpRefreshKey = ref(0)
 const decisionProviders = shallowRef<DecisionProviderView[] | null>(null)
 const externalMcpState = shallowRef<{ servers: ExternalMcpServerView[]; policies: ExternalMcpGroupPolicyView[] } | null>(null)
@@ -904,13 +905,29 @@ const sectionItems = computed(() => [
   { value: 'runtime', title: t('runtime'), description: t('policySafeguards'), icon: 'mdi-tune-variant', badge: resourceState.runtime.error ? resourceState.runtime.loaded ? t('stale') : t('unavailable') : dataLoaded.value ? runtime.value?.enabled ? t('active') : t('paused') : resourceState.runtime.loading ? t('loading') : '' }
 ])
 const activeSection = computed(() => sectionItems.value.find(section => section.value === tab.value))
+const revealSection = (): void => {
+  const navigation = sectionNavigation.value
+  const selected = navigation?.querySelector<HTMLButtonElement>('[aria-selected="true"]')
+  if (!navigation || !selected) return
+  const viewport = navigation.getBoundingClientRect()
+  const bounds = selected.getBoundingClientRect()
+  const padding = Number.parseFloat(getComputedStyle(navigation).paddingInlineStart) || 0
+  const start = viewport.left + navigation.clientLeft + padding
+  const end = viewport.left + navigation.clientLeft + navigation.clientWidth - padding
+  const delta = bounds.left < start ? bounds.left - start : bounds.right > end ? bounds.right - end : 0
+  if (delta) navigation.scrollBy({ left: delta, behavior: 'instant' })
+}
 const selectSection = (requestedIndex: number, event: KeyboardEvent): void => {
+  event.preventDefault()
   const sections = sectionItems.value
   if (!sections.length) return
   const index = (requestedIndex + sections.length) % sections.length
   tab.value = sections[index].value
-  const navigation = (event.currentTarget as HTMLElement | null)?.closest('.agent-sections')
-  queueMicrotask(() => navigation?.querySelectorAll<HTMLButtonElement>('.agent-section')[index]?.focus())
+  const navigation = sectionNavigation.value
+  queueMicrotask(() => {
+    navigation?.querySelectorAll<HTMLButtonElement>('.agent-section')[index]?.focus({ preventScroll: true })
+    revealSection()
+  })
 }
 const selectHorizontalSection = (currentIndex: number, direction: -1 | 1, event: KeyboardEvent): void => {
   event.preventDefault()
@@ -1328,8 +1345,10 @@ watch(tab, value => {
   url.hash = value === 'overview' ? '' : value
   window.history.replaceState(window.history.state, '', url)
 })
+watch(tab, revealSection, { flush: 'post' })
 onMounted(() => {
   restoreSection()
+  queueMicrotask(revealSection)
   window.addEventListener('hashchange', restoreSection)
   void load()
 })
@@ -1423,20 +1442,30 @@ onMounted(() => {
 
 .agent-workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--wiki-space-6); }
 .agent-sections {
+  position: sticky;
+  inset-block-start: var(--admin-sticky-offset, var(--v-layout-top, var(--wiki-chrome-height)));
+  z-index: 4;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-self: start;
   gap: var(--wiki-space-2);
   min-inline-size: 0;
-  padding: var(--wiki-space-1);
-  padding-block-end: var(--wiki-space-3);
+  max-inline-size: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scroll-behavior: auto;
+  padding: var(--wiki-space-2);
   border-block-end: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-chrome-surface);
+  backdrop-filter: var(--wiki-chrome-filter);
+  -webkit-backdrop-filter: var(--wiki-chrome-filter);
+  box-shadow: var(--wiki-glass-specular), var(--wiki-shadow-md);
 }
 .agent-section {
   position: relative;
   display: flex;
-  flex: 0 1 auto;
-  min-inline-size: 0;
-  max-inline-size: 100%;
+  flex: 0 0 auto;
+  min-inline-size: max-content;
   min-block-size: var(--wiki-control-height);
   gap: var(--wiki-space-2);
   padding: var(--wiki-space-2) var(--wiki-space-3);
@@ -1503,8 +1532,7 @@ onMounted(() => {
 .agent-section__copy {
   display: grid;
   min-width: 0;
-  overflow-wrap: anywhere;
-  white-space: normal;
+  white-space: nowrap;
 }
 
 .agent-section__copy strong {
@@ -1515,6 +1543,7 @@ onMounted(() => {
 
 .agent-section__badge {
   flex: 0 0 auto;
+  white-space: nowrap;
   color: var(--wiki-accent-ink);
 }
 
@@ -1547,10 +1576,10 @@ onMounted(() => {
 
 .agent-panel {
   overflow: hidden;
-  border: 1px solid var(--wiki-surface-border);
+  border: 1px solid var(--wiki-material-border);
   border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
+  background: var(--wiki-surface-gradient);
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-specular-border);
 }
 
 .agent-panel__header {
@@ -1713,6 +1742,9 @@ onMounted(() => {
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-sunken);
+  background-image: none;
+  border-color: var(--wiki-well-border);
+  box-shadow: var(--wiki-shadow-inset);
 }
 
 .policy-card::after {
@@ -1834,6 +1866,9 @@ code {
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-sunken);
+  background-image: none;
+  border-color: var(--wiki-well-border);
+  box-shadow: var(--wiki-shadow-inset);
 }
 
 .provider-policy-strip > span {
@@ -1864,6 +1899,7 @@ code {
 .provider-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
+  grid-auto-rows: 1fr;
   gap: var(--wiki-space-3);
 }
 
@@ -1871,15 +1907,14 @@ code {
   position: relative;
   display: flex;
   min-width: 0;
+  container-type: inline-size;
   overflow: hidden;
   flex-direction: column;
   padding: var(--wiki-space-4);
-  border: 1px solid var(--wiki-surface-border);
+  border: 1px solid var(--wiki-material-border);
   border-radius: var(--wiki-panel-radius);
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--wiki-ambient-accent) 4%, transparent), transparent 48%),
-    var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+  background: var(--wiki-surface-gradient);
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-specular-border);
   transition:
     border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
     box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease),
@@ -1889,7 +1924,7 @@ code {
 .provider-card:hover,
 .provider-card:focus-within {
   border-color: color-mix(in srgb, var(--wiki-accent-warm) 28%, var(--wiki-surface-border));
-  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
+  box-shadow: var(--wiki-shadow-sm), var(--wiki-specular-border);
   transform: translateY(calc(var(--wiki-space-1) * -.5));
 }
 
@@ -1949,6 +1984,7 @@ code {
 .connection-state {
   display: inline-flex;
   align-items: center;
+  white-space: nowrap;
   gap: var(--wiki-space-1);
   padding: var(--wiki-space-1) var(--wiki-space-2);
   border-radius: var(--wiki-radius-pill);
@@ -1979,24 +2015,44 @@ code {
   display: grid;
   gap: var(--wiki-space-2);
   padding: var(--wiki-space-3);
-  border: 1px solid var(--wiki-surface-border);
+  border: 1px solid var(--wiki-well-border);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-sunken);
+  background-image: none;
+  box-shadow: var(--wiki-shadow-inset);
 }
 
 .provider-card__models > div {
   display: grid;
   min-width: 0;
   align-items: center;
-  grid-template-columns: 5.5rem minmax(0, 1fr) auto;
+  grid-template-columns: max-content minmax(0, 1fr) auto;
   gap: var(--wiki-space-2);
 }
 
-.provider-card__models code {
-  overflow: hidden;
-  font-size: .72rem;
-  text-overflow: ellipsis;
+.provider-card__models span,
+.provider-card__models small {
   white-space: nowrap;
+}
+
+@container (max-width: 24rem) {
+  .provider-card__models > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .provider-card__models span,
+  .provider-card__models code,
+  .provider-card__models small {
+    grid-column: 1 / -1;
+    justify-self: start;
+    max-inline-size: 100%;
+  }
+}
+
+.provider-card__models code {
+  min-inline-size: 0;
+  font-size: .72rem;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .provider-card__models small {
@@ -2052,6 +2108,7 @@ code {
   align-items: center;
   justify-content: space-between;
   margin: var(--wiki-space-4) calc(var(--wiki-space-4) * -1) calc(var(--wiki-space-4) * -1);
+  margin-block-start: auto;
   padding: var(--wiki-space-2) var(--wiki-space-4);
   border: 0;
   border-block-start: 1px solid var(--wiki-surface-border);
@@ -2085,6 +2142,8 @@ code {
   border: 1px dashed var(--wiki-surface-border-strong);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-sunken);
+  background-image: none;
+  box-shadow: var(--wiki-shadow-inset);
   text-align: center;
 }
 
@@ -2623,14 +2682,15 @@ code {
 
 :global(.profile-editor .v-field),
 :global(.compact-dialog .v-field) {
+  --wiki-field-label-bg: var(--wiki-surface-sunken);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-sunken);
 }
 
 :global(.profile-editor .v-field--focused),
 :global(.compact-dialog .v-field--focused) {
+  --wiki-field-label-bg: var(--wiki-surface-raised);
   background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-focus-ring);
 }
 
 :global(.profile-editor .v-field-label),
@@ -2646,7 +2706,7 @@ code {
 .agent-overview__intro h2 { font: 500 clamp(1.6rem, 2.4vw, 2rem)/1.2 var(--wiki-font-display); margin-block: var(--wiki-space-3) var(--wiki-space-4); }
 .agent-overview__intro p { max-width: 60ch; font-size: .95rem; line-height: 1.7; }
 .agent-overview__grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--wiki-space-6); }
-.agent-setup, .agent-default { padding: clamp(var(--wiki-space-4), 2vw, calc(var(--wiki-space-6) + var(--wiki-space-1))); border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-raised); }
+.agent-setup, .agent-default { padding: clamp(var(--wiki-space-4), 2vw, calc(var(--wiki-space-6) + var(--wiki-space-1))); border: 1px solid var(--wiki-material-border); border-radius: var(--wiki-panel-radius); background: var(--wiki-surface-gradient); box-shadow: var(--wiki-specular-border); }
 .agent-setup h3, .agent-default h3 { font: 500 1.4rem var(--wiki-font-display); }
 .agent-overview__caption { font-size: .8rem; line-height: 1.6; margin-block: var(--wiki-space-3) var(--wiki-space-4); }
 .agent-setup__step { appearance: none; background: transparent; color: inherit; border: 0; cursor: pointer; display: flex; width: 100%; align-items: center; gap: var(--wiki-space-3); padding: var(--wiki-space-4) 0; border-top: 1px solid var(--wiki-surface-border); text-align: start; }
@@ -2654,7 +2714,7 @@ code {
 .agent-setup__step strong { font-size: .9rem; }
 .agent-setup__step small { font-size: .8rem; line-height: 1.5; overflow-wrap: anywhere; }
 .agent-setup__step:focus-visible, .agent-pathways button:focus-visible, .agent-memory-sources button:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: 3px; }
-.agent-default { background: color-mix(in srgb, var(--wiki-accent-warm) 5%, var(--wiki-surface-raised)); }
+.agent-default { border-color: color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-material-border)); }
 .agent-default h3 { margin-block: var(--wiki-space-6) var(--wiki-space-2); overflow-wrap: anywhere; }
 .agent-default code { font-family: var(--wiki-font-mono); font-size: .85rem; overflow-wrap: anywhere; }
 .agent-default p { font-size: .85rem; line-height: 1.7; margin-block: var(--wiki-space-4) var(--wiki-space-6); }

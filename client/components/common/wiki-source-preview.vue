@@ -8,7 +8,7 @@
           <v-btn icon="mdi-close" variant="text" :aria-label="$t('common:wikiSourcePreview.closeSourcePreview')" @click="emit('close')" />
         </header>
         <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This named overflow-y scroll region must remain keyboard-focusable to scroll the excerpt. -->
-        <section class="wiki-source-preview__body" tabindex="0" :aria-label="$t('common:wikiSourcePreview.sourceExcerpt')">
+        <section class="wiki-source-preview__body wiki-surface-well" tabindex="0" :aria-label="$t('common:wikiSourcePreview.sourceExcerpt')">
           <div v-if="loading" class="wiki-source-preview__state" role="status"><v-progress-circular indeterminate size="24" width="2" /><p>{{ $t('common:wikiSourcePreview.openingSource') }}</p></div>
           <div v-else-if="error" class="wiki-source-preview__state" role="alert"><v-icon icon="mdi-file-hidden" size="30" /><p>{{ error }}</p><v-btn variant="tonal" @click="loadSource">{{ $t('common:wikiSourcePreview.tryAgain') }}</v-btn></div>
           <template v-else-if="source">
@@ -25,9 +25,11 @@
         <footer v-if="source && !loading && !error" class="wiki-source-preview__actions">
           <div class="wiki-source-preview__action-buttons">
             <v-btn :href="wikiSourceHref(source)" target="_blank" rel="noopener noreferrer" variant="text" append-icon="mdi-open-in-new">{{ $t('common:wikiSourcePreview.openPage') }}<span class="sr-only"> {{ $t('common:wikiSourcePreview.newTab') }}</span></v-btn>
-            <v-btn v-if="canAsk" class="wiki-source-preview__ask" variant="tonal" prepend-icon="mdi-text-box-plus-outline" @click="emit('ask', WikiSourceSchema.parse(source))">{{ $t('common:wikiSourcePreview.askAboutPage') }}</v-btn>
+            <div v-if="canAsk" class="wiki-source-preview__ask-group">
+              <v-btn class="wiki-source-preview__ask" variant="tonal" prepend-icon="mdi-text-box-plus-outline" :aria-describedby="draftHintId" @click="emit('ask', WikiSourceSchema.parse(source))">{{ $t('common:wikiSourcePreview.askAboutPage') }}</v-btn>
+              <p :id="draftHintId" class="wiki-source-preview__draft-hint">{{ $t('common:wikiSourcePreview.draftOnlyHint', { defaultValue: 'Ask prepares a draft. Nothing is sent.' }) }}</p>
+            </div>
           </div>
-          <p v-if="canAsk" class="wiki-source-preview__draft-hint">{{ $t('common:wikiSourcePreview.draftOnlyHint', { defaultValue: 'Ask prepares a draft. Nothing is sent.' }) }}</p>
         </footer>
       </section>
     </div>
@@ -50,6 +52,7 @@ const emit = defineEmits<{ close: []; ask: [source: WikiSource] }>()
 const { themeClasses } = useTheme()
 const { isRtl } = useRtl()
 const titleId = useId()
+const draftHintId = useId()
 const panel = useTemplateRef<HTMLElement>('panel')
 const backdrop = useTemplateRef<HTMLElement>('backdrop')
 const source = ref<WikiSourcePreview | null>(null)
@@ -111,8 +114,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .wiki-source-preview { position: fixed; inset: 0; z-index: 2800; display: flex; justify-content: flex-end; container: wiki-source-reader / size; background: rgb(0 0 0 / .42); backdrop-filter: blur(3px); }
-.wiki-source-preview__panel { display: flex; flex-direction: column; width: min(42rem, 100%); height: 100%; min-width: 0; background: var(--wiki-surface-raised, rgb(var(--v-theme-surface))); color: rgb(var(--v-theme-on-surface)); box-shadow: -12px 0 60px rgb(0 0 0 / .18); }
-.wiki-source-preview[dir="rtl"] .wiki-source-preview__panel { box-shadow: 12px 0 60px rgb(0 0 0 / .18); }
+.wiki-source-preview__panel { display: flex; flex-direction: column; width: min(42rem, 100%); height: 100%; min-width: 0; background: var(--wiki-surface-gradient); color: rgb(var(--v-theme-on-surface)); border-inline-start: 1px solid var(--wiki-material-border); box-shadow: var(--wiki-shadow-md); }
 .wiki-source-preview__header { display: flex; flex: 0 0 auto; align-items: flex-start; justify-content: space-between; gap: var(--wiki-space-4, 1rem); padding: max(var(--wiki-space-8, 2rem), env(safe-area-inset-top)) max(var(--wiki-space-6, 1.5rem), env(safe-area-inset-right)) var(--wiki-space-5, 1.25rem) max(var(--wiki-space-6, 1.5rem), env(safe-area-inset-left)); border-bottom: 1px solid var(--wiki-surface-border); }
 .wiki-source-preview__header > div { min-width: 0; }
 .wiki-source-preview__header > .v-btn { flex-shrink: 0; }
@@ -144,18 +146,27 @@ onBeforeUnmount(() => {
 .wiki-source-preview__state { padding: var(--wiki-space-12, 3rem) var(--wiki-space-4, 1rem); text-align: center; line-height: var(--wiki-leading-body, 1.625); overflow-wrap: anywhere; }
 .wiki-source-preview__state p { margin: var(--wiki-space-4, 1rem) 0; }
 .wiki-source-preview__actions { flex: 0 0 auto; padding: var(--wiki-space-4, 1rem) max(var(--wiki-space-6, 1.5rem), env(safe-area-inset-right)) max(var(--wiki-space-4, 1rem), env(safe-area-inset-bottom)) max(var(--wiki-space-6, 1.5rem), env(safe-area-inset-left)); border-top: 1px solid var(--wiki-surface-border); }
-.wiki-source-preview__action-buttons { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--wiki-space-3, .75rem); }
-.wiki-source-preview__action-buttons > .v-btn { max-width: 100%; min-height: var(--wiki-control-height, 2.75rem); height: auto; padding-block: var(--wiki-space-3, .75rem); }
+.wiki-source-preview__action-buttons { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--wiki-space-3, .75rem); }
+.wiki-source-preview__ask-group { display: flex; flex-direction: column; align-items: flex-end; flex: 0 1 21rem; min-width: 0; max-width: 100%; margin-inline-start: auto; gap: var(--wiki-space-2, .5rem); text-align: end; }
+.wiki-source-preview__action-buttons .v-btn { max-width: 100%; min-height: var(--wiki-control-height, 2.75rem); height: auto; padding-block: var(--wiki-space-3, .75rem); }
 .wiki-source-preview__action-buttons :deep(.v-btn__content) { white-space: normal; overflow-wrap: anywhere; }
-.wiki-source-preview__draft-hint { margin: var(--wiki-space-3, .75rem) 0 0; font-size: var(--wiki-type-label, .8125rem); line-height: 1.5; color: var(--wiki-text-muted, rgb(var(--v-theme-on-surface))); }
+.wiki-source-preview__draft-hint { margin: 0; font-size: var(--wiki-type-label, .8125rem); line-height: 1.5; color: var(--wiki-text-muted, rgb(var(--v-theme-on-surface))); overflow-wrap: anywhere; }
 @media (max-width: 480px) {
   .wiki-source-preview__header { padding: max(var(--wiki-space-5, 1.25rem), env(safe-area-inset-top)) max(var(--wiki-space-4, 1rem), env(safe-area-inset-right)) var(--wiki-space-5, 1.25rem) max(var(--wiki-space-4, 1rem), env(safe-area-inset-left)); }
   .wiki-source-preview__body, .wiki-source-preview__actions { padding-inline: max(var(--wiki-space-4, 1rem), env(safe-area-inset-left)) max(var(--wiki-space-4, 1rem), env(safe-area-inset-right)); }
   .wiki-source-preview__action-buttons { flex-direction: column; align-items: stretch; }
+  .wiki-source-preview__ask-group { flex-basis: auto; align-items: stretch; margin-inline-start: 0; text-align: start; }
 }
 /* Container rem units track enlarged root text, unlike viewport media-query rem units. */
 @container wiki-source-reader (height < 38rem) {
   .wiki-source-preview__panel { overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
   .wiki-source-preview__body { flex: 1 0 auto; min-height: auto; overflow: visible; scrollbar-gutter: auto; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .wiki-source-preview { backdrop-filter: none; }
+}
+@media (forced-colors: active) {
+  .wiki-source-preview { background: Canvas; backdrop-filter: none; }
+  .wiki-source-preview__panel { border-inline-start-color: CanvasText; box-shadow: none; }
 }
 </style>

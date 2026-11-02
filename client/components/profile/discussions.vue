@@ -21,7 +21,9 @@ v-container.profile-discussions(fluid)
   p(v-if='!ownerId', role='status') Sign in to see your discussions.
   template(v-else)
     p(v-if='loading', role='status') Loading your discussions…
-    p(v-if='!loading && !error && !items.length && nextCursor === null', role='status') No readable contributions to show.
+    AsyncState.profile-discussions__empty.wiki-surface-well(v-if='loaded && !loading && !blocked && wikiStore.authRefreshOutcome === `authenticated` && !error && !items.length && nextCursor === null', state='empty', :title='$t(`profile:discussions.empty`, { defaultValue: `No readable contributions to show.` })', :message='$t(`profile:discussions.emptyHelp`, { defaultValue: `Browse pages to explore discussions available to you.` })')
+      template(#actions)
+        v-btn(href='/t', variant='tonal') {{ $t('profile:discussions.browsePages', { defaultValue: 'Browse pages' }) }}
     ol.profile-discussions__list(v-if='items.length')
       li.profile-discussions__item(v-for='item in items', :key='item.id')
         article
@@ -43,6 +45,7 @@ import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session
 import { fetchMyDiscussions, notificationIdentityInvalidated, notificationPageHref } from '../../helpers/site-notifications-api.ts'
 import type { DiscussionContribution } from '../../../shared/discussion-annotations.ts'
 import AdminHero from '../common/admin-hero.vue'
+import AsyncState from '../common/async-state.vue'
 
 defineOptions({ name: 'ProfileDiscussions' })
 
@@ -50,6 +53,7 @@ const ownerId = computed(() => wikiStore.user.authenticated && Number.isSafeInte
 const items = ref<DiscussionContribution[]>([])
 const nextCursor = ref<string | null>(null)
 const loading = ref(false)
+const loaded = ref(false)
 const error = ref('')
 const blocked = ref(false)
 let generation = 0
@@ -63,6 +67,7 @@ const clear = (): void => {
   items.value = []
   nextCursor.value = null
   loading.value = false
+  loaded.value = false
   error.value = ''
 }
 
@@ -85,6 +90,7 @@ const load = async (append: boolean): Promise<void> => {
       items.value = [...items.value, ...result.items.filter(item => !seen.has(item.id))]
     } else items.value = result.items
     nextCursor.value = result.nextCursor
+    loaded.value = true
   } catch (cause) {
     if (!current()) return
     if (notificationIdentityInvalidated(cause)) {
@@ -149,4 +155,8 @@ onBeforeUnmount(() => {
 .profile-discussions__list { list-style: none; padding: 0; }
 .profile-discussions__item { padding-block: 1.5rem; border-block-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); }
 .profile-discussions__content { white-space: pre-wrap; overflow-wrap: anywhere; margin-block: 1rem; }
+.profile-discussions__empty.wiki-surface-well { flex-direction: column; text-align: center; margin-block: 1.5rem; padding: clamp(1.25rem, 4vw, 2rem); background: var(--wiki-surface-sunken); background-image: none; border: 1px solid var(--wiki-well-border); box-shadow: var(--wiki-shadow-inset); }
+.profile-discussions__empty :deep(.async-state__icon) { display: grid; place-items: center; inline-size: 3rem; block-size: 3rem; border-radius: 50%; background: var(--wiki-surface-raised); border: 1px solid var(--wiki-well-border); }
+.profile-discussions__empty :deep(.async-state__actions) { max-inline-size: 100%; }
+.profile-discussions__empty :deep(.v-btn) { max-inline-size: 100%; white-space: normal; height: auto; min-height: 44px; padding-block: .65rem; }
 </style>

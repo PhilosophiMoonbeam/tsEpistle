@@ -79,8 +79,7 @@ describe('document outline', () => {
     expect(filtered[0].children[0].children).toHaveLength(1)
     expect(filtered[0].children[0].children[0].anchor).toBe('#keys')
 
-    const anchors = (nodes: OutlineNode[]): string[] =>
-      nodes.flatMap(node => [node.anchor, ...anchors(node.children)])
+    const anchors = (nodes: OutlineNode[]): string[] => nodes.flatMap(node => [node.anchor, ...anchors(node.children)])
     expect(anchors(filterOutlineTree(tree, '  aPi '))).toEqual(['#guide', '#setup', '#keys', '#reference', '#api'])
     expect(anchors(filterOutlineTree(tree, 'search'))).toEqual(['#guide', '#search'])
     expect(anchors(filterOutlineTree(tree, 'guide'))).toEqual(['#guide'])
@@ -160,10 +159,13 @@ describe('document outline', () => {
       vi.stubGlobal('cancelAnimationFrame', (id: number): void => {
         frames.delete(id)
       })
-      vi.stubGlobal('ResizeObserver', class {
-        observe(_target: Element): void {}
-        disconnect(): void {}
-      })
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          observe(_target: Element): void {}
+          disconnect(): void {}
+        }
+      )
       Object.defineProperty(window, 'scrollY', { configurable: true, value: scenario.scrolls[0] })
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
       Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: scenario.documentHeight })
@@ -195,7 +197,12 @@ describe('document outline', () => {
 
       const active: string[] = []
       const progress: number[] = []
-      const tracker = trackPageOutline(article, entries, anchor => active.push(anchor), value => progress.push(value))
+      const tracker = trackPageOutline(
+        article,
+        entries,
+        anchor => active.push(anchor),
+        value => progress.push(value)
+      )
       const flushFrames = (): void => {
         while (frames.size > 0) {
           const callbacks = [...frames.values()]
@@ -240,14 +247,25 @@ describe('document outline', () => {
     })
     vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
     let resize = () => {}
-    vi.stubGlobal('ResizeObserver', class {
-      constructor(callback: () => void) { resize = callback }
-      observe(): void {}
-      disconnect(): void {}
-    })
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: () => void) {
+          resize = callback
+        }
+        observe(): void {}
+        disconnect(): void {}
+      }
+    )
     let scrollTop = 0
     let scrollReads = 0
-    Object.defineProperty(window, 'scrollY', { configurable: true, get: () => { scrollReads++; return scrollTop } })
+    Object.defineProperty(window, 'scrollY', {
+      configurable: true,
+      get: () => {
+        scrollReads++
+        return scrollTop
+      }
+    })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
     Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: 11_000 })
     const originalFonts = Object.getOwnPropertyDescriptor(document, 'fonts')
@@ -258,7 +276,15 @@ describe('document outline', () => {
     })
     const article = document.createElement('main')
     const rect = (top: number, height = 40): DOMRect => ({
-      top, bottom: top + height, left: 0, right: 0, width: 0, height, x: 0, y: top, toJSON: () => ({})
+      top,
+      bottom: top + height,
+      left: 0,
+      right: 0,
+      width: 0,
+      height,
+      x: 0,
+      y: top,
+      toJSON: () => ({})
     })
     article.getBoundingClientRect = () => rect(-scrollTop, 10_000)
     let collapsed = true
@@ -275,7 +301,9 @@ describe('document outline', () => {
         // top of nonempty boxes, just like getBoundingClientRect.
         return (index === 2 ? [rect(1, 0), rect(top + 40), rect(top)] : [rect(top, index === 0 ? 0 : 40)]) as unknown as DOMRectList
       }
-      heading.getBoundingClientRect = () => { throw new Error('A heading must not be measured a second time') }
+      heading.getBoundingClientRect = () => {
+        throw new Error('A heading must not be measured a second time')
+      }
       article.append(heading)
       return { anchor: `#${heading.id}`, title: heading.id, depth: 0 }
     })
@@ -297,7 +325,10 @@ describe('document outline', () => {
       expect(active.at(-1)).toBe('#section-0')
       expect(reads.every(count => count === 1)).toBe(true)
       expect(scrollReads).toBe(1)
-      for (const [top, anchor] of [[320, '#section-2'], [6_000, '#section-30']] as const) {
+      for (const [top, anchor] of [
+        [320, '#section-2'],
+        [6_000, '#section-30']
+      ] as const) {
         scrollTop = top
         window.dispatchEvent(new Event('scroll'))
         flush()
@@ -491,8 +522,13 @@ describe('local reading traversal', () => {
   }
 
   function fixture({
-    short = false, noHeadings = false, disclosure = false,
-    rawTransport = false, slotTransport = false, readingScope = scope, code = ''
+    short = false,
+    noHeadings = false,
+    disclosure = false,
+    rawTransport = false,
+    slotTransport = false,
+    readingScope = scope,
+    code = ''
   } = {}) {
     const now = Date.now()
     vi.useFakeTimers()
@@ -504,32 +540,45 @@ describe('local reading traversal', () => {
       return nextFrame
     })
     vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id))
-    vi.stubGlobal('ResizeObserver', class {
-      observe(): void {}
-      disconnect(): void {}
-    })
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(): void {}
+        disconnect(): void {}
+      }
+    )
     Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 })
     Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: short ? 700 : 2_200 })
     Object.defineProperty(document.body, 'scrollHeight', { configurable: true, value: short ? 700 : 2_200 })
     const rect = (top: number, bottom: number): DOMRect => ({
-      top, bottom, left: 0, right: 100, width: 100, height: bottom - top, x: 0, y: top, toJSON: () => ({})
+      top,
+      bottom,
+      left: 0,
+      right: 100,
+      width: 100,
+      height: bottom - top,
+      x: 0,
+      y: top,
+      toJSON: () => ({})
     })
     const header = document.createElement('header')
     header.className = 'nav-header'
     header.getBoundingClientRect = () => rect(0, 64)
     const article = document.createElement('article')
     article.getBoundingClientRect = () => rect(100 - window.scrollY, (short ? 600 : 2_200) - window.scrollY)
-    const entries = noHeadings ? [] : (short ? [100] : [100, 800, 1_500]).map((top, index) => {
-      const heading = document.createElement('h2')
-      heading.id = `private-heading-${index}`
-      heading.textContent = `Confidential heading ${index}`
-      heading.getClientRects = () => [rect(top - window.scrollY, top + 40 - window.scrollY)] as unknown as DOMRectList
-      const prose = document.createElement('p')
-      prose.textContent = `Confidential prose ${index}`
-      article.append(heading, prose)
-      return { anchor: `#${heading.id}`, title: heading.textContent, depth: 0 }
-    })
+    const entries = noHeadings
+      ? []
+      : (short ? [100] : [100, 800, 1_500]).map((top, index) => {
+          const heading = document.createElement('h2')
+          heading.id = `private-heading-${index}`
+          heading.textContent = `Confidential heading ${index}`
+          heading.getClientRects = () => [rect(top - window.scrollY, top + 40 - window.scrollY)] as unknown as DOMRectList
+          const prose = document.createElement('p')
+          prose.textContent = `Confidential prose ${index}`
+          article.append(heading, prose)
+          return { anchor: `#${heading.id}`, title: heading.textContent, depth: 0 }
+        })
     if (noHeadings) article.textContent = 'Confidential prose without headings'
     const details = document.createElement('details')
     const summary = document.createElement('summary')
@@ -572,9 +621,16 @@ describe('local reading traversal', () => {
     // dispatchEvent intentionally cannot manufacture a trusted DOM event.
     const windowEvents = vi.spyOn(window, 'addEventListener')
     const articleEvents = vi.spyOn(article, 'addEventListener')
-    const tracker = trackPageOutline(article, entries, () => {}, value => scalar.push(value), {
-      scope: readingScope, onChange: state => states.push(state)
-    })
+    const tracker = trackPageOutline(
+      article,
+      entries,
+      () => {},
+      value => scalar.push(value),
+      {
+        scope: readingScope,
+        onChange: state => states.push(state)
+      }
+    )
     const wheel = windowEvents.mock.calls.find(([type]) => type === 'wheel')![1] as EventListener
     const keydown = windowEvents.mock.calls.find(([type]) => type === 'keydown')![1] as EventListener
     const click = articleEvents.mock.calls.find(([type]) => type === 'click')![1] as EventListener
@@ -583,7 +639,9 @@ describe('local reading traversal', () => {
     const flush = (): void => {
       const callbacks = [...frames.values()]
       frames.clear()
-      callbacks.forEach(callback => callback(0))
+      callbacks.forEach(callback => {
+        callback(0)
+      })
     }
     const scroll = (top: number): void => {
       Object.defineProperty(window, 'scrollY', { configurable: true, value: top })
@@ -600,7 +658,16 @@ describe('local reading traversal', () => {
     }
     flush()
     return {
-      tracker, article, details, summary, states, scalar, flush, scroll, beginRead, read,
+      tracker,
+      article,
+      details,
+      summary,
+      states,
+      scalar,
+      flush,
+      scroll,
+      beginRead,
+      read,
       end(): void {
         keydown({ isTrusted: true, target: article, key: 'End' } as unknown as Event)
         scroll(short ? 0 : 1_400)
@@ -849,12 +916,7 @@ describe('local reading traversal', () => {
       returned.dispose()
     }
 
-    for (const changed of [
-      code.slice(1),
-      code.slice(0, -1),
-      code.replace('  keep', ' keep'),
-      code.replace('    and', '  and')
-    ]) {
+    for (const changed of [code.slice(1), code.slice(0, -1), code.replace('  keep', ' keep'), code.replace('    and', '  and')]) {
       const changedCode = fixture({ rawTransport: true, code: changed })
       try {
         expect(changedCode.states.at(-1)?.completedAnchors).toEqual([])
@@ -911,7 +973,9 @@ describe('local reading traversal', () => {
 
   for (const method of ['getItem', 'setItem'] as const) {
     test(`continues in memory when ${method} is denied and cancels pending dwell on disposal`, () => {
-      const denied = vi.spyOn(Storage.prototype, method).mockImplementation(() => { throw new Error('Storage denied') })
+      const denied = vi.spyOn(Storage.prototype, method).mockImplementation(() => {
+        throw new Error('Storage denied')
+      })
       const page = fixture({ short: true })
       try {
         page.read(0)

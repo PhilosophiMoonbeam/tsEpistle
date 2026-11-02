@@ -24,9 +24,9 @@ type ContrastResult = {
 async function settled(page: Page) {
   await page.evaluate(async () => {
     await document.fonts.ready
-    const transitions = document.getAnimations().filter(animation =>
-      animation instanceof CSSTransition && Number.isFinite(animation.effect?.getComputedTiming().endTime)
-    )
+    const transitions = document
+      .getAnimations()
+      .filter(animation => animation instanceof CSSTransition && Number.isFinite(animation.effect?.getComputedTiming().endTime))
     await Promise.all(transitions.map(animation => animation.finished))
     const { promise, resolve } = Promise.withResolvers<void>()
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
@@ -36,21 +36,24 @@ async function settled(page: Page) {
 
 async function readInk(locator: Locator, name: string, minimum: number): Promise<InkSample> {
   await expect(locator, name).toBeVisible()
-  return locator.evaluate((element, contract) => {
-    const style = getComputedStyle(element)
-    let opacity = 1
-    for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement) {
-      const computed = getComputedStyle(ancestor)
-      opacity *= Number(computed.opacity)
-      // These samples are solid-color glyphs. Do not silently pretend a future
-      // text gradient, blend mode, mask, or foreground filter is a flat ink.
-      if (computed.mixBlendMode !== 'normal' || computed.filter !== 'none' || computed.maskImage !== 'none' || computed.backgroundClip === 'text') {
-        throw new Error(`${contract.name}: foreground paint requires pixel-specific coverage`)
+  return locator.evaluate(
+    (element, contract) => {
+      const style = getComputedStyle(element)
+      let opacity = 1
+      for (let ancestor: Element | null = element; ancestor; ancestor = ancestor.parentElement) {
+        const computed = getComputedStyle(ancestor)
+        opacity *= Number(computed.opacity)
+        // These samples are solid-color glyphs. Do not silently pretend a future
+        // text gradient, blend mode, mask, or foreground filter is a flat ink.
+        if (computed.mixBlendMode !== 'normal' || computed.filter !== 'none' || computed.maskImage !== 'none' || computed.backgroundClip === 'text') {
+          throw new Error(`${contract.name}: foreground paint requires pixel-specific coverage`)
+        }
       }
-    }
-    const box = element.getBoundingClientRect()
-    return { ...contract, color: style.color, opacity, box: { x: box.x, y: box.y, width: box.width, height: box.height } }
-  }, { name, minimum })
+      const box = element.getBoundingClientRect()
+      return { ...contract, color: style.color, opacity, box: { x: box.x, y: box.y, width: box.width, height: box.height } }
+    },
+    { name, minimum }
+  )
 }
 
 // Sample the real compositor backing with glyph paint temporarily hidden.
@@ -76,7 +79,8 @@ function backingPixels(data: Buffer, width: number, height: number, channels: nu
 }
 
 async function captureBacking(page: Page, scope: string): Promise<Buffer> {
-  const mask = await page.addStyleTag({ content: `
+  const mask = await page.addStyleTag({
+    content: `
     ${scope},
     ${scope} *,
     ${scope} *::before,
@@ -86,7 +90,8 @@ async function captureBacking(page: Page, scope: string): Promise<Buffer> {
       text-shadow: none !important;
     }
     ${scope} svg { visibility: hidden !important; }
-  ` })
+  `
+  })
   try {
     await settled(page)
     return await page.screenshot({ scale: 'css' })
@@ -100,36 +105,40 @@ function contrastRatio(first: ArrayLike<number>, second: ArrayLike<number>) {
   const luminance = (pixel: ArrayLike<number>) => {
     const linear = (byte: number) => {
       const value = byte / 255
-      return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
     }
-    return .2126 * linear(pixel[0]!) + .7152 * linear(pixel[1]!) + .0722 * linear(pixel[2]!)
+    return 0.2126 * linear(pixel[0]!) + 0.7152 * linear(pixel[1]!) + 0.0722 * linear(pixel[2]!)
   }
   const a = luminance(first)
   const b = luminance(second)
-  return (Math.max(a, b) + .05) / (Math.min(a, b) + .05)
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
 }
 
 async function measureContrast(page: Page, sample: InkSample, backgrounds: Pixel[]): Promise<ContrastResult> {
-  const composites = await page.evaluate(({ ink, backings }) => {
-    const canvas = document.createElement('canvas')
-    canvas.width = canvas.height = 1
-    const context = canvas.getContext('2d', { willReadFrequently: true })
-    if (!context) throw new Error('Native canvas color compositing is unavailable')
-    if (!CSS.supports('color', ink.color)) throw new Error(`Unsupported computed ink ${ink.color}`)
-    return backings.map(backing => {
-      context.globalAlpha = 1
-      context.fillStyle = `rgb(${backing.join(' ')})`
-      context.fillRect(0, 0, 1, 1)
-      context.globalAlpha = ink.opacity
-      // The browser parses OKLCH/color()/alpha and performs source-over. Only
-      // the independent WCAG luminance calculation is test-owned arithmetic.
-      context.fillStyle = ink.color
-      context.fillRect(0, 0, 1, 1)
-      return { backing, foreground: Array.from(context.getImageData(0, 0, 1, 1).data) }
-    })
-  }, { ink: sample, backings: backgrounds })
-  const worst = composites.map(composite => ({ ...composite, ratio: contrastRatio(composite.foreground, composite.backing) }))
-    .reduce((a, b) => a.ratio < b.ratio ? a : b)
+  const composites = await page.evaluate(
+    ({ ink, backings }) => {
+      const canvas = document.createElement('canvas')
+      canvas.width = canvas.height = 1
+      const context = canvas.getContext('2d', { willReadFrequently: true })
+      if (!context) throw new Error('Native canvas color compositing is unavailable')
+      if (!CSS.supports('color', ink.color)) throw new Error(`Unsupported computed ink ${ink.color}`)
+      return backings.map(backing => {
+        context.globalAlpha = 1
+        context.fillStyle = `rgb(${backing.join(' ')})`
+        context.fillRect(0, 0, 1, 1)
+        context.globalAlpha = ink.opacity
+        // The browser parses OKLCH/color()/alpha and performs source-over. Only
+        // the independent WCAG luminance calculation is test-owned arithmetic.
+        context.fillStyle = ink.color
+        context.fillRect(0, 0, 1, 1)
+        return { backing, foreground: Array.from(context.getImageData(0, 0, 1, 1).data) }
+      })
+    },
+    { ink: sample, backings: backgrounds }
+  )
+  const worst = composites
+    .map(composite => ({ ...composite, ratio: contrastRatio(composite.foreground, composite.backing) }))
+    .reduce((a, b) => (a.ratio < b.ratio ? a : b))
   return { name: sample.name, minimum: sample.minimum, color: sample.color, opacity: sample.opacity, ...worst }
 }
 
@@ -147,9 +156,15 @@ async function measureFocus(page: Page, control: Locator, other: Locator, name: 
   await keyboardFocus(page, other)
   const box = await control.boundingBox()
   if (!box) throw new Error(`${name}: real control is unavailable`)
-  const before = await sharp(await page.screenshot({ scale: 'css' })).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+  const before = await sharp(await page.screenshot({ scale: 'css' }))
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true })
   await keyboardFocus(page, control)
-  const after = await sharp(await page.screenshot({ scale: 'css' })).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+  const after = await sharp(await page.screenshot({ scale: 'css' }))
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true })
   const pixel = (image: typeof before, x: number, y: number): Pixel => {
     if (x < 0 || y < 0 || x >= image.info.width || y >= image.info.height) throw new Error(`${name}: focus boundary exceeds viewport`)
     const offset = (y * image.info.width + x) * image.info.channels
@@ -163,14 +178,22 @@ async function measureFocus(page: Page, control: Locator, other: Locator, name: 
     const horizontal = side === 'top' || side === 'bottom'
     const length = horizontal ? box.width : box.height
     const samples: ContrastResult[] = []
-    for (let along = Math.ceil(length * .3); along < length * .7; along += 1) {
+    for (let along = Math.ceil(length * 0.3); along < length * 0.7; along += 1) {
       let strongest: ContrastResult | undefined
       for (let outward = 0; outward < 8; outward += 1) {
         const x = Math.floor(horizontal ? box.x + along : side === 'left' ? box.x - outward - 1 : box.x + box.width + outward)
         const y = Math.floor(!horizontal ? box.y + along : side === 'top' ? box.y - outward - 1 : box.y + box.height + outward)
         const backing = pixel(before, x, y)
         const foreground = pixel(after, x, y)
-        const candidate = { name: `${name} ${side}`, minimum: 3, color: 'native focus pixels', opacity: 1, backing, foreground, ratio: contrastRatio(foreground, backing) }
+        const candidate = {
+          name: `${name} ${side}`,
+          minimum: 3,
+          color: 'native focus pixels',
+          opacity: 1,
+          backing,
+          foreground,
+          ratio: contrastRatio(foreground, backing)
+        }
         if (!strongest || candidate.ratio > strongest.ratio) strongest = candidate
       }
       samples.push(strongest!)
@@ -178,7 +201,7 @@ async function measureFocus(page: Page, control: Locator, other: Locator, name: 
     // At least 75% of the straight boundary must reach the threshold; taking
     // a lower quartile rejects isolated glints while tolerating raster edges.
     samples.sort((a, b) => a.ratio - b.ratio)
-    return samples[Math.floor(samples.length * .25)]!
+    return samples[Math.floor(samples.length * 0.25)]!
   })
 }
 
@@ -191,10 +214,15 @@ async function installUnderlay(page: Page, backing: string) {
     // This isolated visual fixture paints only BEHIND real chrome. It neither
     // changes application foreground/material rules nor creates business data.
     Object.assign(fixture.style, {
-      position: 'fixed', inset: '0', zIndex: '999', pointerEvents: 'auto', overflow: 'hidden',
+      position: 'fixed',
+      inset: '0',
+      zIndex: '999',
+      pointerEvents: 'auto',
+      overflow: 'hidden',
       background: value === 'prose' ? getComputedStyle(document.querySelector('.v-application')!).backgroundColor : value,
       color: getComputedStyle(document.querySelector('article.contents')!).color,
-      font: '16px/1.7 serif', padding: '0 24px'
+      font: '16px/1.7 serif',
+      padding: '0 24px'
     })
     if (value === 'prose') {
       for (let index = 0; index < 50; index += 1) {
@@ -225,6 +253,7 @@ test('native floating controls and Focus dock retain AA over prose and saturated
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'light' })
   await openAuthenticatedPage(page, '/', 'article.contents')
+  await expect(page.locator('.nav-header'), 'Floating header glass keeps its identifying hairline').toHaveCSS('border-bottom-width', '1px')
   const cdp = await page.context().newCDPSession(page)
   const results: Array<ContrastResult & { mode: string; fallback: boolean; backingName: string }> = []
   try {
@@ -244,11 +273,13 @@ test('native floating controls and Focus dock retain AA over prose and saturated
     ]
     for (const mode of ['light', 'dark'] as const) {
       for (const fallback of [false, true]) {
-        await cdp.send('Emulation.setEmulatedMedia', { features: [
-          { name: 'prefers-color-scheme', value: mode },
-          { name: 'prefers-reduced-motion', value: 'reduce' },
-          { name: 'prefers-reduced-transparency', value: fallback ? 'reduce' : 'no-preference' }
-        ] })
+        await cdp.send('Emulation.setEmulatedMedia', {
+          features: [
+            { name: 'prefers-color-scheme', value: mode },
+            { name: 'prefers-reduced-motion', value: 'reduce' },
+            { name: 'prefers-reduced-transparency', value: fallback ? 'reduce' : 'no-preference' }
+          ]
+        })
         // The installed admin fixture must track System appearance. Never
         // replace whoami/preferences to manufacture a light/dark UI state.
         await expect(page.locator('.wiki-page')).toHaveClass(new RegExp(`v-theme--${mode}`, 'u'))
@@ -256,12 +287,15 @@ test('native floating controls and Focus dock retain AA over prose and saturated
         if (!fallback) {
           // Source presence and AA alone miss a minifier dropping the standard
           // declaration when an unsupported vendor-prefixed form comes last.
-          await expect(page.locator('.nav-header')).toHaveCSS('backdrop-filter', 'blur(16px) saturate(1.4)')
-          await expect(dock).toHaveCSS('backdrop-filter', 'blur(20px) saturate(1.5)')
+          for (const material of [page.locator('.nav-header'), dock]) {
+            await expect(material).toHaveCSS('backdrop-filter', mode === 'light' ? 'blur(20px) saturate(1.45)' : 'blur(22px) saturate(1.5)')
+            await expect(material).toHaveCSS('background-image', /linear-gradient\(180deg/u)
+          }
         }
         if (fallback) {
           for (const material of [page.locator('.nav-header'), dock]) {
             await expect(material).toHaveCSS('backdrop-filter', 'none')
+            await expect(material, 'An opaque fallback must remove the translucent gradient too').toHaveCSS('background-image', 'none')
             const alpha = await material.evaluate(element => {
               const canvas = document.createElement('canvas')
               canvas.width = canvas.height = 1
@@ -283,9 +317,12 @@ test('native floating controls and Focus dock retain AA over prose and saturated
           const image = await sharp(capture).removeAlpha().raw().toBuffer({ resolveWithObject: true })
           for (const sample of samples) {
             const pixels = backingPixels(image.data, image.info.width, image.info.height, image.info.channels, sample)
-            results.push({ ...await measureContrast(page, sample, pixels), mode, fallback, backingName: backing })
+            results.push({ ...(await measureContrast(page, sample, pixels)), mode, fallback, backingName: backing })
           }
-          for (const [control, other, name] of [[headerControl, dockControl, 'header keyboard focus'], [dockControl, headerControl, 'dock keyboard focus']] as const) {
+          for (const [control, other, name] of [
+            [headerControl, dockControl, 'header keyboard focus'],
+            [dockControl, headerControl, 'dock keyboard focus']
+          ] as const) {
             for (const result of await measureFocus(page, control, other, name)) {
               results.push({ ...result, mode, fallback, backingName: backing })
             }
@@ -329,12 +366,143 @@ test('active contents labels remain readable over their native selected-row pain
       const image = await sharp(capture).removeAlpha().raw().toBuffer({ resolveWithObject: true })
       for (const sample of samples) {
         const pixels = backingPixels(image.data, image.info.width, image.info.height, image.info.channels, sample)
-        results.push({ ...await measureContrast(page, sample, pixels), mode })
+        results.push({ ...(await measureContrast(page, sample, pixels)), mode })
       }
     }
   } finally {
     await testInfo.attach('native-contents-contrast', { body: JSON.stringify(results, null, 2), contentType: 'application/json' })
   }
-  expect(results.filter(result => result.ratio < result.minimum),
-    'Selected-row tint and glow must not make ordinary contents text fall below 4.5:1').toEqual([])
+  expect(
+    results.filter(result => result.ratio < result.minimum),
+    'Selected-row tint and glow must not make ordinary contents text fall below 4.5:1'
+  ).toEqual([])
+})
+
+test('configured material ink survives real gradient interiors and nested theme boundaries', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const results: Array<ContrastResult & { palette: string; fallback: boolean }> = []
+  const paints = new Map<string, Pixel[]>()
+  const cdp = await page.context().newCDPSession(page)
+  // Customize the same public bootstrap boundary used by the application.
+  // Do not install generated runtime ink or reimplement the color solver here.
+  await page.addInitScript(() => {
+    let current: unknown
+    Object.defineProperty(window, 'siteConfig', {
+      configurable: true,
+      get: () => current,
+      set: value => {
+        const custom = new URL(location.href).searchParams.get('native-material') === 'custom'
+        if (custom && value && typeof value === 'object') {
+          const config = value as Record<string, unknown>
+          const colors = config.themeColors as { light: Record<string, string>; dark: Record<string, string> }
+          config.themeColors = {
+            light: { ...colors.light, primary: '#FF00E6', secondary: '#00EAFF', surface: '#A6B7AB', background: '#9DA9BE' },
+            dark: { ...colors.dark, primary: '#FF00E6', secondary: '#00EAFF', surface: '#303B4C', background: '#181F2A' }
+          }
+        }
+        current = value
+      }
+    })
+  })
+  try {
+    for (const palette of ['default', 'custom']) {
+      await page.goto(`/login?native-material=${palette}`, { waitUntil: 'networkidle' })
+      await expect(page.locator('form.login-form--credentials')).toBeVisible()
+      await page.evaluate(() => {
+        const fixture = document.createElement('div')
+        fixture.id = 'native-material-boundaries'
+        Object.assign(fixture.style, { position: 'fixed', inset: '40px', zIndex: '10000', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' })
+        for (const outerMode of ['light', 'dark']) {
+          const outer = document.createElement('section')
+          outer.className = `v-theme--${outerMode}`
+          fixture.append(outer)
+          let boundary = outer
+          for (const mode of [outerMode, outerMode === 'light' ? 'dark' : 'light']) {
+            if (mode !== outerMode) {
+              boundary = document.createElement('section')
+              boundary.className = `v-theme--${mode}`
+              outer.append(boundary)
+            }
+            const card = document.createElement('div')
+            card.className = 'v-card v-card--variant-flat'
+            card.dataset.sample = `${outerMode}-${mode}`
+            Object.assign(card.style, { position: 'relative', height: '350px', padding: '16px', marginBottom: '16px' })
+            for (const purpose of ['primary', 'secondary', 'success', 'info', 'warning', 'error', 'neutral']) {
+              const label = document.createElement('p')
+              label.dataset.ink = purpose
+              label.textContent = `Readable ${purpose} material action`
+              Object.assign(label.style, { color: `var(--wiki-purpose-${purpose}-ink)`, margin: '0', lineHeight: '32px' })
+              card.append(label)
+            }
+            const disabled = document.createElement('p')
+            disabled.dataset.ink = 'disabled-primary'
+            disabled.textContent = 'Unavailable primary action'
+            Object.assign(disabled.style, {
+              color: 'rgb(var(--v-theme-on-primary-disabled-raised))',
+              backgroundColor: 'color-mix(in srgb, rgb(var(--v-theme-primary)) 80%, transparent)',
+              margin: '0',
+              padding: '12px'
+            })
+            card.append(disabled)
+            boundary.append(card)
+          }
+        }
+        document.querySelector('.v-application')!.append(fixture)
+      })
+      for (const fallback of [false, true]) {
+        await cdp.send('Emulation.setEmulatedMedia', {
+          features: [
+            { name: 'prefers-reduced-motion', value: 'reduce' },
+            { name: 'prefers-reduced-transparency', value: fallback ? 'reduce' : 'no-preference' }
+          ]
+        })
+        await settled(page)
+        const cards = page.locator('#native-material-boundaries .v-card')
+        if ((await cards.count()) !== 4) throw new Error('Both nested native theme preview pairs must be mounted')
+        for (const card of await cards.all()) {
+          if (fallback) {
+            await expect(card).toHaveCSS('background-image', 'none')
+          } else {
+            const image = await card.evaluate(element => getComputedStyle(element).backgroundImage)
+            expect(image, 'Both outer and nested cards receive the two-endpoint 155° material').toMatch(/^linear-gradient\(155deg,/u)
+            expect(image.match(/\)\s+[\d.]+%/gu), 'The material has exactly two gradient stops').toHaveLength(2)
+          }
+        }
+        const samples: InkSample[] = []
+        for (const label of await page.locator('#native-material-boundaries [data-ink]').all()) {
+          const name = await label.evaluate(element => `${element.closest('[data-sample]')!.getAttribute('data-sample')} ${element.getAttribute('data-ink')}`)
+          samples.push(await readInk(label, name, 4.5))
+        }
+        const image = await sharp(await captureBacking(page, '#native-material-boundaries'))
+          .removeAlpha()
+          .raw()
+          .toBuffer({ resolveWithObject: true })
+        for (const sample of samples) {
+          const backings = backingPixels(image.data, image.info.width, image.info.height, image.info.channels, sample)
+          paints.set(`${palette}/${fallback}/${sample.name}`, backings)
+          if (palette === 'custom') {
+            expect(backings, `${sample.name} must render the saved custom palette rather than canonical defaults`).not.toEqual(
+              paints.get(`default/${fallback}/${sample.name}`)
+            )
+          }
+          results.push({ ...(await measureContrast(page, sample, backings)), palette, fallback })
+        }
+        for (const mode of ['light', 'dark']) {
+          expect(
+            paints.get(`${palette}/${fallback}/light-${mode} primary`),
+            `${mode} material must not inherit the enclosing preview's palette or fallback`
+          ).toEqual(paints.get(`${palette}/${fallback}/dark-${mode} primary`))
+        }
+      }
+    }
+  } finally {
+    await testInfo.attach('native-configured-material-contrast', { body: JSON.stringify(results, null, 2), contentType: 'application/json' })
+    await cdp.send('Emulation.setEmulatedMedia', { features: [] })
+    await cdp.detach()
+  }
+  expect(
+    results.filter(result => result.ratio < result.minimum),
+    'Configured foregrounds must be readable against actual light/dark material paint, including nested previews and opaque fallbacks'
+  ).toEqual([])
 })

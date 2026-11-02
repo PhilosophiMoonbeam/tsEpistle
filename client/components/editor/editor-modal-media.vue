@@ -1,5 +1,6 @@
 <template lang='pug'>
-  v-card.editor-modal-media(flat, rounded='xl', :class='[`is-editor-${editorKey}`, { "is-editor-embedded": embedded, "is-page-branding": isBranding }]', :role='embedded ? undefined : `dialog`', :aria-modal='embedded ? undefined : `true`', aria-labelledby='editor-media-title', tabindex='-1')
+component(:is='embedded ? `div` : mediaDialogComponent', :style='embedded && isBranding ? { height: `100%`, minHeight: `0`, display: `flex`, flexDirection: `column` } : undefined', v-bind='embedded ? {} : { modelValue: true, maxWidth: 1600, maxHeight: `calc(100dvh - 32px)`, "aria-labelledby": `editor-media-title`, activator: returnFocus }', @update:model-value='!$event && handleMediaEscape()')
+  v-card.editor-modal-media(ref='mediaContent', flat, rounded='xl', :class='{ "is-editor-embedded": embedded, "is-page-branding": isBranding }', aria-labelledby='editor-media-title', tabindex='-1')
     .editor-media-layout
       section.editor-media-browser(aria-labelledby='editor-media-title')
         v-card.editor-media-panel.radius-7
@@ -167,7 +168,7 @@
             footer.editor-media-footer
               .editor-media-count.text-body-medium.text-medium-emphasis {{$t('editor:assets.fileCount', { count: displayedAssets.length })}}
               .editor-media-actions(v-if='!isManaging')
-                v-btn.radius-7(variant="outlined", @click='cancel')
+                v-btn.radius-7(variant="text", @click='cancel')
                   v-icon(start) mdi-close
                   span {{$t('common:actions.cancel')}}
                 v-btn.radius-7(v-if='!isBranding', color='primary', @click='insert', :disabled='!currentFileId || !isAssetActionable(currentFileId) || (currentAsset?.kind === `IMAGE` && !imagePropertiesValid)')
@@ -185,14 +186,12 @@
               h2.editor-media-heading
                 v-icon(aria-hidden='true') mdi-cloud-upload-outline
                 span {{$t('editor:assets.uploadAssets')}}
-              v-btn.editor-media-browse.radius-7(variant="tonal", color='primary', :aria-label='$t(`editor:editorModalMedia.browseFiles`)', @click='browse')
-                v-icon(start) mdi-plus-box-multiple
-                span {{$t('common:actions.browse')}}
             //- A completed /u response releases the canonical asset namespace fence before the next file.
             file-pond.mt-3(
               name='mediaUpload'
               ref='pond'
               :label-idle='$t(`editor:assets.uploadAssetsDropZone`)'
+              :credits='false'
               allow-multiple
               :files='files'
               :max-files='10'
@@ -206,14 +205,15 @@
           v-divider(v-if='!isPrivatePage')
           .editor-media-upload-footer(v-if='!isPrivatePage')
             .text-body-small.text-medium-emphasis(:id='`editor-media-upload-hint`')
-              template(v-if='queuedFileCount > 0') {{ $t('editor:assets.uploadReady', { count: queuedFileCount }) }}
-              template(v-else) {{ $t('editor:assets.uploadLimits') }}
+              div {{ $t('editor:assets.uploadLimits') }}
+              div(v-if='queuedFileCount > 0') {{ $t('editor:assets.uploadReady', { count: queuedFileCount }) }}
             //- Staged upload: the primary button states how many dropped files are waiting.
             v-btn.editor-media-upload-action(
               color='primary'
               :variant='queuedFileCount > 0 ? `flat` : `tonal`'
+              :data-commitment='queuedFileCount > 0 && !uploading ? `active` : undefined'
               :loading='uploading'
-              :aria-disabled='queuedFileCount === 0 || uploading ? `true` : undefined'
+              :disabled='queuedFileCount === 0 || uploading'
               aria-describedby='editor-media-upload-hint'
               @click='upload'
             ) {{ queuedFileCount > 0 ? $t('editor:assets.uploadCount', { count: queuedFileCount }) : $t('common:actions.upload') }}
@@ -458,6 +458,7 @@
 
 <script lang='ts'>
 import { defineComponent, markRaw, type Component, type PropType } from 'vue'
+import { VDialog } from 'vuetify/components'
 import * as _ from 'lodash-es'
 import { createAssetFolder, deleteAsset as deleteAssetRequest, fetchAssetBranding, fetchAssetFolders, fetchAssetRelocationStatus, fetchAssets, relocateAsset as relocateAssetRequest, type Asset, type AssetFolder, type AssetRelocationInput, type AssetRelocationReceipt } from '../../helpers/assets-api'
 import { sameOriginJsonFetch } from '../../helpers/json-transport.ts'
@@ -468,7 +469,6 @@ import { isRecord } from '../../helpers/type-guards'
 import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
 import { emitEditorInsert } from '../../helpers/editor-insert-events'
 import { isSafeEditorImageSource, isValidEditorImageAlt, normalizeEditorImageDimension, type EditorImageAlignment, type EditorImageStyle } from '../../helpers/editor-image-properties'
-import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 import LocalizedRichText from '../common/localized-rich-text'
 
 const imageInsertionOwner = (): string => JSON.stringify([
@@ -640,7 +640,6 @@ type FilePondFile = {
 }
 
 type FilePondRef = {
-  browse: () => void
   getFiles: () => FilePondFile[]
   processFiles: () => Promise<unknown>
   removeFile: (id: string) => void
@@ -681,6 +680,7 @@ export default defineComponent({
       resizeHeight: 900
     }
     return {
+      mediaDialogComponent: markRaw(VDialog),
       folders: markRaw([] as AssetFolder[]),
       files: [] as FilePondFile[],
       assets: markRaw([] as Asset[]),
@@ -742,7 +742,6 @@ export default defineComponent({
       brandingAbortController: null as AbortController | null,
       returnFocus: null as HTMLElement | null,
       mediaDialogReturnFocus: null as HTMLElement | null,
-      focusScope: null as ModalFocusScope | null,
       mediaRequest: 0,
       mediaLoadsInFlight: 0,
       mediaAbortController: null as AbortController | null,
@@ -760,9 +759,6 @@ export default defineComponent({
     imageWidthValid(): boolean { return normalizeEditorImageDimension(this.imageWidth) !== null },
     imageHeightValid(): boolean { return normalizeEditorImageDimension(this.imageHeight) !== null },
     imagePropertiesValid(): boolean { return this.imageAltValid && this.imageWidthValid && this.imageHeightValid },
-    editorKey() {
-      return wikiStore.editor.editorKey
-    },
     activeModal: {
       get() {
         return wikiStore.editor.activeModal
@@ -970,11 +966,6 @@ export default defineComponent({
       this.pagination = 1
       if (!this.disposed) void this.loadMedia()
     },
-    embedded(newValue: boolean) {
-      if (!newValue || !this.focusScope) return
-      this.focusScope.deactivate()
-      this.focusScope = null
-    },
     currentFileId(newValue: number | null) {
       if (this.isBranding && newValue === null) this.invalidateBrandingSelection()
       this.imageAlt = this.assets.find(asset => asset.id === newValue)?.filename ?? ''
@@ -1012,24 +1003,18 @@ export default defineComponent({
       void this.loadMedia()
     }
   },
+  beforeMount() {
+    if (!this.embedded) this.returnFocus = document.activeElement as HTMLElement | null
+  },
   mounted() {
-    if (!this.embedded) {
-      this.returnFocus = document.activeElement as HTMLElement | null
-      this.$nextTick(() => {
-        if (this.disposed || this.embedded) return
-        const root = this.$el instanceof HTMLElement ? this.$el : null
-        if (!root) return
-        this.focusScope = markRaw(createModalFocusScope({
-          root,
-          restoreTarget: () => this.returnFocus,
-          additionalRoots: this.mediaModalAdditionalRoots,
-          onEscape: this.handleMediaEscape
-        }))
-        const refreshButton = this.$refs.refreshButton as { $el?: unknown } | undefined
-        if (refreshButton?.$el instanceof HTMLElement) refreshButton.$el.focus()
-      })
-    }
     void this.loadMedia()
+    // Embedded branding replaces the focused Properties card without opening a
+    // new SDK dialog. Hand off initial focus; the existing VDialog keeps the trap.
+    if (this.embedded && this.isBranding) {
+      const root = (this.$refs.mediaContent as { $el?: HTMLElement } | undefined)?.$el
+      const refreshButton = (this.$refs.refreshButton as { $el?: HTMLElement } | undefined)?.$el
+      if (root?.isConnected && !root.contains(document.activeElement)) refreshButton?.focus({ preventScroll: true })
+    }
   },
   beforeUnmount() {
     this.disposed = true
@@ -1041,13 +1026,12 @@ export default defineComponent({
     this.brandingAbortController = null
     for (const timer of this.fileRemovalTimers) window.clearTimeout(timer)
     this.fileRemovalTimers = []
-    this.focusScope?.deactivate()
-    this.focusScope = null
+    if (!this.embedded && this.returnFocus?.isConnected) {
+      const target = this.returnFocus
+      this.$nextTick(() => target.isConnected && target.focus({ preventScroll: true }))
+    }
   },
   methods: {
-    mediaModalAdditionalRoots (): HTMLElement[] {
-      return Array.from(document.querySelectorAll<HTMLElement>('.editor-media-owned-overlay'))
-    },
     setActionMenu (assetId: number, isOpen: boolean) {
       this.actionMenuAssetId = isOpen && this.isAssetActionable(assetId) ? assetId : null
     },
@@ -1081,7 +1065,7 @@ export default defineComponent({
       this.cancel()
     },
     rememberMediaDialogFocus (assetId: number) {
-      const root = this.$el instanceof HTMLElement ? this.$el : null
+      const root = (this.$refs.mediaContent as { $el?: HTMLElement } | undefined)?.$el
       this.mediaDialogReturnFocus = root?.querySelector<HTMLElement>(`[data-editor-media-asset-actions="${assetId}"]`) ?? null
     },
     restoreMediaDialogFocus () {
@@ -1258,9 +1242,6 @@ export default defineComponent({
         } : {})
       })
       this.activeModal = ''
-    },
-    browse () {
-      ;(this.$refs.pond as FilePondRef).browse()
     },
     async upload () {
       if (this.isPrivatePage) {
@@ -1665,71 +1646,13 @@ export default defineComponent({
 
 <style lang='scss'>
 .editor-modal-media {
-  --editor-media-bottom-clearance: calc(var(--v-layout-bottom, 0px) + 24px + env(safe-area-inset-bottom));
-  background: rgb(var(--v-theme-background)) !important;
+  background: var(--wiki-canvas-bg, rgb(var(--v-theme-background))) !important;
   color: rgb(var(--v-theme-on-background));
   padding-bottom: env(safe-area-inset-bottom);
-  height: calc(100dvh - 112px - var(--editor-media-bottom-clearance));
-  left: 64px;
-  overflow: auto;
-  position: fixed !important;
-  top: 112px;
-  width: calc(100vw - 64px);
-  z-index: 10;
-
-  @include until($tablet) {
-    left: 0;
-    width: 100vw;
-  }
-
-  &.is-editor-visual-markdown {
-    height: calc(100dvh - 64px - var(--editor-media-bottom-clearance));
-    left: 0;
-    top: 64px;
-    width: 100vw;
-
-    @include until($tablet) {
-      height: calc(100dvh - 56px - var(--editor-media-bottom-clearance));
-      top: 56px;
-    }
-  }
-  &.is-editor-ckeditor {
-    top: 64px;
-    left: 0;
-    width: 100%;
-    height: calc(100dvh - 64px - var(--editor-media-bottom-clearance) - 2px);
-
-    @include until($tablet) {
-      top: 56px;
-      left: 0;
-      width: 100%;
-      height: calc(100dvh - 56px - var(--editor-media-bottom-clearance));
-    }
-  }
-
-  &.is-editor-code {
-    top: 64px;
-    height: calc(100dvh - 64px - var(--editor-media-bottom-clearance));
-
-    @include until($tablet) {
-      top: 56px;
-      height: calc(100dvh - 56px - var(--editor-media-bottom-clearance));
-    }
-  }
-
-  &.is-editor-common {
-    top: 64px;
-    left: 0;
-    width: 100%;
-    height: calc(100dvh - 64px - var(--editor-media-bottom-clearance));
-
-    @include until($tablet) {
-      top: 56px;
-      left: 0;
-      width: 100%;
-      height: calc(100dvh - 56px - var(--editor-media-bottom-clearance));
-    }
-  }
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  width: 100%;
 
   .editor-media-layout {
     display: grid;
@@ -1906,8 +1829,14 @@ export default defineComponent({
   }
 
   .v-card {
-    background: rgb(var(--v-theme-surface));
+    background: var(--wiki-surface-raised);
     color: rgb(var(--v-theme-on-surface));
+  }
+
+  .editor-media-panel {
+    background: var(--wiki-surface-gradient);
+    border: 1px solid var(--wiki-material-border);
+    box-shadow: var(--wiki-specular-border);
   }
 
   tr.is-clickable {
@@ -1936,13 +1865,12 @@ export default defineComponent({
     margin-bottom: 0;
   }
 
-  .filepond--credits {
-    color: rgb(var(--v-theme-on-surface));
-    opacity: 1;
-  }
 
   .filepond--panel-root {
-    background: color-mix(in srgb, rgb(var(--v-theme-surface-variant)) 35%, rgb(var(--v-theme-surface)));
+    background: var(--wiki-surface-sunken);
+    background-image: none;
+    border: 1px solid var(--wiki-well-border);
+    box-shadow: var(--wiki-shadow-inset);
   }
 
   .filepond--drop-label {
@@ -1974,6 +1902,7 @@ export default defineComponent({
     inset: auto;
     width: auto !important;
     height: auto !important;
+    max-height: none;
     min-height: 0;
     overflow: visible;
     z-index: auto;

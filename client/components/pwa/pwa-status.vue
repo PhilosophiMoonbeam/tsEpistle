@@ -20,7 +20,9 @@ section.pwa-status-panel(
     dl.pwa-status-panel__facts
       div
         dt {{ $t('common:offline.status.browserConnection', { defaultValue: 'Browser connection' }) }}
-        dd(:class='`pwa-status-panel__value--${networkHintTone}`') {{ msg($t, networkHint) }}
+        dd(:class='`pwa-status-panel__value--${networkHintTone}`')
+          span.pwa-status-panel__network-dot(v-if='pwaState.onlineHint === true', aria-hidden='true')
+          | {{ msg($t, networkHint) }}
       div
         dt {{ $t('common:offline.status.server', { defaultValue: 'Server' }) }}
         dd(:class='`pwa-status-panel__value--${serverStatusTone}`') {{ msg($t, serverStatus) }}
@@ -157,10 +159,10 @@ const showInstallSection = true
 const connectionPresentation = computed(() => pwaConnectionPresentation(pwaState))
 const connectionLabel = (t: Translate): string => translateConnection(connectionPresentation.value, t)
 
-const networkHintTone = computed<'success' | 'warning' | 'error'>(() => {
-  if (pwaState.onlineHint === true) return 'warning'
+const networkHintTone = computed<'success' | 'warning' | 'error' | 'neutral'>(() => {
+  if (pwaState.onlineHint === true) return 'success'
   if (pwaState.onlineHint === false) return 'error'
-  return 'warning'
+  return 'neutral'
 })
 
 const serverStatus = computed<StatusMessage>(() => {
@@ -361,9 +363,23 @@ const applyUpdate = async (): Promise<void> => {
   text-align: end;
 }
 
-.pwa-status-panel__value--success { color: rgb(var(--v-theme-success)) !important; }
+.pwa-status-panel__value--success { color: var(--wiki-success-ink) !important; }
 .pwa-status-panel__value--warning { color: var(--wiki-warning-ink) !important; }
-.pwa-status-panel__value--error { color: rgb(var(--v-theme-error)) !important; }
+.pwa-status-panel__value--error { color: var(--wiki-error-ink) !important; }
+
+.pwa-status-panel__network-dot {
+  display: inline-block;
+  inline-size: .4rem;
+  block-size: .4rem;
+  margin-inline-end: .4rem;
+  border-radius: 50%;
+  background: var(--wiki-success-ink);
+  vertical-align: .1em;
+}
+
+@media (forced-colors: active) {
+  .pwa-status-panel__network-dot { background: CanvasText; }
+}
 
 .pwa-status-panel__alert {
   margin-block: var(--wiki-space-2);

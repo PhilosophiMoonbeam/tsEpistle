@@ -1,5 +1,5 @@
 <template lang='pug'>
-v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable, aria-labelledby='content-extension-title', @update:model-value='close'): v-card.editor-modal-blocks(flat, rounded='xl')
+v-dialog.editor-modal-blocks-dialog(:model-value='true', max-width='680', scrollable, aria-labelledby='content-extension-title', @update:model-value='close'): v-card.editor-modal-blocks(flat, rounded='xl')
   v-toolbar.editor-modal-blocks-toolbar(flat)
     v-icon.mr-3(color="secondary") {{activeStatus?.icon || 'mdi-shape-outline'}}
     v-toolbar-title#content-extension-title {{ $t(`editor:editorModalBlocks.insertContentExtension`) }}
@@ -8,7 +8,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
       v-icon mdi-close
   v-container.editor-modal-blocks-body.py-6(fluid)
     v-row.justify-center
-      v-col(cols='12', md='9', lg='7', xl='6')
+      v-col(cols='12')
         v-skeleton-loader(v-if='isLoading', type='heading, paragraph, paragraph, actions')
         template(v-else-if='loadError')
           v-alert.mb-4(type='error', variant='tonal') {{loadError}}
@@ -1049,9 +1049,10 @@ export default defineComponent({
   display: flex;
   flex-direction: column;
   width: 100%;
-  height: 100dvh;
+  height: auto;
+  max-height: calc(100dvh - 48px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   min-height: 0;
-  background-color: rgb(var(--v-theme-background)) !important;
+  background: var(--wiki-canvas-bg, rgb(var(--v-theme-background))) !important;
 
   > .v-toolbar {
     background: var(--wiki-surface-raised);
@@ -1060,20 +1061,22 @@ export default defineComponent({
   }
 
   &-body {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    scroll-padding-block: 1rem;
   }
 
   &-actions {
-    position: sticky;
-    bottom: 0;
+    position: static;
     display: flex;
     justify-content: flex-end;
     gap: 12px;
+    flex-wrap: wrap;
     padding: 12px 0;
     margin-top: 24px;
-    background: rgb(var(--v-theme-background));
+    background: var(--wiki-canvas-bg, rgb(var(--v-theme-background)));
   }
 
   .source-textarea textarea {

@@ -16,6 +16,7 @@
         .auth-shell__title
           .auth-shell__eyebrow(v-if='eyebrow') {{ eyebrow }}
           h1(:id='headingId') {{ title }}
+          slot(name='brand-subtitle')
       .auth-shell__lead(v-if='$slots.lead')
         slot(name='lead')
       slot
@@ -315,9 +316,21 @@ export default defineComponent({
     }
   }
 
-  &--login::after {
-    border: 0;
-    border-radius: 0;
+  &--login {
+    background-color: var(--wiki-canvas-bg);
+
+    &::after {
+      border: 0;
+      border-radius: 0;
+    }
+
+    .auth-shell__card {
+      background: var(--wiki-hud-surface);
+      border: var(--wiki-hud-border);
+      box-shadow: var(--wiki-glass-specular), var(--wiki-shadow-md);
+      backdrop-filter: var(--wiki-hud-filter);
+      -webkit-backdrop-filter: var(--wiki-hud-filter);
+    }
   }
 }
 
@@ -396,6 +409,36 @@ export default defineComponent({
   }
 }
 
+@media screen and (min-width: 960px) {
+  .auth-shell--login {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    column-gap: var(--wiki-space-4);
+
+    .auth-shell__card {
+      grid-area: 1 / 1 / 2 / 6;
+      justify-self: center;
+    }
+
+    .login-colophon {
+      position: relative;
+      z-index: 1;
+      display: block;
+      grid-area: 1 / 6 / 2 / 13;
+      align-self: end;
+      justify-self: end;
+      max-width: min(100%, 30rem);
+      margin: 0;
+      color: var(--wiki-text-muted);
+      font-size: .75rem;
+      letter-spacing: .08em;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+      text-align: end;
+    }
+  }
+}
+
 // This is the particle stage's explicit 960px contract, not Vuetify's md breakpoint.
 @media screen and (width < 960px) {
   .auth-shell--login {
@@ -415,8 +458,8 @@ export default defineComponent({
       overflow: visible;
       border: 1px solid var(--wiki-surface-border-strong);
       border-radius: var(--wiki-hero-radius);
-      background: var(--wiki-surface-raised);
-      box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
+      background: var(--wiki-hud-surface);
+      box-shadow: var(--wiki-glass-specular), var(--wiki-shadow-md);
     }
 
     .auth-shell__brand {
@@ -429,6 +472,14 @@ export default defineComponent({
       border-end-start-radius: inherit;
       border-end-end-radius: inherit;
     }
+  }
+}
+
+@media screen and (width < 600px) {
+  .auth-shell--login .auth-shell__card {
+    height: auto;
+    min-height: unset;
+    align-content: start;
   }
 }
 

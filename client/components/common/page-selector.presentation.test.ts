@@ -23,7 +23,10 @@ const globals = globalThis as typeof globalThis & {
   siteLangs: Array<{ code: string; name: string }>
 }
 globals.siteConfig = { lang: 'en' }
-globals.siteLangs = []
+globals.siteLangs = [
+  { code: 'en', name: 'English' },
+  { code: 'fr', name: 'Français' }
+]
 
 // Vuetify snapshots browser capabilities, so module loading follows the shared DOM harness.
 const Vue = await import('vue')
@@ -221,7 +224,111 @@ const treeItem = (host: HTMLElement, title: string): HTMLElement => {
   return item
 }
 
+const actionStatus = (host: HTMLElement): HTMLElement => {
+  const status = host.querySelector<HTMLElement>('.page-selector__action-status')
+  if (!status) throw new Error('Destination action status did not render')
+  expect(status.getAttribute('role')).toBe('status')
+  expect(status.getAttribute('aria-live')).toBe('polite')
+  return status
+}
 describe('Browse page selector presentation', () => {
+  test.each([
+    ['create', 'createTitle', 'readyToCreate'],
+    ['move', 'moveTitle', 'readyToMove'],
+    ['select', 'selectTitle', 'readyToSelect']
+  ])('describes %s destinations with the current path and locale, never a generic create promise', async (mode, title, ready) => {
+    const submissions: unknown[] = []
+    const { host, instance } = await mountSelector([], {
+      mode,
+      mustExist: false,
+      path: 'docs/proposed',
+      locale: 'en',
+      openHandler: (selection: unknown) => {
+        submissions.push(selection)
+        return false
+      }
+    })
+    expect(host.querySelector('h2')?.textContent).toBe(translateEnglish(`common:pageSelector.${title}`))
+    expect(actionStatus(host).textContent).toBe(translateEnglish(`common:pageSelector.${ready}`, { path: '/en/docs/proposed' }))
+    instance.currentPath = 'login'
+    await settle()
+    expect(actionStatus(host).textContent).toBe(translateEnglish('common:pageSelector.enterValidDestination'))
+    const select = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.trim() === 'Select')!
+    expect(select.disabled).toBe(true)
+    select.click()
+    await settle()
+    expect(submissions).toEqual([])
+    instance.currentPath = 'guides/revised'
+    instance.currentLocale = 'de'
+    await settle()
+    expect(actionStatus(host).textContent).toBe(translateEnglish('common:pageSelector.enterValidDestination'))
+    expect(select.disabled).toBe(true)
+    select.click()
+    await settle()
+    expect(submissions).toEqual([])
+    instance.currentLocale = 'fr'
+    await settle()
+    expect(actionStatus(host).textContent).toBe(translateEnglish(`common:pageSelector.${ready}`, { path: '/fr/guides/revised' }))
+    instance.currentLocale = ''
+    await settle()
+    expect(actionStatus(host).textContent).toBe(translateEnglish('common:pageSelector.enterValidDestination'))
+    expect(select.disabled).toBe(true)
+    select.click()
+    await settle()
+    expect(submissions).toEqual([])
+  })
+
+  test('must-exist selection never advertises creation authority even when invoked in create mode', async () => {
+    let selected: unknown
+    const { host } = await mountSelector([{ ...page(12, 'docs/existing', 'Existing page'), pageId: 412 }], {
+      mode: 'create',
+      mustExist: true,
+      openHandler: (selection: unknown) => {
+        selected = selection
+        return false
+      }
+    })
+    expect(actionStatus(host).textContent).toBe(translateEnglish('common:pageSelector.selectPageToContinue'))
+    host.querySelector<HTMLButtonElement>('[data-value="12"]')!.click()
+    await settle()
+    expect(actionStatus(host).textContent).toBe(translateEnglish('common:pageSelector.readyToSelect', { path: '/en/docs/existing' }))
+    const submit = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.trim() === 'Select')!
+    expect(submit.disabled).toBe(false)
+    submit.click()
+    await settle()
+    expect(selected).toEqual({ locale: 'en', path: 'docs/existing', id: 412, visibility: 'public' })
+    expect(host.querySelector('.page-selector__move-result')).toBeNull()
+  })
+
+  test('submission status takes precedence over a ready destination, then exposes a known rejection', async () => {
+    const response = Promise.withResolvers<never>()
+    let submissions = 0
+    const { host } = await mountSelector([], {
+      mode: 'move',
+      mustExist: false,
+      path: 'docs/archive',
+      sourcePageId: 10,
+      sourceSourceRevision: '5',
+      openHandler: () => {
+        submissions++
+        return response.promise
+      }
+    })
+    const submit = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.trim() === 'Select')!
+    submit.click()
+    await settle()
+    expect(actionStatus(host).textContent).toBe(translateEnglish('common:pageSelector.submittingSelection'))
+    expect(submit.disabled).toBe(true)
+    submit.click()
+    expect(submissions).toBe(1)
+    response.reject(Object.assign(new Error('Destination is occupied'), { status: 409 }))
+    await settle()
+    expect(actionStatus(host).textContent).toBe('Error: Destination is occupied')
+    expect(host.querySelector('.page-selector__submission-error')?.textContent).toContain('Destination is occupied')
+    expect(host.querySelector('.page-selector__move-result')).toBeNull()
+    expect(submit.disabled).toBe(false)
+  })
+
   test('renders asynchronous native folders without toggling and loads an activated folder through the real tree', async () => {
     const rootReply = Promise.withResolvers<Response>()
     const childReply = Promise.withResolvers<Response>()
@@ -441,13 +548,15 @@ describe('Browse page selector presentation', () => {
       ],
       projections: 'pending' as const
     }
-    const submittedMove: { value: {
-      locale: string
-      path: string
-      sourcePageId?: number
-      expectedSourceRevision?: string
-      reviewToken?: string
-    } | null } = { value: null }
+    const submittedMove: {
+      value: {
+        locale: string
+        path: string
+        sourcePageId?: number
+        expectedSourceRevision?: string
+        reviewToken?: string
+      } | null
+    } = { value: null }
     let acknowledgement: unknown
     const { host, instance } = await mountSelector([page(22, 'docs/other', 'Another page')], {
       mode: 'move',
@@ -485,6 +594,7 @@ describe('Browse page selector presentation', () => {
     await settle()
 
     await clickButton('Find incoming links')
+    expect(actionStatus(host).textContent).toBe(translateEnglish('common:pageSelector.reviewSelectedChanges'))
     expect(requests).toHaveLength(1)
     expect(requests[0]?.pageId).toBe(10)
     expect(requests[0]?.input).toEqual({
@@ -512,6 +622,7 @@ describe('Browse page selector presentation', () => {
     expect(selfLinkCard?.querySelector('input[type="checkbox"]')).toBeNull()
 
     await clickButton('Review selected changes')
+    expect(actionStatus(host).textContent).toBe(translateEnglish('common:pageSelector.reviewExactSourceEdits'))
     expect(requests[1]?.input.selectedPageIds).toEqual([21, 23])
     const confirmation = host.querySelector('section.page-selector__link-review')
     const confirmationHeading = confirmation?.querySelector('h3')
@@ -545,6 +656,7 @@ describe('Browse page selector presentation', () => {
       expectedSourceRevision: '5',
       reviewToken: 'signed-review-token'
     })
+    expect(actionStatus(host).textContent).toBe(translateEnglish('common:pageSelector.moveCommitted'))
     expect(host.querySelector('.page-selector__move-result')?.textContent).toContain('source revision 6')
     expect(host.querySelector('.page-selector__projection-notice')?.textContent).toContain('pending')
     expect(acknowledgement).toBeUndefined()
@@ -611,6 +723,7 @@ describe('Browse page selector presentation', () => {
     await settle()
 
     expect(submissions).toBe(1)
+    expect(actionStatus(host).textContent).toBe(translateEnglish('common:pageSelector.moveOutcomeUncertain'))
     const uncertainAlert = host.querySelector('section.page-selector__link-review[role="alert"]')
     const uncertainHeading = uncertainAlert?.querySelector('h3')
     expect(uncertainAlert).not.toBeNull()

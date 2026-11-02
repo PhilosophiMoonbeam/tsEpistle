@@ -15,8 +15,14 @@ import { translateEnglish } from '../test/english-translate.mts'
 import { renderTemplate } from '../test/render-template.mts'
 globalThis.translate = translateEnglish
 const fixtureSiteConfig = {
-  company: '', contentLicense: '', footerOverride: '', banner: {},
-  darkMode: false, tocPosition: 'left', title: 'Test', logoUrl: '',
+  company: '',
+  contentLicense: '',
+  footerOverride: '',
+  banner: {},
+  darkMode: false,
+  tocPosition: 'left',
+  title: 'Test',
+  logoUrl: '',
   product: { name: 'Test', version: '1.0.0' }
 }
 const installSiteConfig = () => {
@@ -72,7 +78,9 @@ describe('history revision list and comparison behavior', () => {
   let restoreSiteConfig
   const ownedInstances = []
   const ownedWatchers = []
-  beforeEach(() => { restoreSiteConfig = installSiteConfig() })
+  beforeEach(() => {
+    restoreSiteConfig = installSiteConfig()
+  })
   afterEach(() => {
     try {
       for (const stop of ownedWatchers.splice(0)) stop()
@@ -189,21 +197,23 @@ describe('history revision list and comparison behavior', () => {
         }
       }
     })
-    const context = reactive(Object.fromEntries(
-      ['pageId', 'sourceRevision', 'visibility', 'path', 'locale'].map(key => [key, instance[key]])
-    ))
+    const context = reactive(Object.fromEntries(['pageId', 'sourceRevision', 'visibility', 'path', 'locale'].map(key => [key, instance[key]])))
     for (const key of Object.keys(context)) {
       Object.defineProperty(instance, key, {
         get: () => context[key],
-        set: value => { context[key] = value }
+        set: value => {
+          context[key] = value
+        }
       })
     }
     if (component.watch.restoreContextKey) {
-      ownedWatchers.push(watch(
-        () => instance.restoreContextKey,
-        () => component.watch.restoreContextKey.handler.call(instance),
-        { flush: 'sync' }
-      ))
+      ownedWatchers.push(
+        watch(
+          () => instance.restoreContextKey,
+          () => component.watch.restoreContextKey.handler.call(instance),
+          { flush: 'sync' }
+        )
+      )
     }
 
     ownedInstances.push({ component, instance, wikiStore })
@@ -268,6 +278,13 @@ describe('history revision list and comparison behavior', () => {
     store.stopLoading('unrelated-reader')
     expect(store.isLoading).toBe(false)
   }
+  const expectRevisionBadge = async (instance, count) => {
+    const { document } = await renderTemplate('client/components/history.vue', instance)
+    const badge = document.querySelector('.history-toolbar-meta > span:nth-child(3)')
+    if (count === null) expect(badge).toBeNull()
+    else expect(badge?.textContent.match(/\d+/)?.[0]).toBe(String(count))
+    return document
+  }
 
   test('renders comparisons through the diff renderer, reuses cached formats and preserves trail scroll position', async () => {
     const trailEl = { scrollTop: 0 }
@@ -313,15 +330,23 @@ describe('history revision list and comparison behavior', () => {
 
   test('ignores a comparison result after the selection changed', async () => {
     const resolvers = []
-    const renderer = createFakeRenderer(() => new Promise(resolve => { resolvers.push(resolve) }))
-    const { instance } = createHistoryInstance({
-      source: page(1),
-      target: page(2),
-      sourceReady: true,
-      targetReady: true,
-      diffSource: 1,
-      diffTarget: 2
-    }, { renderer })
+    const renderer = createFakeRenderer(
+      () =>
+        new Promise(resolve => {
+          resolvers.push(resolve)
+        })
+    )
+    const { instance } = createHistoryInstance(
+      {
+        source: page(1),
+        target: page(2),
+        sourceReady: true,
+        targetReady: true,
+        diffSource: 1,
+        diffTarget: 2
+      },
+      { renderer }
+    )
 
     const first = instance.renderComparison()
     instance.source = page(3)
@@ -337,24 +362,37 @@ describe('history revision list and comparison behavior', () => {
   test('maps comparison outcomes to problem, empty and retry states', async () => {
     const outcomes = [{ status: 'limit' }, { status: 'timeout' }, { status: 'ready', html: '<p>ok</p>' }, { status: 'empty' }]
     const renderer = createFakeRenderer(() => outcomes.shift())
-    const { instance } = createHistoryInstance({
-      source: page(1),
-      target: page(2),
-      sourceReady: true,
-      targetReady: true,
-      diffSource: 1,
-      diffTarget: 2
-    }, { renderer })
+    const { instance } = createHistoryInstance(
+      {
+        source: page(1),
+        target: page(2),
+        sourceReady: true,
+        targetReady: true,
+        diffSource: 1,
+        diffTarget: 2,
+        trailLoaded: true,
+        trailLoading: false
+      },
+      { renderer }
+    )
 
     await instance.renderComparison()
     expect(instance.comparisonProblem).toBe('limit')
     expect(instance.diffHTML).toBe('')
-    expect(translate(`history:comparison.${instance.comparisonProblem}Message`)).toContain('too large')
+    const limited = await renderTemplate('client/components/history.vue', instance)
+    const limitState = limited.document.querySelector('[data-stub="async-state"]')
+    expect(limitState.getAttribute('state')).toBe('error')
+    expect(limitState.hasAttribute('retry-label')).toBe(false)
+    expect(limited.document.querySelector('.history-problem-actions')).not.toBeNull()
 
     instance.viewMode = 'side-by-side'
     await instance.renderComparison()
     expect(instance.comparisonProblem).toBe('timeout')
-    expect(translate('history:comparison.timeoutTitle')).toBe('Comparison took too long')
+    const timedOut = await renderTemplate('client/components/history.vue', instance)
+    const timeoutState = timedOut.document.querySelector('[data-stub="async-state"]')
+    expect(timeoutState.getAttribute('state')).toBe('error')
+    expect(timeoutState.getAttribute('retry-label')).toBeTruthy()
+    expect(timedOut.document.querySelector('.history-problem-actions')).toBeNull()
     instance.retryComparison()
     await Promise.resolve()
     await Promise.resolve()
@@ -365,6 +403,9 @@ describe('history revision list and comparison behavior', () => {
     instance.diffTarget = 4
     await instance.renderComparison()
     expect(instance.comparisonEmpty).toBe(true)
+    const empty = await renderTemplate('client/components/history.vue', instance)
+    expect(empty.document.querySelector('[data-stub="async-state"]').getAttribute('state')).toBe('empty')
+    expect(empty.document.querySelector('.history-diff')).toBeNull()
   })
 
   test('does not render or keep comparison state before both revisions are ready', async () => {
@@ -441,14 +482,12 @@ describe('history revision list and comparison behavior', () => {
     const { document } = await renderTemplate('client/components/history.vue', instance)
     const rows = [...document.querySelectorAll('.history-revision-row')]
     expect(rows).toHaveLength(5)
-    expect(rows.map(row => row.querySelector('.history-revision-reason')?.textContent ?? null))
-      .toEqual([null, reasonA, reasonB, null, null])
+    expect(rows.map(row => row.querySelector('.history-revision-reason')?.textContent ?? null)).toEqual([null, reasonA, reasonB, null, null])
     expect(rows[1].querySelector('.history-revision-reason').getAttribute('dir')).toBe('auto')
     expect(rows[1].querySelector('.history-revision-reason').querySelector('img')).toBeNull()
     expect(rows[1].querySelector('.history-revision-main').getAttribute('aria-label')).toContain(reasonA)
     expect(rows[1].querySelector('.history-revision-action--secondary').textContent).toBe('Edited by Ada')
-    expect(rows[2].querySelector('.history-revision-action--secondary').textContent)
-      .toBe('Moved from /old/path to /home by TestAuthor')
+    expect(rows[2].querySelector('.history-revision-action--secondary').textContent).toBe('Moved from /old/path to /home by TestAuthor')
     expect(rows[3].querySelector('.history-revision-action').textContent).toBe('Edited by TestAuthor')
     expect(rows[4].querySelector('.history-revision-action').textContent).toBe('Created by TestAuthor')
     expect(rows[3].querySelector('.history-revision-action--secondary')).toBeNull()
@@ -458,28 +497,21 @@ describe('history revision list and comparison behavior', () => {
     }
   })
 
-  test.each([undefined, null, '', '   ', 'Current revision reason'])(
-    'uses only the genuine current prop for the live reason (%s)',
-    async changeReason => {
-      const { instance } = createHistoryInstance({
-        title: 'Current title',
-        changeReason,
-        trailLoaded: true,
-        trailLoading: false,
-        trail: [
-          { ...trailItem(2), changeReason: 'Archived revision reason' },
-          trailItem(1, 'initial')
-        ]
-      })
-      const { document } = await renderTemplate('client/components/history.vue', instance)
-      const rows = [...document.querySelectorAll('.history-revision-row')]
-      expect(rows[0].querySelector('.history-revision-reason')?.textContent ?? null)
-        .toBe(changeReason?.trim() || null)
-      expect(rows[0].querySelector('.history-revision-action').textContent).toBe('Last edited by TestAuthor')
-      expect(rows[1].querySelector('.history-revision-reason')?.textContent).toBe('Archived revision reason')
-      expect(rows[2].querySelector('.history-revision-reason')).toBeNull()
-    }
-  )
+  test.each([undefined, null, '', '   ', 'Current revision reason'])('uses only the genuine current prop for the live reason (%s)', async changeReason => {
+    const { instance } = createHistoryInstance({
+      title: 'Current title',
+      changeReason,
+      trailLoaded: true,
+      trailLoading: false,
+      trail: [{ ...trailItem(2), changeReason: 'Archived revision reason' }, trailItem(1, 'initial')]
+    })
+    const { document } = await renderTemplate('client/components/history.vue', instance)
+    const rows = [...document.querySelectorAll('.history-revision-row')]
+    expect(rows[0].querySelector('.history-revision-reason')?.textContent ?? null).toBe(changeReason?.trim() || null)
+    expect(rows[0].querySelector('.history-revision-action').textContent).toBe('Last edited by TestAuthor')
+    expect(rows[1].querySelector('.history-revision-reason')?.textContent).toBe('Archived revision reason')
+    expect(rows[2].querySelector('.history-revision-reason')).toBeNull()
+  })
 
   test.each(['Current title', 'Historical rename', '', '   '])(
     'keeps meaningful comparison headings and revision details for target title %s',
@@ -503,12 +535,10 @@ describe('history revision list and comparison behavior', () => {
       expect(new Set(ids).size).toBe(ids.length)
       expect([...document.querySelectorAll('h1, h2, h3')].every(element => element.textContent.trim())).toBe(true)
       const distinctTitle = historicalTitle.trim() && historicalTitle !== instance.title
-      expect(section.querySelector('.history-comparison-title')?.textContent ?? null)
-        .toBe(distinctTitle ? historicalTitle : null)
+      expect(section.querySelector('.history-comparison-title')?.textContent ?? null).toBe(distinctTitle ? historicalTitle : null)
       expect(section.querySelector('.history-comparison-description').textContent).toBe('Historical description')
       expect(section.querySelector('.history-revision-meta').textContent).toContain('Revision 2')
-      expect(section.querySelector('.history-revision-meta').textContent)
-        .toContain(formatRevisionTime(instance.target.versionDate).short)
+      expect(section.querySelector('.history-revision-meta').textContent).toContain(formatRevisionTime(instance.target.versionDate).short)
     }
   )
 
@@ -523,12 +553,15 @@ describe('history revision list and comparison behavior', () => {
 
   test('keeps a bounded revision cache that retains the live and compared versions', async () => {
     const fetchPageVersion = vi.fn(async (_fetch, _pageId, versionId) => page(versionId))
-    const { instance } = createHistoryInstance({
-      cache: [{ ...page(0), versionId: 0 }],
-      trail: [trailItem(30)],
-      diffSource: 3,
-      diffTarget: 0
-    }, { fetchPageVersion })
+    const { instance } = createHistoryInstance(
+      {
+        cache: [{ ...page(0), versionId: 0 }],
+        trail: [trailItem(30)],
+        diffSource: 3,
+        diffTarget: 0
+      },
+      { fetchPageVersion }
+    )
     for (let versionId = 3; versionId <= 20; versionId += 1) await instance.loadVersion(versionId)
     const ids = instance.cache.map(item => item.versionId)
     expect(ids.length).toBeLessThanOrEqual(12)
@@ -566,7 +599,7 @@ describe('history revision list and comparison behavior', () => {
     expect(trailEl.scrollTop).toBe(120)
   })
 
-  test('scrolls mobile revision selections to the comparison and preserves the trail position', () => {
+  test.each([false, true])('moves mobile comparison focus without scrolling it twice and respects reduced motion (%s)', reducedMotion => {
     const originalWindow = global.window
     const originalDocument = global.document
     let scrolledTo = null
@@ -575,21 +608,19 @@ describe('history revision list and comparison behavior', () => {
     try {
       global.window = {
         siteConfig: fixtureSiteConfig,
-        scrollY: 150,
+        scrollY: 0,
         innerWidth: 600,
         scrollTo: options => {
           scrolledTo = options
         },
-        matchMedia: () => ({ matches: false }),
-        getComputedStyle: () => ({
-          getPropertyValue: property => (property === '--v-layout-top' ? '48px' : '0px')
-        })
+        matchMedia: () => ({ matches: reducedMotion }),
+        getComputedStyle: () => ({ getPropertyValue: () => '' })
       }
       global.document = { documentElement: {} }
 
       const trailEl = { scrollTop: 0 }
       const headingEl = {
-        getBoundingClientRect: () => ({ top: 450 }),
+        getBoundingClientRect: () => ({ top: 0 }),
         focus: options => {
           focusedWith = options
         }
@@ -603,15 +634,17 @@ describe('history revision list and comparison behavior', () => {
 
       expect(instance.diffTarget).toBe(0)
       expect(instance.diffSource).toBe(2)
-      expect(scrolledTo).toEqual({ top: 540, behavior: 'smooth' })
+      expect(scrolledTo?.behavior).toBe(reducedMotion ? 'auto' : 'smooth')
       expect(focusedWith).toEqual({ preventScroll: true })
       expect(trailEl.scrollTop).toBe(60)
 
       scrolledTo = null
+      focusedWith = null
       global.window.innerWidth = 1200
       trailEl.scrollTop = 0
       instance.selectVersion(1)
       expect(scrolledTo).toBeNull()
+      expect(focusedWith).toBeNull()
       expect(trailEl.scrollTop).toBe(60)
     } finally {
       global.window = originalWindow
@@ -729,17 +762,21 @@ describe('history revision list and comparison behavior', () => {
     expect(pending[0].offsetSize).toBe(25)
     expect(pending[1].offsetSize).toBe(25)
     expectHistoryOwners(wikiStore, 2)
+    await expectRevisionBadge(instance, null)
 
     pending[0].resolve({ total: 1, trail: [trailItem(2)] })
     expect(await first).toBe(false)
     expect(instance.trail).toEqual([])
     expect(instance.trailLoading).toBe(true)
     expectHistoryOwners(wikiStore, 1)
+    await expectRevisionBadge(instance, null)
 
     pending[1].resolve({ total: 1, trail: [trailItem(3)] })
     expect(await second).toBe(true)
     expect(instance.trail.map(item => item.versionId)).toEqual([3])
     expect(instance.trailLoading).toBe(false)
+    await expectRevisionBadge(instance, 2)
+    expect(instance.total).toBe(1)
     expectHistoryOwners(wikiStore, 0)
     releaseUnrelatedOwner(wikiStore)
   })
@@ -760,12 +797,61 @@ describe('history revision list and comparison behavior', () => {
       { fetchPageHistory }
     )
 
+    const firstPage = await expectRevisionBadge(instance, 2)
+    expect(firstPage.querySelectorAll('.history-revision-row')).toHaveLength(2)
+    expect(firstPage.querySelector('.history-load-more')).not.toBeNull()
     expect(await instance.loadMore()).toBe(true)
     expect(instance.loadingMore).toBe(false)
+    await expectRevisionBadge(instance, 3)
+    expect(instance.total).toBe(3)
     expect(await instance.loadMore()).toBe(true)
     expect(instance.loadingMore).toBe(false)
     expect(instance.trail.map(item => item.versionId)).toEqual([3, 2, 1])
     expect(instance.offsetPage).toBe(2)
+    const complete = await expectRevisionBadge(instance, 4)
+    expect(complete.querySelectorAll('.history-revision-row')).toHaveLength(4)
+    expect(complete.querySelector('.history-load-more')).toBeNull()
+    expect(complete.querySelector('.history-end-state')).not.toBeNull()
+    expect(instance.total).toBe(3)
+  })
+
+  test('keeps the displayed revision count and server total through a failed refresh, then shows zero for an empty result', async () => {
+    const failedRefresh = Promise.withResolvers()
+    const emptyRefresh = Promise.withResolvers()
+    const fetchPageHistory = vi.fn().mockReturnValueOnce(failedRefresh.promise).mockReturnValueOnce(emptyRefresh.promise)
+    const { instance } = createHistoryInstance(
+      {
+        trailLoaded: true,
+        trailLoading: false,
+        total: 50,
+        trail: [trailItem(3), trailItem(2)]
+      },
+      { fetchPageHistory }
+    )
+
+    const refresh = instance.loadHistory()
+    const refreshing = await expectRevisionBadge(instance, 3)
+    expect(refreshing.querySelector('.history-refreshing[role="status"]')).not.toBeNull()
+    expect(refreshing.querySelectorAll('.history-revision-row')).toHaveLength(3)
+    expect(instance.total).toBe(50)
+    failedRefresh.reject(new Error('History refresh unavailable'))
+    expect(await refresh).toBe(false)
+    const failed = await expectRevisionBadge(instance, 3)
+    expect(failed.querySelector('.history-refresh-error[role="alert"]').textContent).toContain('History refresh unavailable')
+    expect(failed.querySelectorAll('.history-revision-row')).toHaveLength(3)
+    expect(failed.querySelector('.history-load-more')).not.toBeNull()
+    expect(instance.total).toBe(50)
+
+    const retry = instance.loadHistory()
+    await expectRevisionBadge(instance, 3)
+    emptyRefresh.resolve({ total: 0, trail: [] })
+    expect(await retry).toBe(true)
+    const empty = await expectRevisionBadge(instance, 0)
+    expect(empty.querySelectorAll('.history-revision-row')).toHaveLength(0)
+    expect(empty.querySelector('.history-refresh-error')).toBeNull()
+    expect(empty.querySelector('.history-load-more')).toBeNull()
+    expect(empty.querySelector('[data-stub="async-state"]').getAttribute('state')).toBe('empty')
+    expect(instance.total).toBe(0)
   })
 
   test('balances pagination and refresh loading when refresh supersedes pagination', async () => {
@@ -838,11 +924,17 @@ describe('history revision list and comparison behavior', () => {
   })
 
   const restoredTarget = {
-    id: 42, sourceRevision: '9', locale: 'en', path: 'restored', visibility: 'private'
+    id: 42,
+    sourceRevision: '9',
+    locale: 'en',
+    path: 'restored',
+    visibility: 'private'
   }
-  const jsonResponse = (payload, status = 200) => new Response(JSON.stringify(payload), {
-    status, headers: { 'Content-Type': 'application/json' }
-  })
+  const jsonResponse = (payload, status = 200) =>
+    new Response(JSON.stringify(payload), {
+      status,
+      headers: { 'Content-Type': 'application/json' }
+    })
 
   test('opens a restored page only after its exact committed preview is ready', async () => {
     const originalWindow = global.window
@@ -851,21 +943,24 @@ describe('history revision list and comparison behavior', () => {
     const notifications = vi.fn()
     const fetch = vi.fn((url, init) => {
       if (init.method === 'POST') return Promise.resolve(jsonResponse(restoredTarget))
-      return new Promise(resolve => { resolvePreview = resolve })
+      return new Promise(resolve => {
+        resolvePreview = resolve
+      })
     })
     try {
       global.window = { siteConfig: fixtureSiteConfig, fetch, setTimeout: vi.fn(), clearTimeout: vi.fn(), location: { assign } }
-      const { instance, wikiStore } = createHistoryInstance({
-        isRestoreConfirmDialogShown: true,
-        restoreTarget: { versionId: 2, versionDate: '' }
-      }, { showNotification: notifications })
+      const { instance, wikiStore } = createHistoryInstance(
+        {
+          isRestoreConfirmDialogShown: true,
+          restoreTarget: { versionId: 2, versionDate: '' }
+        },
+        { showNotification: notifications }
+      )
       seedUnrelatedOwner(wikiStore)
       const restore = instance.restoreConfirm()
       await yieldEventLoop()
 
-      expect(fetch.mock.calls.map(([url]) => url)).toEqual([
-        '/_api/pages/42/history/2/restore', '/_api/pages/preview?id=42'
-      ])
+      expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/_api/pages/42/history/2/restore', '/_api/pages/preview?id=42'])
       expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ expectedSourceRevision: '8' })
       expect(assign).not.toHaveBeenCalled()
       expect(notifications).not.toHaveBeenCalled()
@@ -889,7 +984,8 @@ describe('history revision list and comparison behavior', () => {
   test('retains the saved restore after a different preview revision and retries only readiness', async () => {
     const originalWindow = global.window
     const assign = vi.fn()
-    const fetch = vi.fn()
+    const fetch = vi
+      .fn()
       .mockResolvedValueOnce(jsonResponse(restoredTarget))
       .mockResolvedValueOnce(jsonResponse({ ...restoredTarget, sourceRevision: '10' }))
       .mockResolvedValueOnce(jsonResponse(restoredTarget))
@@ -937,14 +1033,19 @@ describe('history revision list and comparison behavior', () => {
       const fetch = vi.fn((_url, init) => {
         if (init.method === 'POST') return Promise.resolve(jsonResponse(restoredTarget))
         previewSignal = init.signal
-        return new Promise(resolve => { resolvePreview = resolve })
+        return new Promise(resolve => {
+          resolvePreview = resolve
+        })
       })
       try {
         global.window = { siteConfig: fixtureSiteConfig, fetch, setTimeout: vi.fn(), clearTimeout: vi.fn(), location: { assign } }
-        const { component, instance, wikiStore } = createHistoryInstance({
-          isRestoreConfirmDialogShown: true,
-          restoreTarget: { versionId: 2, versionDate: '' }
-        }, { showNotification: notifications })
+        const { component, instance, wikiStore } = createHistoryInstance(
+          {
+            isRestoreConfirmDialogShown: true,
+            restoreTarget: { versionId: 2, versionDate: '' }
+          },
+          { showNotification: notifications }
+        )
         seedUnrelatedOwner(wikiStore)
         const restore = instance.restoreConfirm()
         await yieldEventLoop()
@@ -989,17 +1090,22 @@ describe('history revision list and comparison behavior', () => {
         siteConfig: fixtureSiteConfig,
         fetch: (_url, init) => {
           restoreSignal = init.signal
-          return new Promise(resolve => { resolveRestore = resolve })
+          return new Promise(resolve => {
+            resolveRestore = resolve
+          })
         },
         setTimeout,
         clearTimeout: vi.fn(),
         location: { assign }
       }
       const restorePageVersion = fetch => fetch('/restore', {})
-      const { component, instance, wikiStore } = createHistoryInstance({
-        $t: i18n.t.bind(i18n),
-        isRestoreConfirmDialogShown: true
-      }, { restorePageVersion, showNotification: notifications })
+      const { component, instance, wikiStore } = createHistoryInstance(
+        {
+          $t: i18n.t.bind(i18n),
+          isRestoreConfirmDialogShown: true
+        },
+        { restorePageVersion, showNotification: notifications }
+      )
       seedUnrelatedOwner(wikiStore)
 
       const restore = instance.restoreConfirm()

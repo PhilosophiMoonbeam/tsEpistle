@@ -79,33 +79,6 @@
       aria-atomic="true"
     >{{ liveStatusLabel }}</span>
 
-    <div class="agent-composer__context-row" tabindex="0" :aria-label="$t('common:agentContextUi.context')">
-      <AgentContextSummary
-        v-if="sourceContext !== undefined || memoryContext !== undefined"
-        :sources="sourceContext ?? null"
-        :memory="memoryContext ?? null"
-        :loading="contextLoading"
-        :network-blocked="networkBlocked"
-        :sources-disabled="contextSourcesDisabled"
-        :memory-disabled="contextMemoryDisabled"
-        @open-sources="opener => emit('openSources', opener)"
-        @open-memory="(target, opener) => emit('openMemory', target, opener)"
-      />
-      <slot name="context-controls" />
-      <v-chip
-        v-if="goalsEnabled && goalMode"
-        class="agent-composer__goal-chip"
-        color="primary"
-        size="small"
-        variant="tonal"
-        prepend-icon="mdi-target"
-        closable
-        :close-label="$t('common:agentComposer.turnOffGoalMode')"
-        :disabled="disabled || sendInProgress"
-        :title="$t('common:agentComposer.goalModeNextMessage')"
-        @click:close="goalMode = false"
-      >{{ $t('common:agentComposer.goal') }}</v-chip>
-    </div>
 
     <div class="agent-composer__editor">
       <!-- biome-ignore lint/a11y/useAriaActivedescendantWithTabindex: Vuetify forwards this ARIA attribute to its natively tabbable textarea. -->
@@ -128,6 +101,8 @@
         :aria-controls="skillsEnabled && skillCommandOpen ? composerIds.commandResults : undefined"
         :aria-activedescendant="activeCommandOptionId"
         @select="handleSelectionChange"
+        @compositionstart="inputComposing = true"
+        @compositionend="inputComposing = false"
         @keydown="handleKeydown"
       />
 
@@ -157,6 +132,7 @@
 
     <p v-if="composerNotice" class="agent-composer__notice" role="alert">{{ composerNotice }}</p>
 
+    <div class="agent-composer__attachment-strip">
     <AgentComposerMedia
       ref="mediaComposer"
       :csrf-token="csrfToken ?? ''"
@@ -206,6 +182,7 @@
         </v-chip>
       </div>
     </fieldset>
+    </div>
 
     <div class="agent-composer__actions">
       <!-- Recording replaces the unrelated message tools: discard sits at the
@@ -228,7 +205,9 @@
           @click="cancelDictation"
         />
       </fieldset>
-      <fieldset v-else ref="controlsGroup" class="agent-composer__context-controls" :aria-label="$t('common:agentComposer.messageTools')">
+      <fieldset v-else class="agent-composer__context-controls" :aria-label="$t('common:agentComposer.messageTools')">
+        <div class="agent-composer__context-row"><slot name="context-controls" /></div>
+        <slot name="source-control" />
         <v-menu v-if="attachmentsAvailable" content-class="agent-owned-overlay" location="top start" v-model="attachmentMenuOpen">
           <template #activator="{ props: activatorProps }">
             <v-tooltip location="top" :text="attachmentAdmissionReason || $t('common:agentComposer.attachFiles')">
@@ -256,43 +235,8 @@
           </v-list>
         </v-menu>
         <span :id="composerIds.attachmentReason" class="sr-only">{{ attachmentAdmissionReason }}</span>
-        <v-menu v-if="createAvailable && !isControlFolded('create')" content-class="agent-owned-overlay" location="top start" v-model="creationMenuOpen">
-          <template #activator="{ props: activatorProps }">
-            <v-btn
-              v-bind="activatorProps"
-              class="agent-composer__create wiki-purpose-control"
-              :variant="selectedGenerationTools.length ? 'tonal' : 'text'"
-              :color="selectedGenerationTools.length ? 'primary' : undefined"
-              :data-state="selectedGenerationTools.length ? 'selected' : undefined"
-              rounded="pill"
-              prepend-icon="mdi-creation-outline"
-              append-icon="mdi-chevron-down"
-              :aria-label="$t('common:agentComposer.chooseCreationTools')"
-              :title="selectedGenerationTools.length ? $t('common:agentComposer.creationToolEnabledAssistant', { count: selectedGenerationTools.length, interpolation: { escapeValue: false } }) : $t('common:agentComposer.chooseCreationTools')"
-              :disabled="generationDisabled"
-              @keydown.capture="handleOwnedMenuKeydown($event, 'create')"
-            >{{ $t('common:actions.create') }}</v-btn>
-          </template>
-          <v-list density="compact" class="agent-composer__tool-menu" :aria-label="$t('common:agentComposer.creationTools')" @keydown.capture="handleOwnedMenuKeydown($event, 'create')">
-            <v-list-subheader>{{ $t('common:agentComposer.availableAssistantUse') }}</v-list-subheader>
-            <v-list-item
-              v-for="option in generationOptions"
-              :key="option.value"
-              :title="option.title"
-              :prepend-icon="option.icon"
-              role="menuitemcheckbox"
-              :aria-checked="selectedGenerationTools.includes(option.value)"
-              :active="selectedGenerationTools.includes(option.value)"
-              :disabled="generationDisabled"
-              @click="toggleGenerationTool(option.value)"
-            >
-              <template #append><v-icon :icon="selectedGenerationTools.includes(option.value) ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'" size="20" aria-hidden="true" /></template>
-            </v-list-item>
-            <p class="agent-composer__tool-menu-note">{{ $t('common:agentComposer.askNaturallyAssistantCan') }}</p>
-          </v-list>
-        </v-menu>
         <v-menu
-          v-if="skillsEnabled"
+          v-if="skillsEnabled || createAvailable || personalToolsEnabled"
           content-class="agent-owned-overlay agent-composer__skill-menu-content"
           v-model="skillMenuOpen"
           location="top start"
@@ -304,17 +248,26 @@
               class="agent-composer__skills-trigger wiki-purpose-control"
               variant="text"
               rounded="pill"
-              prepend-icon="mdi-puzzle-outline"
+              prepend-icon="mdi-shape-outline"
               append-icon="mdi-chevron-down"
-              :aria-label="$t('common:agentComposer.skills')"
-              :title="$t('common:agentComposer.skills')"
+              :aria-label="$t('common:agentComposer.capabilities')"
+              :title="$t('common:agentComposer.capabilities')"
               aria-haspopup="dialog"
               :aria-expanded="skillMenuOpen"
               :disabled="disabled || sendInProgress"
               @keydown.capture="handleOwnedMenuKeydown($event, 'skills')"
-            ><span class="agent-composer__skills-label">{{ $t('common:agentComposer.skills') }}</span></v-btn>
+            ><span class="agent-composer__skills-label">{{ $t('common:agentComposer.capabilities') }}</span></v-btn>
           </template>
+          <v-list density="compact" :aria-label="$t('common:agentComposer.capabilities')">
+            <v-list-item v-if="personalToolsEnabled" prepend-icon="mdi-connection" :title="$t('common:agentComposer.myTools')" :disabled="disabled || sendInProgress" @click="skillMenuOpen = false; emit('openPersonalTools')" />
+            <v-list-subheader v-if="createAvailable">{{ $t('common:agentComposer.creationTools') }}</v-list-subheader>
+            <v-list-item v-for="option in createAvailable ? generationOptions : []" :key="option.value" :title="option.title" :prepend-icon="option.icon" role="menuitemcheckbox" :aria-checked="selectedGenerationTools.includes(option.value)" :active="selectedGenerationTools.includes(option.value)" :disabled="generationDisabled" @click="toggleGenerationTool(option.value)">
+              <template #append><v-icon :icon="selectedGenerationTools.includes(option.value) ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'" size="20" aria-hidden="true" /></template>
+            </v-list-item>
+            <p v-if="createAvailable" class="agent-composer__tool-menu-note">{{ $t('common:agentComposer.askNaturallyAssistantCan') }}</p>
+          </v-list>
           <AgentComposerSkillMenu
+            v-if="skillsEnabled"
             :dialog-id="composerIds.skillsDialog"
             :heading-id="composerIds.skillsHeading"
             :description-id="composerIds.skillsDescription"
@@ -336,61 +289,23 @@
             @retry-skills="retrySkills"
           />
         </v-menu>
-        <v-tooltip v-if="goalsEnabled && !goalMode && !isControlFolded('goal')" location="top" :text="goalDisabledReason || $t('common:agentComposer.defineDurableOutcomeMulti')">
+        <v-tooltip v-if="goalsEnabled" location="top" :text="goalDisabledReason || $t('common:agentComposer.defineDurableOutcomeMulti')">
           <template #activator="{ props: tooltipProps }">
             <span v-bind="tooltipProps" :tabindex="goalDisabledReason ? 0 : undefined" :aria-label="goalDisabledReason || undefined">
               <v-btn
                 class="agent-composer__goal-toggle wiki-purpose-control"
-                variant="text"
+                :variant="goalMode ? 'tonal' : 'text'"
+                :aria-pressed="goalMode"
                 rounded="pill"
                 prepend-icon="mdi-target"
                 :aria-label="$t('common:agentComposer.goal')"
                 :title="goalDisabledReason || $t('common:agentComposer.defineDurableOutcomeMulti')"
                 :disabled="Boolean(goalDisabledReason)"
-                @click="goalMode = true"
+                @click="goalMode = !goalMode"
               >{{ $t('common:agentComposer.goal') }}</v-btn>
             </span>
           </template>
         </v-tooltip>
-        <v-menu
-          v-if="hasMoreMenuContent"
-          content-class="agent-owned-overlay agent-composer__more-menu-content"
-          v-model="moreMenuOpen"
-          location="top end"
-        >
-          <template #activator="{ props: activatorProps }">
-            <v-btn
-              v-bind="activatorProps"
-              class="agent-composer__more-button"
-              icon="mdi-dots-horizontal"
-              variant="text"
-              size="small"
-              rounded="pill"
-              :aria-label="$t('common:agentComposer.moreOptions')"
-              aria-haspopup="menu"
-              :aria-expanded="moreMenuOpen"
-              :title="$t('common:agentComposer.moreOptions')"
-              :disabled="disabled || sendInProgress"
-              @keydown.capture="handleOwnedMenuKeydown($event, 'more')"
-            />
-          </template>
-          <v-list density="compact" class="agent-composer__more-menu" :aria-label="$t('common:agentComposer.moreComposerOptions')" @keydown.capture="handleOwnedMenuKeydown($event, 'more')">
-            <v-list-item
-              v-for="item in moreMenuItems"
-              :key="item.key"
-              :prepend-icon="item.icon"
-              :title="item.label"
-              :subtitle="item.subtitle"
-              :disabled="item.disabled"
-              :aria-disabled="item.disabled || undefined"
-              :aria-checked="item.checked"
-              role="menuitemcheckbox"
-              @click="item.run()"
-            >
-              <template #append><v-icon :icon="item.checked ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'" size="20" aria-hidden="true" /></template>
-            </v-list-item>
-          </v-list>
-        </v-menu>
       </fieldset>
 
       <fieldset class="agent-composer__primary-actions" :aria-label="$t('common:agentComposer.messageActions')">
@@ -437,7 +352,9 @@
             class="agent-composer__submit"
             type="submit"
             color="primary"
+            :variant="submitDisabled ? 'tonal' : 'flat'"
             :prepend-icon="submitIcon"
+            :data-commitment="!submitDisabled ? 'active' : undefined"
             :loading="sendInProgress || mediaTranscribing"
             :disabled="submitDisabled"
             :aria-describedby="composerIds.status"
@@ -458,9 +375,6 @@ import type { Ref } from 'vue'
 import AgentComposerMedia from './agent-composer-media.vue'
 import AgentComposerSkillMenu from './agent-composer-skill-menu.vue'
 import AgentDictationWaveform from './agent-dictation-waveform.vue'
-import AgentContextSummary from './agent-context-summary.vue'
-import type { AgentMemoryContextProjection } from '../../../shared/agents/contracts.ts'
-import type { AgentSourceContextProjection } from '../../../shared/agents/knowledge-context.ts'
 import { agentAttachmentMimeTypes, type AgentMediaSubmission } from '../../helpers/agent-media.ts'
 import type { AgentMediaView, AgentMediaCapabilities, AgentThreadState, AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
 import { agentMediaContentUrl, type VisibleAgentSkill } from '../../helpers/agents-api.ts'
@@ -496,14 +410,9 @@ const props = defineProps<{
   networkBlocked?: boolean
   /** Keep the message field editable while a reply streams; sending still follows `disabled`. */
   draftEditable?: boolean
-  /** Guarded committed/frozen projections; undefined opts out for other composer hosts. */
-  sourceContext?: AgentSourceContextProjection | null
-  memoryContext?: AgentMemoryContextProjection | null
-  contextLoading?: boolean
-  contextSourcesDisabled?: boolean
-  contextMemoryDisabled?: boolean
+  personalToolsEnabled?: boolean
 }>()
-const emit = defineEmits<{ openSources: [opener: HTMLElement]; openMemory: [target: 'user' | 'agent', opener: HTMLElement]; draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void, media?: AgentMediaSubmission]; mediaSettled: []; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]] }>()
+const emit = defineEmits<{ openPersonalTools: []; draftChange: [sessionId: string, text: string]; compositionChange: [sessionId: string, patch: { mode: 'message' | 'goal'; skillVersionIds: string[] }]; send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void, media?: AgentMediaSubmission]; mediaSettled: []; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]] }>()
 const mediaComposer = useTemplateRef<{
   clear: () => void
   addFiles: (files: readonly File[]) => Promise<unknown>
@@ -700,6 +609,8 @@ const handleMediaDrop = (event: DragEvent) => {
   if (files.length) admitMediaFiles(files)
 }
 const draft = ref(props.initialDraft ?? '')
+const inputComposing = ref(false)
+const isInputComposing = (): boolean => inputComposing.value
 watch(draft, text => {
   if (props.sessionId) emit('draftChange', props.sessionId, text)
 }, { flush: 'sync' })
@@ -709,9 +620,7 @@ watch(() => props.initialDraft, (value, previous) => {
 })
 const goalMode = ref(props.initialMode === 'goal')
 const skillMenuOpen = ref(false)
-const moreMenuOpen = ref(false)
 const attachmentMenuOpen = ref(false)
-const creationMenuOpen = ref(false)
 const selectedSkillIds = ref<string[]>([...(props.initialSkillVersionIds ?? [])])
 let syncingComposition = false
 watch([goalMode, selectedSkillIds], () => {
@@ -724,7 +633,6 @@ watch(() => [props.initialMode, props.initialSkillVersionIds] as const, ([mode, 
   syncingComposition = false
 })
 const composerRoot = useTemplateRef<{ $el?: HTMLElement } | HTMLElement>('composerRoot')
-const controlsGroup = useTemplateRef<HTMLElement | null>('controlsGroup')
 const messageInput = useTemplateRef<{ focus: () => void; $el?: HTMLElement }>('messageInput')
 const dismissedCommandToken = ref<{ start: number; prefix: string } | null>(null)
 const activeCommandIndex = ref(0)
@@ -733,8 +641,8 @@ const submissionPending = ref(false)
 const hasPendingSubmission = (): boolean => submissionPending.value
 const error = ref('')
 const sendInProgress = computed(() => props.sending || submissionPending.value)
-const handleOwnedMenuKeydown = async (event: KeyboardEvent, menu: 'attach' | 'create' | 'more' | 'skills'): Promise<void> => {
-  const open = menu === 'attach' ? attachmentMenuOpen : menu === 'create' ? creationMenuOpen : menu === 'more' ? moreMenuOpen : skillMenuOpen
+const handleOwnedMenuKeydown = async (event: KeyboardEvent, menu: 'attach' | 'skills'): Promise<void> => {
+  const open = menu === 'attach' ? attachmentMenuOpen : skillMenuOpen
   if (event.key === 'Escape' && open.value) {
     event.preventDefault()
     event.stopImmediatePropagation()
@@ -749,7 +657,7 @@ const handleOwnedMenuKeydown = async (event: KeyboardEvent, menu: 'attach' | 'cr
     return
   }
   if (open.value || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return
-  if (menu === 'attach' ? attachDisabled.value : menu === 'create' ? generationDisabled.value : props.disabled || sendInProgress.value) return
+  if (menu === 'attach' ? attachDisabled.value : props.disabled || sendInProgress.value) return
   const trigger = event.currentTarget
   if (!(trigger instanceof HTMLElement)) return
   event.preventDefault()
@@ -822,112 +730,9 @@ const isPreferred = (versionId: string): boolean => {
   const skillId = skillIdForVersion(versionId)
   return skillId !== undefined && preferredSkillIds.value.has(skillId)
 }
-// Only genuinely secondary controls fold into More; Skills stays directly reachable.
-const moreMenuItems = computed(() => {
-  const items: Array<{ key: string; icon: string; label: string; subtitle?: string; checked?: boolean; disabled?: boolean; run: () => void }> = []
-  if (props.goalsEnabled && !goalMode.value && isControlFolded('goal')) {
-    items.push({
-      key: 'goal',
-      icon: 'mdi-target',
-      label: t('common:agentComposer.goal'),
-      subtitle: goalDisabledReason.value || t('common:agentComposer.defineDurableOutcomeMulti'),
-      checked: false,
-      disabled: Boolean(goalDisabledReason.value),
-      run: () => {
-        if (goalDisabledReason.value) return
-        goalMode.value = true
-      }
-    })
-  }
-  if (isControlFolded('create') && createAvailable.value) {
-    for (const option of generationOptions.value) {
-      items.push({
-        key: `create-${option.value}`,
-        icon: option.icon,
-        label: option.title,
-        checked: selectedGenerationTools.value.includes(option.value),
-        disabled: generationDisabled.value,
-        run: () => toggleGenerationTool(option.value)
-      })
-    }
-  }
-  return items
-})
-
-/**
- * Measure the available control row, folding Create then Goal into More and
- * restoring them when space returns. Skills, Attach, dictation and Send/Stop
- * remain directly reachable. Very narrow composer containers can reflow the
- * action groups rather than clip mandatory controls.
- */
-type FoldableControl = 'create' | 'goal'
-const FOLDABLE_CONTROLS: readonly FoldableControl[] = ['create', 'goal']
-const foldedControls = ref<FoldableControl[]>([])
-let foldResizeObserver: ResizeObserver | null = null
-watch(controlsGroup, (group, previous) => {
-  if (!foldResizeObserver) return
-  if (previous) foldResizeObserver.unobserve(previous)
-  if (group) foldResizeObserver.observe(group)
-  void nextTick(handleFoldResize)
-}, { flush: 'post' })
-const isControlFolded = (control: FoldableControl): boolean => foldedControls.value.includes(control)
-watch(() => generationDisabled.value || isControlFolded('create'), blocked => {
-  if (blocked) creationMenuOpen.value = false
-}, { flush: 'sync' })
-const hasMoreMenuContent = computed(() => moreMenuItems.value.length > 0)
-watch(hasMoreMenuContent, available => {
-  if (!available) moreMenuOpen.value = false
-}, { flush: 'sync' })
-watch(() => !props.skillsEnabled || props.disabled || sendInProgress.value, blocked => {
+watch(() => (!props.skillsEnabled && !createAvailable.value && !props.personalToolsEnabled) || props.disabled || sendInProgress.value, blocked => {
   if (blocked) skillMenuOpen.value = false
 }, { flush: 'sync' })
-const measureControlsOverflow = (): boolean => {
-  const group = controlsGroup.value
-  if (!group) return false
-  // Measure the unwrapped row even when the mandatory controls have reflowed.
-  // scrollWidth alone would report a fit after wrapping and unfold everything.
-  let requiredWidth = 0
-  let count = 0
-  for (const child of group.children) {
-    if (!(child instanceof HTMLElement)) continue
-    const style = window.getComputedStyle(child)
-    if (style.position === 'absolute' || style.position === 'fixed' || style.display === 'none') continue
-    const width = child.getBoundingClientRect().width
-    if (width === 0) continue
-    requiredWidth += width
-    count++
-  }
-  const gap = Number.parseFloat(window.getComputedStyle(group).columnGap) || 0
-  return requiredWidth + Math.max(0, count - 1) * gap > group.clientWidth + 1
-}
-const updateFoldState = async (): Promise<void> => {
-  if (measureControlsOverflow()) {
-    const control = FOLDABLE_CONTROLS.find(candidate => !foldedControls.value.includes(candidate))
-    if (control === undefined) return
-    foldedControls.value = [...foldedControls.value, control]
-    await nextTick()
-    await updateFoldState()
-    return
-  }
-  if (foldedControls.value.length === 0) return
-  const last = foldedControls.value[foldedControls.value.length - 1]
-  foldedControls.value = foldedControls.value.slice(0, -1)
-  await nextTick()
-  if (measureControlsOverflow()) {
-    // Restoring did not fit after all; keep it folded and stop to avoid oscillation.
-    foldedControls.value = [...foldedControls.value, last]
-    await nextTick()
-    return
-  }
-  await updateFoldState()
-}
-const handleFoldResize = (): void => {
-  void updateFoldState()
-}
-watch([
-  createAvailable, () => props.skillsEnabled, () => props.goalsEnabled, goalMode,
-  () => t('common:actions.create'), () => t('common:agentComposer.skills'), () => t('common:agentComposer.goal')
-], () => { void nextTick(handleFoldResize) }, { flush: 'post' })
 
 const coarseInput = ref(false)
 let coarseInputQuery: MediaQueryList | null = null
@@ -1107,7 +912,7 @@ const handleSelectionChange = (): void => {
 }
 const focusInput = async (): Promise<void> => {
   await nextTick()
-  messageInput.value?.focus()
+  if (mounted) messageInput.value?.focus()
 }
 const togglePreference = (versionId: string): void => {
   if (props.disabled || props.networkBlocked || sendInProgress.value) return
@@ -1422,6 +1227,7 @@ const submit = (): void => {
   }, { attachmentIds: [...mediaSubmission.value.attachmentIds], generationTools: mediaSubmission.value.generationTools })
 }
 const setDraft = async (value: string): Promise<void> => {
+  if (inputComposing.value || !mounted) return
   draft.value = value
   await focusInput()
 }
@@ -1432,7 +1238,7 @@ const editImage = async (media: AgentMediaView) => {
   }
 }
 const reattachMedia = async (media: AgentMediaView): Promise<boolean> => (await mediaComposer.value?.reattachMedia(media)) === true
-defineExpose({ focusInput, focusSkillsTrigger, setDraft, editImage, reattachMedia, hasUnsentMedia, hasPendingSubmission, isMediaBusy })
+defineExpose({ focusInput, focusSkillsTrigger, setDraft, editImage, reattachMedia, hasUnsentMedia, hasPendingSubmission, isMediaBusy, isInputComposing })
 onMounted(() => {
   mounted = true
   if (typeof window.matchMedia === 'function') {
@@ -1443,22 +1249,12 @@ onMounted(() => {
   mountCaretMirror()
   resizeInput()
   window.addEventListener('resize', resizeInput)
-  if (typeof ResizeObserver !== 'undefined') {
-    foldResizeObserver = new ResizeObserver(handleFoldResize)
-    const group = controlsGroup.value
-    if (group) foldResizeObserver.observe(group)
-    const root = composerRoot.value instanceof HTMLElement ? composerRoot.value : composerRoot.value?.$el
-    if (root instanceof HTMLElement) foldResizeObserver.observe(root)
-    void nextTick(handleFoldResize)
-  }
 })
 onBeforeUnmount(() => {
   mounted = false
   coarseInputQuery?.removeEventListener('change', updateCoarseInput)
   coarseInputQuery = null
   window.removeEventListener('resize', resizeInput)
-  foldResizeObserver?.disconnect()
-  foldResizeObserver = null
   unmountCaretMirror()
 })
 </script>
@@ -1466,7 +1262,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .agent-composer__media-attachments {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--wiki-space-2);
   margin: 0;
   padding: 0;
@@ -1521,7 +1317,7 @@ onBeforeUnmount(() => {
   --agent-composer-control-padding-inline: calc(var(--wiki-space-3) * .9);
   --agent-composer-control-font-size: var(--v-btn-size, .875rem);
   --agent-composer-control-min-width: max(var(--agent-composer-control-hit-height), calc(var(--agent-composer-control-face-height) + var(--wiki-space-1)));
-  --agent-composer-padding: calc(var(--wiki-space-2) * .8);
+  --agent-composer-padding: var(--wiki-space-1);
   position: relative;
   display: flex;
   max-height: min(calc(var(--wiki-space-12) * 7), 44dvh);
@@ -1529,25 +1325,18 @@ onBeforeUnmount(() => {
   overflow: visible;
   min-width: 0;
   padding: var(--agent-composer-padding);
-  border: 1px solid var(--wiki-surface-border-strong);
+  border: 1px solid var(--wiki-hud-border);
   border-radius: var(--wiki-panel-radius);
-  background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-sm);
+  background: var(--wiki-hud-surface);
+  -webkit-backdrop-filter: var(--wiki-hud-filter);
+  backdrop-filter: var(--wiki-hud-filter);
+  box-shadow: var(--wiki-glass-specular), var(--wiki-shadow-md);
   font-family: var(--wiki-font-body);
   transition:
     border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
     box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
 }
 
-/* The parent owns the transcript-reading fade; only the backing is translucent.
-   Keep the raised fill opaque when blur or transparency is unavailable. */
-@supports ((backdrop-filter: blur(6px)) or (-webkit-backdrop-filter: blur(6px))) {
-  @media (prefers-reduced-transparency: no-preference) and (forced-colors: none) {
-    .agent-composer {
-      background: color-mix(in oklch, var(--wiki-surface-raised) 94%, transparent);
-    }
-  }
-}
 
 /* Shared native field focus owns the boundary and halo; do not add a second ring. */
 
@@ -1576,12 +1365,14 @@ onBeforeUnmount(() => {
   min-height: 0;
   flex: 1 1 auto;
   overflow: hidden;
-  padding: calc(var(--wiki-space-1) * .5) 0 0;
+  padding: 0;
 }
 
 .agent-composer__input :deep(.v-field) {
-  background: transparent;
-  box-shadow: none;
+  background: var(--wiki-surface-sunken);
+  box-shadow: var(--wiki-shadow-inset);
+  background-image: none;
+  border: 1px solid var(--wiki-well-border);
 }
 
 .agent-composer__input :deep(.v-field__input) {
@@ -1643,7 +1434,7 @@ onBeforeUnmount(() => {
   display: flex;
   min-width: 0;
   flex: 1;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-content: flex-start;
   gap: var(--wiki-space-1);
 }
@@ -1656,8 +1447,8 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--agent-composer-control-gap);
-  padding: var(--agent-composer-control-gap) 0 0;
-  margin-top: var(--agent-composer-control-gap);
+  padding: var(--wiki-space-1) 0 0;
+  margin-top: 0;
   /* Subtle separation above the action toolbar instead of a hard divider. */
   border-top: 1px solid color-mix(in srgb, var(--wiki-surface-border) 55%, transparent);
 }
@@ -1666,15 +1457,16 @@ onBeforeUnmount(() => {
   display: flex;
   min-width: 0;
   min-height: 0;
-  max-height: min(14rem, 28dvh);
+  max-width: min(15rem, 100%);
   flex: 0 1 auto;
-  overflow-y: auto;
+  overflow: auto;
   overscroll-behavior: contain;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--agent-composer-control-gap);
-  margin: 0 0 var(--agent-composer-control-gap);
+  margin: 0;
 }
+.agent-composer__attachment-strip { display: flex; min-width: 0; align-items: center; gap: var(--wiki-space-1); overflow-x: auto; flex: 0 1 auto; }
 .agent-composer__context-row:focus-visible {
   outline: 2px solid var(--wiki-focus-color);
   outline-offset: 2px;
@@ -1696,8 +1488,7 @@ onBeforeUnmount(() => {
   gap: var(--agent-composer-control-gap);
 }
 
-/* Fold secondary controls first. If mandatory controls alone cannot fit,
-   reflow them without clipping or hiding their native focus targets. */
+/* Mandatory controls reflow rather than hiding keyboard targets. */
 .agent-composer__context-controls {
   flex-wrap: wrap;
   overflow: visible;
@@ -1726,13 +1517,11 @@ onBeforeUnmount(() => {
    Only the block-axis target extends beyond the face, so neighboring pointer
    targets cannot overlap across the control gap. */
 .agent-composer__attach,
-.agent-composer__create,
 .agent-composer__skills-trigger,
 .agent-composer__goal-toggle,
 .agent-composer__mic,
 .agent-composer__dictation-discard,
 .agent-composer__dictation-review,
-.agent-composer__more-button,
 .agent-composer__submit,
 .agent-composer__stop {
   position: relative;
@@ -1749,13 +1538,11 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__attach::before,
-.agent-composer__create::before,
 .agent-composer__skills-trigger::before,
 .agent-composer__goal-toggle::before,
 .agent-composer__mic::before,
 .agent-composer__dictation-discard::before,
 .agent-composer__dictation-review::before,
-.agent-composer__more-button::before,
 .agent-composer__submit::before,
 .agent-composer__stop::before {
   position: absolute;
@@ -1771,7 +1558,6 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__attach,
-.agent-composer__create,
 .agent-composer__skills-trigger,
 .agent-composer__goal-toggle {
   max-width: 100%;
@@ -1786,14 +1572,7 @@ onBeforeUnmount(() => {
 }
 
 
-.agent-composer__goal-chip {
-  max-width: 100%;
-}
 
-.agent-composer__tool-menu {
-  min-width: 264px;
-  max-width: min(320px, calc(100vw - 24px));
-}
 
 .agent-composer__tool-menu-note {
   margin: 8px 16px 6px;
@@ -1803,12 +1582,6 @@ onBeforeUnmount(() => {
   opacity: .7;
 }
 
-.agent-composer__more-menu {
-  border: 1px solid var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-raised);
-  box-shadow: var(--wiki-shadow-lg);
-}
 
 /* Recording feedback row inside the input area. Red is reserved for the
    noninteractive status dot; actions stay neutral/amber. The row reserves its
@@ -1877,7 +1650,6 @@ onBeforeUnmount(() => {
   margin-inline: calc(var(--wiki-space-1) * -.9) calc(var(--wiki-space-2) * .9);
 }
 
-.agent-composer__create :deep(.v-btn__append),
 .agent-composer__skills-trigger :deep(.v-btn__append) {
   margin-inline-start: 4px;
   margin-inline-end: 0;
@@ -2069,13 +1841,11 @@ onBeforeUnmount(() => {
   }
 
   .agent-composer__attach,
-  .agent-composer__create,
   .agent-composer__goal-toggle {
     padding-inline: calc(var(--wiki-space-2) * .9);
   }
 
-  .agent-composer__attach :deep(.v-btn__prepend),
-  .agent-composer__create :deep(.v-btn__prepend) {
+  .agent-composer__attach :deep(.v-btn__prepend) {
     margin: 0;
   }
 }
@@ -2086,7 +1856,6 @@ onBeforeUnmount(() => {
   }
 
   .agent-composer__attach,
-  .agent-composer__create,
   .agent-composer__goal-toggle {
     padding-inline: calc(var(--wiki-space-2) * .6);
   }

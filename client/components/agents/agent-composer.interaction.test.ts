@@ -161,6 +161,8 @@ interface RealComposerPublic {
   readonly reattachMedia: (media: AgentMediaView) => Promise<boolean>
   readonly hasUnsentMedia: () => boolean
   readonly isMediaBusy: () => boolean
+  readonly isInputComposing: () => boolean
+  readonly setDraft: (value: string) => Promise<void>
 }
 interface RealComposerOptions {
   readonly skills?: readonly TestSkill[]
@@ -343,17 +345,17 @@ const chooseRealAttachmentSource = async (menu: HTMLElement, title: string): Pro
   item.click()
   await waitForRealSurface(() => !menu.isConnected, 'attachment source selection closed')
 }
-const openRealCreationMenu = async (root: HTMLElement, keyboard = false): Promise<HTMLElement> => {
-  const create = root.querySelector<HTMLButtonElement>('.agent-composer__create')
-  if (!create) throw new Error('Real Create action did not render')
-  expect(create.disabled).toBe(false)
-  return openOwnedMenu(create, '.agent-composer__tool-menu', 'creation tools menu', keyboard)
+const openRealCapabilitiesMenu = async (root: HTMLElement, keyboard = false): Promise<HTMLElement> => {
+  const trigger = root.querySelector<HTMLButtonElement>('.agent-composer__skills-trigger')
+  if (!trigger) throw new Error('Capabilities action did not render')
+  expect(trigger.disabled).toBe(false)
+  return openOwnedMenu(trigger, '.agent-composer__skill-menu-content', 'capabilities menu', keyboard)
 }
 const openRealSkillsMenu = async (root: HTMLElement, keyboard = false): Promise<HTMLElement> => {
-  const skills = root.querySelector<HTMLButtonElement>('.agent-composer__skills-trigger')
-  if (!skills) throw new Error('The direct Skills action did not render')
-  expect(skills.disabled).toBe(false)
-  return openOwnedMenu(skills, '.agent-composer-skill-menu__card', 'Skills menu', keyboard)
+  const popup = await openRealCapabilitiesMenu(root, keyboard)
+  const skills = popup.querySelector<HTMLElement>('.agent-composer-skill-menu__card')
+  if (!skills) throw new Error('Skills card did not render in Capabilities')
+  return skills
 }
 
 const makeSkill = (name: string, versionId = `${name}-version`): TestSkill => ({
@@ -926,6 +928,27 @@ describe('Real Agent composer slash boundaries', () => {
       })
     ])
   })
+
+  it('does not replace an active IME draft through the public preparation action', async () => {
+    const mounted = mountRealComposers([{ skills: [] }])
+    const root = mounted.roots[0]
+    const textarea = root.querySelector<HTMLTextAreaElement>('textarea')
+    const composer = mounted.publicRefs[0].value
+    if (!textarea || !composer) throw new Error('Real composer controls missing')
+    textarea.value = 'Keep the composing draft'
+    textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+    textarea.dispatchEvent(new browserWindow.CompositionEvent('compositionstart', { bubbles: true }))
+    expect(composer.isInputComposing()).toBe(true)
+    await composer.setDraft('External prepared request')
+    expect(textarea.value).toBe('Keep the composing draft')
+    expect(mounted.sent).toEqual([])
+    textarea.dispatchEvent(new browserWindow.CompositionEvent('compositionend', { bubbles: true }))
+    expect(composer.isInputComposing()).toBe(false)
+    await composer.setDraft('External prepared request')
+    expect(textarea.value).toBe('External prepared request')
+    expect(mounted.drafts.at(-1)?.text).toBe('External prepared request')
+    expect(mounted.sent).toEqual([])
+  })
 })
 
 describe('Agent composer instance accessibility', () => {
@@ -1015,7 +1038,7 @@ describe('Agent composer media and menu interactions', () => {
     expect(root.querySelector('.agent-composer__attach')).toBeNull()
     expect(root.querySelector<HTMLInputElement>('input[type="file"]')?.disabled).toBe(true)
     expect(root.querySelector('.sr-only[id$="-attachment-reason"]')?.textContent).toBe(translateEnglish('common:agentComposer.attachmentsUnsupported'))
-    const menu = await openRealCreationMenu(root)
+    const menu = await openRealCapabilitiesMenu(root)
     const options = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]'))
     expect(options.map(option => option.querySelector('.v-list-item-title')?.textContent?.trim())).toEqual([
       translateEnglish('common:agentComposerMedia.images'),
@@ -1027,16 +1050,16 @@ describe('Agent composer media and menu interactions', () => {
       expect(option.getAttribute('aria-checked')).toBe(index === 0 ? 'true' : 'false')
     }
     options[0].click()
-    await waitForRealSurface(() => !menu.isConnected, 'image generation preference deselected')
-    // Vuetify briefly guards click reopening after selection; keyboard opening remains available.
-    const musicMenu = await openRealCreationMenu(root, true)
-    expect(musicMenu.querySelector('[role="menuitemcheckbox"]')?.getAttribute('aria-checked')).toBe('false')
-    const musicOption = Array.from(musicMenu.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')).find(
+    await Vue.nextTick()
+    expect(menu.querySelector('[role="menuitemcheckbox"]')?.getAttribute('aria-checked')).toBe('false')
+    const musicOption = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')).find(
       option => option.querySelector('.v-list-item-title')?.textContent?.trim() === translateEnglish('common:agentComposerMedia.music')
     )
     if (!musicOption) throw new Error('Music generation option did not render')
     musicOption.click()
-    await waitForRealSurface(() => !musicMenu.isConnected, 'music generation preference selected')
+    await Vue.nextTick()
+    expect(musicOption.getAttribute('aria-checked')).toBe('true')
+    await closeOwnedMenu(menu)
     const textarea = root.querySelector<HTMLTextAreaElement>('textarea')
     if (!textarea) throw new Error('Real composer textbox did not render')
     textarea.value = 'Create accompanying music without images'
@@ -1080,14 +1103,15 @@ describe('Agent composer media and menu interactions', () => {
     attach?.click()
     await Vue.nextTick()
     expect(document.querySelector('.v-overlay--active [aria-label="Attachment source"]')).toBeNull()
-    const creationMenu = await openRealCreationMenu(root)
+    const creationMenu = await openRealCapabilitiesMenu(root)
     const imageOption = creationMenu.querySelector<HTMLElement>('[role="menuitemcheckbox"]')
     if (!imageOption) throw new Error('Image generation option did not render at attachment capacity')
     expect(imageOption.getAttribute('aria-disabled')).not.toBe('true')
     expect(imageOption.getAttribute('aria-checked')).toBe('true')
     imageOption.click()
-    await waitForRealSurface(() => !creationMenu.isConnected, 'full-capacity generation preference selection')
-    expect(root.querySelector('.agent-composer__create')?.getAttribute('data-state')).toBeNull()
+    await Vue.nextTick()
+    expect(imageOption.getAttribute('aria-checked')).toBe('false')
+    await closeOwnedMenu(creationMenu)
     expect(mounted.uploads).toHaveLength(4)
     await selectRealFiles(root, [new File(['%PDF-1.4\nfifth\n%%EOF\n'], 'five.pdf', { type: 'application/pdf' })])
     await waitForRealSurface(
@@ -1111,20 +1135,21 @@ describe('Agent composer media and menu interactions', () => {
     expect(root.querySelector('.agent-composer__attachment-count')?.textContent?.trim()).toBe('3/4')
   })
 
-  it('does not reopen Create when revoked creation support returns', async () => {
+  it('retires the capabilities popup when its last available capability is revoked', async () => {
     const options = Vue.reactive({ media: true, attachments: false, imageGeneration: true })
     const mounted = mountRealComposers([options])
     const root = mounted.roots[0]
     await Vue.nextTick()
-    await openRealCreationMenu(root)
+    const menu = await openRealCapabilitiesMenu(root)
     options.imageGeneration = false
-    await waitForRealSurface(() => !root.querySelector('[aria-label="Choose creation tools"]'), 'revoked Create control removed')
+    await waitForRealSurface(() => !root.querySelector('.agent-composer__skills-trigger'), 'revoked capabilities control removed')
+    expect(menu.isConnected && Boolean(menu.closest('.v-overlay--active'))).toBe(false)
     options.imageGeneration = true
-    await waitForRealSurface(() => root.querySelector('[aria-label="Choose creation tools"]') !== null, 'restored Create control rendered')
-    const create = root.querySelector<HTMLButtonElement>('[aria-label="Choose creation tools"]')
-    if (!create) throw new Error('The restored creation trigger did not render')
-    expect(create.getAttribute('aria-expanded')).toBe('false')
-    expect(activeOwnedMenu(create, '[aria-label="Creation tools"]')).toBeNull()
+    await waitForRealSurface(() => root.querySelector('.agent-composer__skills-trigger') !== null, 'restored capabilities control rendered')
+    const trigger = root.querySelector<HTMLButtonElement>('.agent-composer__skills-trigger')
+    if (!trigger) throw new Error('Restored capabilities trigger did not render')
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(activeOwnedMenu(trigger, '.agent-composer__skill-menu-content')).toBeNull()
   })
 
   it('lets users select and deselect authorized organization skills, then drops revoked versions before sending', async () => {
@@ -1133,7 +1158,6 @@ describe('Agent composer media and menu interactions', () => {
     const options = Vue.reactive({ skills: [shared, grouped] })
     const mounted = mountRealComposers([options])
     const root = mounted.roots[0]
-    expect(root.querySelector('.agent-composer__more-button')).toBeNull()
     const menu = await openRealSkillsMenu(root, true)
     const row = (name: string): HTMLElement => {
       const result = Array.from(menu.querySelectorAll<HTMLElement>('.v-list-item')).find(item => item.querySelector('.v-list-item-title')?.textContent === name)
@@ -1166,22 +1190,19 @@ describe('Agent composer media and menu interactions', () => {
     await Vue.nextTick()
     submit.click()
     await Vue.nextTick()
-    expect(mounted.sent).toEqual([
-      expect.objectContaining({ content: 'Author the summary', invokedSkillVersionIds: [shared.versionId], mode: 'message' })
-    ])
+    expect(mounted.sent).toEqual([expect.objectContaining({ content: 'Author the summary', invokedSkillVersionIds: [shared.versionId], mode: 'message' })])
   })
 
-  it('keeps one direct Skills trigger, stable popup IDs and exact keyboard focus restoration', async () => {
+  it('keeps one capabilities trigger, stable skill popup IDs and exact keyboard focus restoration', async () => {
     const mounted = mountRealComposers([{ skills: [] }, { skills: [] }])
     await Vue.nextTick()
     const dialogIds: string[] = []
     for (const [index, root] of mounted.roots.entries()) {
       expect(root.querySelectorAll('.agent-composer__skills-trigger')).toHaveLength(1)
-      expect(root.querySelector('.agent-composer__more-button')).toBeNull()
       const skillsTrigger = root.querySelector<HTMLButtonElement>('.agent-composer__skills-trigger')
       const skillsMenu = await openRealSkillsMenu(root, true)
       dialogIds.push(skillsMenu.id)
-      expect(document.activeElement).toBe(skillsMenu.querySelector('button'))
+      expect(skillsMenu.closest('.v-overlay__content')?.contains(document.activeElement)).toBe(true)
       await closeOwnedMenu(skillsMenu)
       expect(document.activeElement).toBe(skillsTrigger)
       const reopened = await openRealSkillsMenu(root, true)
@@ -1387,20 +1408,20 @@ describe('Agent composer goal mode', () => {
     if (!goal) throw new Error('Goal control did not render')
     goal.click()
     await Vue.nextTick()
-    const chip = mounted.root.querySelector<HTMLElement>('.agent-composer__goal-chip')
-    if (!chip) throw new Error('Selected goal did not render')
+    expect(goal.getAttribute('aria-pressed')).toBe('true')
     mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.click()
     await settleAsync()
     expect(mounted.sent).toEqual([expect.objectContaining({ content: 'Reach an outcome', mode: 'goal' })])
-    expect(mounted.root.querySelector('.agent-composer__goal-chip')).toBeNull()
+    expect(goal.getAttribute('aria-pressed')).toBe('false')
     const restoredGoal = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__goal-toggle')
     if (!restoredGoal) throw new Error('Goal control did not return after successful submission')
     restoredGoal.click()
     await Vue.nextTick()
 
-    const close = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__goal-chip .v-chip__close')
-    if (!close) throw new Error('Goal removal control did not render')
-    close.click()
+    expect(restoredGoal.getAttribute('aria-pressed')).toBe('true')
+    restoredGoal.click()
+    await Vue.nextTick()
+    expect(restoredGoal.getAttribute('aria-pressed')).toBe('false')
     await Vue.nextTick()
     const textarea = mounted.root.querySelector<HTMLTextAreaElement>('textarea')
     if (!textarea) throw new Error('Message input did not render')

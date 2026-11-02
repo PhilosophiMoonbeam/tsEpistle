@@ -111,7 +111,7 @@ A confirmed terminal authentication, authorization, or conversation failure clos
 | Login/logout/TFA/password change | Network required | Existing POST/no-store flows |
 | Admin/profile operations | Network required | Existing routes and APIs |
 | Live collaboration | No new durable replay | Existing fresh-session/generation reconnect |
-| Outbound share | Copy/export fallback | `navigator.share` when supported and user-initiated |
+| Outbound share | Saved-library native share when supported; local copy/export fallbacks | Online reader native/public-provider actions require explicit site opt-in and current Guest admission; saved-library actions remain separate |
 | Install prompt | Platform-specific guidance | Native prompt when exposed |
 
 `navigator.onLine` is a hint only. A capability becomes available after its actual request succeeds. UI wording MUST distinguish **Available offline**, **Saved on this device**, **Waiting for connection**, **Needs review**, **Publishing**, **Published**, **Update ready**, and **Server unavailable**.
@@ -387,7 +387,9 @@ Manifest requirements: stable `id`, root `start_url` and `scope`, standalone dis
 - macOS Safari: support Dock installation behavior available in current Safari and manifest shortcuts where available.
 - Firefox: offline APIs remain baseline; install guidance must reflect platform/browser capability rather than claiming universal Chromium install APIs.
 
-Outbound share uses `navigator.share`/`canShare` from a user gesture and handles cancellation silently. Copy link and export/copy-text fallbacks remain available. Offline sharing of a downloaded page shares a truthful title/text excerpt or local route, not a claim that recipients can access unavailable or restricted content.
+Online reader native/public-provider sharing requires explicit site opt-in and the server's canonical Guest admission proof, not merely public visibility or the requesting user's access. Current publication, no protection/unlock requirement, verified online reader authority and a valid HTTP(S) destination are also required; see [Search and reader sharing](search-agent-workspace.md#sources-in-place). Copy link, Markdown/section links, page text and email retain their separate guards and do not promise recipient access.
+
+The offline library deliberately retains a separate user-initiated local-copy contract. For a ready admitted saved snapshot (including a currently unlocked, coherent private snapshot), supported `navigator.share`/`canShare` receives the saved title, a saved description or search-text excerpt normalized to at most 320 characters, and the library's offline-selector URL with its saved-copy explanation. That selector identifies local saved reading; it is not a newly admitted public URL, a content upload, or a grant of access on another device. Online public-provider gating must not disable this existing library capability. Native cancellation is silent; other failures offer copying. **Copy page link** copies that same selector, while **Copy full page text** copies the committed reader title/body and exposes a selectable-text fallback if clipboard access fails. Locked, stale, expired or retired private reading remains unavailable under the existing vault and identity fences.
 
 Registration is single-instance and exposes explicit callbacks for ready, offline-ready, update-ready, reload-needed, and registration error. Updates are prompted. The app does not rely on a stale library helper argument to suppress reload; it owns `onNeedReload` behavior. Reduced-motion users receive no decorative transition; forced-colors, keyboard focus, screen-reader live regions, 44px touch targets, RTL, dark mode, safe-area insets, compact mobile layout, and landscape are acceptance requirements.
 

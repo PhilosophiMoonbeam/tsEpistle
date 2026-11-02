@@ -1,14 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
-import * as cheerio from 'cheerio'
-import pug from 'pug'
 import sharp from 'sharp'
 import * as lodash from 'lodash-es'
 import { isSafeEditorImageSource, isValidEditorImageAlt, normalizeEditorImageDimension } from '../../helpers/editor-image-properties'
 import { describe, expect, test, vi } from '../../../server/test/bun-test.mts'
 import { browserWindow, document } from '../../test/browser-dom.mts'
-import { createModalFocusScope } from '../common/modal-focus-scope'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 const componentPath = path.join(process.cwd(), 'client/components/editor/editor-modal-media.vue')
@@ -47,7 +44,7 @@ const loadMediaComponent = ({ relocateAssetRequest, wikiStore, window, fetchAsse
     _: lodash,
     LocalizedRichText,
     createAssetFolder: async () => undefined,
-    createModalFocusScope: () => ({ deactivate: () => undefined }),
+    VDialog: vuetifyComponents.VDialog,
     defineComponent: value => value,
     deleteAssetRequest: async () => undefined,
     emitEditorInsert: () => undefined,
@@ -58,7 +55,7 @@ const loadMediaComponent = ({ relocateAssetRequest, wikiStore, window, fetchAsse
     isSafeEditorImageSource,
     isValidEditorImageAlt,
     normalizeEditorImageDimension,
-    markRaw: value => value,
+    markRaw: Vue.markRaw,
     relocateAssetRequest,
     vueFilePond: () => ({ render: () => null }),
     wikiStore,
@@ -300,54 +297,66 @@ describe('editor media upload and thumbnails', () => {
   })
 })
 
-describe('standalone shared asset workspace', () => {
-  const compileComponentRender = filename => {
-    const descriptor = parse(fs.readFileSync(filename, 'utf8'), { filename }).descriptor
-    const compiled = compileTemplate({
-      source: descriptor.template.content,
-      filename,
-      id: filename,
-      preprocessLang: descriptor.template.lang,
-      preprocessOptions: { doctype: 'html' },
-      compilerOptions: { mode: 'function' }
-    })
-    if (compiled.errors.length) throw compiled.errors[0]
-    return new Function('Vue', compiled.code)(Vue)
+const compileComponentRender = filename => {
+  const descriptor = parse(fs.readFileSync(filename, 'utf8'), { filename }).descriptor
+  const compiled = compileTemplate({
+    source: descriptor.template.content,
+    filename,
+    id: filename,
+    preprocessLang: descriptor.template.lang,
+    preprocessOptions: { doctype: 'html' },
+    compilerOptions: { mode: 'function' }
+  })
+  if (compiled.errors.length) throw compiled.errors[0]
+  return new Function('Vue', compiled.code)(Vue)
+}
+const mountManager = async (purpose, options = {}) => {
+  const rootAsset = {
+    id: 7,
+    filename: 'shared-logo.png',
+    folderId: 0,
+    kind: 'IMAGE',
+    ext: '.png',
+    fileSize: 80,
+    createdAt: '2026-01-01T00:00:00Z',
+    description: ''
   }
-  const mountManager = async (purpose, options = {}) => {
-    const rootAsset = { id: 7, filename: 'shared-logo.png', folderId: 0, kind: 'IMAGE', ext: '.png', fileSize: 80, createdAt: '2026-01-01T00:00:00Z', description: '' }
-    const folderAsset = { ...rootAsset, id: 8, filename: 'folder-logo.png', folderId: 3 }
-    const { component, context } = createHarness({
-      fetchAssets: options.fetchAssets ?? (async (_fetch, folderId) => folderId === 0 ? [rootAsset] : [folderAsset]),
-      fetchAssetFolders: options.fetchAssetFolders ?? (async (_fetch, folderId) => folderId === 0 ? [{ id: 3, name: 'logos', slug: 'logos' }] : [])
-    })
-    context.wikiStore.page.visibility = 'private'
-    context.wikiStore.editor.activeModal = 'editorModalMedia'
-    context.wikiStore.editor.media = {
-      currentFolderId: 91,
-      currentFileId: 92,
-      folderTree: [{ id: 91, name: 'editor-folder', slug: 'editor-folder' }]
-    }
-    const before = structuredClone({ page: Vue.toRaw(context.wikiStore.page), editor: Vue.toRaw(context.wikiStore.editor) })
-    if (options.filePondComponent) component.components.FilePond = options.filePondComponent
-    if (options.filePondServerOpts) component.computed.filePondServerOpts = () => options.filePondServerOpts
-    const app = Vue.createApp({ ...component, render: compileComponentRender(componentPath) }, { purpose, embedded: true })
-    app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
-    app.component('VCardChin', Vue.defineComponent({
+  const folderAsset = { ...rootAsset, id: 8, filename: 'folder-logo.png', folderId: 3 }
+  const { component, context } = createHarness({
+    fetchAssets: options.fetchAssets ?? (async (_fetch, folderId) => (folderId === 0 ? [rootAsset] : [folderAsset])),
+    fetchAssetFolders: options.fetchAssetFolders ?? (async (_fetch, folderId) => (folderId === 0 ? [{ id: 3, name: 'logos', slug: 'logos' }] : []))
+  })
+  context.wikiStore.page.visibility = 'private'
+  context.wikiStore.editor.activeModal = 'editorModalMedia'
+  context.wikiStore.editor.media = {
+    currentFolderId: 91,
+    currentFileId: 92,
+    folderTree: [{ id: 91, name: 'editor-folder', slug: 'editor-folder' }]
+  }
+  const before = structuredClone({ page: Vue.toRaw(context.wikiStore.page), editor: Vue.toRaw(context.wikiStore.editor) })
+  if (options.filePondComponent) component.components.FilePond = options.filePondComponent
+  if (options.filePondServerOpts) component.computed.filePondServerOpts = () => options.filePondServerOpts
+  const app = Vue.createApp({ ...component, render: compileComponentRender(componentPath) }, { purpose, embedded: true })
+  app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+  app.component(
+    'VCardChin',
+    Vue.defineComponent({
       render: compileComponentRender(path.join(process.cwd(), 'client/components/common/v-card-chin.vue'))
-    }))
-    app.use(localizationPlugin)
-    app.config.globalProperties.$helpers = { formatMoment: () => 'recently' }
-    const root = document.body.appendChild(document.createElement('div'))
-    const model = app.mount(root)
-    await vi.waitFor(() => expect(model.loading).toBe(false))
-    return { app, root, model, store: context.wikiStore, before }
-  }
-
+    })
+  )
+  app.use(localizationPlugin)
+  app.config.globalProperties.$helpers = { formatMoment: () => 'recently' }
+  const root = document.body.appendChild(document.createElement('div'))
+  const model = app.mount(root)
+  await vi.waitFor(() => expect(model.loading).toBe(false))
+  return { app, root, model, store: context.wikiStore, before }
+}
+describe('standalone shared asset workspace', () => {
   test('opens shared assets at root, navigates folders independently and exposes management without editor insertion', async () => {
     const { app, root, model, store, before } = await mountManager('manage')
     try {
       expect(root.textContent).toContain('shared-logo.png')
+      expect(root.querySelector('[role="dialog"]')).toBeNull()
       expect(model.currentFolderId).toBe(0)
       expect(root.querySelector('.editor-media-upload-header')).not.toBeNull()
       expect(root.querySelector('.editor-media-actions')).toBeNull()
@@ -402,7 +411,15 @@ describe('standalone shared asset workspace', () => {
           }
           acknowledgments.push(() => {
             active--
-            accepted.push({ id: accepted.length + 1, filename: file.name, folderId: 0, kind: 'IMAGE', ext: file.name.endsWith('.png') ? '.png' : '.jpg', fileSize: file.size, createdAt: '2026-01-01T00:00:00Z' })
+            accepted.push({
+              id: accepted.length + 1,
+              filename: file.name,
+              folderId: 0,
+              kind: 'IMAGE',
+              ext: file.name.endsWith('.png') ? '.png' : '.jpg',
+              fileSize: file.size,
+              createdAt: '2026-01-01T00:00:00Z'
+            })
             load('ok')
           })
           return { abort: () => undefined }
@@ -420,6 +437,9 @@ describe('standalone shared asset workspace', () => {
       ])
       await Vue.nextTick()
       await vi.waitFor(() => expect(model.queuedFileCount).toBe(2))
+      expect(started).toHaveLength(0)
+      expect(root.querySelectorAll('.filepond--label-action')).toHaveLength(1)
+      expect(root.querySelector('.filepond--credits')).toBeNull()
       root.querySelector('.editor-media-upload-action').click()
       await vi.waitFor(() => expect(started).toHaveLength(1), { timeout: 5_000 })
       expect(accepted).toHaveLength(0)
@@ -431,7 +451,10 @@ describe('standalone shared asset workspace', () => {
       await vi.waitFor(() => expect(model.uploading).toBe(false), { timeout: 5_000 })
       await vi.waitFor(() => expect(root.textContent).toContain('second.jpg'))
       expect(maximumActive).toBe(1)
-      expect(started).toEqual([{ filename: 'first.png', folderId: 0 }, { filename: 'second.jpg', folderId: 0 }])
+      expect(started).toEqual([
+        { filename: 'first.png', folderId: 0 },
+        { filename: 'second.jpg', folderId: 0 }
+      ])
       expect(model.assets.map(asset => asset.filename)).toEqual(['first.png', 'second.jpg'])
       expect(root.textContent).toContain('first.png')
     } finally {
@@ -502,8 +525,8 @@ describe('standalone shared asset workspace', () => {
     const nested = { id: 4, name: 'Logos', slug: 'logos' }
     const child = { id: 5, name: 'Icons', slug: 'icons' }
     const { app, root, model } = await mountManager('manage', {
-      fetchAssets: async (_fetch, id) => id === 4 ? [{ ...image }] : [],
-      fetchAssetFolders: async (_fetch, id) => id === 0 ? [parent] : id === 3 ? [nested] : [child]
+      fetchAssets: async (_fetch, id) => (id === 4 ? [{ ...image }] : []),
+      fetchAssetFolders: async (_fetch, id) => (id === 0 ? [parent] : id === 3 ? [nested] : [child])
     })
     try {
       model.downFolder(parent)
@@ -559,39 +582,73 @@ describe('standalone shared asset workspace', () => {
 })
 
 describe('editor media teleported controls', () => {
-  test('keeps the native alignment menu actionable without releasing the modal background', async () => {
-    const descriptor = parse(fs.readFileSync(componentPath, 'utf8'), { filename: componentPath }).descriptor
-    const markup = cheerio.load(pug.render(descriptor.template.content))
-    const alignment = markup('v-select[label="Image alignment"]')
-    expect(alignment).toHaveLength(1)
-    // Exercise the production invocation and Vuetify teleport, not a copied menu configuration.
-    const compiled = compileTemplate({
-      source: alignment.toString(),
-      filename: componentPath,
-      id: 'media-alignment-focus-scope',
-      compilerOptions: { mode: 'function' }
-    })
-    if (compiled.errors.length) throw compiled.errors[0]
-    const { context } = createHarness()
+  test('hands focus to newly embedded branding without stealing focus for an embedded management workspace', async () => {
+    const invoker = document.body.appendChild(document.createElement('button'))
+    invoker.textContent = 'Choose branding asset'
+    invoker.focus()
+    try {
+      const branding = await mountManager('page-branding')
+      try {
+        const refresh = branding.root.querySelector('.editor-media-header button')
+        expect(refresh).not.toBeNull()
+        expect(document.activeElement === refresh).toBe(true)
+        expect(branding.root.querySelector('.editor-modal-media').contains(document.activeElement)).toBe(true)
+        expect(branding.root.querySelector('[role="dialog"]')).toBeNull()
+      } finally {
+        branding.app.unmount()
+        branding.root.remove()
+      }
+      invoker.focus()
+      const management = await mountManager('manage')
+      try {
+        expect(management.root.querySelector('.editor-media-header button')).not.toBeNull()
+        expect(document.activeElement).toBe(invoker)
+      } finally {
+        management.app.unmount()
+        management.root.remove()
+      }
+    } finally {
+      invoker.remove()
+    }
+  })
+
+  test('keeps menus and nested dialogs above the real standalone Assets dialog, then restores its invoker', async () => {
     const background = document.body.appendChild(document.createElement('button'))
+    background.textContent = 'Open assets'
+    background.focus()
+    const { component, context } = createHarness({
+      fetchAssets: async () => [{ id: 7, filename: 'image.png', folderId: 0, kind: 'IMAGE', ext: '.png', fileSize: 80 }],
+      fetchAssetFolders: async () => []
+    })
+    context.wikiStore.page.visibility = 'private'
+    context.wikiStore.editor.activeModal = 'editorModalMedia'
+    const Media = Vue.defineComponent({ ...component, render: compileComponentRender(componentPath) })
+    const model = Vue.ref()
     const root = document.body.appendChild(document.createElement('div'))
-    root.tabIndex = -1
     const app = Vue.createApp({
-      data: () => ({ imageAlignment: context.imageAlignment, imageAlignments: context.imageAlignments }),
-      render: new Function('Vue', compiled.code)(Vue)
+      render: () =>
+        Vue.h(vuetifyComponents.VApp, null, () => (context.wikiStore.editor.activeModal === 'editorModalMedia' ? Vue.h(Media, { ref: model }) : null))
     })
     app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
-    app.config.globalProperties.$t = translateEnglish
-    const model = app.mount(root)
-    const scope = createModalFocusScope({
-      root,
-      restoreTarget: background,
-      additionalRoots: context.mediaModalAdditionalRoots,
-      onEscape: () => undefined
-    })
+    app.component(
+      'VCardChin',
+      Vue.defineComponent({
+        render: compileComponentRender(path.join(process.cwd(), 'client/components/common/v-card-chin.vue'))
+      })
+    )
+    app.use(localizationPlugin)
+    app.config.globalProperties.$helpers = { formatMoment: () => 'recently' }
+    app.mount(root)
     try {
+      await vi.waitFor(() => expect(model.value?.loading).toBe(false))
+      model.value.selectAsset(7)
       await Vue.nextTick()
-      const field = root.querySelector('.v-field')
+      const dialog = document.querySelector('[role="dialog"][aria-labelledby="editor-media-title"]')
+      expect(dialog).not.toBeNull()
+      expect(dialog.getAttribute('aria-modal')).toBe('true')
+      expect(dialog.closest('.v-overlay').querySelector('.v-overlay__scrim')).not.toBeNull()
+      const alignment = Array.from(dialog.querySelectorAll('label')).find(label => label.textContent.trim() === 'Image alignment')
+      const field = alignment?.closest('.v-field')
       expect(field).not.toBeNull()
       field.dispatchEvent(new browserWindow.MouseEvent('mousedown', { bubbles: true, cancelable: true }))
       field.dispatchEvent(new browserWindow.MouseEvent('mouseup', { bubbles: true }))
@@ -600,14 +657,43 @@ describe('editor media teleported controls', () => {
       await vi.waitFor(() => {
         centered = Array.from(document.querySelectorAll('[role="option"]')).find(option => option.textContent.trim() === 'Centered')
         expect(centered).toBeDefined()
-        expect(centered.closest('.v-overlay').inert).not.toBe(true)
-        expect(centered.closest('[aria-hidden="true"]')).toBeNull()
-        expect(background.inert).toBe(true)
+        expect(centered.closest('[aria-hidden="true"], [inert]')).toBeNull()
       })
       centered.click()
-      await vi.waitFor(() => expect(model.imageAlignment).toBe('center'))
+      await vi.waitFor(() => expect(model.value.imageAlignment).toBe('center'))
+      expect(context.wikiStore.editor.activeModal).toBe('editorModalMedia')
+
+      const newFolderButton = dialog.querySelector('.editor-media-new-folder')
+      newFolderButton.click()
+      await vi.waitFor(() => expect(document.querySelector('[aria-labelledby="editor-media-new-folder-title"]')).not.toBeNull())
+      // Vuetify publishes globalTop in a zero-delay task. A synthetic key in
+      // this mounting task would otherwise run before the new child owns Esc.
+      await new Promise(resolve => browserWindow.setTimeout(resolve, 0))
+      const nested = document.querySelector('[aria-labelledby="editor-media-new-folder-title"]')
+      nested.querySelector('input').focus()
+      nested.querySelector('input').dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      // A closed model is not a completed leave: Vuetify promotes the parent
+      // overlay on the next task and then returns focus to the child invoker.
+      await vi.waitFor(() => {
+        expect(model.value.newFolderDialog).toBe(false)
+        expect(nested.isConnected).toBe(false)
+        expect(document.activeElement).toBe(newFolderButton)
+      })
+      expect(context.wikiStore.editor.activeModal).toBe('editorModalMedia')
+      expect(document.querySelector('[role="dialog"][aria-labelledby="editor-media-title"]')).toBe(dialog)
+      background.focus()
+      const tab = new browserWindow.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+      background.dispatchEvent(tab)
+      expect(tab.defaultPrevented).toBe(true)
+      expect(dialog.contains(document.activeElement)).toBe(true)
+
+      const refresh = dialog.querySelector('.editor-media-header button')
+      refresh.focus()
+      refresh.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await vi.waitFor(() => expect(context.wikiStore.editor.activeModal).toBe(''))
+      await vi.waitFor(() => expect(document.activeElement).toBe(background))
+      expect(context.wikiStore.page).toMatchObject({ id: 42, locale: 'en', path: 'media', visibility: 'private' })
     } finally {
-      scope.deactivate({ restoreFocus: false })
       app.unmount()
       root.remove()
       background.remove()

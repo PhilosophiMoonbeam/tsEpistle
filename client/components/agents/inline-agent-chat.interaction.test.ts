@@ -16,7 +16,6 @@ import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
 import { fetchRecentPages, searchPages } from '../../helpers/pages-api.ts'
 import { resolveUserPicture } from '../../helpers/user-picture.ts'
 import { fetchWikiSource } from '../../helpers/wiki-source.ts'
-import { fallbackLocalizationLabel } from '../../modules/localization.ts'
 import { createModalFocusScope } from '../common/modal-focus-scope.ts'
 import { calculateComposerSizing, caretBoundsFromMirror, scrollTopForCaret } from './agent-composer-sizing.ts'
 import { filterSkillsForCommand } from './agent-skill-command.ts'
@@ -114,7 +113,7 @@ const compiledTemplate = compileTemplate({
   compilerOptions: { mode: 'function' }
 })
 if (compiledTemplate.errors.length > 0) throw compiledTemplate.errors[0]
-const renderInlineAgent = new Function('Vue', compiledTemplate.code)(Vue) as () => unknown
+const renderInlineAgent = new Function('Vue', new Bun.Transpiler({ loader: 'ts' }).transformSync(compiledTemplate.code))(Vue) as () => unknown
 const compiledComposerTemplate = compileTemplate({
   source: composerDescriptor.template.content,
   filename: composerComponentPath,
@@ -148,7 +147,8 @@ const contextPickerComponent = Vue.defineComponent({
     currentPageTitle: String,
     disabled: Boolean,
     connectionBlocked: Boolean,
-    connectionRetrying: Boolean
+    connectionRetrying: Boolean,
+    sourceTrigger: Object
   },
   emits: ['change', 'sourcesAdded', 'retry-connection'],
   setup(props, { emit, expose }) {
@@ -211,6 +211,7 @@ interface LockState {
   transcriptFollowing: ValueRef<boolean>
   transcriptBottomDistance: ValueRef<number>
   reconcileTranscriptGrowth: (shouldFollow: boolean) => Promise<void>
+  scrollToLatest: () => Promise<void>
   openGoal: ValueRef<{ status: string } | null>
   goalSubmitUnavailableReason: ValueRef<string>
   submitUnavailableReason: ValueRef<string>
@@ -368,8 +369,11 @@ const loadGoalLockState = (
   const ref = <T>(value: T): ValueRef<T> => Vue.ref(value) as ValueRef<T>
   const thread = ref({
     memoryContext: {
-      ownerId: 2, sessionId: 'session-1', frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
-      latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } }, nextSession: { user: 'unknown', agent: 'unknown' }
+      ownerId: 2,
+      sessionId: 'session-1',
+      frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+      latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } },
+      nextSession: { user: 'unknown', agent: 'unknown' }
     },
     session: {
       id: 'session-1',
@@ -674,13 +678,18 @@ const resolvedMediaCapabilities = (capabilities: AgentMediaCapabilities): Requir
   musicGeneration: capabilities.musicGeneration ?? false,
   inputModalities: capabilities.inputModalities ?? { images: capabilities.attachments, documents: capabilities.attachments, audio: false, video: false },
   inputMimeTypes: capabilities.inputMimeTypes ?? (capabilities.attachments ? ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'] : []),
-  mediaToolInputs: capabilities.mediaToolInputs ?? (capabilities.attachments && capabilities.imageGeneration ? { image: { images: true, documents: false, audio: false, video: false } } : {})
+  mediaToolInputs:
+    capabilities.mediaToolInputs ??
+    (capabilities.attachments && capabilities.imageGeneration ? { image: { images: true, documents: false, audio: false, video: false } } : {})
 })
 
 const threadFixture = (id = sessionId, retention: 'saved' | 'temporary' = 'saved', capabilities: AgentMediaCapabilities | null = null): AgentThreadState => ({
   memoryContext: {
-    ownerId: 2, sessionId: id, frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
-    latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } }, nextSession: { user: 'unknown', agent: 'unknown' }
+    ownerId: 2,
+    sessionId: id,
+    frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+    latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } },
+    nextSession: { user: 'unknown', agent: 'unknown' }
   },
   session: {
     id,
@@ -777,8 +786,16 @@ const proposalThread = (status: 'pending' | 'denied' = 'pending'): AgentThreadSt
   }
 }
 const reviewSource = (id: number): WikiSource => ({
-  id, locale: 'en', path: `handbook/source-${id}`, title: `Source ${id}`, description: 'Page description',
-  sourceRevision: '7', updatedAt: timestamp, visibility: 'public', excerpt: 'Authorized page excerpt', excerptTruncated: false
+  id,
+  locale: 'en',
+  path: `handbook/source-${id}`,
+  title: `Source ${id}`,
+  description: 'Page description',
+  sourceRevision: '7',
+  updatedAt: timestamp,
+  visibility: 'public',
+  excerpt: 'Authorized page excerpt',
+  excerptTruncated: false
 })
 const reviewPreview = (source: WikiSource) => ({
   ...source,
@@ -787,10 +804,7 @@ const reviewPreview = (source: WikiSource) => ({
     truncated: false
   }
 })
-const reviewThread = (
-  currentPage: TestPageHint | null | undefined,
-  sources: WikiSource[] = []
-): AgentThreadState => {
+const reviewThread = (currentPage: TestPageHint | null | undefined, sources: WikiSource[] = []): AgentThreadState => {
   const runId = '00000000-0000-4000-8000-000000000060'
   const common = { runId, citations: [], createdAt: timestamp, updatedAt: timestamp }
   return {
@@ -798,21 +812,35 @@ const reviewThread = (
     messages: [
       {
         ...common,
-        id: '00000000-0000-4000-8000-000000000061', ordinal: 0, role: 'user', status: 'complete',
+        id: '00000000-0000-4000-8000-000000000061',
+        ordinal: 0,
+        role: 'user',
+        status: 'complete',
         content: 'What is the dominant color and geometric shape in this uploaded image? Use only the uploaded image, not Wiki pages.',
         ...(currentPage !== undefined ? { currentPage } : {}),
         knowledgeContext: {
           scope: sources.length ? { kind: 'selected' } : { kind: 'all' },
           sources: sources.map(({ id, locale, path, title, visibility, sourceRevision }) => ({ id, locale, path, title, visibility, sourceRevision }))
         },
-        media: [{
-          id: '00000000-0000-4000-8000-000000000062', kind: 'attachment', filename: 'blue-triangle.png',
-          mimeType: 'image/png', byteLength: 128, available: true, detached: false
-        }]
+        media: [
+          {
+            id: '00000000-0000-4000-8000-000000000062',
+            kind: 'attachment',
+            filename: 'blue-triangle.png',
+            mimeType: 'image/png',
+            byteLength: 128,
+            available: true,
+            detached: false
+          }
+        ]
       },
       {
         ...common,
-        id: '00000000-0000-4000-8000-000000000063', ordinal: 1, role: 'assistant', status: 'failed', content: '',
+        id: '00000000-0000-4000-8000-000000000063',
+        ordinal: 1,
+        role: 'assistant',
+        status: 'failed',
+        content: '',
         runOutcome: { status: 'failed', errorCode: 'AGENT_CONTEXT_TOO_LARGE' }
       }
     ]
@@ -843,6 +871,7 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     const method = init?.method ?? 'GET'
     requests.push({ method, path })
     const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : {}
+    if (path === '/_api/pages/recent' && method === 'GET') return Response.json([])
     if (path === '/_api/pages/preview') {
       const response = sourceResponses.get(Number(url.searchParams.get('id')))
       if (!response) throw new Error('Unexpected source preview')
@@ -879,7 +908,13 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     if (path === '/_api/agents/skills') return Response.json({ skills: [] })
     if (path === '/_api/agents/conversation-folders') return Response.json({ folders: [] })
     if (path === '/_api/agents/sessions' && method === 'GET')
-      return authorization.pending ?? Response.json({ sessions: [summary(), ...Array.from(additionalThreads.values(), thread => ({ ...thread.session, deletedAt: null }))], nextCursor: null })
+      return (
+        authorization.pending ??
+        Response.json({
+          sessions: [summary(), ...Array.from(additionalThreads.values(), thread => ({ ...thread.session, deletedAt: null }))],
+          nextCursor: null
+        })
+      )
     if (path === '/_api/agents/sessions' && method === 'POST') {
       const next = creations.shift()
       if (!next || body.retention !== next.retention || Object.keys(body).some(key => key !== 'retention'))
@@ -1049,13 +1084,9 @@ const mountInlineAgent = (
       mediaSession: Object,
       mediaCapabilities: Object,
       networkBlocked: Boolean,
-      sourceContext: Object,
-      memoryContext: Object,
-      contextLoading: Boolean,
-      contextSourcesDisabled: Boolean,
-      contextMemoryDisabled: Boolean
+      personalToolsEnabled: Boolean
     },
-    emits: ['openSources', 'openMemory', 'send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'draftChange', 'compositionChange', 'mediaSettled'],
+    emits: ['openPersonalTools', 'send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'draftChange', 'compositionChange', 'mediaSettled'],
     setup(props, { emit, expose }) {
       const bindings = evaluateComposer(
         Vue.computed,
@@ -1097,24 +1128,20 @@ const mountInlineAgent = (
   if (options.pinia) app.use(options.pinia)
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.config.globalProperties.$t = translateEnglish
-  for (const name of [
-    'AgentMcpApproval',
-    'AgentMemoryManager',
-    'AgentPersonalSkills',
-    'AgentPersonalMcp',
-    'WikiSourcePreview'
-  ])
+  for (const name of ['AgentMcpApproval', 'AgentMemoryManager', 'AgentPersonalSkills', 'AgentPersonalMcp', 'WikiSourcePreview'])
     app.component(name, componentStub)
   app.component('AgentThread', options.realThread ? threadComponent : componentStub)
   app.component('AgentGoalStatus', options.realGoal ? goalStatusComponent : componentStub)
   app.component(
     'AgentHistoryPanel',
-    options.realHistory ? historyPanelComponent : Vue.defineComponent({
-      props: { headingId: String, descriptionId: String },
-      setup(props) {
-        return () => Vue.h('div', [Vue.h('h2', { id: props.headingId }, 'Conversations'), Vue.h('p', { id: props.descriptionId }, 'Conversation history')])
-      }
-    })
+    options.realHistory
+      ? historyPanelComponent
+      : Vue.defineComponent({
+          props: { headingId: String, descriptionId: String },
+          setup(props) {
+            return () => Vue.h('div', [Vue.h('h2', { id: props.headingId }, 'Conversations'), Vue.h('p', { id: props.descriptionId }, 'Conversation history')])
+          }
+        })
   )
   app.component('AgentContextPicker', contextPickerComponent)
   app.component('AgentContextSummary', contextSummaryComponent)
@@ -1230,14 +1257,14 @@ describe('Inline Agent historical Review scope', () => {
     const workspace = realWorkspace('saved', routePage, historical)
     const mounted = mountInlineAgent(workspace.state(), { realThread: true })
     await settle()
-    expect(mounted.root.querySelector('.agent-context__page-chip')?.getAttribute('aria-pressed')).toBe('true')
+    expect(mounted.root.querySelector('.agent-context-summary__page')?.textContent).toContain(translateEnglish('common:agentContextUi.pageIncluded'))
     await workspace.store.openSession(sessionId)
     await settle()
 
     review(mounted.root).click()
     await settle()
     expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(historical.messages[0].content)
-    expect(mounted.root.querySelector('.agent-context__page-chip')?.getAttribute('aria-pressed')).toBe('false')
+    expect(mounted.root.querySelector('.agent-context-summary__page')?.textContent).toContain(translateEnglish('common:agentContextUi.noPage'))
     expect(mounted.root.querySelector('.agent-composer__media-attachments')).toBeNull()
     expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
     expect(mounted.root.querySelector('.inline-agent__context-notice[role="status"][aria-live="polite"]')).toBeNull()
@@ -1270,10 +1297,9 @@ describe('Inline Agent historical Review scope', () => {
 
     review(mounted.root).click()
     await settle()
-    const chip = () => mounted.root.querySelector('.agent-context__page-chip')
-    expect(chip()?.getAttribute('aria-pressed')).toBe('true')
+    const chip = () => mounted.root.querySelector('.agent-context__source-preview[data-source-key="current"]')
     expect(chip()?.textContent).toContain('en/handbook/original')
-    expect(mounted.root.querySelectorAll('.agent-context__source-label')).toHaveLength(8)
+    expect(mounted.root.querySelectorAll('.agent-context__source-label')).toHaveLength(9)
     expect(workspace.messageInputs).toHaveLength(0)
 
     workspace.store.setCurrentPage({ ...routePage, id: 1, path: 'handbook/source-1' })
@@ -1300,11 +1326,16 @@ describe('Inline Agent historical Review scope', () => {
     await settle()
     review(mounted.root).click()
     await settle()
-    const chip = mounted.root.querySelector<HTMLButtonElement>('.agent-context__page-chip')
-    expect(chip?.getAttribute('aria-pressed')).toBe('false')
+    expect(mounted.root.querySelector('.agent-context-summary__page')?.textContent).toContain(translateEnglish('common:agentContextUi.noPage'))
     expect(mounted.root.querySelector('.inline-agent__context-notice[role="status"][aria-live="polite"]')).not.toBeNull()
     expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
-    chip?.click()
+    mounted.root.querySelector<HTMLButtonElement>('.inline-agent__source-control')!.click()
+    await settle()
+    const include = document.body.querySelector<HTMLButtonElement>('.agent-context__scope [aria-pressed="false"]')
+    if (!include) throw new Error('Explicit page opt-in missing from Source')
+    include.click()
+    await settle()
+    document.body.querySelector<HTMLButtonElement>('.agent-context__dialog-close')!.click()
     await settle()
     send(mounted.root).click()
     await settle()
@@ -1325,7 +1356,7 @@ describe('Inline Agent historical Review scope', () => {
     review(mounted.root).click()
     await settle()
     expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('')
-    expect(mounted.root.querySelector('.agent-context__page-chip')?.getAttribute('aria-pressed')).toBe('false')
+    expect(mounted.root.querySelector('.agent-context-summary__page')?.textContent).toContain(translateEnglish('common:agentContextUi.noPage'))
     expect(mounted.root.querySelector('.inline-agent__context-notice[role="status"][aria-live="polite"]')).not.toBeNull()
     expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
   })
@@ -1343,14 +1374,14 @@ describe('Inline Agent historical Review scope', () => {
     state.resolveDraftDiscard(false)
     await settle()
     expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('Keep this unsent draft')
-    expect(mounted.root.querySelector('.agent-context__page-chip')?.getAttribute('aria-pressed')).toBe('true')
+    expect(mounted.root.querySelector('.agent-context-summary__page')?.textContent).toContain(translateEnglish('common:agentContextUi.pageIncluded'))
     review(mounted.root).click()
     await settle()
     expect(state.discardDraftOpen.value).toBe(true)
     state.resolveDraftDiscard(true)
     await settle()
     expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(historical.messages[0].content)
-    expect(mounted.root.querySelector('.agent-context__page-chip')?.getAttribute('aria-pressed')).toBe('false')
+    expect(mounted.root.querySelector('.agent-context-summary__page')?.textContent).toContain(translateEnglish('common:agentContextUi.noPage'))
     expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
   })
 
@@ -1360,7 +1391,12 @@ describe('Inline Agent historical Review scope', () => {
       const historical = reviewThread(originalPage, [source])
       const workspace = realWorkspace('saved', routePage, historical)
       let resolveSource!: (response: Response) => void
-      workspace.sourceResponses.set(source.id, new Promise<Response>(resolve => { resolveSource = resolve }))
+      workspace.sourceResponses.set(
+        source.id,
+        new Promise<Response>(resolve => {
+          resolveSource = resolve
+        })
+      )
       const mounted = mountInlineAgent(workspace.state(), { realThread: true })
       await settle()
       review(mounted.root).click()
@@ -1387,15 +1423,16 @@ describe('Inline Agent historical Review scope', () => {
       const sources = [reviewSource(1), reviewSource(2)]
       const workspace = realWorkspace('saved', routePage, reviewThread(originalPage, sources))
       workspace.sourceResponses.set(1, Response.json(reviewPreview(sources[0])))
-      workspace.sourceResponses.set(2, unavailable === 'denied'
-        ? new Response(null, { status: 403 })
-        : Response.json(reviewPreview({ ...sources[1], locale: 'fr' })))
+      workspace.sourceResponses.set(
+        2,
+        unavailable === 'denied' ? new Response(null, { status: 403 }) : Response.json(reviewPreview({ ...sources[1], locale: 'fr' }))
+      )
       const mounted = mountInlineAgent(workspace.state(), { realThread: true })
       await settle()
       review(mounted.root).click()
       await settle()
       expect(mounted.root.querySelectorAll('.agent-context__source-label')).toHaveLength(0)
-      expect(mounted.root.querySelector('.agent-context__page-chip')?.getAttribute('aria-pressed')).toBe('false')
+      expect(mounted.root.querySelector('.agent-context-summary__page')?.textContent).toContain(translateEnglish('common:agentContextUi.noPage'))
       expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('')
       expect(mounted.root.querySelector('.inline-agent__context-notice[role="status"][aria-live="polite"]')).not.toBeNull()
       expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([])
@@ -1890,7 +1927,7 @@ describe('Inline Agent workspace actions', () => {
       expect(workspace.store.thread?.session.id).toBe(sessionId)
       expect(workspace.store.drafts[sessionId]).toEqual(expectedDraft)
       expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(expectedDraft.text)
-      expect(mounted.root.querySelector('.agent-composer__goal-chip')).not.toBeNull()
+      expect(mounted.root.querySelector('.agent-composer__goal-toggle')?.getAttribute('aria-pressed')).toBe('true')
       expect(mounted.root.querySelector('.agent-context__sources')?.textContent).toContain('Release handbook')
       const textarea = mounted.root.querySelector<HTMLTextAreaElement>('textarea')
       expect(document.activeElement).toBe(textarea)
@@ -1947,7 +1984,7 @@ describe('Inline Agent workspace actions', () => {
         includeCurrentPage: true
       })
       expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('')
-      expect(mounted.root.querySelector('.agent-composer__goal-chip')).toBeNull()
+      expect(mounted.root.querySelector('.agent-composer__goal-toggle')?.getAttribute('aria-pressed')).toBe('false')
       expect(mounted.root.querySelector('.agent-context__sources')).toBeNull()
     })
 
@@ -1959,7 +1996,13 @@ describe('Inline Agent workspace actions', () => {
         ...initial,
         session: {
           ...initial.session,
-          mediaCapabilities: resolvedMediaCapabilities({ attachments: true, imageGeneration: true, videoGeneration: false, musicGeneration: false, transcription: false })
+          mediaCapabilities: resolvedMediaCapabilities({
+            attachments: true,
+            imageGeneration: true,
+            videoGeneration: false,
+            musicGeneration: false,
+            transcription: false
+          })
         }
       }
       let completeUpload: (response: Response) => void = () => {
@@ -2064,7 +2107,13 @@ describe('Inline Agent workspace actions', () => {
       ...initial,
       session: {
         ...initial.session,
-        mediaCapabilities: resolvedMediaCapabilities({ attachments: true, imageGeneration: true, videoGeneration: true, musicGeneration: true, transcription: false })
+        mediaCapabilities: resolvedMediaCapabilities({
+          attachments: true,
+          imageGeneration: true,
+          videoGeneration: true,
+          musicGeneration: true,
+          transcription: false
+        })
       }
     }
     const state = workspace.state()
@@ -2379,6 +2428,22 @@ describe('Inline Agent workspace actions', () => {
     session.title = 'Launch checklist'
     await settle()
     expect(mounted.root.querySelector('.inline-agent__session-title')?.textContent?.trim()).toBe('Launch checklist')
+    state.thread.value = {
+      ...thread,
+      session: { ...session, title: '' },
+      messages: [{ id: 'untitled-message', role: 'assistant', content: 'Retained untitled conversation' }]
+    }
+    await settle()
+    expect(mounted.root.querySelector('.inline-agent__session-title')?.textContent?.trim()).toBe(
+      translateEnglish('common:inlineAgentChat.untitledConversation')
+    )
+    ;(state.loading as ValueRef<boolean>).value = true
+    await settle()
+    expect(mounted.root.querySelector('.inline-agent__session-title')?.textContent?.trim()).toBe(translateEnglish('common:inlineAgentChat.openingConversation'))
+    ;(state.loading as ValueRef<boolean>).value = false
+    state.thread.value = { ...thread, session: { ...session, title: '' }, messages: [] }
+    await settle()
+    expect(mounted.root.querySelector('.inline-agent__session-title')?.textContent?.trim()).toBe(translateEnglish('common:inlineAgentChat.newChat'))
   })
 
   it('reinitializes a closed workspace on mount without requiring Retry', async () => {
@@ -2396,12 +2461,26 @@ describe('Inline Agent workspace actions', () => {
     expect(reopened.root.querySelector('.inline-agent__initialization-error')).toBeNull()
   })
 
-  it('mounts a usable source picker and message textbox in the workspace', () => {
-    const mounted = mountInlineAgent()
-    expect(mounted.root.querySelectorAll('[aria-label="Conversation source controls"]')).toHaveLength(1)
-    expect(mounted.root.querySelector<HTMLButtonElement>('[aria-label="Add sources"]')?.disabled).toBe(false)
-    expect(mounted.root.querySelector<HTMLButtonElement>('[aria-label="Choose Agent search scope"]')?.disabled).toBe(false)
+  it('offers one context summary and opens Source from the composer without duplicating context controls', async () => {
+    // Source admission requires the store's validated owner/session projection,
+    // which the focused goal-lock stub intentionally does not implement.
+    const workspace = realWorkspace()
+    const mounted = mountInlineAgent(workspace.state())
+    await settle()
+    const name = translateEnglish('common:agentContextUi.context')
+    const summary = `:is(section, [role="region"])[aria-label="${name}"]`
+    expect(mounted.root.querySelectorAll(summary)).toHaveLength(1)
+    expect(mounted.root.querySelector('.agent-composer')?.querySelector(summary)).toBeNull()
+    const source = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__source-control')
+    if (!source) throw new Error('Composer Source action missing')
+    expect(source.disabled).toBe(false)
     expect(mounted.root.querySelector('textarea')).not.toBeNull()
+    source.click()
+    await settle()
+    expect(document.body.querySelector('.agent-context__search input')).not.toBeNull()
+    expect(document.body.querySelector('[aria-label="Conversation source controls"]')).not.toBeNull()
+    expect(workspace.requests.filter(request => request.path === '/_api/pages/recent')).toHaveLength(1)
+    expect(workspace.requests.filter(request => request.method === 'POST')).toHaveLength(0)
   })
 
   it('offers labelled no-page starters and admits a Wiki-wide run', async () => {
@@ -2434,8 +2513,10 @@ describe('Inline Agent workspace actions', () => {
     const first = workspace.state()
     const mounted = mountInlineAgent(first)
     const expectIncluded = (root: HTMLElement, page: TestPageHint): void => {
-      const chip = root.querySelector('[aria-pressed="true"].agent-context__page-chip')
-      expect(chip?.getAttribute('aria-label')).toBe(`Include current page: ${page.locale}/${page.path}`)
+      const chip = root.querySelector('.agent-context__source-preview[data-source-key="current"]')
+      expect(chip?.getAttribute('aria-label')).toBe(
+        translateEnglish('common:agentContextPicker.previewAttachedSource', { title: `${page.locale}/${page.path}` })
+      )
     }
     expect(first.currentPage.value).toEqual(firstPage)
     expectIncluded(mounted.root, firstPage)
@@ -2656,7 +2737,7 @@ describe('Inline Agent workspace actions', () => {
     expect(workspace.requests.some(request => /\/profiles(?:\/|$)|\/profile$/.test(request.path))).toBe(false)
   })
 
-  it('coalesces scroll measurements while preserving manual reading, follow and approval navigation', async () => {
+  it('coalesces scroll work and keeps historical reading disarmed until explicit Latest', async () => {
     installBrowserSurface()
     const frames = controlTranscriptFrames()
     const state = loadGoalLockState(null)
@@ -2676,11 +2757,10 @@ describe('Inline Agent workspace actions', () => {
     const approval = document.createElement('div')
     approval.id = 'agent-approval-proposal-1'
     approval.tabIndex = -1
-    container.insertBefore(approval, dock)
+    container.append(approval)
     let height = 2000
     const heightRead = vi.fn(() => height)
     const viewportRead = vi.fn(() => ({ top: 0, bottom: 600, height: 600 }) as DOMRect)
-    const dockRead = vi.fn(() => ({ top: 400, bottom: 600, height: 200 }) as DOMRect)
     let approvalTop = 700
     const approvalRead = vi.fn(() => ({ top: approvalTop, bottom: approvalTop + 100, height: 100 }) as DOMRect)
     Object.defineProperties(container, {
@@ -2688,10 +2768,14 @@ describe('Inline Agent workspace actions', () => {
       clientHeight: { configurable: true, value: 600 }
     })
     container.getBoundingClientRect = viewportRead
-    dock.getBoundingClientRect = dockRead
     approval.getBoundingClientRect = approvalRead
     await frames.flush()
+    expect(container.scrollTop).toBe(0)
+    expect(state.transcriptFollowing.value).toBe(false)
+    await state.scrollToLatest()
+    await frames.flush()
     expect(container.scrollTop).toBe(1400)
+    expect(state.transcriptFollowing.value).toBe(true)
 
     // Short transcripts can expose earlier media actions while still within
     // the near-bottom threshold. A ripple/layout frame must not move the
@@ -2712,10 +2796,9 @@ describe('Inline Agent workspace actions', () => {
     container.scrollTop = 1400
     container.dispatchEvent(new browserWindow.Event('scroll'))
     await frames.flush()
-    expect(state.transcriptFollowing.value).toBe(true)
+    expect(state.transcriptFollowing.value).toBe(false)
     heightRead.mockClear()
     viewportRead.mockClear()
-    dockRead.mockClear()
     approvalRead.mockClear()
 
     container.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
@@ -2728,7 +2811,6 @@ describe('Inline Agent workspace actions', () => {
     await frames.flush()
     expect(heightRead).toHaveBeenCalledTimes(1)
     expect(viewportRead).toHaveBeenCalledTimes(1)
-    expect(dockRead).toHaveBeenCalledTimes(1)
     expect(approvalRead).toHaveBeenCalledTimes(1)
     expect(state.transcriptFollowing.value).toBe(false)
     expect(state.transcriptBottomDistance.value).toBe(600)
@@ -2747,6 +2829,9 @@ describe('Inline Agent workspace actions', () => {
     container.scrollTop = 1800
     container.dispatchEvent(new browserWindow.Event('scroll'))
     await frames.flush()
+    expect(state.transcriptFollowing.value).toBe(false)
+    await state.scrollToLatest()
+    await frames.flush()
     expect(state.transcriptFollowing.value).toBe(true)
     height = 2600
     state.scheduleTranscriptReconcile()
@@ -2761,7 +2846,7 @@ describe('Inline Agent workspace actions', () => {
     expect(frames.callbacks.size).toBe(0)
   })
 
-  it('tracks growing dock height and focuses approvals without resuming automatic follow', async () => {
+  it('keeps approval navigation and subsequent footer resize from resuming automatic follow', async () => {
     installBrowserSurface()
     const frames = controlTranscriptFrames()
     const originalObserver = globalThis.ResizeObserver
@@ -2806,23 +2891,19 @@ describe('Inline Agent workspace actions', () => {
       scrollHeight: { configurable: true, value: 2000 },
       clientHeight: { configurable: true, value: 600 }
     })
-    let dockHeight = 120
-    dock.getBoundingClientRect = () => ({ top: 600 - dockHeight, bottom: 600, height: dockHeight }) as DOMRect
     container.getBoundingClientRect = () => ({ top: 0, bottom: 600, height: 600 }) as DOMRect
     const approval = document.createElement('div')
     approval.id = 'agent-approval-proposal-1'
     approval.tabIndex = -1
     approval.getBoundingClientRect = () => ({ top: 200, bottom: 300, height: 100 }) as DOMRect
-    container.insertBefore(approval, dock)
+    container.append(approval)
     await frames.flush()
-    expect(container.style.getPropertyValue('--agent-dock-height')).toBe('120px')
     const observer = observers.find(candidate => candidate.targets.has(dock))
     if (!observer) throw new Error('Conversation dock was not observed')
-    dockHeight = 340
     observer.callback([], observer)
     observer.callback([], observer)
     await frames.flush()
-    expect(container.style.getPropertyValue('--agent-dock-height')).toBe('340px')
+    expect(container.scrollTop).toBe(0)
 
     const scrollIntoView = vi.spyOn(approval, 'scrollIntoView')
     await state.jumpToApproval()
@@ -2832,134 +2913,247 @@ describe('Inline Agent workspace actions', () => {
     container.scrollTop = 900
     state.handleTranscriptScroll()
     await frames.flush()
-    dockHeight = 420
     observer.callback([], observer)
     await frames.flush()
-    expect(container.style.getPropertyValue('--agent-dock-height')).toBe('420px')
     expect(container.scrollTop).toBe(900)
     expect(state.transcriptFollowing.value).toBe(false)
     mounted.unmount()
     expect(observer.disconnected).toBe(true)
   })
 
-  it('positions empty mobile starters above the focused composer while translations are unavailable and after recovery', async () => {
+  it('preserves reading through composer focus, draft edits, disclosure, viewport resize and late content', async () => {
     installBrowserSurface()
     const frames = controlTranscriptFrames()
-    resizeViewport?.(390)
-    const translator = vi.fn<typeof translateEnglish>(fallbackLocalizationLabel)
-    const state = loadGoalLockState(null, false, null, false, null, undefined, translator)
-    const transcript = document.createElement('div')
-    document.body.append(transcript)
-    // Model a keyboard-reduced scrollport; native delayed-media anchoring is
-    // exercised separately by the responsive browser case.
+    const state = loadGoalLockState(null)
+    state.thread.value = { ...state.thread.value!, messages: [{ id: 'history-message', role: 'assistant', content: 'Retained response' }] }
+    const mounted = mountInlineAgent(state, { viewportWidth: 390 })
+    const transcript = mounted.root.querySelector<HTMLElement>('.inline-agent__transcript')
+    const textarea = mounted.root.querySelector<HTMLTextAreaElement>('textarea')
+    if (!transcript || !textarea) throw new Error('Conversation controls missing')
+    let height = 2000
+    let viewportHeight = 600
     Object.defineProperties(transcript, {
-      scrollHeight: { configurable: true, value: 800 },
-      clientHeight: { configurable: true, value: 240 }
+      scrollHeight: { configurable: true, get: () => height },
+      clientHeight: { configurable: true, get: () => viewportHeight }
     })
-    state.transcript.value = transcript
-    state.handleComposerFocusIn()
-    await state.reconcileTranscriptGrowth(false)
     await frames.flush()
-    expect(transcript.scrollTop).toBe(560)
-
-    translator.mockImplementation(translateEnglish)
-    transcript.scrollTo({ top: 0 })
-    await state.reconcileTranscriptGrowth(false)
+    await state.scrollToLatest()
     await frames.flush()
-    expect(transcript.scrollTop).toBe(560)
+    transcript.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    transcript.scrollTop = 700
+    transcript.dispatchEvent(new browserWindow.Event('scroll'))
+    await frames.flush()
+    expect(state.transcriptFollowing.value).toBe(false)
 
-    resizeViewport?.(1024)
-    await state.reconcileTranscriptGrowth(false)
+    textarea.focus()
+    textarea.value = 'Keep this draft while reading'
+    textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+    mounted.root.querySelector<HTMLElement>('.agent-context-summary summary')!.click()
+    viewportHeight = 320
+    browserWindow.dispatchEvent(new browserWindow.Event('resize'))
+    height = 2600
+    transcript.append(document.createElement('img'))
+    state.scheduleTranscriptReconcile()
+    await frames.flush()
+    expect(transcript.scrollTop).toBe(700)
+    expect(state.transcriptFollowing.value).toBe(false)
+    expect(textarea.value).toBe('Keep this draft while reading')
+    expect(mounted.root.querySelector('textarea')).toBe(textarea)
+    expect(mounted.root.querySelector<HTMLDetailsElement>('.agent-context-summary details')?.open).toBe(true)
+  })
+
+  it('keeps an accepted Send following through stream readiness and terminal publication before the next frame', async () => {
+    installBrowserSurface()
+    const frames = controlTranscriptFrames()
+    const streams: RunEventSource[] = []
+    class RunEventSource {
+      readonly listeners: Record<string, Array<(event: MessageEvent) => void>> = {}
+      readonly close = vi.fn()
+      constructor(readonly url: string) { streams.push(this) }
+      addEventListener(type: string, listener: EventListener): void {
+        (this.listeners[type] ??= []).push(listener as (event: MessageEvent) => void)
+      }
+      emit(type: string, lastEventId: string, data: unknown): void {
+        const event = new MessageEvent(type, { lastEventId, data: JSON.stringify(data) })
+        for (const listener of this.listeners[type] ?? []) listener(event)
+      }
+    }
+    const previousEventSource = Object.getOwnPropertyDescriptor(globalThis, 'EventSource')
+    Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: RunEventSource })
+    stateCleanups.push(() => {
+      if (previousEventSource) Object.defineProperty(globalThis, 'EventSource', previousEventSource)
+      else Reflect.deleteProperty(globalThis, 'EventSource')
+    })
+    const published = { ...threadFixture() }
+    published.messages = [{
+      id: '00000000-0000-4000-8000-000000000060', runId: null, ordinal: 0,
+      role: 'assistant', status: 'complete', content: 'Earlier completed response',
+      citations: [], createdAt: timestamp, updatedAt: timestamp
+    }]
+    const workspace = realWorkspace('saved', null, published)
+    const state = workspace.state()
+    const mounted = mountInlineAgent(state, { realThread: true, pinia: workspace.pinia })
+    const transcript = mounted.root.querySelector<HTMLElement>('.inline-agent__transcript')
+    const textarea = mounted.root.querySelector<HTMLTextAreaElement>('textarea')
+    if (!transcript || !textarea) throw new Error('Conversation controls missing')
+    let height = 2000
+    Object.defineProperties(transcript, {
+      scrollHeight: { configurable: true, get: () => height },
+      clientHeight: { configurable: true, value: 600 }
+    })
     await frames.flush()
     expect(transcript.scrollTop).toBe(0)
+    expect(state.transcriptFollowing.value).toBe(false)
+    transcript.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+    transcript.scrollTop = 700
+    transcript.dispatchEvent(new browserWindow.Event('scroll'))
+    await frames.flush()
+    textarea.focus()
+    textarea.value = 'Continue from this completed conversation'
+    textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+    await frames.flush()
+    // A pre-submit measurement must not occupy the new submission's frame slot.
+    state.handleTranscriptScroll()
+    const admission = Promise.withResolvers<Response>()
+    workspace.sendResponse.pending = admission.promise
+    mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')!.click()
+    await vi.waitFor(() => expect(workspace.messageInputs).toHaveLength(1))
+    expect(workspace.messageInputs[0]?.content).toBe('Continue from this completed conversation')
+    expect(transcript.scrollTop).toBe(700)
+    expect(state.transcriptFollowing.value).toBe(false)
+    const run: NonNullable<AgentThreadState['session']['currentRun']> = {
+      id: '00000000-0000-4000-8000-000000000020', sessionId, status: 'running',
+      attempt: 1, eventSequence: 1, canCancel: true, createdAt: timestamp,
+      startedAt: timestamp, completedAt: null, errorCode: null, errorMessage: null
+    }
+    // Publish through the same HTTP projection and EventSource boundary as a
+    // normal send; the real store owns admission callbacks and connection state.
+    published.session = { ...published.session, version: 2, profileResolutionToken: profileResolutionToken(sessionId, 2), currentRun: run }
+    published.messages = [...published.messages, {
+      id: '00000000-0000-4000-8000-000000000021', runId: null, ordinal: 1,
+      role: 'user', status: 'complete', content: String(workspace.messageInputs[0]?.content),
+      citations: [], createdAt: timestamp, updatedAt: timestamp
+    }, {
+      id: '00000000-0000-4000-8000-000000000022', runId: run.id, ordinal: 2,
+      role: 'assistant', status: 'streaming', content: 'Preparing the newest answer',
+      citations: [], createdAt: timestamp, updatedAt: timestamp
+    }]
+    admission.resolve(Response.json({ run, replayed: false }))
+    await vi.waitFor(() => expect(streams).toHaveLength(1))
+    expect(workspace.store.connection).toBe('connecting')
+    await frames.flush()
+    expect(transcript.scrollTop).toBe(1400)
+    expect(state.transcriptFollowing.value).toBe(true)
+    expect(textarea.value).toBe('')
+
+    streams[0]!.emit('stream.ready', '', { schemaVersion: 1, ownerId: 2, sessionId, runId: run.id, replayThroughSequence: 1 })
+    await settle()
+    expect(workspace.store.connection).toBe('connected')
+    published.session = { ...published.session, currentRun: { ...run, status: 'succeeded', eventSequence: 4, canCancel: false, completedAt: timestamp } }
+    published.messages = published.messages.map(message => message.id === '00000000-0000-4000-8000-000000000022'
+      ? { ...message, status: 'complete', content: 'The final checkpoint belongs to the newest response.' }
+      : message)
+    height = 2600
+    streams[0]!.emit('run.completed', '4', { id: `${run.id}:4`, runId: run.id, sequence: 4, type: 'run.completed', attempt: 1, schemaVersion: 1, data: { runId: run.id }, createdAt: timestamp })
+    expect(workspace.store.connection).toBe('reconnecting')
+    await vi.waitFor(() => expect(workspace.store.connection).toBe('idle'))
+    expect(mounted.root.querySelectorAll('.agent-message--assistant')[1]?.textContent).toContain('The final checkpoint')
+    await frames.flush()
+    expect(transcript.scrollTop).toBe(2000)
+    expect(state.transcriptBottomDistance.value).toBe(0)
+    expect(state.transcriptFollowing.value).toBe(true)
   })
 
-  it('restores composer opacity on engagement and returns to reading state on transcript engagement', async () => {
-    const lockState = loadGoalLockState(null)
-    const mounted = mountInlineAgent(lockState)
-    const getComposerDock = (): HTMLElement => {
-      const dock = mounted.root.querySelector<HTMLElement>('.inline-agent__composer')
-      if (!dock) throw new Error('Composer dock did not render')
-      return dock
-    }
-    const getTranscript = (): HTMLElement => {
+  for (const accepted of [false, true]) {
+    it(`${accepted ? 'resumes follow at accepted admission before final refresh' : 'retains reading after rejected submission'}`, async () => {
+      installBrowserSurface()
+      const frames = controlTranscriptFrames()
+      const state = loadGoalLockState(null)
+      state.thread.value = { ...state.thread.value!, messages: [{ id: 'history-message', role: 'assistant', content: 'Earlier response' }] }
+      const mounted = mountInlineAgent(state)
       const transcript = mounted.root.querySelector<HTMLElement>('.inline-agent__transcript')
-      if (!transcript) throw new Error('Composer transcript did not render')
-      return transcript
-    }
-    const getTextarea = (): HTMLTextAreaElement => {
-      const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
-      if (!textarea) throw new Error('Composer textarea did not render')
-      return textarea
-    }
-    getTranscript()
-    getTextarea()
-    await settle()
-    const initialTranscript = getTranscript()
-    initialTranscript.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
-    initialTranscript.focus()
-    expect(document.activeElement).toBe(initialTranscript)
-    await settle()
-    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(false)
-    mounted.transcriptFollowing.value = false
-    await settle()
-    expect(getComposerDock().classList.contains('inline-agent__composer--scrolled')).toBe(true)
-    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(false)
+      const textarea = mounted.root.querySelector<HTMLTextAreaElement>('textarea')
+      if (!transcript || !textarea) throw new Error('Conversation controls missing')
+      Object.defineProperties(transcript, {
+        scrollHeight: { configurable: true, value: 2000 },
+        clientHeight: { configurable: true, value: 600 }
+      })
+      await frames.flush()
+      transcript.scrollTop = 700
+      transcript.dispatchEvent(new browserWindow.Event('scroll'))
+      await frames.flush()
+      const admission = Promise.withResolvers<boolean>()
+      let onAccepted!: () => void
+      state.agentCalls.send = vi.fn((...args: unknown[]) => {
+        onAccepted = args[4] as () => void
+        return admission.promise
+      })
+      textarea.value = 'Ask without abandoning reading until accepted'
+      textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+      await settle()
+      mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')!.click()
+      await settle()
+      expect(state.agentCalls.send).toHaveBeenCalledTimes(1)
+      expect(transcript.scrollTop).toBe(700)
+      expect(state.transcriptFollowing.value).toBe(false)
+      if (accepted) {
+        onAccepted()
+        await frames.flush()
+        expect(transcript.scrollTop).toBe(1400)
+        expect(state.transcriptFollowing.value).toBe(true)
+        expect(textarea.value).toBe('')
+      }
+      admission.resolve(accepted)
+      await settle()
+      await frames.flush()
+      expect(transcript.scrollTop).toBe(accepted ? 1400 : 700)
+      expect(state.transcriptFollowing.value).toBe(accepted)
+      expect(textarea.value).toBe(accepted ? '' : 'Ask without abandoning reading until accepted')
+    })
+  }
 
-    getComposerDock().dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
-
-    await settle()
-    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(true)
-
-    const focusedTextarea = getTextarea()
-    focusedTextarea.focus()
-    expect(document.activeElement).toBe(focusedTextarea)
-    focusedTextarea.dispatchEvent(new document.defaultView!.FocusEvent('focusin', { bubbles: true }))
-    await settle()
-    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(true)
-    const editingTranscript = getTranscript()
-    const transcriptPointerEvent = new MouseEvent('pointerdown', { bubbles: true }) as unknown as PointerEvent
-    editingTranscript.dispatchEvent(transcriptPointerEvent)
-    await settle()
-    expect(document.activeElement).toBe(focusedTextarea)
-    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(false)
-    editingTranscript.focus()
-    expect(document.activeElement).toBe(editingTranscript)
-    await settle()
-    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(false)
-
-    const refocusedTextarea = getTextarea()
-    refocusedTextarea.focus()
-    expect(document.activeElement).toBe(refocusedTextarea)
-    refocusedTextarea.dispatchEvent(new document.defaultView!.FocusEvent('focusin', { bubbles: true }))
-    await settle()
-    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(true)
-    const refocusTranscript = getTranscript()
-    refocusTranscript.focus()
-    expect(document.activeElement).toBe(refocusTranscript)
-    const transcriptFocusEvent = new document.defaultView!.FocusEvent('focusin', { bubbles: true })
-    refocusTranscript.dispatchEvent(transcriptFocusEvent)
-    await settle()
-    expect(getComposerDock().classList.contains('inline-agent__composer--focused')).toBe(false)
-
-    const disabledState = loadGoalLockState('active')
-    const disabledMounted = mountInlineAgent(disabledState)
-    const getDisabledComposerDock = (): HTMLElement => {
-      const dock = disabledMounted.root.querySelector<HTMLElement>('.inline-agent__composer')
-      if (!dock) throw new Error('Disabled composer dock did not render')
-      return dock
-    }
-    const getDisabledTextarea = (): HTMLTextAreaElement => {
-      const textarea = disabledMounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
-      if (!textarea) throw new Error('Disabled composer textarea did not render')
-      return textarea
-    }
-    disabledMounted.transcriptFollowing.value = false
-    await settle()
-    getDisabledTextarea().dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
-    await settle()
-    expect(getDisabledComposerDock().classList.contains('inline-agent__composer--focused')).toBe(true)
-  })
+  for (const boundary of ['session', 'owner', 'unmount'] as const) {
+    it(`retires late send admission across the ${boundary} boundary`, async () => {
+      installBrowserSurface()
+      const frames = controlTranscriptFrames()
+      const state = loadGoalLockState(null)
+      state.thread.value = { ...state.thread.value!, messages: [{ id: 'old-message', role: 'assistant', content: 'Old session response' }] }
+      const mounted = mountInlineAgent(state)
+      const transcript = mounted.root.querySelector<HTMLElement>('.inline-agent__transcript')
+      if (!transcript) throw new Error('Transcript missing')
+      Object.defineProperties(transcript, {
+        scrollHeight: { configurable: true, value: 2000 },
+        clientHeight: { configurable: true, value: 600 }
+      })
+      await frames.flush()
+      const admission = Promise.withResolvers<boolean>()
+      let onAccepted!: () => void
+      state.agentCalls.send = vi.fn((...args: unknown[]) => {
+        onAccepted = args[4] as () => void
+        return admission.promise
+      })
+      const sending = state.sendPrompt('Original session request')
+      await settle()
+      expect(state.agentCalls.send).toHaveBeenCalledTimes(1)
+      if (boundary === 'session')
+        state.thread.value = {
+          ...state.thread.value!,
+          session: { id: 'replacement-session', title: '', skills: [], currentRun: null },
+          messages: [{ id: 'replacement-message', role: 'assistant', content: 'Replacement history' }]
+        }
+      else if (boundary === 'owner') state.componentProps.ownerId = 3
+      else mounted.unmount()
+      await settle()
+      await frames.flush()
+      transcript.scrollTop = 350
+      onAccepted()
+      admission.resolve(true)
+      await sending
+      await frames.flush()
+      expect(transcript.scrollTop).toBe(350)
+      expect(state.transcriptFollowing.value).toBe(false)
+    })
+  }
 })
 
 describe('Inline Agent clear-unfiled confirmation', () => {
@@ -3127,15 +3321,37 @@ describe('Inline Agent panel semantics', () => {
 })
 
 describe('Inline Agent latest response dock', () => {
-  it('names the latest response button and hides its decorative halo from assistive technology', () => {
-    const mounted = mountInlineAgent(undefined, { followJumpVisible: true })
+  it('keeps the named Latest action outside the transcript and explicitly resumes follow', async () => {
+    installBrowserSurface()
+    const frames = controlTranscriptFrames()
+    const state = loadGoalLockState(null)
+    const thread = state.thread.value
+    if (!thread) throw new Error('Conversation missing')
+    state.thread.value = {
+      ...thread,
+      messages: [{ id: 'latest-response', role: 'assistant', content: 'Retained response' }]
+    }
+    const mounted = mountInlineAgent(state)
+    const transcript = mounted.root.querySelector<HTMLElement>('.inline-agent__transcript')
+    const dock = mounted.root.querySelector<HTMLElement>('.inline-agent__conversation-dock')
+    if (!transcript || !dock) throw new Error('Conversation scrollport or footer missing')
+    Object.defineProperties(transcript, {
+      scrollHeight: { configurable: true, value: 2000 },
+      clientHeight: { configurable: true, value: 600 }
+    })
+    await frames.flush()
+    expect(transcript.scrollTop).toBe(0)
+    expect(state.transcriptFollowing.value).toBe(false)
     const button = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__follow-jump')
-    const halo = mounted.root.querySelector<HTMLElement>('.inline-agent__follow-jump-halo')
-
-    if (!button || !halo) throw new Error('Latest response control did not render')
+    if (!button) throw new Error('Latest response control did not render for earlier reading')
     expect(button.getAttribute('aria-label')).toBe('Jump to latest response')
-    expect(button.querySelectorAll('button')).toHaveLength(0)
-    expect(halo.getAttribute('aria-hidden')).toBe('true')
+    expect(transcript.contains(button)).toBe(false)
+    expect(transcript.contains(dock)).toBe(false)
+    button.click()
+    await frames.flush()
+    expect(transcript.scrollTop).toBe(1400)
+    expect(state.transcriptFollowing.value).toBe(true)
+    expect(document.activeElement).toBe(transcript)
   })
 
   it('keeps approval navigation ahead of latest response navigation', () => {
@@ -3268,9 +3484,15 @@ describe('Inline Agent conversation starters', () => {
     expect(notices[0]?.textContent).toContain('Connection required')
     expect(notices[0]?.textContent).toContain('Retry connection')
     const transcript = mounted.root.querySelector<HTMLElement>('.inline-agent__transcript')
-    const order = Array.from(transcript?.children ?? []).map(child => child.className)
-    expect(order[0]).toContain('inline-agent__welcome')
-    expect(order.at(-1)).toContain('inline-agent__conversation-dock')
+    const welcome = mounted.root.querySelector<HTMLElement>('.inline-agent__welcome')
+    const dock = mounted.root.querySelector<HTMLElement>('.inline-agent__conversation-dock')
+    if (!transcript || !welcome || !dock) throw new Error('Blocked resting workspace is incomplete')
+    expect(welcome.parentElement).toBe(transcript)
+    expect(transcript.contains(dock)).toBe(false)
+    expect(transcript.parentElement).toBe(dock.parentElement)
+    expect(transcript.parentElement?.lastElementChild).toBe(dock)
+    expect(transcript.compareDocumentPosition(dock) & browserWindow.Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+    expect(dock.querySelector('.inline-agent__composer textarea')).not.toBeNull()
     const starters = Array.from(mounted.root.querySelectorAll<HTMLButtonElement>('.inline-agent__starter'))
     expect(starters).toHaveLength(3)
     expect(starters.every(starter => starter.getAttribute('aria-disabled') === 'true')).toBe(true)
@@ -3289,8 +3511,9 @@ describe('Inline Agent selected-session recovery', () => {
     if (!toggle) throw new Error('History toggle missing')
     if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click()
     await settle()
-    const row = Array.from(mounted.root.querySelectorAll<HTMLElement>('.agent-history__session'))
-      .find(candidate => candidate.querySelector('.v-list-item-title')?.textContent?.trim() === title)
+    const row = Array.from(mounted.root.querySelectorAll<HTMLElement>('.agent-history__session')).find(
+      candidate => candidate.querySelector('.v-list-item-title')?.textContent?.trim() === title
+    )
     if (!row) throw new Error(`History conversation missing: ${title}`)
     row.click()
     await settle()
@@ -3303,26 +3526,75 @@ describe('Inline Agent selected-session recovery', () => {
     expect(await workspace.store.openSession(launchId)).toBe(true)
     workspace.store.setDraft(launchId, 'Keep the original conversation draft separate')
     const draft: AgentDraft = {
-      ...emptyAgentDraft(), text: 'Keep this selected conversation draft', includeCurrentPage: false,
-      scope: { kind: 'selected' }, sources: [reviewSource(7)]
+      ...emptyAgentDraft(),
+      text: 'Keep this selected conversation draft',
+      includeCurrentPage: false,
+      scope: { kind: 'selected' },
+      sources: [reviewSource(7)]
     }
     workspace.store.updateDraft(sessionId, draft)
     const state = workspace.state()
     state.componentProps.resumeSessionId = launchId
     const mounted = mountInlineAgent(state, { realThread: true, realHistory: true, pinia: workspace.pinia, viewportWidth: 1600 })
     await settle()
+    const transcript = mounted.root.querySelector<HTMLElement>('.inline-agent__transcript')
+    if (!transcript) throw new Error('History transcript missing')
+    Object.defineProperties(transcript, {
+      scrollHeight: { configurable: true, value: 2000 },
+      clientHeight: { configurable: true, value: 600 }
+    })
+    transcript.scrollTop = 700
     await selectHistory(mounted, selected.session.title)
     expect(workspace.store.thread?.session.id).toBe(sessionId)
+    expect(transcript.scrollTop).toBe(0)
+    expect(state.transcriptFollowing.value).toBe(false)
+    expect(mounted.root.querySelector('.inline-agent__session-title')?.textContent?.trim()).toBe(selected.session.title)
     expect(mounted.root.querySelector('.proposal-diff')?.textContent).toContain('Wait for reviewer confirmation')
     expect(mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')?.value).toBe(draft.text)
     return { ...workspace, state, mounted, selected, draft }
   }
 
+  for (const action of ['rename', 'delete'] as const) {
+    it(`returns cancelled conversation ${action} focus to its real history row action invoker`, async () => {
+      const workspace = await selectedWorkspace()
+      const row = Array.from(workspace.mounted.root.querySelectorAll<HTMLElement>('.agent-history__session')).find(
+        candidate => candidate.querySelector('.v-list-item-title')?.textContent?.trim() === workspace.selected.session.title
+      )
+      const trigger = row?.querySelector<HTMLButtonElement>('.agent-history-session-actions__trigger')
+      if (!trigger) throw new Error('The selected conversation action trigger is missing')
+      // JSDOM has no layout; keep the real invoker, SDK, dialog and focus handling.
+      vi.spyOn(trigger, 'getClientRects').mockReturnValue({ length: 1 } as DOMRectList)
+      expect(trigger.isConnected && !trigger.disabled).toBe(true)
+      trigger.focus()
+      trigger.click()
+      await settle()
+      const menu = document.querySelector('.v-overlay--active .agent-history-session-actions__menu')
+      const command = Array.from(menu?.querySelectorAll<HTMLElement>('.v-list-item') ?? []).find(
+        candidate => candidate.querySelector('.v-list-item-title')?.textContent?.trim() === translateEnglish(`common:actions.${action}`)
+      )
+      if (!command) throw new Error(`The selected conversation ${action} action is missing`)
+      command.focus()
+      command.click()
+      await settle()
+      const dialog = document.querySelector<HTMLElement>('.v-dialog.v-overlay--active')
+      if (!dialog) throw new Error(`The real conversation ${action} dialog did not open`)
+      if (action === 'rename') expect(dialog.querySelector<HTMLInputElement>('input[maxlength="255"]')?.value).toBe(workspace.selected.session.title)
+      else expect(dialog.querySelector('strong')?.textContent).toBe(workspace.selected.session.title)
+      const cancel = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button')).find(
+        button => button.textContent?.trim() === translateEnglish('common:actions.cancel')
+      )
+      if (!cancel) throw new Error(`The real conversation ${action} dialog did not expose Cancel`)
+      cancel.click()
+      await settle()
+      expect(document.activeElement === trigger).toBe(true)
+      expect(workspace.requests.filter(request => request.method === 'PATCH' || request.method === 'DELETE')).toEqual([])
+    })
+  }
+
   for (const recovery of ['connection', 'initialization'] as const) {
     it(`reauthorizes the rendered History selection rather than the launch session on ${recovery} retry`, async () => {
       const workspace = await selectedWorkspace()
-      if (recovery === 'initialization')
-        workspace.threadRead.pending = Promise.resolve(Response.json({ error: 'Current access denied' }, { status: 403 }))
+      if (recovery === 'initialization') workspace.threadRead.pending = Promise.resolve(Response.json({ error: 'Current access denied' }, { status: 403 }))
       testPwaState.connectionState = 'offline'
       await settle()
       if (recovery === 'initialization') {
@@ -3377,10 +3649,13 @@ describe('Inline Agent selected-session recovery', () => {
     await settle()
     expect(workspace.store.isWorkspaceReady()).toBe(true)
     expect(workspace.store.thread?.session.id).toBe(freshId)
-    expect(workspace.mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')?.value).toBe('A draft belonging to the explicit new conversation')
+    expect(workspace.mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')?.value).toBe(
+      'A draft belonging to the explicit new conversation'
+    )
     expect(workspace.mounted.root.querySelector('.proposal-diff')).toBeNull()
-    expect(workspace.requests.slice(beforeRecovery).filter(request => /^\/_api\/agents\/sessions\//.test(request.path)))
-      .toEqual([{ method: 'GET', path: `/_api/agents/sessions/${freshId}` }])
+    expect(workspace.requests.slice(beforeRecovery).filter(request => /^\/_api\/agents\/sessions\//.test(request.path))).toEqual([
+      { method: 'GET', path: `/_api/agents/sessions/${freshId}` }
+    ])
     expect(workspace.requests.filter(request => request.method === 'POST')).toEqual([{ method: 'POST', path: '/_api/agents/sessions' }])
   })
 
@@ -3437,7 +3712,9 @@ describe('Inline Agent selected-session recovery', () => {
       if (boundary === 'selection') {
         expect(workspace.store.isWorkspaceReady()).toBe(true)
         expect(workspace.store.thread?.session.id).toBe(launchId)
-        expect(workspace.mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')?.value).toBe('Keep the original conversation draft separate')
+        expect(workspace.mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')?.value).toBe(
+          'Keep the original conversation draft separate'
+        )
         expect(workspace.mounted.root.querySelector('.proposal-diff')).toBeNull()
       } else if (boundary === 'owner') {
         expect(workspace.store.workspaceOwnerId).toBe(3)
@@ -3806,15 +4083,24 @@ describe('Live Memory receipt presentation', () => {
       session: {
         ...base.session,
         currentRun: {
-          id: '00000000-0000-4000-8000-000000000020', sessionId,
-          status: 'running', attempt: 1, eventSequence: 1, canCancel: true,
-          createdAt: timestamp, startedAt: timestamp, completedAt: null,
-          errorCode: null, errorMessage: null
+          id: '00000000-0000-4000-8000-000000000020',
+          sessionId,
+          status: 'running',
+          attempt: 1,
+          eventSequence: 1,
+          canCancel: true,
+          createdAt: timestamp,
+          startedAt: timestamp,
+          completedAt: null,
+          errorCode: null,
+          errorMessage: null
         }
       },
       memoryContext: {
-        ownerId: 2, sessionId,
-        frozen: { snapshotId: sessionId, user, agent }, latestSaved: { user, agent },
+        ownerId: 2,
+        sessionId,
+        frozen: { snapshotId: sessionId, user, agent },
+        latestSaved: { user, agent },
         nextSession: { user: 'unchanged', agent: 'unchanged' }
       }
     }
@@ -3822,21 +4108,33 @@ describe('Live Memory receipt presentation', () => {
     const state = workspace.state()
     const mounted = mountInlineAgent(state)
     await settle()
-    const pill = mounted.root.querySelector<HTMLElement>('.inline-agent__memory-pill')!
+    const pill = mounted.root.querySelector<HTMLElement>('.inline-agent__context-header')!
     // JSDOM has no layout; only the browser visibility boundary is supplied.
     pill.getClientRects = () => [{ width: 80, height: 32 }] as unknown as DOMRectList
     const beam = () => mounted.root.querySelector('.inline-agent__memory-beam')
     const publish = (sequence: number): void => {
       const capture = workspace.store.captureMemoryMutationContext()
       if (!capture) throw new Error('Current owned memory context is required')
-      workspace.store.projectRunMemoryReceipt({
-        id: `recall-${sequence}`, runId: thread.session.currentRun!.id, sequence,
-        type: 'memory.contextIncluded', attempt: 1, schemaVersion: 1, createdAt: timestamp,
-        data: {
-          ownerId: 2, sessionId, snapshotId: sessionId, deliveryId: `dispatch-${sequence}`,
-          targets: [{ target: 'user', characters: 24, limit: 1375, snapshotId: 'a'.repeat(64) }]
-        }
-      }, 'live', capture)
+      workspace.store.projectRunMemoryReceipt(
+        {
+          id: `recall-${sequence}`,
+          runId: thread.session.currentRun!.id,
+          sequence,
+          type: 'memory.contextIncluded',
+          attempt: 1,
+          schemaVersion: 1,
+          createdAt: timestamp,
+          data: {
+            ownerId: 2,
+            sessionId,
+            snapshotId: sessionId,
+            deliveryId: `dispatch-${sequence}`,
+            targets: [{ target: 'user', characters: 24, limit: 1375, snapshotId: 'a'.repeat(64) }]
+          }
+        },
+        'live',
+        capture
+      )
     }
     expect(beam() === null).toBe(true)
     publish(1)
@@ -3860,7 +4158,7 @@ describe('Live Memory receipt presentation', () => {
     state.advanceTime(1)
     await settle()
     expect(beam() === null).toBe(true)
-    expect(pill.classList.contains('inline-agent__memory-pill--feedback')).toBe(false)
+    expect(pill.classList.contains('inline-agent__context-header--feedback')).toBe(false)
 
     publish(3)
     await settle()
@@ -3879,6 +4177,6 @@ describe('Live Memory receipt presentation', () => {
     state.advanceTime(600)
     await settle()
     expect(beam() === null).toBe(true)
-    expect(pill.classList.contains('inline-agent__memory-pill--feedback')).toBe(false)
+    expect(pill.classList.contains('inline-agent__context-header--feedback')).toBe(false)
   })
 })

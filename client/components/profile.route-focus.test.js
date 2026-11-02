@@ -44,23 +44,19 @@ const routePage = heading =>
   Vue.defineComponent({
     name: `RoutePage${heading ?? 'Loading'}`,
     setup() {
-      return () => Vue.h('section', [
-        heading ? Vue.h('h1', heading) : Vue.h('p', 'Loading account settings'),
-        Vue.h('input', { 'aria-label': 'Incoming field' })
-      ])
+      return () =>
+        Vue.h('section', [heading ? Vue.h('h1', heading) : Vue.h('p', 'Loading account settings'), Vue.h('input', { 'aria-label': 'Incoming field' })])
     }
   })
 
 const offlinePage = Vue.defineComponent({
-  setup: () => () => Vue.h('section', [
-    Vue.h('h1', 'Offline access'),
-    Vue.h('h2', { id: 'downloaded-pages-title' }, 'Saved pages'),
-    Vue.h('input', { 'aria-label': 'Incoming field' }),
-    Vue.h('details', [
-      Vue.h('summary', 'Storage details'),
-      Vue.h('h2', { id: 'storage-details' }, 'Storage location')
+  setup: () => () =>
+    Vue.h('section', [
+      Vue.h('h1', 'Offline access'),
+      Vue.h('h2', { id: 'downloaded-pages-title' }, 'Saved pages'),
+      Vue.h('input', { 'aria-label': 'Incoming field' }),
+      Vue.h('details', [Vue.h('summary', 'Storage details'), Vue.h('h2', { id: 'storage-details' }, 'Storage location')])
     ])
-  ])
 })
 
 let app
@@ -83,15 +79,16 @@ const settle = async () => {
 const heldEntry = () => {
   let entered
   let fail
-  const ready = new Promise((resolve, reject) => { entered = resolve; fail = reject })
+  const ready = new Promise((resolve, reject) => {
+    entered = resolve
+    fail = reject
+  })
   // Errors can occur during mount, before the test awaits the entry hook.
   void ready.catch(() => {})
-  const controlEntry = create => (type, props, ...children) => create(type,
-    type === Vue.Transition
-      ? { ...props, onEnter: (element, done) => entered({ element, finish: done }) }
-      : props,
-    ...children
-  )
+  const controlEntry =
+    create =>
+    (type, props, ...children) =>
+      create(type, type === Vue.Transition ? { ...props, onEnter: (element, done) => entered({ element, finish: done }) } : props, ...children)
   return {
     ready,
     fail,
@@ -170,10 +167,9 @@ describe('profile route accessibility', () => {
     expect(host.querySelectorAll('[data-confirm-host]')).toHaveLength(1)
   })
 
-  it('names the shell once and offers a way back to the wiki', async () => {
+  it('names profile navigation and offers a way back to the wiki', async () => {
     const { host } = await mountProfile()
 
-    expect(host.textContent.split('profile:workspace')).toHaveLength(2)
     expect(host.querySelector('nav').getAttribute('aria-label')).toBe('profile:nav.label')
     const back = host.querySelector('a[href="/"]')
     expect(back.textContent).toContain('profile:nav.backToWiki')
@@ -256,11 +252,12 @@ describe('profile route accessibility', () => {
       setup() {
         const field = Vue.ref(null)
         Vue.onMounted(() => field.value.focus())
-        return () => Vue.h('section', [
-          Vue.h('h1', 'Account details'),
-          Vue.h('h2', { id: 'account-fragment' }, 'Account fragment'),
-          Vue.h('input', { ref: field, 'aria-label': 'Claimed during mount' })
-        ])
+        return () =>
+          Vue.h('section', [
+            Vue.h('h1', 'Account details'),
+            Vue.h('h2', { id: 'account-fragment' }, 'Account fragment'),
+            Vue.h('input', { ref: field, 'aria-label': 'Claimed during mount' })
+          ])
       }
     })
     const scroll = vi.spyOn(browserWindow.Element.prototype, 'scrollIntoView')
@@ -322,10 +319,8 @@ describe('profile route accessibility', () => {
   for (const concealed of [{ hidden: '' }, { inert: '' }, { 'aria-hidden': 'true' }]) {
     it(`never attempts background heading or fragment focus under ${Object.keys(concealed)[0]}`, async () => {
       const hiddenPage = Vue.defineComponent({
-        setup: () => () => Vue.h('section', concealed, [
-          Vue.h('h1', 'Unavailable heading'),
-          Vue.h('h2', { id: 'unavailable-fragment' }, 'Unavailable fragment')
-        ])
+        setup: () => () =>
+          Vue.h('section', concealed, [Vue.h('h1', 'Unavailable heading'), Vue.h('h2', { id: 'unavailable-fragment' }, 'Unavailable fragment')])
       })
       const { host, router, componentErrors } = await mountProfile('/profile', {
         extraRoutes: [{ path: '/unavailable', component: hiddenPage }]

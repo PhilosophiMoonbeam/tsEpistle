@@ -102,7 +102,7 @@
             p.page-selector__filter-count(v-if='currentPages.length > 0' role='status' aria-live='polite' aria-atomic='true') {{$t('common:pageSelector.filterMatches', { count: filteredPages.length, total: currentPages.length })}}
           div.page-selector__scroller(role='region' :aria-labelledby='pagesId' :aria-busy='currentFolderLoading && currentPages.length > 0 ? `true` : undefined')
             .page-selector__selection-note(
-              v-if='currentPages.length > 0 || currentPage'
+              v-if='mustExist && (currentPages.length > 0 || currentPage)'
               :class="{ 'page-selector__selection-note--selected': currentPage }"
               :data-selection-state='currentPage ? `selected` : `none`'
               role='status'
@@ -273,14 +273,12 @@
         h3(:id='moveUncertainId' tabindex='-1') {{$t('common:pageSelector.moveOutcomeUncertain')}}
         p {{$t('common:pageSelector.moveOutcomeUncertainNote')}}
         v-btn(variant='outlined' @click='refreshCurrentPage') {{$t('common:pageSelector.refreshPage')}}
-      v-card-actions.page-selector__options.pa-2(v-if='!mustExist || allowLocaleChange')
+      v-card-actions.page-selector__options.pa-2(v-if='!mustExist || allowLocaleChange', role='group', :aria-label='$t(`common:pageSelector.destinationControls`)')
         v-select(
           v-model='currentLocale'
-          variant='solo'
-          flat
-          bg-color='surface-variant'
+          variant='outlined'
+          density='compact'
           hide-details
-          single-line
           :items='namespaces'
           :label='$t(`common:pageSelector.localeLabel`)'
           :aria-label='$t(`common:pageSelector.pageLocaleLabel`)'
@@ -289,18 +287,19 @@
         v-text-field(
           ref='pathIpt'
           v-model='currentPath'
-          variant='solo'
+          variant='outlined'
+          density='compact'
           hide-details
           prefix='/'
           :label='$t(`common:pageSelector.pagePathLabel`)'
           :aria-label='$t(`common:pageSelector.pagePathLabel`)'
-          flat
           :readonly='mustExist'
           clearable
           :disabled='isSubmitting || moveReceipt !== null'
         )
       v-card-chin.page-selector__chin
         v-alert.page-selector__submission-error(v-if='submissionError' type='error' variant='tonal' density='compact' role='alert') {{ submissionError }}
+        p.page-selector__action-status(role='status', aria-live='polite', aria-atomic='true') {{ actionStatus }}
         v-spacer
         v-btn(
           variant='text'
@@ -310,14 +309,14 @@
         v-btn(
           v-if='mode === `move` && updateIncomingLinks && moveReviewStage === `candidates`'
           color='primary'
-          :disabled='(selectedMovePageIds.length === 0 && !hasAutomaticSelfLinkChanges) || moveReviewLoading || moveReviewNeedsRefresh'
+          :disabled='!isValidDestination || (selectedMovePageIds.length === 0 && !hasAutomaticSelfLinkChanges) || moveReviewLoading || moveReviewNeedsRefresh'
           :loading='moveReviewLoading'
           @click='reviewSelectedMovePages'
         ) {{selectedMovePageIds.length === 0 ? $t('common:pageSelector.reviewSelfLinkChanges') : $t('common:pageSelector.reviewSelectedChanges')}}
         v-btn(
           v-else-if='mode === `move` && updateIncomingLinks && moveReviewStage === `confirm`'
           color='primary'
-          :disabled='!selectedMoveReview || moveReviewLoading || isSubmitting'
+          :disabled='!isValidDestination || !selectedMoveReview || moveReviewLoading || isSubmitting'
           :loading='isSubmitting'
           @click='confirmReviewedMove'
         ) {{$t('common:pageSelector.moveAndUpdateSelectedLinks')}}
@@ -337,12 +336,12 @@
           prepend-icon='mdi-check'
           :loading='isSubmitting || moveReviewLoading'
           @click='open'
-          :disabled='!isValidPath || isSubmitting || moveReviewLoading || !canReviewIncomingLinks && mode === `move` && updateIncomingLinks'
+          :disabled='!isValidDestination || isSubmitting || moveReviewLoading || !canReviewIncomingLinks && mode === `move` && updateIncomingLinks'
         ) {{mode === `move` && updateIncomingLinks ? $t('common:pageSelector.findIncomingLinks') : $t('common:actions.select')}}
         v-btn(
           v-if='mode === `move` && updateIncomingLinks && moveReceipt === null && !moveOutcomeUncertain'
           variant='outlined'
-          :disabled='isSubmitting || moveReviewLoading'
+          :disabled='!isValidDestination || isSubmitting || moveReviewLoading'
           @click='moveWithoutRepair'
         ) {{$t('common:pageSelector.moveWithoutLinkRepair')}}
 </template>
@@ -523,6 +522,28 @@ export default defineComponent({
     }
   },
   computed: {
+    actionStatus(): string {
+      if (this.moveOutcomeUncertain) return this.$t('common:pageSelector.moveOutcomeUncertain')
+      if (this.moveReceipt) return this.$t('common:pageSelector.moveCommitted')
+      if (this.isSubmitting) return this.$t('common:pageSelector.submittingSelection')
+      if (this.submissionError) return this.submissionError
+      if (this.moveReviewError) return this.moveReviewError
+      if (this.moveReviewLoading) return this.$t('common:pageSelector.loadingIncomingLinkCandidates')
+      if (this.mode === 'move' && this.updateIncomingLinks) {
+        if (this.moveReviewStage === 'confirm') return this.$t('common:pageSelector.reviewExactSourceEdits')
+        if (this.moveReviewStage === 'candidates') return this.$t('common:pageSelector.reviewSelectedChanges')
+        if (!this.canReviewIncomingLinks) return this.$t('common:pageSelector.incomingLinkReviewUnavailable')
+      }
+      if (this.mustExist && !this.currentPage) return this.$t('common:pageSelector.selectPageToContinue')
+      if (!this.isValidDestination) return this.$t('common:pageSelector.enterValidDestination')
+      const path = `/${this.currentLocale}/${this.currentPath}`
+      const key = this.mustExist || this.mode === 'select'
+        ? 'common:pageSelector.readyToSelect'
+        : this.mode === 'move'
+          ? 'common:pageSelector.readyToMove'
+          : 'common:pageSelector.readyToCreate'
+      return this.$t(key, { path, interpolation: { escapeValue: false } })
+    },
     isShown: {
       get(): boolean { return this.modelValue },
       set(val: boolean) { this.$emit('update:modelValue', val) }
@@ -572,8 +593,8 @@ export default defineComponent({
     selectedReviewHasNoChanges(): boolean {
       return Boolean(this.selectedMoveReview?.items.some(item => item.id !== this.sourcePageId && item.changes.length === 0))
     },
-    isValidPath (): boolean {
-      if (!this.currentPath || (this.mustExist && !this.currentPage)) return false
+    isValidDestination (): boolean {
+      if (!this.currentLocale || !this.namespaces.includes(this.currentLocale) || !this.currentPath || (this.mustExist && !this.currentPage)) return false
       const firstSection = this.currentPath.split('/')[0]
       if (!firstSection || firstSection.length <= 1 || localeSegmentRegex.test(firstSection)) return false
       return !['login', 'logout', 'register', 'verify', 'favicons', 'fonts', 'img', 'js', 'svg'].includes(firstSection)
@@ -614,7 +635,9 @@ export default defineComponent({
         void this.$nextTick(() => { this.currentNode = oldValue })
         return
       }
-      if (nodeId !== oldValue[0]) this.pageFilter = ''
+      // Locale reloads replace the selection array without selecting a new folder.
+      if (nodeId === oldValue[0]) return
+      this.pageFilter = ''
       const current = this.all.find(item => item.id === nodeId)
       const opened = new Set(this.openNodes)
       if (current) opened.add(current.parent)
@@ -689,7 +712,7 @@ export default defineComponent({
         this.isShown = false
     },
     async open(): Promise<void> {
-      if (!this.currentPath || !this.isValidPath || this.isSubmitting || this.moveReviewLoading) return
+      if (!this.currentPath || !this.isValidDestination || this.isSubmitting || this.moveReviewLoading) return
       if (this.mode === 'move' && this.updateIncomingLinks) {
         await this.loadMoveCandidates(null, true)
         return
@@ -697,12 +720,12 @@ export default defineComponent({
       await this.submitSelection()
     },
     async moveWithoutRepair(): Promise<void> {
-      if (this.mode !== 'move' || this.isSubmitting || this.moveReviewLoading || this.moveReceipt || this.moveOutcomeUncertain) return
+      if (this.mode !== 'move' || !this.isValidDestination || this.isSubmitting || this.moveReviewLoading || this.moveReceipt || this.moveOutcomeUncertain) return
       this.updateIncomingLinks = false
       await this.submitSelection()
     },
     async submitSelection(reviewToken?: string): Promise<void> {
-      if (!this.currentPath || !this.isValidPath || this.isSubmitting) return
+      if (!this.currentPath || !this.isValidDestination || this.isSubmitting) return
       const requestId = ++this.submissionRequestId
       const destinationLocale = this.currentLocale
       const destinationPath = this.currentPath
@@ -779,6 +802,7 @@ export default defineComponent({
       if (
         !this.canReviewIncomingLinks ||
         !this.currentPath ||
+        !this.isValidDestination ||
         this.moveReviewLoading ||
         this.isSubmitting ||
         this.moveReceipt ||
@@ -855,6 +879,7 @@ export default defineComponent({
       if (
         !this.canReviewIncomingLinks ||
         !this.currentPath ||
+        !this.isValidDestination ||
         (this.selectedMovePageIds.length === 0 && !this.hasAutomaticSelfLinkChanges) ||
         this.selectedMovePageIds.length > 20 ||
         this.moveReviewLoading ||
@@ -921,7 +946,7 @@ export default defineComponent({
     },
     confirmReviewedMove(): void {
       const token = this.selectedMoveReview?.reviewToken
-      if (!token || this.moveReviewNeedsRefresh || this.isSubmitting || this.moveReviewLoading) return
+      if (!token || !this.isValidDestination || this.moveReviewNeedsRefresh || this.isSubmitting || this.moveReviewLoading) return
       void this.submitSelection(token)
     },
     moveItemTitle(pageId: number): string {
@@ -1414,14 +1439,85 @@ export default defineComponent({
     border-inline-start: .2rem solid var(--wiki-accent-ink);
     background: color-mix(in srgb, var(--wiki-accent-ink) 8%, transparent);
   }
-  &__options .v-select {
-    flex: 0 1 10rem;
-    min-width: 7rem;
+  &__options {
+    gap: 0;
+    align-items: stretch;
+    --wiki-field-label-bg: var(--wiki-surface-raised);
   }
 
-  &__options .v-text-field {
-    flex: 1 1 14rem;
+  &__options .v-select {
+    flex: 0 0 7rem;
     min-width: 0;
+  }
+
+  &__options .v-text-field:not(.v-select) {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  &__options .v-field {
+    --v-input-control-height: 44px;
+    --v-field-input-padding-top: 10px;
+    --v-field-input-padding-bottom: 10px;
+    min-height: 44px;
+    background: var(--wiki-surface-raised);
+    border-radius: 0;
+  }
+
+  &__options .v-select .v-field {
+    border-start-start-radius: var(--wiki-control-radius);
+    border-end-start-radius: var(--wiki-control-radius);
+  }
+
+  &__options .v-text-field:not(.v-select) .v-field {
+    border-start-end-radius: var(--wiki-control-radius);
+    border-end-end-radius: var(--wiki-control-radius);
+  }
+
+  &__options .v-text-field:not(.v-select) {
+    margin-inline-start: -1px;
+  }
+
+  &__options .v-input:focus-within {
+    z-index: 1;
+  }
+
+  &__action-status {
+    flex: 1 1 100%;
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--wiki-text-muted);
+    font-size: .875rem;
+  }
+
+  @media (max-width: 360px) {
+    &__options {
+      flex-direction: column;
+    }
+
+    &__options .v-select,
+    &__options .v-text-field:not(.v-select) {
+      flex: 0 1 auto;
+      width: 100%;
+      margin-inline-start: 0;
+    }
+
+    &__options .v-select .v-field {
+      border-start-start-radius: var(--wiki-control-radius);
+      border-start-end-radius: var(--wiki-control-radius);
+      border-end-start-radius: 0;
+    }
+
+    &__options .v-text-field:not(.v-select) {
+      margin-block-start: -1px;
+    }
+
+    &__options .v-text-field:not(.v-select) .v-field {
+      border-start-end-radius: 0;
+      border-end-start-radius: var(--wiki-control-radius);
+      border-end-end-radius: var(--wiki-control-radius);
+    }
   }
 
   &__chin {
@@ -1458,12 +1554,7 @@ export default defineComponent({
   }
 
   .page-selector__options {
-    flex-wrap: wrap;
-  }
-
-  .page-selector__options .v-select,
-  .page-selector__options .v-text-field {
-    flex: 1 1 100%;
+    flex-wrap: nowrap;
   }
   .page-selector__link-review {
     max-height: 42dvh;

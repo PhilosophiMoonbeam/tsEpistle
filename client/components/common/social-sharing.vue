@@ -1,70 +1,91 @@
 <template lang="pug">
-  v-list(nav, density="compact", :aria-label='$t(`common:page.share`)')
+  v-list.social-sharing(nav, role='group', tabindex='-1', density="compact", :aria-label='$t(`common:page.share`)')
+    .social-sharing__canonical
+      label.social-sharing__url-label
+        span {{ $t('common:socialSharing.canonicalUrl') }}
+        input.social-sharing__url.wiki-surface-well(
+          type='text'
+          readonly
+          :value='shareUrl'
+          :aria-label='$t("common:socialSharing.canonicalUrl")'
+          dir='ltr'
+          @focus='selectUrl'
+        )
+      v-btn(variant='tonal', size='small', :disabled='!shareUrl', @click='copyUrl')
+        v-icon.social-sharing__icon(start, size='small') {{ copied ? 'mdi-check-bold' : 'mdi-content-copy' }}
+        | {{ $t('common:socialSharing.copyLink') }}
+    v-list-item(tag='button', type='button', role='button', :disabled='!shareUrl', :aria-disabled='!shareUrl ? `true` : undefined', :tabindex='shareUrl ? 0 : -1', @click='copyMarkdown')
+      template(v-slot:prepend)
+        v-icon.social-sharing__icon(size='small') mdi-language-markdown-outline
+      v-list-item-title.px-3 {{ $t('common:socialSharing.copyMarkdownLink') }}
+    v-list-item(
+      tag='button'
+      type='button'
+      role='button'
+      :disabled='!sectionUrl'
+      :aria-disabled='!sectionUrl ? `true` : undefined'
+      :tabindex='sectionUrl ? 0 : -1'
+      :title='sectionUrl ? undefined : $t("common:socialSharing.noCurrentSection")'
+      @click='copySection'
+    )
+      template(v-slot:prepend)
+        v-icon.social-sharing__icon(size='small') mdi-link-variant
+      v-list-item-title.px-3 {{ $t('common:socialSharing.copyCurrentSectionLink') }}
+    v-list-item(v-if='offline', tag='button', type='button', role='button', tabindex='0', @click='copyText')
+      template(v-slot:prepend)
+        v-icon.social-sharing__icon(size='small') mdi-text-box-outline
+      v-list-item-title.px-3 {{ $t('common:socialSharing.copyPageText') }}
+    v-list-item(:href='shareUrl ? shareUrls.email : undefined', role='link', :disabled='!shareUrl', :aria-disabled='!shareUrl ? `true` : undefined', :tabindex='shareUrl ? 0 : -1')
+      template(v-slot:prepend)
+        v-icon.social-sharing__icon(size='small') mdi-email-outline
+      v-list-item-title.px-3 {{ $t('common:socialSharing.shareViaEmail') }}
+    p.social-sharing__notice {{ offline ? $t('common:socialSharing.localCopySavedDevice') : $t('common:socialSharing.linkAccessNotice') }}
     v-list-item(
       v-if='canUseNativeShare'
       tag='button'
       type='button'
       role='button'
       :disabled='nativeShareLoading'
+      :aria-disabled='nativeShareLoading ? `true` : undefined'
+      :tabindex='nativeShareLoading ? -1 : 0'
       @click='shareNative'
     )
       template(v-slot:prepend)
-        v-icon(color='primary', size="small") mdi-share-variant
-      v-list-item-title.px-3 {{ offline ? $t(`common:socialSharing.shareExcerptLocalLink`) : $t(`common:socialSharing.share`) }}
-    v-list-item(tag='button', type='button', role='button', @click='copyUrl')
-      template(v-slot:prepend)
-        v-icon(
-          :key='copied ? "check" : "copy"'
-          :class='copied ? "icon-tactile-bounce" : "social-sharing__icon"'
-          :color='copied ? "success" : undefined'
-          size="small"
-        ) {{ copied ? 'mdi-check-bold' : 'mdi-content-copy' }}
-      v-list-item-title.px-3 {{ $t(`common:socialSharing.copyUrl`) }}
-    v-list-item(v-if='!offline' tag='button', type='button', role='button', @click='copySummary')
-      template(v-slot:prepend)
-        v-icon.social-sharing__icon(size="small") mdi-text-box-outline
-      v-list-item-title.px-3 {{ $t(`common:socialSharing.copyPageSummary`) }}
-    v-list-item(v-else tag='button', type='button', role='button', @click='copyText')
-      template(v-slot:prepend)
-        v-icon.social-sharing__icon(size="small") mdi-text-box-outline
-      v-list-item-title.px-3 {{ $t(`common:socialSharing.copyPageText`) }}
-    v-list-item(:href='shareUrls.email')
-      template(v-slot:prepend)
-        v-icon.social-sharing__icon(size="small") mdi-email-outline
-      v-list-item-title.px-3 {{ $t(`common:socialSharing.email`) }}
-    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.facebook)')
+        v-icon.social-sharing__icon(size='small') mdi-share-variant
+      v-list-item-title.px-3 {{ $t('common:socialSharing.share') }}
+    v-list-item(v-if='canUsePublicSharing', tag='button', type='button', role='button', tabindex='0', @click='openSocialPop(shareUrls.facebook)')
       template(v-slot:prepend)
         v-icon.social-sharing__icon(size="small") mdi-facebook
       v-list-item-title.px-3 Facebook
-    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.linkedin)')
+    v-list-item(v-if='canUsePublicSharing', tag='button', type='button', role='button', tabindex='0', @click='openSocialPop(shareUrls.linkedin)')
       template(v-slot:prepend)
         v-icon.social-sharing__icon(size="small") mdi-linkedin
       v-list-item-title.px-3 LinkedIn
-    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.reddit)')
+    v-list-item(v-if='canUsePublicSharing', tag='button', type='button', role='button', tabindex='0', @click='openSocialPop(shareUrls.reddit)')
       template(v-slot:prepend)
         v-icon.social-sharing__icon(size="small") mdi-reddit
       v-list-item-title.px-3 Reddit
-    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.telegram)')
+    v-list-item(v-if='canUsePublicSharing', tag='button', type='button', role='button', tabindex='0', @click='openSocialPop(shareUrls.telegram)')
       template(v-slot:prepend)
         v-icon.social-sharing__icon(size="small") mdi-send-circle-outline
       v-list-item-title.px-3 Telegram
-    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.x)')
+    v-list-item(v-if='canUsePublicSharing', tag='button', type='button', role='button', tabindex='0', @click='openSocialPop(shareUrls.x)')
       template(v-slot:prepend)
         v-icon.social-sharing__icon(size="small") mdi-alpha-x-box-outline
       v-list-item-title.px-3 X
-    v-list-item(:href='shareUrls.viber')
+    v-list-item(v-if='canUsePublicSharing', :href='shareUrls.viber', tabindex='0')
       template(v-slot:prepend)
         v-icon.social-sharing__icon(size="small") mdi-phone-in-talk
       v-list-item-title.px-3 Viber
-    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.weibo)')
+    v-list-item(v-if='canUsePublicSharing', tag='button', type='button', role='button', tabindex='0', @click='openSocialPop(shareUrls.weibo)')
       template(v-slot:prepend)
         v-icon.social-sharing__icon(size="small") mdi-sina-weibo
       v-list-item-title.px-3 Weibo
-    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.whatsapp)')
+    v-list-item(v-if='canUsePublicSharing', tag='button', type='button', role='button', tabindex='0', @click='openSocialPop(shareUrls.whatsapp)')
       template(v-slot:prepend)
         v-icon.social-sharing__icon(size="small") mdi-whatsapp
       v-list-item-title.px-3 WhatsApp
-    span.social-sharing-status.sr-only(role='status', aria-live='polite') {{ copyStatus }}
+    p.social-sharing-status(role='status', aria-live='polite', aria-atomic='true') {{ copyStatus }}
 </template>
 
 <script lang='ts'>
@@ -96,7 +117,7 @@ function copyWithLegacyFallback (text: string): boolean {
     return document.execCommand('copy')
   } finally {
     input.remove()
-    if (activeElement instanceof HTMLElement) activeElement.focus({ preventScroll: true })
+    if (activeElement instanceof HTMLElement && activeElement.isConnected) activeElement.focus({ preventScroll: true })
   }
 }
 
@@ -121,6 +142,14 @@ export default defineComponent({
     description: {
       type: String,
       default: ''
+    },
+    sectionAnchor: {
+      type: String,
+      default: ''
+    },
+    publicContextEligible: {
+      type: Boolean,
+      default: false
     },
     offline: {
       type: Boolean,
@@ -156,6 +185,23 @@ export default defineComponent({
     title (): void {
       this.invalidateCopyFeedback()
     },
+    sectionAnchor (): void {
+      this.invalidateCopyFeedback()
+    },
+    canUsePublicSharing (): void {
+      this.shareOperationId += 1
+      this.nativeShareLoading = false
+    },
+    shareData: {
+      handler (): void {
+        this.shareOperationId += 1
+        this.nativeShareLoading = false
+      },
+      deep: true
+    },
+    offlineText (): void {
+      this.invalidateCopyFeedback()
+    },
     description (): void {
       this.invalidateCopyFeedback()
     },
@@ -168,16 +214,39 @@ export default defineComponent({
   },
   computed: {
     shareUrl (): string {
-      const localUrl = this.offlineUrl.trim()
-      return this.offline && localUrl ? localUrl : this.url.trim()
+      const suppliedUrl = this.offline && this.offlineUrl.trim() ? this.offlineUrl.trim() : this.url.trim()
+      if (!suppliedUrl) return ''
+      try {
+        const url = new URL(suppliedUrl, typeof window === 'undefined' ? undefined : window.location.origin)
+        if (url.protocol !== 'https:' && url.protocol !== 'http:') return ''
+        url.username = ''
+        url.password = ''
+        url.search = ''
+        url.hash = ''
+        return url.href
+      } catch {
+        return ''
+      }
     },
-    // Ordinary readers copy metadata only; the saved reader keeps its full passive text action below.
-    summaryText (): string {
-      const parts = [this.title.trim(), this.description.trim()].filter(Boolean)
-      return parts.join('\n\n')
+    sectionUrl (): string {
+      if (!this.shareUrl || !this.sectionAnchor) return ''
+      try {
+        return `${this.shareUrl}#${encodeURIComponent(this.sectionAnchor)}`
+      } catch {
+        return ''
+      }
+    },
+    markdownLink (): string {
+      const title = this.title.trim().replace(/[\r\n]+/g, ' ').replace(/[\\`*_[\]{}()<>]/g, '\\$&')
+      const destination = this.shareUrl.replace(/\\/g, '%5C').replace(/\(/g, '%28').replace(/\)/g, '%29').replace(/</g, '%3C').replace(/>/g, '%3E')
+      return `[${title}](${destination})`
+    },
+    canUsePublicSharing (): boolean {
+      return typeof window !== 'undefined' && window.siteConfig?.publicSocialSharing === true &&
+        this.publicContextEligible && !this.offline && Boolean(this.shareUrl)
     },
     shareText (): string {
-      if (!this.offline) return this.summaryText
+      if (!this.offline) return [this.title.trim(), this.description.trim()].filter(Boolean).join('\n\n')
       const content = (this.offlineText || this.description).trim()
       const parts = [this.title.trim(), content].filter(Boolean)
       parts.push(this.$t('common:socialSharing.localCopySavedDevice'))
@@ -199,6 +268,7 @@ export default defineComponent({
       return data
     },
     canUseNativeShare (): boolean {
+      if (!this.canUsePublicSharing) return false
       const shareNavigator = getShareNavigator()
       if (!shareNavigator?.share) return false
       if (!shareNavigator.canShare) return true
@@ -227,6 +297,9 @@ export default defineComponent({
     }
   },
   methods: {
+    selectUrl (event: FocusEvent): void {
+      if (event.target instanceof HTMLInputElement) event.target.select()
+    },
     clearCopiedTimer (): void {
       if (this.copiedTimer !== null) {
         clearTimeout(this.copiedTimer)
@@ -285,10 +358,16 @@ export default defineComponent({
       }
     },
     async copyUrl (): Promise<void> {
+      if (!this.shareUrl) return
       await this.copyValue(this.shareUrl, this.$t('common:socialSharing.urlCopiedSuccessfully'))
     },
-    async copySummary (): Promise<void> {
-      await this.copyValue(this.summaryText, this.$t('common:socialSharing.pageSummaryCopiedSuccessfully'))
+    async copyMarkdown (): Promise<void> {
+      if (!this.shareUrl) return
+      await this.copyValue(this.markdownLink, this.$t('common:socialSharing.markdownLinkCopied'))
+    },
+    async copySection (): Promise<void> {
+      if (!this.sectionUrl) return
+      await this.copyValue(this.sectionUrl, this.$t('common:socialSharing.sectionLinkCopied'))
     },
     async copyText (): Promise<void> {
       await this.copyValue(this.shareText, this.$t('common:socialSharing.pageTextCopiedSuccessfully'))
@@ -323,6 +402,7 @@ export default defineComponent({
       }
     },
     openSocialPop (url: string): void {
+      if (!this.canUsePublicSharing) return
       const gutter = 12
       const availableWidth = window.innerWidth || window.screen.availWidth
       const availableHeight = window.innerHeight || window.screen.availHeight
@@ -355,31 +435,64 @@ export default defineComponent({
 </script>
 
 <style scoped>
-/* Secondary share icons use the muted text token so palettes and dark mode apply. */
+.social-sharing {
+  max-inline-size: 100%;
+  background: var(--wiki-surface-gradient);
+  color: var(--wiki-text-primary);
+}
+
+.social-sharing__canonical {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--wiki-space-2);
+  padding: var(--wiki-space-3);
+}
+
+.social-sharing__url-label {
+  display: grid;
+  flex: 1 1 12rem;
+  gap: var(--wiki-space-1);
+  min-inline-size: 0;
+  font-size: 0.8125rem;
+  color: var(--wiki-text-muted);
+}
+
+.social-sharing__url {
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 44px;
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+  border-radius: var(--wiki-radius-sm);
+  color: var(--wiki-text-primary);
+  font: inherit;
+  user-select: text;
+}
+
+
+.social-sharing__canonical :deep(.v-btn),
+.social-sharing :deep(.v-list-item) {
+  min-block-size: 44px;
+}
+
+.social-sharing :deep(.v-list-item-title) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .social-sharing__icon {
   color: var(--wiki-text-muted);
 }
 
-.icon-tactile-bounce {
-  animation: tactile-bounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-  transform-origin: center;
+.social-sharing__notice,
+.social-sharing-status {
+  padding-inline: var(--wiki-space-3);
+  margin-block: var(--wiki-space-2);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
 }
 
-@keyframes tactile-bounce {
-  0% {
-    transform: scale(0.92);
-  }
-  50% {
-    transform: scale(1.08);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .icon-tactile-bounce {
-    animation: none !important;
-  }
+.social-sharing__notice {
+  color: var(--wiki-text-muted);
 }
 </style>

@@ -1,12 +1,13 @@
 @use './admin-workspace.scss' as workspace;
 
 .developer-flags-workspace {
-  --flags-line: rgba(var(--v-theme-on-surface), 0.14);
+  --flags-line: var(--wiki-surface-border);
   --flags-muted: var(--wiki-text-muted);
   max-width: 1420px;
   margin: 0 auto;
-  padding: 28px 30px 40px;
+  padding: 8px 24px 24px;
   min-width: 0;
+  @include workspace.admin-draft-clearance;
 
   h1,
   h2,
@@ -15,30 +16,21 @@
     margin: 0;
   }
 
-  h1,
-  h2 {
-    font-family: var(--wiki-font-editorial, Georgia, serif);
-    font-weight: 500;
-    letter-spacing: -0.035em;
-    line-height: 1.12;
-  }
-
-  h1 {
-    font-size: clamp(32px, 3.2vw, 46px);
-  }
-
-  h2 {
-    font-size: clamp(26px, 2.4vw, 34px);
+  .flags-section-head h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
   }
 
   h3 {
-    font-size: 18px;
+    font-size: 1rem;
     line-height: 1.35;
   }
 
   p {
     color: var(--flags-muted);
-    line-height: 1.65;
+    line-height: 1.5;
   }
 
   button:focus-visible,
@@ -47,7 +39,6 @@
     outline-offset: 4px;
   }
 
-  .flags-section-head,
   .flags-history-row,
   .flags-runtime-note {
     display: flex;
@@ -62,46 +53,45 @@
     font-weight: 700;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    margin-bottom: 10px;
+    margin-bottom: 6px;
   }
 
   .flags-strip {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    border-block: 1px solid var(--flags-line);
-    margin-bottom: 28px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    margin: 0;
+    font-size: .75rem;
+    line-height: 1.4;
   }
 
   .flags-strip > div {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px;
     min-width: 0;
-    padding: 19px 22px 19px 0;
   }
 
-  .flags-strip > div + div {
-    border-left: 1px solid var(--flags-line);
-    padding-left: 22px;
-  }
-
-  .flags-strip span,
+  .flags-strip dt,
   .flags-facts dt,
   .flags-history-row time {
     color: var(--flags-muted);
-    font-size: 11px;
+    font-size: .75rem;
   }
 
-  .flags-strip strong {
-    display: block;
-    margin-top: 6px;
-    font-size: 14px;
+  .flags-strip dd {
+    margin: 0;
+    font-weight: 600;
     overflow-wrap: anywhere;
   }
 
   .flags-nav {
     display: flex;
-    gap: 28px;
+    flex-wrap: wrap;
+    gap: 4px 24px;
     border-bottom: 1px solid var(--flags-line);
-    margin-bottom: 30px;
-    overflow-x: auto;
+    margin-bottom: 12px;
   }
 
   .flags-nav button {
@@ -110,10 +100,10 @@
     background: transparent;
     color: var(--flags-muted);
     cursor: pointer;
-    font-size: 13px;
+    font-size: .8125rem;
     font-weight: 600;
-    padding: 16px 0;
-    white-space: nowrap;
+    min-height: 44px;
+    padding: 8px 0;
   }
 
   .flags-nav button[aria-current='page'] {
@@ -122,32 +112,37 @@
   }
 
   .flags-section-head {
-    align-items: end;
-    margin-bottom: 22px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 16px;
+    margin-bottom: 12px;
   }
 
-  .flags-section-head p:not(.flags-kicker) {
-    margin-top: 10px;
-    max-width: 680px;
-    font-size: 14px;
+  .flags-section-head p {
+    max-width: 70ch;
+    font-size: .8125rem;
   }
 
   .flags-grid {
     display: grid;
     grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.85fr);
-    gap: 24px;
+    gap: 16px;
   }
 
   .flags-panel,
   .flags-flag,
   .flags-history-row {
-    border: 1px solid var(--flags-line);
-    border-radius: 6px;
+    --wiki-field-label-bg: var(--wiki-surface-raised);
+    border: 1px solid var(--wiki-material-border);
+    border-radius: var(--wiki-panel-radius);
+    background: var(--wiki-surface-gradient);
+    box-shadow: var(--wiki-specular-border), var(--wiki-shadow-sm);
   }
 
   .flags-panel {
     min-width: 0;
-    padding: 26px;
+    padding: 18px;
   }
 
   .flags-panel > p + p,
@@ -155,12 +150,9 @@
     margin-top: 11px;
   }
 
-  .flags-panel--quiet {
-    background: rgba(var(--v-theme-on-surface), 0.025);
-  }
 
   .flags-flag {
-    padding: 24px;
+    padding: 18px;
   }
 
   .flags-flag + .flags-flag {
@@ -183,16 +175,26 @@
   }
 
   .flags-facts {
-    margin: 19px 0 0;
+    margin: 16px 0 0;
+    padding: 0 12px;
+    background: var(--wiki-surface-sunken);
+    background-image: none;
+    border: 1px solid var(--wiki-well-border);
+    border-radius: var(--wiki-control-radius);
+    box-shadow: var(--wiki-shadow-inset);
   }
 
   .flags-facts > div {
     display: grid;
     grid-template-columns: 142px minmax(0, 1fr);
     gap: 18px;
-    border-top: 1px solid var(--flags-line);
-    padding: 11px 0;
-    font-size: 13px;
+    border-bottom: 1px solid var(--flags-line);
+    padding: 10px 0;
+    font-size: .8125rem;
+  }
+
+  .flags-facts > div:last-child {
+    border-bottom: 0;
   }
 
   .flags-facts dd {
@@ -224,12 +226,6 @@
     margin-bottom: 2px;
   }
 
-  .flags-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
 
   .flags-history {
     display: grid;
@@ -242,6 +238,10 @@
   .flags-history-row {
     align-items: start;
     padding: 17px;
+    background: var(--wiki-surface-sunken);
+    background-image: none;
+    border-color: var(--wiki-well-border);
+    box-shadow: var(--wiki-shadow-inset);
   }
 
   .flags-history-row p {
@@ -251,15 +251,20 @@
 
   .flags-history-row time {
     flex: 0 0 auto;
-    text-align: right;
+    text-align: end;
   }
 
   .flags-empty {
-    padding: 22px 0 4px;
+    padding: 16px;
+    background: var(--wiki-surface-sunken);
+    background-image: none;
+    border: 1px solid var(--wiki-well-border);
+    border-radius: var(--wiki-control-radius);
+    box-shadow: var(--wiki-shadow-inset);
   }
 
   @media (max-width: 900px) {
-    padding: 22px 20px 34px;
+    padding: 8px 16px 24px;
 
     .flags-grid {
       grid-template-columns: 1fr;
@@ -267,7 +272,7 @@
   }
 
   @media (max-width: 599.98px) {
-    padding: 18px 14px 28px;
+    padding: 8px 12px 20px;
 
     .flags-section-head,
     .flags-savebar,
@@ -277,15 +282,6 @@
       flex-direction: column;
     }
 
-    .flags-strip {
-      grid-template-columns: 1fr;
-    }
-
-    .flags-strip > div + div {
-      border-left: 0;
-      border-top: 1px solid var(--flags-line);
-      padding-left: 0;
-    }
 
     .flags-facts > div {
       grid-template-columns: 1fr;
@@ -293,7 +289,7 @@
     }
 
     .flags-history-row time {
-      text-align: left;
+      text-align: start;
     }
   }
 }

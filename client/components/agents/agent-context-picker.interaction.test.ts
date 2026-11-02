@@ -6,7 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from '../../../server
 import { AgentKnowledgeContextSchema } from '../../../shared/agents/knowledge-context.ts'
 import type { AgentDraft } from '../../helpers/agent-draft.ts'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
-import { fetchRecentPages as requestRecentPages, searchPages as requestPageSearch, type PageSearchResult, type PageSearchRow, type RecentPageRow } from '../../helpers/pages-api.ts'
+import {
+  fetchRecentPages as requestRecentPages,
+  searchPages as requestPageSearch,
+  type PageSearchResult,
+  type PageSearchRow,
+  type RecentPageRow
+} from '../../helpers/pages-api.ts'
 import type { WikiSource } from '../../../shared/wiki-source.ts'
 
 const componentPath = path.join(process.cwd(), 'client/components/agents/agent-context-picker.vue')
@@ -200,7 +206,7 @@ const mountPicker = (
   fetchWikiSourceImpl: (selector: { id: number }, query: string, signal: AbortSignal) => Promise<WikiSource>,
   draft = emptyDraft(),
   currentPage: AgentCurrentPageHint | null = null,
-  extraProps: { connectionBlocked?: boolean; currentPageTitle?: string } = {},
+  extraProps: { connectionBlocked?: boolean; currentPageTitle?: string; commitChanges?: boolean } = {},
   fetchRecentPagesImpl: (fetchImpl: Parameters<typeof requestRecentPages>[0]) => Promise<RecentPageRow[]> = async () => []
 ): MountedPicker => {
   const host = document.createElement('div')
@@ -215,7 +221,8 @@ const mountPicker = (
       disabled: { type: Boolean, default: false },
       connectionBlocked: { type: Boolean, default: false },
       connectionRetrying: { type: Boolean, default: false },
-      currentPageTitle: { type: String, default: undefined }
+      currentPageTitle: { type: String, default: undefined },
+      sourceTrigger: { type: Object, default: null }
     },
     setup(componentProps, { expose }) {
       return evaluatePicker(
@@ -228,7 +235,11 @@ const mountPicker = (
         Vue.watch,
         () => componentProps,
         () => (event: string, patch?: Partial<AgentDraft>) => {
-          if (event === 'change' && patch) changes.push(patch)
+          if (event === 'change' && patch) {
+            changes.push(patch)
+            // Commit as the real parent does, before the child's nextTick focus.
+            if (extraProps.commitChanges) rootProps.draft = { ...rootProps.draft, ...patch }
+          }
           if (event === 'sourcesAdded') sourcesAdded.value += 1
         },
         expose,
@@ -241,9 +252,33 @@ const mountPicker = (
     },
     render: renderPicker
   })
-  const rootProps = Vue.reactive({ draft, currentPage, disabled: false, connectionBlocked: false, connectionRetrying: false, ...extraProps })
+  const rootProps = Vue.reactive({
+    draft,
+    currentPage,
+    disabled: false,
+    connectionBlocked: extraProps.connectionBlocked ?? false,
+    connectionRetrying: false,
+    currentPageTitle: extraProps.currentPageTitle
+  })
   // Runtime-compiled setup bindings have unknown keys; use Vue's public renderable contract.
-  const app = Vue.createApp({ setup: () => () => Vue.h(picker as Component, rootProps) })
+  const pickerRef = Vue.ref<{ openSources: (opener: HTMLElement) => void } | null>(null)
+  const sourceTrigger = Vue.ref<HTMLButtonElement | null>(null)
+  const app = Vue.createApp({
+    setup: () => () =>
+      Vue.h('div', [
+        Vue.h(
+          'button',
+          {
+            ref: sourceTrigger,
+            type: 'button',
+            class: 'test-source-trigger',
+            onClick: (event: MouseEvent) => pickerRef.value?.openSources(event.currentTarget as HTMLElement)
+          },
+          'Source'
+        ),
+        Vue.h(picker as Component, { ...rootProps, ref: pickerRef, sourceTrigger: sourceTrigger.value })
+      ])
+  })
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.config.globalProperties.$t = translateWithDefaultEscaping
   app.component(
@@ -266,7 +301,7 @@ const mountPicker = (
 }
 
 const openPicker = async (mounted: MountedPicker): Promise<void> => {
-  const button = mounted.host.querySelector<HTMLButtonElement>('.agent-context__scope button:last-child')
+  const button = mounted.host.querySelector<HTMLButtonElement>('.test-source-trigger')
   if (!button) throw new Error('Add sources activator did not render')
   button.focus()
   button.click()
@@ -307,7 +342,7 @@ afterEach(() => {
 })
 
 describe('Agent context source dialog focus', () => {
-  it('returns focus to Add sources after cancelling a pending selection and short query', async () => {
+  it('returns focus to Source after cancelling a pending selection and short query', async () => {
     const draft = { ...emptyDraft(), scope: { kind: 'all' } as const }
     const mounted = mountPicker(
       vi.fn(async () => result([])),
@@ -317,19 +352,18 @@ describe('Agent context source dialog focus', () => {
       {},
       vi.fn(async () => [recent(1)])
     )
-    const activator = mounted.host.querySelector<HTMLButtonElement>('.agent-context__scope button:last-child')
-    if (!activator) throw new Error('Add sources activator did not render')
+    const activator = mounted.host.querySelector<HTMLButtonElement>('.test-source-trigger')
+    if (!activator) throw new Error('Source activator did not render')
     await openPicker(mounted)
     await selectResult()
     await search(mounted, 'x')
     const cancel = document.body.querySelector<HTMLButtonElement>('.agent-context__dialog-close')
     if (!cancel) throw new Error('Cancel action did not render')
-    const focusReturned = new Promise<void>(resolve => {
-      activator.addEventListener('focus', () => resolve(), { once: true })
-    })
+    const focusReturned = Promise.withResolvers<void>()
+    activator.addEventListener('focus', () => focusReturned.resolve(), { once: true })
     cancel.focus()
     cancel.click()
-    await focusReturned
+    await focusReturned.promise
     expect(document.activeElement).toBe(activator)
     expect(mounted.changes).toEqual([])
     await openPicker(mounted)
@@ -344,7 +378,14 @@ describe('Agent context recent suggestions', () => {
     const fetchRecentPagesImpl = vi.fn(async () => recents)
     const searchPagesImpl = vi.fn(async () => result([{ ...row('2'), locale: 'fr' }, row(10)]))
     const draft = { ...emptyDraft([source(1)]), scope: { kind: 'all' } as const }
-    const mounted = mountPicker(searchPagesImpl, vi.fn(async (selector: { id: number }) => source(selector.id)), draft, null, {}, fetchRecentPagesImpl)
+    const mounted = mountPicker(
+      searchPagesImpl,
+      vi.fn(async (selector: { id: number }) => source(selector.id)),
+      draft,
+      null,
+      {},
+      fetchRecentPagesImpl
+    )
     await openPicker(mounted)
 
     expect(fetchRecentPagesImpl).toHaveBeenCalledTimes(1)
@@ -390,7 +431,12 @@ describe('Agent context recent suggestions', () => {
       const expectedIds = scope.kind === 'section' ? [91] : scope.kind === 'locale' ? [91, 93] : [91, 92, 93]
       const expectedOptions = scope.kind === 'section' ? { locale: 'en', path: 'handbook' } : scope.kind === 'locale' ? { locale: 'en' } : {}
       const searchPagesImpl = vi.fn(async (_fetchImpl: unknown, _query: string, options: Record<string, unknown>) =>
-        options.cursor ? result([row(94)]) : result(candidates.map(item => ({ ...row(item.id), ...item })), 'next-page')
+        options.cursor
+          ? result([row(94)])
+          : result(
+              candidates.map(item => ({ ...row(item.id), ...item })),
+              'next-page'
+            )
       )
       const mounted = mountPicker(
         searchPagesImpl,
@@ -401,8 +447,12 @@ describe('Agent context recent suggestions', () => {
         vi.fn(async () => candidates)
       )
       await openPicker(mounted)
-      expect(Array.from(document.body.querySelectorAll('.agent-context__result strong'), item => item.textContent)).toEqual(expectedIds.map(id => `Topic ${id}`))
-      expect(document.body.querySelector('.agent-context__recent-title')?.textContent).toContain(scope.kind === 'section' ? 'en/handbook' : scope.kind === 'locale' ? 'EN pages' : 'All Wiki')
+      expect(Array.from(document.body.querySelectorAll('.agent-context__result strong'), item => item.textContent)).toEqual(
+        expectedIds.map(id => `Topic ${id}`)
+      )
+      expect(document.body.querySelector('.agent-context__recent-title')?.textContent).toContain(
+        scope.kind === 'section' ? 'en/handbook' : scope.kind === 'locale' ? 'EN pages' : 'All Wiki'
+      )
       await selectResult()
       await search(mounted, 'topics')
       expect(searchPagesImpl.mock.calls[0]?.[2]).toEqual({ ...expectedOptions, paginated: true })
@@ -418,15 +468,24 @@ describe('Agent context recent suggestions', () => {
 
   it('reports recent failure safely, retries the existing endpoint, and distinguishes an empty recent list from short-query guidance', async () => {
     let attempts = 0
-    const fetchRecentPagesImpl = vi.fn(async () => requestRecentPages(async url => {
-      expect(url).toBe('/_api/pages/recent')
-      attempts += 1
-      return new Response(JSON.stringify(attempts === 1 ? { message: 'sensitive server detail' } : []), {
-        status: attempts === 1 ? 500 : 200,
-        headers: { 'content-type': 'application/json' }
+    const fetchRecentPagesImpl = vi.fn(async () =>
+      requestRecentPages(async url => {
+        expect(url).toBe('/_api/pages/recent')
+        attempts += 1
+        return new Response(JSON.stringify(attempts === 1 ? { message: 'sensitive server detail' } : []), {
+          status: attempts === 1 ? 500 : 200,
+          headers: { 'content-type': 'application/json' }
+        })
       })
-    }))
-    const mounted = mountPicker(vi.fn(async () => result([])), vi.fn(async (selector: { id: number }) => source(selector.id)), emptyDraft(), null, {}, fetchRecentPagesImpl)
+    )
+    const mounted = mountPicker(
+      vi.fn(async () => result([])),
+      vi.fn(async (selector: { id: number }) => source(selector.id)),
+      emptyDraft(),
+      null,
+      {},
+      fetchRecentPagesImpl
+    )
     await openPicker(mounted)
     const error = document.body.querySelector('.agent-context__search-error')
     expect(error?.textContent).toContain('Recent pages could not be loaded.')
@@ -547,7 +606,12 @@ describe('Agent context source transaction', () => {
       query === 'eight' ? result([row('8')]) : query === 'same' ? result([row(8)]) : result([row(9)])
     )
     const fetchWikiSourceImpl = vi.fn(async (selector: { id: number }) => source(selector.id))
-    const mounted = mountPicker(searchPagesImpl, fetchWikiSourceImpl, emptyDraft(existing), { id: 99, locale: 'en', path: 'handbook/current', observedUpdatedAt: '2026-09-16T00:00:00.000Z' })
+    const mounted = mountPicker(searchPagesImpl, fetchWikiSourceImpl, emptyDraft(existing), {
+      id: 99,
+      locale: 'en',
+      path: 'handbook/current',
+      observedUpdatedAt: '2026-09-16T00:00:00.000Z'
+    })
     await openPicker(mounted)
     await search(mounted, 'eight')
     await selectResult()
@@ -574,14 +638,12 @@ describe('Agent context source transaction', () => {
 })
 
 describe('Agent context authoritative source admission', () => {
-  for (const invalid of [
-    { id: 122 },
-    { locale: 'fr' },
-    { path: 'handbook/moved' },
-    { sourceRevision: '0' }
-  ]) {
+  for (const invalid of [{ id: 122 }, { locale: 'fr' }, { path: 'handbook/moved' }, { sourceRevision: '0' }]) {
     it(`rejects authoritative ${Object.keys(invalid)[0]} mismatch without a partial commit`, async () => {
-      const mounted = mountPicker(vi.fn(async () => result([row(121)])), vi.fn(async () => ({ ...source(121), ...invalid })))
+      const mounted = mountPicker(
+        vi.fn(async () => result([row(121)])),
+        vi.fn(async () => ({ ...source(121), ...invalid }))
+      )
       await openPicker(mounted)
       await search(mounted, 'identity')
       await selectResult()
@@ -603,7 +665,11 @@ describe('Agent context authoritative source admission', () => {
     }))
     const mounted = mountPicker(
       vi.fn(async () => result(candidates)),
-      vi.fn(async (selector: { id: number }) => ({ ...source(selector.id), title: candidates[selector.id - 130].title, path: candidates[selector.id - 130].path }))
+      vi.fn(async (selector: { id: number }) => ({
+        ...source(selector.id),
+        title: candidates[selector.id - 130].title,
+        path: candidates[selector.id - 130].path
+      }))
     )
     await openPicker(mounted)
     await search(mounted, 'budget')
@@ -651,7 +717,10 @@ describe('Agent context authoritative source admission', () => {
   })
 
   it('removes externally attached identities from the actual pending count without emitting another commit', async () => {
-    const mounted = mountPicker(vi.fn(async () => result([row(151)])), vi.fn(async (selector: { id: number }) => source(selector.id)))
+    const mounted = mountPicker(
+      vi.fn(async () => result([row(151)])),
+      vi.fn(async (selector: { id: number }) => source(selector.id))
+    )
     await openPicker(mounted)
     await search(mounted, 'dedupe')
     await selectResult()
@@ -667,37 +736,34 @@ describe('Agent context authoritative source admission', () => {
 })
 
 describe('Agent context current-page inclusion', () => {
-  it('emits an inclusion toggle for the next message without changing the opening page', async () => {
-    const page: AgentCurrentPageHint = {
-      id: 77,
-      locale: 'en',
-      path: 'handbook/context',
-      observedUpdatedAt: '2026-09-16T00:00:00.000Z'
-    }
-    const searchPagesImpl = vi.fn(async () => result([]))
-    const fetchWikiSourceImpl = vi.fn(async (selector: { id: number }) => source(selector.id))
-    const included = mountPicker(searchPagesImpl, fetchWikiSourceImpl, emptyDraft(), page)
-    const includeControl = included.host.querySelector<HTMLButtonElement>('.agent-context__page-chip')
-    if (!includeControl) throw new Error('Current-page source chip did not render')
-
-    expect(includeControl.getAttribute('aria-pressed')).toBe('true')
-    expect(includeControl.getAttribute('aria-label')).toContain('en/handbook/context')
-    includeControl.click()
+  it('removes the included navigation hint and re-includes it explicitly through Source without navigating', async () => {
+    const page: AgentCurrentPageHint = { id: 77, locale: 'en', path: 'handbook/context', observedUpdatedAt: '2026-09-16T00:00:00.000Z' }
+    const mounted = mountPicker(
+      vi.fn(async () => result([])),
+      vi.fn(async (selector: { id: number }) => source(selector.id)),
+      emptyDraft(),
+      page,
+      { commitChanges: true }
+    )
+    const remove = mounted.host.querySelector<HTMLButtonElement>('.agent-context__source-remove')
+    if (!remove) throw new Error('Included source removal did not render')
+    remove.click()
+    expect(mounted.changes).toEqual([{ sources: [], includeCurrentPage: false }])
     await settle()
-    expect(included.changes).toEqual([{ includeCurrentPage: false }])
-    expect(window.location.pathname).toBe('/wiki/en/home')
+    expect(mounted.host.querySelectorAll('.agent-context__source-group')).toHaveLength(0)
+    expect(document.activeElement).toBe(mounted.host.querySelector('.test-source-trigger'))
 
-    const excluded = mountPicker(searchPagesImpl, fetchWikiSourceImpl, emptyDraft([], false), page)
-    const excludeControl = excluded.host.querySelector<HTMLButtonElement>('.agent-context__page-chip')
-    if (!excludeControl) throw new Error('Current-page source chip did not render')
-    expect(excludeControl.getAttribute('aria-pressed')).toBe('false')
-    excludeControl.click()
+    await openPicker(mounted)
+    const include = document.body.querySelector<HTMLButtonElement>('.agent-context__scope [aria-pressed]')
+    if (!include) throw new Error('Current-page inclusion control missing from Source dialog')
+    expect(include.getAttribute('aria-pressed')).toBe('false')
+    include.click()
     await settle()
-    expect(excluded.changes).toEqual([{ includeCurrentPage: true }])
+    expect(mounted.changes[1]).toEqual({ includeCurrentPage: true })
     expect(window.location.pathname).toBe('/wiki/en/home')
   })
 
-  it('names the chip by page title and explains, without toggling, while the connection is down', async () => {
+  it('renders an unescaped current-page title while disabling both source actions offline', async () => {
     const page: AgentCurrentPageHint = { id: 78, locale: 'en', path: 'handbook/title', observedUpdatedAt: '2026-09-16T00:00:00.000Z' }
     const currentPageTitle = 'Team & <Ops> / "Handbook"'
     const mounted = mountPicker(
@@ -705,70 +771,104 @@ describe('Agent context current-page inclusion', () => {
       vi.fn(async (selector: { id: number }) => source(selector.id)),
       emptyDraft(),
       page,
-      {
-        connectionBlocked: true,
-        currentPageTitle
-      }
+      { connectionBlocked: true, currentPageTitle }
     )
-    const chip = mounted.host.querySelector<HTMLButtonElement>('.agent-context__page-chip')
-    if (!chip) throw new Error('Current-page source chip did not render')
-    expect(chip.textContent).toContain(currentPageTitle)
-    expect(chip.textContent).not.toContain('handbook/title')
-    expect(chip.getAttribute('aria-label')).toContain(currentPageTitle)
-    expect(chip.querySelector('ops')).toBeNull()
-    expect(chip.getAttribute('aria-pressed')).toBe('true')
-    // Still focusable so its tooltip can give the reason, but the click changes nothing.
-    expect(chip.disabled).toBe(false)
-    expect(chip.getAttribute('aria-disabled')).toBe('true')
-    chip.click()
+    const group = mounted.host.querySelector<HTMLElement>('.agent-context__source-group')
+    if (!group) throw new Error('Current-page source group did not render')
+    expect(group.getAttribute('aria-label')).toBe(currentPageTitle)
+    expect(group.textContent).toContain(currentPageTitle)
+    expect(group.querySelector('ops')).toBeNull()
+    const actions = Array.from(group.querySelectorAll<HTMLButtonElement>('button'))
+    expect(actions).toHaveLength(2)
+    for (const action of actions) {
+      expect(action.disabled).toBe(true)
+      action.click()
+    }
     await settle()
     expect(mounted.changes).toEqual([])
+    expect(mounted.host.querySelector('[data-source-id]')).toBeNull()
   })
 })
 
 describe('Agent context source and scope affordances', () => {
-  it('opens source preview with Enter while close removes without previewing', async () => {
+  it('keeps preview and removal as independent sibling actions and returns focus to the next source', async () => {
     const searchPagesImpl = vi.fn(async () => result([]))
     const fetchWikiSourceImpl = vi.fn(async (selector: { id: number }) => source(selector.id))
-    const mounted = mountPicker(searchPagesImpl, fetchWikiSourceImpl, emptyDraft([source(7)]))
-    const chip = mounted.host.querySelector<HTMLElement>('.agent-context__sources .v-chip')
-    if (!chip) throw new Error('Attached source chip did not render')
-    expect(chip.getAttribute('title')).toBe(chip.getAttribute('aria-label'))
-    chip.focus()
-    chip.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    const mounted = mountPicker(searchPagesImpl, fetchWikiSourceImpl, emptyDraft([source(7), source(8)]), null, { commitChanges: true })
+    const group = mounted.host.querySelector<HTMLElement>('.agent-context__source-group')
+    const previewButton = group?.querySelector<HTMLButtonElement>('.agent-context__source-preview')
+    const remove = group?.querySelector<HTMLButtonElement>('.agent-context__source-remove')
+    if (!group || !previewButton || !remove) throw new Error('Sibling source actions missing')
+    expect(group).toBeInstanceOf(browserWindow.HTMLFieldSetElement)
+    expect(group.getAttribute('aria-label')).toBe(source(7).title)
+    expect(previewButton.parentElement).toBe(remove.parentElement)
+    expect(mounted.host.querySelector('button button, [role="button"] button')).toBeNull()
+    // JSDOM does not perform native keyboard button activation.
+    previewButton.focus()
+    previewButton.click()
     await settle()
-    const preview = mounted.host.querySelector<HTMLElement>('[role="dialog"][data-source-id="7"]')
-    expect(preview).not.toBeNull()
-    preview?.querySelector<HTMLButtonElement>('button')?.click()
+    expect(mounted.host.querySelector('[role="dialog"][data-source-id="7"]')).not.toBeNull()
+    expect(mounted.changes).toEqual([])
+    mounted.host.querySelector<HTMLButtonElement>('[data-source-id="7"] button')!.click()
     await settle()
-    const close = chip.querySelector<HTMLElement>('.v-chip__close')
-    if (!close) throw new Error('Source removal control did not render')
-    close.click()
+    remove.focus()
+    remove.click()
     await settle()
-    expect(mounted.changes).toEqual([{ sources: [] }])
+    expect(mounted.changes).toEqual([{ sources: [source(8)] }])
     expect(mounted.host.querySelector('[role="dialog"][data-source-id]')).toBeNull()
+    expect(document.activeElement).toBe(mounted.host.querySelector('.agent-context__source-preview'))
     expect(searchPagesImpl).not.toHaveBeenCalled()
     expect(fetchWikiSourceImpl).not.toHaveBeenCalled()
   })
 
-  it('explains scope on focus and guides empty selected pages without changing admission', async () => {
+  it('deduplicates an attached current page and removes both provenance states atomically with selected-scope fallback', async () => {
+    const attached = source(7)
+    const page = { id: attached.id, locale: attached.locale, path: attached.path, observedUpdatedAt: '2026-09-16T00:00:00.000Z' }
+    const draft = { ...emptyDraft([attached]), scope: { kind: 'selected' as const } }
+    const mounted = mountPicker(
+      vi.fn(async () => result([])),
+      vi.fn(async () => attached),
+      draft,
+      page,
+      { commitChanges: true }
+    )
+    expect(mounted.host.querySelectorAll('.agent-context__source-group')).toHaveLength(1)
+    expect(mounted.host.querySelector('.agent-context__source-group small')?.textContent).toBe(translateEnglish('common:agentContextPicker.currentAndAttached'))
+    mounted.host.querySelector<HTMLButtonElement>('.agent-context__source-remove')!.click()
+    expect(mounted.changes).toEqual([{ sources: [], includeCurrentPage: false, scope: { kind: 'all' } }])
+    await settle()
+    expect(document.activeElement).toBe(mounted.host.querySelector('.test-source-trigger'))
+  })
+
+  it('shows a distinct current hint alongside eight explicit attachments without granting a ninth slot', async () => {
+    const attachments = Array.from({ length: 8 }, (_, index) => source(index + 1))
+    const page = { id: 99, locale: 'en', path: 'current/page', observedUpdatedAt: '2026-09-16T00:00:00.000Z' }
+    const mounted = mountPicker(
+      vi.fn(async () => result([])),
+      vi.fn(async (selector: { id: number }) => source(selector.id)),
+      emptyDraft(attachments),
+      page
+    )
+    expect(mounted.host.querySelectorAll('.agent-context__source-group')).toHaveLength(9)
+    mounted.host.querySelector<HTMLButtonElement>('.agent-context__source-remove')!.click()
+    expect(mounted.changes).toEqual([{ sources: attachments, includeCurrentPage: false }])
+    await openPicker(mounted)
+    expect(addButton().disabled).toBe(true)
+  })
+
+  it('keeps empty selected scope unavailable while allowing Wiki-wide scope from Source', async () => {
     const searchPagesImpl = vi.fn(async () => result([]))
     const fetchWikiSourceImpl = vi.fn(async (selector: { id: number }) => source(selector.id))
     const mounted = mountPicker(searchPagesImpl, fetchWikiSourceImpl)
-    const scope = mounted.host.querySelector<HTMLButtonElement>('.agent-context__scope-control')
-    if (!scope) throw new Error('Scope control did not render')
-    scope.focus()
-    await settle()
-    const helpId = scope.getAttribute('aria-describedby')
-    const help = helpId ? document.getElementById(helpId) : null
-    expect(help?.textContent).toContain(translateEnglish('common:agentContextPicker.searchScopeHelp'))
+    await openPicker(mounted)
+    const scope = document.body.querySelector<HTMLButtonElement>('.agent-context__scope button[aria-haspopup="menu"]')
+    if (!scope) throw new Error('Scope control did not render in Source dialog')
     scope.click()
     await settle()
     const selected = Array.from(document.body.querySelectorAll<HTMLElement>('.v-list-item')).find(
       item => item.querySelector('.v-list-item-title')?.textContent === translateEnglish('common:agentContextPicker.selectedPages')
     )
     expect(selected?.getAttribute('aria-disabled')).toBe('true')
-    expect(selected?.textContent).toContain(translateEnglish('common:agentContextPicker.attachSourcesFirst'))
     selected?.click()
     await settle()
     expect(mounted.changes).toEqual([])
@@ -1031,8 +1131,13 @@ describe('Agent context source debounce', () => {
 describe('Agent context source cancellation', () => {
   it('resumes interrupted discovery after Apply fails instead of reporting an unsearched query as empty', async () => {
     const results = deferred<PageSearchResult>()
-    const searchPagesImpl = vi.fn(async (_fetchImpl: unknown, query: string) => query === 'selected' ? result([row(171)]) : results.promise)
-    const mounted = mountPicker(searchPagesImpl, vi.fn(async () => { throw new Error('This source is no longer available to you.') }))
+    const searchPagesImpl = vi.fn(async (_fetchImpl: unknown, query: string) => (query === 'selected' ? result([row(171)]) : results.promise))
+    const mounted = mountPicker(
+      searchPagesImpl,
+      vi.fn(async () => {
+        throw new Error('This source is no longer available to you.')
+      })
+    )
     await openPicker(mounted)
     await search(mounted, 'selected')
     await selectResult()

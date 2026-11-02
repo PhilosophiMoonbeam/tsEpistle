@@ -42,7 +42,8 @@
               prepend-inner-icon="mdi-magnify"
               clearable
               hide-details
-              density="comfortable"
+              density="compact"
+              variant="outlined"
             >
               <template #clear="{ props: clearProps }"><v-icon v-bind="clearProps" icon="mdi-close-circle" :aria-label="$t('common:agentPersonalSkills.clearSearch')" /></template>
             </v-text-field>
@@ -92,14 +93,14 @@
                 </v-list-item>
               </v-list>
 
-              <div v-else-if="skills.length" class="personal-inventory__empty">
+              <div v-else-if="skills.length" class="personal-inventory__empty wiki-surface-well">
                 <v-icon icon="mdi-text-search" size="24" />
                 <strong>{{ $t('common:agentPersonalSkills.noMatchingPersonalSkills') }}</strong>
                 <span>{{ $t('common:agentPersonalSkills.tryAnotherNameDescription') }}</span>
                 <v-btn size="small" variant="text" @click="search = ''">{{ $t('common:agentPersonalSkills.clearSearch') }}</v-btn>
               </div>
 
-              <div v-else class="personal-inventory__empty">
+              <div v-else class="personal-inventory__empty wiki-surface-well">
                 <v-icon icon="mdi-file-document-plus-outline" size="28" />
                 <strong>{{ $t('common:agentPersonalSkills.personalLayerEmpty') }}</strong>
                 <span>{{ $t('common:agentPersonalSkills.createSkillMdDocument') }}</span>
@@ -164,7 +165,7 @@
         <div class="personal-skills__trust-note"><v-icon icon="mdi-account-lock-outline" size="18" /><span>{{ $t('common:agentPersonalSkills.personalSkillsAffectOnly') }}</span></div>
         <v-spacer />
         <v-btn :disabled="saving" @click="requestClose">{{ $t('common:actions.close') }}</v-btn>
-        <v-btn color="primary" type="submit" :loading="saving" :disabled="!loaded || !readAccepted || !formValid || loading || saving || networkBlocked || editedSkillMissing" form="personal-skill-form">{{ editingId ? $t('common:agentPersonalSkills.saveRevision') : $t('common:agentPersonalSkills.createSkill') }}</v-btn>
+        <v-btn color="primary" variant="tonal" :data-commitment="isDirty && loaded && readAccepted && formValid && !loading && !saving && !networkBlocked && !editedSkillMissing ? 'active' : undefined" type="submit" :loading="saving" :disabled="!loaded || !readAccepted || !formValid || loading || saving || networkBlocked || editedSkillMissing" form="personal-skill-form">{{ editingId ? $t('common:agentPersonalSkills.saveRevision') : $t('common:agentPersonalSkills.createSkill') }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -547,14 +548,15 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .personal-skills {
-  --personal-accent: var(--wiki-accent-spectral);
+  --personal-accent: var(--wiki-secondary-ink);
 
   overflow: hidden;
-  border: 1px solid var(--wiki-surface-border);
+  border: var(--wiki-hud-border);
   border-radius: var(--wiki-panel-radius) !important;
-  background: var(--wiki-surface-raised) !important;
+  background: var(--wiki-hud-surface) !important;
   color: rgb(var(--v-theme-on-surface));
-  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset) !important;
+  backdrop-filter: var(--wiki-hud-filter);
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-glass-specular) !important;
 }
 
 .personal-skills__header {
@@ -564,9 +566,7 @@ onBeforeUnmount(() => {
   gap: var(--wiki-space-3);
   padding: var(--wiki-space-4) var(--wiki-space-5);
   border-bottom: 1px solid var(--wiki-surface-border);
-  background:
-    linear-gradient(110deg, color-mix(in srgb, var(--personal-accent) 8%, transparent), transparent 52%),
-    var(--wiki-surface-raised);
+  background: transparent;
 }
 
 .personal-skills__mark,
@@ -655,6 +655,10 @@ onBeforeUnmount(() => {
   display: flex;
   min-width: 0;
   flex-direction: column;
+  align-content: start;
+  align-self: start;
+  block-size: min(40rem, 72dvh);
+  min-block-size: 0;
   padding: var(--wiki-space-4);
   border-inline-end: 1px solid var(--wiki-surface-border);
   background: var(--wiki-surface-sunken);
@@ -662,6 +666,7 @@ onBeforeUnmount(() => {
 
 .personal-inventory__header {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: var(--wiki-space-3);
@@ -681,27 +686,42 @@ onBeforeUnmount(() => {
 }
 
 .personal-inventory__search {
+  flex: 0 0 auto;
+  --wiki-field-label-bg: var(--wiki-surface-sunken);
   margin-bottom: var(--wiki-space-2);
 }
 
 .personal-inventory__search :deep(.v-field) {
-  border: 1px solid var(--wiki-surface-border);
+  --v-input-control-height: 40px;
+  --v-field-input-padding-top: 7px;
+  --v-field-input-padding-bottom: 7px;
+  border: 1px solid var(--wiki-well-border);
   border-radius: var(--wiki-control-radius);
-  background: var(--wiki-surface-raised);
+  background: var(--wiki-surface-sunken);
+  background-image: none;
   box-shadow: var(--wiki-shadow-inset);
+}
+
+.personal-inventory__search :deep(.v-field__input) {
+  min-height: max(38px, 2.375em);
 }
 
 .personal-inventory__error {
   margin-top: var(--wiki-space-3);
+  flex: 0 0 auto;
 }
 
 .personal-inventory__loading {
   display: grid;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
   gap: var(--wiki-space-2);
   margin-top: var(--wiki-space-2);
 }
 
 .personal-inventory__summary {
+  flex: 0 0 auto;
   padding: var(--wiki-space-2) var(--wiki-space-2) var(--wiki-space-1);
   color: var(--wiki-text-muted);
   font-size: var(--wiki-label-size);
@@ -712,6 +732,8 @@ onBeforeUnmount(() => {
 }
 
 .personal-inventory__list {
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
   padding: 0;
   background: transparent;
@@ -780,9 +802,11 @@ onBeforeUnmount(() => {
 
 .personal-inventory__empty {
   display: grid;
-  min-height: 15rem;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
   place-items: center;
-  align-content: center;
+  align-content: safe center;
   gap: var(--wiki-space-2);
   padding: var(--wiki-space-6) var(--wiki-space-4);
   color: var(--wiki-text-muted);
@@ -951,9 +975,11 @@ onBeforeUnmount(() => {
 }
 
 .personal-editor__code :deep(.v-field) {
-  border: 1px solid var(--wiki-surface-border);
+  --wiki-field-label-bg: var(--wiki-surface-sunken);
+  border: 1px solid var(--wiki-well-border);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-sunken);
+  background-image: none;
   box-shadow: var(--wiki-shadow-inset);
 }
 
@@ -964,10 +990,6 @@ onBeforeUnmount(() => {
   tab-size: 2;
 }
 
-.personal-editor__code :deep(.v-field--focused) {
-  border-color: var(--wiki-focus-color);
-  box-shadow: var(--wiki-focus-ring), var(--wiki-shadow-inset);
-}
 
 .personal-skills__actions {
   display: flex;
@@ -995,13 +1017,14 @@ onBeforeUnmount(() => {
 }
 
 .personal-confirmation {
-  --personal-accent: var(--wiki-accent-spectral);
+  --personal-accent: var(--wiki-secondary-ink);
 
   overflow: hidden;
-  border: 1px solid var(--wiki-surface-border);
+  border: var(--wiki-hud-border);
   border-radius: var(--wiki-panel-radius) !important;
-  background: var(--wiki-surface-raised) !important;
-  box-shadow: var(--wiki-shadow-md), var(--wiki-shadow-inset) !important;
+  background: var(--wiki-hud-surface) !important;
+  backdrop-filter: var(--wiki-hud-filter);
+  box-shadow: var(--wiki-shadow-md), var(--wiki-glass-specular) !important;
 }
 
 .personal-confirmation__header {
@@ -1047,16 +1070,23 @@ onBeforeUnmount(() => {
   }
 
   .personal-inventory {
-    max-height: 18rem;
+    block-size: auto;
     border-block-end: 1px solid var(--wiki-surface-border);
     border-inline-end: 0;
   }
 
   .personal-inventory__list {
-    min-height: 0;
+    flex: 0 1 auto;
+    max-block-size: 18rem;
+  }
+
+  .personal-inventory__loading {
+    flex: 0 0 auto;
+    max-block-size: 18rem;
   }
 
   .personal-inventory__empty {
+    flex: 0 0 auto;
     min-height: 10rem;
   }
 

@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-app().profile
+  v-app.profile(:class='{ "profile--permanent-sidebar": $vuetify.display.mdAndUp }')
     nav-header
       template(v-slot:mobileBrand)
         .profile-mobile-brand
@@ -173,12 +173,15 @@ export default defineComponent({
 <style lang='scss'>
 .profile {
   font-family: var(--wiki-font-body);
+  background: var(--wiki-canvas-bg);
 
-  .nav-header {
-    border-bottom: 1px solid var(--wiki-surface-border) !important;
-    background: var(--wiki-surface-raised) !important;
-    box-shadow: var(--wiki-shadow-xs) !important;
+  &--permanent-sidebar .profile-main .admin-hero {
+    &__mark,
+    &__eyebrow {
+      display: none;
+    }
   }
+
 
   .profile-main a:focus-visible,
   .profile-sidebar a:focus-visible {
@@ -330,7 +333,7 @@ export default defineComponent({
 
 .profile-main {
   min-width: 0;
-  background: var(--wiki-surface-sunken);
+  background: var(--wiki-canvas-bg);
 
   h1[tabindex='-1']:focus {
     outline: none;
@@ -345,10 +348,10 @@ export default defineComponent({
 
   .v-card:not(.v-card--flat, .v-card--variant-flat) {
     overflow: hidden;
-    border: 1px solid var(--wiki-surface-border);
+    border: 1px solid var(--wiki-material-border);
     border-radius: .65rem;
-    background: var(--wiki-surface-raised);
-    box-shadow: none;
+    background: var(--wiki-surface-gradient);
+    box-shadow: var(--wiki-specular-border), var(--wiki-shadow-sm);
   }
 
   .v-field,

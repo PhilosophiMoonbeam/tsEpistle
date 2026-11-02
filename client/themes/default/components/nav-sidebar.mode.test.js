@@ -190,7 +190,7 @@ const useCurrentPage = () => {
   cleanups.push(() => Object.assign(wikiStore.page, original))
 }
 
-describe('Custom Navigation preserves its two views', () => {
+describe('Custom Navigation selects only usable views', () => {
   for (const [label, items] of [
     ['empty or permission-filtered', []],
     ['home only', [home]],
@@ -200,24 +200,25 @@ describe('Custom Navigation preserves its two views', () => {
       it(`respects ${preference ?? 'unset'} preference with a ${label} menu`, () => {
         const localStorage = storage(preference)
         const sidebar = mountSidebar({ items, localStorage })
-        const expected = preference === 'browse' || preference === 'custom' ? preference : items.includes(guide) ? 'custom' : 'browse'
+        const expected = !items.includes(guide) ? 'browse' : preference === 'browse' ? 'browse' : 'custom'
         expect(sidebar.currentMode).toBe(expected)
         expect(sidebar.fetchBrowseItems).toHaveBeenCalledTimes(expected === 'browse' ? 1 : 0)
         expect(localStorage.setItem).not.toHaveBeenCalled()
       })
     }
-    it(`switches in both directions and remembers the choice with a ${label} menu`, async () => {
+    it(`preserves the saved choice without selecting an empty ${label} menu`, async () => {
       const localStorage = storage('custom')
       const transport = vi.fn(async () => treeResponse([]))
       const { sidebar } = mountSidebar({ items, localStorage, transport, realDirectory: true })
+      await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
       sidebar.switchMode('browse')
       await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
       expect(sidebar.currentMode).toBe('browse')
       expect(transport).toHaveBeenCalledTimes(1)
       expect(mountSidebar({ items, localStorage }).currentMode).toBe('browse')
       sidebar.switchMode('custom')
-      expect(sidebar.currentMode).toBe('custom')
-      expect(mountSidebar({ items, localStorage }).currentMode).toBe('custom')
+      expect(sidebar.currentMode).toBe(items.includes(guide) ? 'custom' : 'browse')
+      expect(mountSidebar({ items, localStorage }).currentMode).toBe(items.includes(guide) ? 'custom' : 'browse')
       sidebar.switchMode('browse')
       expect(transport).toHaveBeenCalledTimes(1)
     })
@@ -229,9 +230,8 @@ describe('Custom Navigation preserves its two views', () => {
   ]) {
     it(`${navMode} uses its configured view regardless of the saved preference`, () => {
       const localStorage = storage(expected === 'custom' ? 'browse' : 'custom')
-      const sidebar = mountSidebar({ navMode, localStorage })
+      const sidebar = mountSidebar({ navMode, localStorage, items: [guide] })
       expect(sidebar.currentMode).toBe(expected)
-      expect(localStorage.getItem).not.toHaveBeenCalled()
       expect(sidebar.fetchBrowseItems).toHaveBeenCalledTimes(expected === 'browse' ? 1 : 0)
     })
   }
@@ -333,15 +333,26 @@ describe('Custom Navigation preserves its two views', () => {
 
   it('loads the current page directory when expanding parents is enabled', async () => {
     useCurrentPage()
-    const transport = vi.fn(async () => treeResponse(currentDirectoryFixture))
-    const { sidebar } = mountSidebar({
+    let release
+    const transport = vi.fn(
+      () =>
+        new Promise(resolve => {
+          release = resolve
+        })
+    )
+    const { sidebar } = renderMountedSidebar({
       expandParentByDefault: true,
       items: [guide],
       localStorage: storage('custom'),
-      transport,
-      realDirectory: true
+      transport
     })
     sidebar.switchMode('browse')
+    await Vue.nextTick()
+    sidebar.switchMode('browse')
+    await Vue.nextTick()
+    expect(transport).toHaveBeenCalledTimes(1)
+    expect(sidebar.browseRequestController.signal.aborted).toBe(false)
+    release(treeResponse(currentDirectoryFixture))
     await vi.waitFor(() => expect(sidebar.currentItems.map(item => item.id)).toEqual([20, 21]))
     expect(sidebar.currentParent).toMatchObject({ id: 10, title: 'Guides' })
     expect(sidebar.parents.map(item => item.id)).toEqual([0, 10])
@@ -464,6 +475,7 @@ describe('Custom Navigation preserves its two views', () => {
     })
     await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
     const olderRequest = sidebar.loadFromCurrentPath()
+    const olderController = sidebar.browseRequestController
     const custom = [...host.querySelectorAll('button')].find(button => button.textContent.trim() === 'Main Menu')
     const browse = [...host.querySelectorAll('button')].find(button => button.textContent.trim() === 'Browse')
     custom.click()
@@ -471,6 +483,7 @@ describe('Custom Navigation preserves its two views', () => {
     Object.assign(wikiStore.page, { id: 84, path: 'recipes/current', locale: 'en', visibility: 'public' })
     await Vue.nextTick()
     expect(transport).toHaveBeenCalledTimes(2)
+    expect(olderController.signal.aborted).toBe(true)
     browse.click()
     await Vue.nextTick()
     expect(transport).toHaveBeenCalledTimes(3)
@@ -541,21 +554,23 @@ describe('Custom Navigation preserves its two views', () => {
     }
     const transport = vi.fn(async () => treeResponse([]))
     const { sidebar } = mountSidebar({
+      items: [guide],
       localStorage: { getItem: unavailable, setItem: unavailable },
       transport,
       realDirectory: true
     })
     await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
-    expect(sidebar.currentMode).toBe('browse')
+    expect(sidebar.currentMode).toBe('custom')
     sidebar.switchMode('browse')
     expect(sidebar.currentMode).toBe('browse')
+    await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
     expect(transport).toHaveBeenCalledTimes(1)
     sidebar.switchMode('custom')
     expect(sidebar.currentMode).toBe('custom')
   })
 
-  it('leaves exactly one control selected and does not deselect when selecting the active mode', async () => {
-    for (const items of [[], [home], [home, guide]]) {
+  it('leaves exactly one usable mode selected and does not deselect the active mode', async () => {
+    for (const items of [[guide], [home, guide]]) {
       const { host } = renderMountedSidebar({ items, localStorage: storage('custom') })
       await Vue.nextTick()
       const mainMenu = [...host.querySelectorAll('button')].find(button => button.textContent.trim() === 'Main Menu')
@@ -581,6 +596,25 @@ describe('Custom Navigation preserves its two views', () => {
       await Vue.nextTick()
       selected('true', 'false')
     }
+  })
+
+  it('offers Browse without an empty Main Menu and restores the saved menu when authorized links return', async () => {
+    const items = Vue.reactive([home, guide])
+    const localStorage = storage('custom')
+    const { host, sidebar } = renderMountedSidebar({ items, localStorage })
+    await Vue.nextTick()
+    expect(host.querySelector('.nav-sidebar-list a')?.getAttribute('href')).toBe('/en/guide')
+    items.splice(1)
+    await Vue.nextTick()
+    await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
+    expect(host.querySelector('.nav-sidebar-modes')).toBeNull()
+    expect(sidebar.currentMode).toBe('browse')
+    expect(host.querySelector('.nav-sidebar-list a[href="/en/guide"]')).toBeNull()
+    expect(localStorage.setItem).not.toHaveBeenCalled()
+    items.push(guide)
+    await Vue.nextTick()
+    expect(host.querySelector('.nav-sidebar-list a')?.getAttribute('href')).toBe('/en/guide')
+    expect(host.querySelector('[aria-pressed="true"]')?.textContent).toContain('Main Menu')
   })
 })
 
@@ -617,17 +651,18 @@ describe('directory navigation commits', () => {
             release = resolve
           })
       )
-      const { sidebar, host } = renderMountedSidebar({ localStorage: storage('custom'), transport })
+      const { sidebar, host } = renderMountedSidebar({ items: [guide], localStorage: storage('custom'), transport })
       const root = sidebar.currentParent
       const directory = treeRow(10, 0, 'Directory A', { isFolder: true })
       const child = treeRow(11, 10, 'Directory B', { isFolder: true })
       const oldPage = treeRow(12, 10, 'Page in A')
       const newPage = treeRow(13, 11, 'Page in B')
-      sidebar.currentMode = 'browse'
       sidebar.currentParent = directory
       sidebar.parents = [root, directory]
       sidebar.currentItems = [child, oldPage]
       sidebar.loadedCache = [10]
+      sidebar.loadedBrowseLocationKey = sidebar.pageLocationKey
+      sidebar.switchMode('browse')
       await Vue.nextTick()
       const currentAncestor = host.querySelector('.nav-sidebar-ancestor[aria-current="location"]')
       expect(currentAncestor.textContent).toContain('Directory A')
@@ -751,7 +786,7 @@ describe('directory navigation commits', () => {
           })
       )
       .mockResolvedValue(treeResponse([treeRow(23, 20, 'Latest page')]))
-    const { sidebar } = mountSidebar({ localStorage: storage('custom'), transport, realDirectory: true })
+    const { sidebar } = mountSidebar({ items: [guide], localStorage: storage('custom'), transport, realDirectory: true })
     const root = sidebar.currentParent
     const older = sidebar.fetchBrowseItems(treeRow(10, 0, 'Older folder', { isFolder: true }))
     await sidebar.fetchBrowseItems(treeRow(20, 0, 'Latest folder', { isFolder: true }))
@@ -790,16 +825,16 @@ describe('offline navigation continuity', () => {
     const previousItems = [treeRow(50, 10, 'Previously visible guide')]
     const transport = vi
       .fn()
-      .mockResolvedValueOnce(treeResponse(previousItems))
+      .mockResolvedValueOnce(treeResponse([...currentDirectoryFixture, ...previousItems]))
       .mockImplementationOnce(() => obsolete)
       .mockResolvedValue(treeResponse(freshItems))
     const { sidebar, component, connection } = mountSidebar({
-      localStorage: storage('custom'),
+      localStorage: storage('browse'),
+      expandParentByDefault: true,
       transport,
       realDirectory: true
     })
-    sidebar.currentMode = 'browse'
-    await sidebar.fetchBrowseItems(currentDirectoryFixture[0])
+    await vi.waitFor(() => expect(sidebar.navLoading).toBe(false))
     const visible = sidebar.currentItems
     const request = sidebar.fetchBrowseItems()
     const controller = sidebar.browseRequestController

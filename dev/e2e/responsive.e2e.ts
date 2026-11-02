@@ -18,13 +18,9 @@ const routedReaderTest = test.extend({ serviceWorkers: 'block' })
 
 async function openFixtureAgentFromSearch(page: Page): Promise<Locator> {
   await openAuthenticatedPage(page, '/', '.page-header-section')
-  const viewport = page.viewportSize()
+  const search = await openSearch(page)
   const searchDialog = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
-  if (viewport && viewport.width >= 960) await page.keyboard.press('ControlOrMeta+K')
-  else await openSearch(page)
   await expect(searchDialog).toBeVisible()
-  const search = page.locator('.nav-header-search-control input:visible').first()
-  await expect(search).toBeVisible()
   await search.fill('home')
   const askAgent = searchDialog.getByRole('button', { name: 'Ask about this', exact: true })
   await expect(askAgent).toBeVisible()
@@ -113,8 +109,13 @@ async function installAgentContinuityPages(page: Page | BrowserContext): Promise
       return `${prefix}${quote}${Buffer.from(JSON.stringify(patched)).toString('base64')}${quote}`
     })
     expect(replaced, 'The deployed wiki document exposes its normal navigation payload').toBe(true)
-    body = body.replace(/<template\b[^>]*\bdata-wiki-page-contents\b[^>]*>/u, opener =>
-      `${opener}<nav aria-label="Fixture pages">${sources.filter(item => item.id >= 901).map(item => `<a href="/${item.path}">${item.title}</a>`).join(' ')}</nav>`
+    body = body.replace(
+      /<template\b[^>]*\bdata-wiki-page-contents\b[^>]*>/u,
+      opener =>
+        `${opener}<nav aria-label="Fixture pages">${sources
+          .filter(item => item.id >= 901)
+          .map(item => `<a href="/${item.path}">${item.title}</a>`)
+          .join(' ')}</nav>`
     )
     await route.fulfill({ response, body })
   })
@@ -141,6 +142,16 @@ async function closeContinuityAgent(page: Page): Promise<void> {
   await expect(page.getByRole('region', { name: 'Wiki Agent', exact: true })).toBeHidden()
 }
 
+async function withCurrentPageChoice(page: Page, agent: Locator, interaction: (choice: Locator) => Promise<void>): Promise<void> {
+  await agent.getByRole('button', { name: 'Sources', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Add sources', exact: true })
+  const choice = dialog.getByRole('button', { name: /^Include current page:/ })
+  await expect(choice).toBeVisible()
+  await interaction(choice)
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(dialog).toBeHidden()
+}
+
 async function sendContinuityPrompt(page: Page, agent: Locator, prompt: string): Promise<ContinuitySubmission> {
   const request = page.waitForRequest(
     request => request.method() === 'POST' && /\/_api\/agents\/sessions\/[^/]+\/messages$/.test(new URL(request.url()).pathname)
@@ -149,10 +160,13 @@ async function sendContinuityPrompt(page: Page, agent: Locator, prompt: string):
   // A conversation restore can land after the caller types and revert the
   // composer to the saved draft; keep the typed prompt until it sticks.
   await expect
-    .poll(async () => {
-      if ((await composer.inputValue()) !== prompt) await composer.fill(prompt)
-      return composer.inputValue()
-    }, { timeout: 15_000 })
+    .poll(
+      async () => {
+        if ((await composer.inputValue()) !== prompt) await composer.fill(prompt)
+        return composer.inputValue()
+      },
+      { timeout: 15_000 }
+    )
     .toBe(prompt)
   await agent.getByRole('button', { name: 'Send', exact: true }).click()
   const body = (await request).postDataJSON() as ContinuitySubmission
@@ -167,7 +181,6 @@ test.describe('responsive UI quality matrix', () => {
     test.setTimeout(60_000)
   })
 
-
   test('keeps Table Helper reachable at 320px and 390px', async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'responsive-chromium-mobile', 'Narrow editor controls are owned by Chromium mobile')
     for (const width of [320, 390]) {
@@ -176,7 +189,9 @@ test.describe('responsive UI quality matrix', () => {
       const row = page.locator('.editor-tiptap-toolbar')
       const table = row.getByRole('button', { name: 'Table Helper', exact: true })
       await expect(table).toBeVisible()
-      await row.evaluate(element => { element.scrollLeft = 0 })
+      await row.evaluate(element => {
+        element.scrollLeft = 0
+      })
       expect(await row.evaluate(element => element.scrollWidth - element.clientWidth), `${width}px toolbar has a local scroll range`).toBeGreaterThan(0)
       await row.hover()
       await page.mouse.wheel(10_000, 0)
@@ -192,24 +207,27 @@ test.describe('responsive UI quality matrix', () => {
     test.skip(testInfo.project.name !== 'responsive-chromium-mobile', 'Narrow rich-editor containment is owned by Chromium mobile')
     await page.setViewportSize({ width: 320, height: 720 })
     await openAuthenticatedPage(page, '/en/visual-markdown-browser', 'article.contents')
-    const readerTypography = await page.locator('article.contents h1').first().evaluate(element => {
-      const style = getComputedStyle(element)
-      const inkProbe = document.createElement('span')
-      inkProbe.hidden = true
-      inkProbe.style.color = 'var(--wiki-accent-ink)'
-      element.append(inkProbe)
-      const accentInk = getComputedStyle(inkProbe).color
-      inkProbe.remove()
-      return {
-        color: style.color,
-        accentInk,
-        'font-family': style.fontFamily,
-        'font-size': style.fontSize,
-        'font-weight': style.fontWeight,
-        'line-height': style.lineHeight,
-        'letter-spacing': style.letterSpacing
-      }
-    })
+    const readerTypography = await page
+      .locator('article.contents h1')
+      .first()
+      .evaluate(element => {
+        const style = getComputedStyle(element)
+        const inkProbe = document.createElement('span')
+        inkProbe.hidden = true
+        inkProbe.style.color = 'var(--wiki-accent-ink)'
+        element.append(inkProbe)
+        const accentInk = getComputedStyle(inkProbe).color
+        inkProbe.remove()
+        return {
+          color: style.color,
+          accentInk,
+          'font-family': style.fontFamily,
+          'font-size': style.fontSize,
+          'font-weight': style.fontWeight,
+          'line-height': style.lineHeight,
+          'letter-spacing': style.letterSpacing
+        }
+      })
     const { accentInk, ...expectedTypography } = readerTypography
     expect(expectedTypography.color, 'The live reader H1 uses the shared accent-ink token').toBe(accentInk)
     for (const format of ['visual-markdown', 'visual-html']) {
@@ -222,7 +240,9 @@ test.describe('responsive UI quality matrix', () => {
       await page.keyboard.insertText(marker)
       await expect(paragraph).toContainText(marker)
       const formattingRow = page.locator('.editor-tiptap-toolbar')
-      await formattingRow.evaluate(element => { element.scrollLeft = 0 })
+      await formattingRow.evaluate(element => {
+        element.scrollLeft = 0
+      })
       const undo = formattingRow.getByRole('button', { name: 'Undo', exact: true })
       const leadingBounds = await undo.boundingBox()
       const rowBounds = await formattingRow.boundingBox()
@@ -232,10 +252,15 @@ test.describe('responsive UI quality matrix', () => {
       await undo.click()
       await expect(editor).not.toContainText(marker)
       await paragraph.click({ position: { x: 5, y: 5 } })
-      expect(await formattingRow.evaluate(element => element.scrollWidth - element.clientWidth), 'The narrow formatting row actually needs local horizontal scrolling').toBeGreaterThan(0)
+      expect(
+        await formattingRow.evaluate(element => element.scrollWidth - element.clientWidth),
+        'The narrow formatting row actually needs local horizontal scrolling'
+      ).toBeGreaterThan(0)
       await formattingRow.hover()
       await page.mouse.wheel(10_000, 0)
-      await expect.poll(() => formattingRow.evaluate(element => element.scrollLeft), 'Real horizontal wheel input scrolls only the formatting row').toBeGreaterThan(0)
+      await expect
+        .poll(() => formattingRow.evaluate(element => element.scrollLeft), 'Real horizontal wheel input scrolls only the formatting row')
+        .toBeGreaterThan(0)
       const trailing = formattingRow.getByRole('button', { name: format === 'visual-html' ? 'Align right' : 'Table Helper', exact: true })
       await expectLocatorWithinViewport(trailing, 'Far formatting action')
       await trailing.click()
@@ -246,7 +271,9 @@ test.describe('responsive UI quality matrix', () => {
         await expect(page.getByText('Insert table', { exact: true })).toBeVisible()
         await page.keyboard.press('Escape')
         const insertRow = page.getByRole('toolbar', { name: 'Insert tools', exact: true })
-        await insertRow.evaluate(element => { element.scrollLeft = 0 })
+        await insertRow.evaluate(element => {
+          element.scrollLeft = 0
+        })
         const content = insertRow.getByRole('button', { name: 'Insert content extension', exact: true })
         const [insertBounds, contentBounds] = await Promise.all([insertRow.boundingBox(), content.boundingBox()])
         if (!insertBounds || !contentBounds) throw new Error('Insertion row has no native geometry')
@@ -256,10 +283,15 @@ test.describe('responsive UI quality matrix', () => {
         const extensions = page.getByRole('dialog', { name: 'Insert content extension', exact: true })
         await expect(extensions).toBeVisible()
         await extensions.getByRole('button', { name: 'Close content extension dialog', exact: true }).click()
-        expect(await insertRow.evaluate(element => element.scrollWidth - element.clientWidth), 'Insertion tools have their own local scroll range').toBeGreaterThan(0)
+        expect(
+          await insertRow.evaluate(element => element.scrollWidth - element.clientWidth),
+          'Insertion tools have their own local scroll range'
+        ).toBeGreaterThan(0)
         await insertRow.hover()
         await page.mouse.wheel(10_000, 0)
-        await expect.poll(() => insertRow.evaluate(element => element.scrollLeft), 'Real horizontal wheel input reaches the far insertion action').toBeGreaterThan(0)
+        await expect
+          .poll(() => insertRow.evaluate(element => element.scrollLeft), 'Real horizontal wheel input reaches the far insertion action')
+          .toBeGreaterThan(0)
         const glyph = insertRow.getByRole('button', { name: 'Insert icon or emoji', exact: true })
         await expectLocatorWithinViewport(glyph, 'Far insertion action')
         await glyph.click()
@@ -282,9 +314,14 @@ test.describe('responsive UI quality matrix', () => {
       }
       const headingText = await paragraph.innerText()
       await paragraph.click({ position: { x: 5, y: 5 } })
-      await formattingRow.evaluate(element => { element.scrollLeft = 0 })
+      await formattingRow.evaluate(element => {
+        element.scrollLeft = 0
+      })
       await formattingRow.getByRole('button', { name: /^Text style:/u }).click()
-      await page.getByRole('listitem').filter({ hasText: /^Heading 1$/u }).click()
+      await page
+        .getByRole('listitem')
+        .filter({ hasText: /^Heading 1$/u })
+        .click()
       const editorHeading = editor.getByRole('heading', { level: 1, name: headingText, exact: true })
       for (const [property, value] of Object.entries(expectedTypography)) {
         await expect(editorHeading, `Shared reader/editor heading ${property}`).toHaveCSS(property, value)
@@ -292,9 +329,12 @@ test.describe('responsive UI quality matrix', () => {
       await expectResponsiveLayout(page, `${format} narrow toolbar containment`)
       await testInfo.attach(`${format}-narrow-tools`, { body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png' })
       await page.getByRole('button', { name: 'More editor actions', exact: true }).click()
-      await page.getByRole('listitem').filter({ hasText: /^Close$/u }).click()
+      await page
+        .getByRole('listitem')
+        .filter({ hasText: /^Close$/u })
+        .click()
       const discard = page.getByRole('button', { name: 'Discard Changes', exact: true })
-      await expect.poll(async () => await discard.isVisible() || new URL(page.url()).pathname === `/en/${format}-browser`).toBe(true)
+      await expect.poll(async () => (await discard.isVisible()) || new URL(page.url()).pathname === `/en/${format}-browser`).toBe(true)
       if (await discard.isVisible()) await discard.click()
       await expect(page).toHaveURL(`/en/${format}-browser`, { timeout: 30_000 })
     }
@@ -305,7 +345,8 @@ test.describe('responsive UI quality matrix', () => {
     test.setTimeout(90_000)
     await openAuthenticatedPage(page, '/e/en/visual-markdown-browser', '.editor-tiptap')
     const paragraph = page.locator('.editor-tiptap .ProseMirror p').first()
-    const pageAction = page.getByRole('button', { name: 'Page', exact: true })
+    const pageAction = page.getByRole('button', { name: 'Page Properties', exact: true })
+    await expect(pageAction).toHaveCount(1)
     const outsideSpacing = await pageAction.evaluate(element => getComputedStyle(element).letterSpacing)
     const originalSpacing = await paragraph.evaluate(element => getComputedStyle(element).letterSpacing)
     const desktopViewport = page.viewportSize()
@@ -317,14 +358,17 @@ test.describe('responsive UI quality matrix', () => {
     page.on('console', message => {
       if (message.type() === 'warning' && message.text().includes('@import')) warnings.push(message.text())
     })
-    await page.route('**/assets/native-editor-import.css', route => route.fulfill({ contentType: 'text/css', body: 'p, button { letter-spacing: 99px !important }' }))
+    await page.route('**/assets/native-editor-import.css', route =>
+      route.fulfill({ contentType: 'text/css', body: 'p, button { letter-spacing: 99px !important }' })
+    )
     await page.evaluate(() => {
       const parserStyles: HTMLStyleElement[] = []
       Object.defineProperty(window, '__nativeParserStyles', { value: parserStyles })
       new MutationObserver(records => {
-        for (const record of records) for (const node of record.addedNodes) {
-          if (node instanceof HTMLStyleElement && node.media === 'not all') parserStyles.push(node)
-        }
+        for (const record of records)
+          for (const node of record.addedNodes) {
+            if (node instanceof HTMLStyleElement && node.media === 'not all') parserStyles.push(node)
+          }
       }).observe(document.head, { childList: true })
     })
     const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
@@ -343,7 +387,15 @@ test.describe('responsive UI quality matrix', () => {
       const visit = (rules: CSSRuleList) => {
         for (const rule of rules) {
           if (rule.type === CSSRule.IMPORT_RULE) imports += 1
-          if (rule instanceof CSSStyleRule && rule.selectorText.split(',').map(selector => selector.trim()).includes('p') && rule.style.letterSpacing === '7px') ordinaryRule = true
+          if (
+            rule instanceof CSSStyleRule &&
+            rule.selectorText
+              .split(',')
+              .map(selector => selector.trim())
+              .includes('p') &&
+            rule.style.letterSpacing === '7px'
+          )
+            ordinaryRule = true
           if ('cssRules' in rule) visit((rule as CSSGroupingRule).cssRules)
         }
       }
@@ -352,7 +404,12 @@ test.describe('responsive UI quality matrix', () => {
     })
     expect(ruleReport, 'Native emitted rules retain authored declarations without importing unscoped CSS').toEqual({ imports: 0, ordinaryRule: true })
     expect(warnings, 'The unsupported-import boundary emits one diagnostic').toHaveLength(1)
-    expect(await page.evaluate(() => (window as typeof window & { __nativeParserStyles: HTMLStyleElement[] }).__nativeParserStyles.every(style => !style.isConnected)), 'Transient native parser styles are removed').toBe(true)
+    expect(
+      await page.evaluate(() =>
+        (window as typeof window & { __nativeParserStyles: HTMLStyleElement[] }).__nativeParserStyles.every(style => !style.isConnected)
+      ),
+      'Transient native parser styles are removed'
+    ).toBe(true)
     await expect(page.locator('head style[media="not all"]'), 'No native parser style remains attached').toHaveCount(0)
     await page.setViewportSize({ width: 320, height: 720 })
     await expect(paragraph).toHaveCSS('letter-spacing', '7px')
@@ -365,7 +422,10 @@ test.describe('responsive UI quality matrix', () => {
     await css.fill('p, button { letter-spacing: 11px !important; }')
     await properties.getByRole('button', { name: 'Apply', exact: true }).click()
     await expect(paragraph).toHaveCSS('letter-spacing', '11px')
-    expect(await styleNode.evaluate(element => element === document.querySelector('#editor-script-css')), 'A nonempty CSS update reuses the existing style node').toBe(true)
+    expect(
+      await styleNode.evaluate(element => element === document.querySelector('#editor-script-css')),
+      'A nonempty CSS update reuses the existing style node'
+    ).toBe(true)
     await expect(pageAction).toHaveCSS('letter-spacing', outsideSpacing)
     await pageAction.click()
     await properties.getByRole('tab', { name: 'Styles', exact: true }).click()
@@ -392,7 +452,10 @@ test.describe('responsive UI quality matrix', () => {
       app.unmount()
     })
     await expect(page.locator('.editor-tiptap'), 'The actual mounted editor is torn down').toHaveCount(0)
-    expect(await styleNode.evaluate(element => element.ownerDocument === document), 'Teardown retains the original document rather than clearing styles through navigation').toBe(true)
+    expect(
+      await styleNode.evaluate(element => element.ownerDocument === document),
+      'Teardown retains the original document rather than clearing styles through navigation'
+    ).toBe(true)
     await expect(page.locator('#editor-script-css'), 'Same-document teardown removes the existing page sheet').toHaveCount(0)
     await page.clock.fastForward(2000)
     await expect(page.locator('#editor-script-css'), 'A cancelled pending timer cannot reinsert a page sheet after teardown').toHaveCount(0)
@@ -472,7 +535,7 @@ test.describe('responsive UI quality matrix', () => {
         if (viewport.width >= 1280) {
           const railBounds = await page.locator('.page-col-sd:visible').first().boundingBox()
           expect(railBounds).not.toBeNull()
-          expect(railBounds!.width, 'The contents rail leaves room for reading').toBe(220)
+          expect(railBounds!.width, 'The contents rail leaves room for reading').toBe(224)
         } else {
           const summary = tocCard.locator('.page-toc-summary')
           const bounds = await summary.boundingBox()
@@ -757,15 +820,18 @@ test.describe('responsive UI quality matrix', () => {
   test('preserves automatic and explicit TOC layouts across wide and collapsed reader transitions', async ({ page }) => {
     const viewport = page.viewportSize()
     if (!viewport) throw new Error('Reader geometry requires a configured viewport')
-    await openAuthenticatedPage(page, '/en/home', '.page-header-section')
-    const setPosition = async (value?: 'auto' | 'left' | 'right' | 'off'): Promise<string> => page.evaluate(position => {
-      const app = (window as typeof window & { WIKI?: { config?: { globalProperties?: { $pinia?: { _s?: Map<string, { site: { tocPosition: string } }> } } } } }).WIKI
-      const store = app?.config?.globalProperties?.$pinia?._s?.get('wiki')
-      if (!store) throw new Error('Wiki store is unavailable for responsive TOC transition.')
-      const previous = store.site.tocPosition
-      if (position !== undefined) store.site.tocPosition = position
-      return previous
-    }, value)
+    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
+    const setPosition = async (value?: 'auto' | 'left' | 'right' | 'off'): Promise<string> =>
+      page.evaluate(position => {
+        const app = (
+          window as typeof window & { WIKI?: { config?: { globalProperties?: { $pinia?: { _s?: Map<string, { site: { tocPosition: string } }> } } } } }
+        ).WIKI
+        const store = app?.config?.globalProperties?.$pinia?._s?.get('wiki')
+        if (!store) throw new Error('Wiki store is unavailable for responsive TOC transition.')
+        const previous = store.site.tocPosition
+        if (position !== undefined) store.site.tocPosition = position
+        return previous
+      }, value)
     const original = await setPosition()
     try {
       await page.setViewportSize({ width: 1440, height: 900 })
@@ -773,6 +839,10 @@ test.describe('responsive UI quality matrix', () => {
         await setPosition(position)
         const article = page.locator('.page-col-content:not(.is-page-header) > .contents')
         await expect(article).toBeVisible()
+        await expect(
+          page.getByRole('progressbar', { name: 'Article position', exact: true }),
+          'Every outline policy owns exactly one visible article-position filament'
+        ).toHaveCount(1)
         const articleBounds = await article.boundingBox()
         if (!articleBounds) throw new Error('Reader article geometry is missing')
         if (position === 'off') {
@@ -782,18 +852,20 @@ test.describe('responsive UI quality matrix', () => {
           expect(Math.abs(articleBounds.width - row!.width)).toBeLessThanOrEqual(2)
           continue
         }
+        if (position === 'left') {
+          await expect(page.locator('.page-col-sd')).toHaveCount(0)
+          await expect(page.locator('#page-inline-toc .page-toc-toggle'), 'An open left navigation never competes with a second left rail').toBeVisible()
+          continue
+        }
         const rail = page.locator('.page-col-sd')
         await expect(rail).toBeVisible()
         const railBounds = await rail.boundingBox()
         if (!railBounds) throw new Error('Reader contents geometry is missing')
-        expect(railBounds.width).toBe(220)
-        if (position === 'left') expect(railBounds.x + railBounds.width).toBeLessThan(articleBounds.x)
-        else {
-          expect(articleBounds.x + articleBounds.width).toBeLessThan(railBounds.x)
-          const prose = await article.locator('p:visible, h2:visible, h3:visible').first().boundingBox()
-          expect(prose).not.toBeNull()
-          expect(prose!.x, 'Actual prose does not inherit the retired left utility rail').toBeLessThanOrEqual(300)
-        }
+        expect(railBounds.width).toBe(224)
+        expect(articleBounds.x + articleBounds.width).toBeLessThan(railBounds.x)
+        const prose = await article.locator('p:visible, h2:visible, h3:visible').first().boundingBox()
+        expect(prose).not.toBeNull()
+        expect(prose!.x, 'Actual prose does not inherit the retired left utility rail').toBeLessThanOrEqual(300)
         await page.setViewportSize({ width: 1279, height: 900 })
         const toggle = page.locator('#page-inline-toc .page-toc-toggle')
         await expect(toggle).toHaveAttribute('aria-expanded', 'false')
@@ -806,7 +878,10 @@ test.describe('responsive UI quality matrix', () => {
         await page.setViewportSize({ width: 1440, height: 900 })
       }
       await setPosition('auto')
-      for (const size of [{ width: 390, height: 844 }, { width: 768, height: 1024 }]) {
+      for (const size of [
+        { width: 390, height: 844 },
+        { width: 768, height: 1024 }
+      ]) {
         await page.setViewportSize(size)
         await page.evaluate(() => window.scrollTo(0, 0))
         const summary = await page.locator('.page-toc-summary').boundingBox()
@@ -829,10 +904,12 @@ test.describe('responsive UI quality matrix', () => {
     let direction: 'ltr' | 'rtl' = 'ltr'
     const digest = 'a'.repeat(64)
     const imageUrl = `/assets/native-reader-brand.png?v=${digest}`
-    await page.route(`**/assets/native-reader-brand.png?v=${digest}`, route => route.fulfill({
-      contentType: 'image/svg+xml',
-      body: '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="64"><rect width="96" height="64" rx="8" fill="#0c2238"/></svg>'
-    }))
+    await page.route(`**/assets/native-reader-brand.png?v=${digest}`, route =>
+      route.fulfill({
+        contentType: 'image/svg+xml',
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="64"><rect width="96" height="64" rx="8" fill="#0c2238"/></svg>'
+      })
+    )
     await page.route('**/en/visual-markdown-browser', async route => {
       const response = await route.fetch()
       if (!response.ok()) throw new Error(`Reader geometry bootstrap returned HTTP ${response.status()}`)
@@ -887,7 +964,10 @@ test.describe('responsive UI quality matrix', () => {
         const style = getComputedStyle(element)
         return Number.parseFloat(style.paddingRight) + Number.parseFloat(style.borderRightWidth)
       })
-      expect(markBounds.x + markBounds.width, `${direction} mark remains at the physical right heading content edge`).toBeCloseTo(headingBounds.x + headingBounds.width - headingRightInset, 0)
+      expect(markBounds.x + markBounds.width, `${direction} mark remains at the physical right heading content edge`).toBeCloseTo(
+        headingBounds.x + headingBounds.width - headingRightInset,
+        0
+      )
       for (const text of [title, headings.locator('.page-document-label')]) {
         const bounds = await text.boundingBox()
         if (!bounds) throw new Error('Reader text geometry is missing')
@@ -899,36 +979,42 @@ test.describe('responsive UI quality matrix', () => {
       } else {
         await expect(drawer).toHaveClass(/v-navigation-drawer--active/u)
       }
-      await expect.poll(async () => {
-        const bounds = await drawer.boundingBox()
-        if (!bounds) throw new Error('Native sidebar geometry is missing')
-        return direction === 'ltr' ? bounds.x : bounds.x + bounds.width - viewport.width
-      }, `${direction} navigation settles at its physical viewport edge`).toBeCloseTo(0, 0)
+      await expect
+        .poll(async () => {
+          const bounds = await drawer.boundingBox()
+          if (!bounds) throw new Error('Native sidebar geometry is missing')
+          return direction === 'ltr' ? bounds.x : bounds.x + bounds.width - viewport.width
+        }, `${direction} navigation settles at its physical viewport edge`)
+        .toBeCloseTo(0, 0)
       const drawerBounds = await drawer.boundingBox()
       if (!drawerBounds) throw new Error('Native sidebar geometry is missing')
       expect(drawerBounds.width, 'Sidebar retains a usable navigation width').toBeGreaterThanOrEqual(Math.min(200, viewport.width))
       expect(drawerBounds.x).toBeGreaterThanOrEqual(-1)
       expect(drawerBounds.x + drawerBounds.width).toBeLessThanOrEqual(viewport.width + 1)
       if (viewport.width >= 1280) {
-        const rail = page.locator('.page-col-sd')
-        const [railBounds, articleBounds] = await Promise.all([rail.boundingBox(), article.boundingBox()])
-        if (!railBounds || !articleBounds) throw new Error('Native reader rail geometry is missing')
-        if (direction === 'ltr') {
-          expect(drawerBounds.x + drawerBounds.width, 'LTR drawer reserves space before the reader rail').toBeLessThanOrEqual(railBounds.x + 1)
-          expect(railBounds.x + railBounds.width, 'LTR metadata rail stays clear of the article').toBeLessThanOrEqual(articleBounds.x + 1)
-        } else {
-          expect(articleBounds.x + articleBounds.width, 'RTL metadata rail is after and clear of the article').toBeLessThanOrEqual(railBounds.x + 1)
-          expect(railBounds.x + railBounds.width, 'RTL drawer reserves space after the reader rail').toBeLessThanOrEqual(drawerBounds.x + 1)
-        }
-        const headingStartInset = direction === 'rtl' ? headingRightInset : await headings.evaluate(element => {
-          const style = getComputedStyle(element)
-          return Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.borderLeftWidth)
-        })
+        await expect(page.locator('.page-col-sd'), 'Explicit left contents collapse beside the open navigation in both directions').toHaveCount(0)
+        await expect(page.locator('#page-inline-toc .page-toc-toggle')).toBeVisible()
+        const articleBounds = await article.boundingBox()
+        if (!articleBounds) throw new Error('Native reader article geometry is missing')
+        if (direction === 'ltr') expect(drawerBounds.x + drawerBounds.width).toBeLessThanOrEqual(articleBounds.x + 1)
+        else expect(articleBounds.x + articleBounds.width).toBeLessThanOrEqual(drawerBounds.x + 1)
+        const headingStartInset =
+          direction === 'rtl'
+            ? headingRightInset
+            : await headings.evaluate(element => {
+                const style = getComputedStyle(element)
+                return Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.borderLeftWidth)
+              })
         const headingStart = direction === 'rtl' ? headingBounds.x + headingBounds.width - headingStartInset : headingBounds.x + headingStartInset
         const articleStart = direction === 'rtl' ? articleBounds.x + articleBounds.width : articleBounds.x
         expect(Math.abs(headingStart - articleStart), `${direction} heading column and article share their logical outer edge`).toBeLessThanOrEqual(2)
       }
-      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), `${direction} reader has no horizontal overflow after native layout settles`).toBeLessThanOrEqual(1)
+      await expect
+        .poll(
+          () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+          `${direction} reader has no horizontal overflow after native layout settles`
+        )
+        .toBeLessThanOrEqual(1)
       await testInfo.attach(`native-reader-${direction}`, { body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png' })
     }
   })
@@ -967,9 +1053,7 @@ test.describe('responsive UI quality matrix', () => {
       expect(articleColumnBounds).not.toBeNull()
       expect(articleBounds).not.toBeNull()
       if (!headerShellBounds || !headerBounds || !headingsBounds || !rowBounds || !articleColumnBounds || !articleBounds) return
-      const printHeadingMaxWidth = await page.evaluate(
-        () => 80 * Number.parseFloat(getComputedStyle(document.documentElement).fontSize)
-      )
+      const printHeadingMaxWidth = await page.evaluate(() => 80 * Number.parseFloat(getComputedStyle(document.documentElement).fontSize))
 
       expect(Math.abs(headerBounds.x - headerShellBounds.x), 'Print header starts at the printable shell edge').toBeLessThanOrEqual(2)
       expect(Math.abs(headerBounds.width - headerShellBounds.width), 'Print header fills the printable shell').toBeLessThanOrEqual(2)
@@ -1031,6 +1115,22 @@ test.describe('responsive UI quality matrix', () => {
     })
     await openAuthenticatedPage(page, '/', '.page-header-section')
     const search = await openSearch(page)
+    const workingSet = page.getByRole('grid', { name: 'Recent pages & quick actions', exact: true })
+    await expect(workingSet).toBeVisible()
+    const home = workingSet.locator('.search-results-working-row').filter({ has: page.getByRole('link', { name: /^Home\b/ }) })
+    await expect(home).toHaveCount(1)
+    const pin = home.getByRole('button', { name: 'Pin Home in this tab', exact: true })
+    await pin.focus()
+    await pin.press('Enter')
+    await expect(home.getByRole('button', { name: 'Unpin Home from this tab', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    const create = workingSet.getByRole('button', { name: 'Create page', exact: true })
+    await expect(create).not.toHaveAttribute('aria-disabled', 'true')
+    await create.click()
+    const selector = page.getByRole('dialog').filter({ has: page.locator('.page-selector') })
+    await expect(selector).toBeVisible()
+    await selector.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(page).toHaveURL('/')
+    await openSearch(page)
     await search.pressSequentially('responsive')
 
     const result = page.getByText('Responsive Search Result', { exact: true }).first()
@@ -1039,12 +1139,48 @@ test.describe('responsive UI quality matrix', () => {
     await result.scrollIntoViewIfNeeded()
     await expectLocatorWithinViewport(result, 'Search result title')
     await expectResponsiveLayout(page, 'Search results')
+    await search.fill('r')
+    await expect(workingSet).toBeVisible()
+    await expect(home.getByRole('button', { name: 'Unpin Home from this tab', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await home.getByRole('button', { name: 'Unpin Home from this tab', exact: true }).click()
+    await expect(home.getByRole('button', { name: 'Pin Home in this tab', exact: true })).toHaveAttribute('aria-pressed', 'false')
+    await workingSet.getByRole('link', { name: 'Browse by tags', exact: true }).click()
+    await expect(page).toHaveURL('/t')
   })
 
-  test('keeps the Admin Dashboard and page management responsive', async ({ page }) => {
+  routedReaderTest('keeps the Admin Dashboard, page register, and atlas responsive', async ({ page }) => {
     const viewport = page.viewportSize()
     expect(viewport).not.toBeNull()
     if (!viewport) return
+    const records = Array.from({ length: 12 }, (_, index) => ({
+      id: 8100 + index,
+      locale: 'en',
+      path: `release/${index < 6 ? 'evidence' : 'operations'}/page-${index + 1}`,
+      title: `Release record ${String(index + 1).padStart(2, '0')}`,
+      description: 'Accessible release evidence with publication and identity details.',
+      isPublished: true,
+      isSearchable: true,
+      publishStartDate: null,
+      publishEndDate: null,
+      visibility: 'public',
+      ownerId: null,
+      contentType: 'markdown',
+      createdAt: '2026-09-01T12:00:00.000Z',
+      updatedAt: '2026-09-02T12:00:00.000Z',
+      tags: ['release']
+    }))
+    await page.route('**/_api/pages', route => (route.request().method() === 'GET' ? route.fulfill({ json: records }) : route.fallback()))
+    await page.route('**/_api/pages/links?**', route =>
+      route.fulfill({
+        json: records.map((record, index) => ({
+          id: record.id,
+          path: `en/${record.path}`,
+          title: `${record.title} — evidence for deliberate release decisions`,
+          links: [`en/${records[(index + 1) % records.length]!.path}`]
+        }))
+      })
+    )
+    if (viewport && viewport.width >= 960) await page.setViewportSize({ width: viewport.width, height: 900 })
 
     for (const path of ['/a/dashboard', '/a/pages']) {
       await openAuthenticatedPage(page, path, '.admin-main')
@@ -1052,6 +1188,32 @@ test.describe('responsive UI quality matrix', () => {
       await expect(page.locator('.nav-header .nav-header-browse')).toHaveCount(0)
     }
 
+    const register = page.locator('.pages-register')
+    await expect(register.locator('.pages-record')).toHaveCount(records.length)
+    const search = page.getByRole('textbox', { name: 'Find a title, path, tag or page ID', exact: true })
+    const searchBounds = await search.boundingBox()
+    if (!searchBounds) throw new Error('The register search has no native geometry')
+    expect(searchBounds.y, 'Inventory filtering starts near the top of the page').toBeLessThanOrEqual(190)
+    const rowBounds = await register.locator('.pages-record').evaluateAll(rows =>
+      rows.map(row => {
+        const bounds = row.getBoundingClientRect()
+        return { top: bounds.top, bottom: bounds.bottom, height: bounds.height }
+      })
+    )
+    const height = page.viewportSize()!.height
+    if (viewport.width >= 960) {
+      expect(
+        rowBounds.filter(row => row.height > 0 && row.top >= 0 && row.bottom <= height).length,
+        'A 900px desktop shows at least eight complete page records'
+      ).toBeGreaterThanOrEqual(8)
+    } else {
+      expect(rowBounds[0]!.bottom, 'The first mobile record is complete before scrolling').toBeLessThanOrEqual(height)
+    }
+    await search.fill('record 12')
+    await expect(register.locator('.pages-record')).toHaveCount(1)
+    await expect(register.getByRole('link', { name: 'Release record 12', exact: true })).toBeVisible()
+    await search.fill('')
+    await expect(register.locator('.pages-record')).toHaveCount(records.length)
     const drawer = page.locator('#admin-navigation')
     const toggle = page.getByRole('button', { name: 'Open administration navigation' })
     if (viewport.width < 840) {
@@ -1061,6 +1223,7 @@ test.describe('responsive UI quality matrix', () => {
       await toggle.click()
       await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
       await expectLocatorWithinViewport(drawer, 'Administration navigation')
+      await expect(drawer.getByRole('link', { name: /^Pages\b/ })).toHaveAttribute('aria-current', 'page')
       await expectResponsiveLayout(page, 'Open administration navigation')
       await drawer.getByRole('button', { name: 'Close administration navigation' }).click()
       await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/)
@@ -1068,7 +1231,72 @@ test.describe('responsive UI quality matrix', () => {
       await expect(toggle).toBeHidden()
       await expect(drawer).not.toHaveClass(/v-navigation-drawer--temporary/)
       await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
+      await expect(drawer.getByRole('link', { name: /^Pages\b/ })).toHaveAttribute('aria-current', 'page')
     }
+    await page.getByRole('link', { name: 'Explore structure', exact: true }).click()
+    const canvas = page.locator('.admin-pages-visualize-svg')
+    await expect(canvas.locator('svg text').first()).toBeVisible()
+    const expectAtlasGeometry = async () => {
+      await expect(canvas.locator('svg text[role="link"]:not([aria-hidden="true"])'), 'Fitting keeps every accessible page, not a pruned diagram').toHaveCount(
+        records.length
+      )
+      await expect
+        .poll(
+          () =>
+            canvas.evaluate(root => {
+              const svg = root.querySelector('svg')
+              if (!svg) return ['Diagram has not mounted']
+              const frame = svg.getBoundingClientRect()
+              const labels = [...svg.querySelectorAll<SVGTextElement>('text:not([aria-hidden="true"])')].map(label => ({
+                title: label.textContent ?? '',
+                bounds: label.getBoundingClientRect()
+              }))
+              if (labels.length < 12) return ['Accessible page labels are missing']
+              const failures: string[] = []
+              for (const label of labels) {
+                const bounds = label.bounds
+                if (
+                  bounds.width <= 0 ||
+                  bounds.height <= 0 ||
+                  bounds.left < frame.left - 1 ||
+                  bounds.top < frame.top - 1 ||
+                  bounds.right > frame.right + 1 ||
+                  bounds.bottom > frame.bottom + 1
+                )
+                  failures.push(`Clipped: ${label.title}`)
+              }
+              for (let i = 0; i < labels.length; i++) {
+                for (let j = i + 1; j < labels.length; j++) {
+                  const a = labels[i]!.bounds
+                  const b = labels[j]!.bounds
+                  if (a.left < b.right + 6 && b.left < a.right + 6 && a.top < b.bottom + 6 && b.top < a.bottom + 6)
+                    failures.push(`Crowded: ${labels[i]!.title} / ${labels[j]!.title}`)
+                }
+              }
+              return failures
+            }),
+          { message: 'Actual rendered atlas labels retain gaps and full root/leaf bounds' }
+        )
+        .toEqual([])
+    }
+    await expectAtlasGeometry()
+    const layout = page.getByRole('combobox', { name: 'Diagram structure', exact: true })
+    for (const name of ['Folder tree', 'Radial folders', 'Page relationships']) {
+      await layout.click()
+      await page.getByRole('option', { name, exact: true }).click()
+      await expect(page.locator('.atlas-controls .v-select').last()).toContainText(name)
+      await expectAtlasGeometry()
+      await page.getByRole('button', { name: 'Zoom in', exact: true }).click()
+      await page.getByRole('button', { name: 'Fit diagram', exact: true }).click()
+      await expectAtlasGeometry()
+      await page.getByRole('button', { name: 'Zoom out', exact: true }).click()
+      await page.getByRole('button', { name: 'Reset view', exact: true }).click()
+      await expectAtlasGeometry()
+    }
+    await page.getByRole('button', { name: 'Connection directory', exact: true }).click()
+    await page.setViewportSize({ width: Math.max(320, viewport.width - 80), height: viewport.height })
+    await page.getByRole('button', { name: 'Diagram', exact: true }).click()
+    await expectAtlasGeometry()
   })
 
   test('keeps tag taxonomy lifecycle review and navigation safe', async ({ page }) => {
@@ -1157,7 +1385,8 @@ test.describe('responsive UI quality matrix', () => {
     await expect(page).toHaveURL('/a/tags')
 
     const directoryRow = (tag: string, pressed: boolean) =>
-      page.getByRole('complementary', { name: 'Tag directory', exact: true })
+      page
+        .getByRole('complementary', { name: 'Tag directory', exact: true })
         .getByRole('button', { pressed })
         .filter({ has: page.getByText(tag, { exact: true }) })
 
@@ -1293,13 +1522,18 @@ test.describe('responsive UI quality matrix', () => {
     const queryEditor = page.locator('.graphiql-query-editor')
     await expect(queryEditor).toContainText('PaneRetention')
     const expectEditorRelayout = async () => {
-      await expect.poll(
-        () => page.getByRole('textbox', { name: 'Editor content', exact: true }).evaluateAll(inputs => inputs.every(input => {
-          const bounds = input.getBoundingClientRect()
-          return bounds.left >= -1 && bounds.right <= window.innerWidth + 1
-        })),
-        'Monaco inputs finish native relayout after the documentation pane changes'
-      ).toBe(true)
+      await expect
+        .poll(
+          () =>
+            page.getByRole('textbox', { name: 'Editor content', exact: true }).evaluateAll(inputs =>
+              inputs.every(input => {
+                const bounds = input.getBoundingClientRect()
+                return bounds.left >= -1 && bounds.right <= window.innerWidth + 1
+              })
+            ),
+          'Monaco inputs finish native relayout after the documentation pane changes'
+        )
+        .toBe(true)
     }
     await page.getByRole('button', { name: 'Show Documentation Explorer', exact: true }).click()
     await expect(page.locator('.graphiql-doc-explorer')).toBeVisible()
@@ -1340,45 +1574,48 @@ test.describe('responsive UI quality matrix', () => {
         await page.evaluate(() => document.fonts.ready)
         const title = page.locator('.nav-header-title-stacked')
         await expectLocatorWithinViewport(title, 'Complete phone workspace title')
-        await expect.poll(() => title.evaluate(box => {
-          const lines = [...box.querySelectorAll<HTMLElement>('.nav-header-title-line')]
-          return {
-            title: lines.map(line => line.textContent).join(' '),
-            fits: box.scrollHeight <= box.clientHeight + 1 &&
-              lines.every(line => line.scrollWidth <= line.clientWidth + 1 && line.scrollHeight <= line.clientHeight + 1)
-          }
-        })).toEqual({ title: workspaceTitle, fits: true })
+        await expect
+          .poll(() =>
+            title.evaluate(box => {
+              const lines = [...box.querySelectorAll<HTMLElement>('.nav-header-title-line')]
+              return {
+                title: lines.map(line => line.textContent).join(' '),
+                fits:
+                  box.scrollHeight <= box.clientHeight + 1 &&
+                  lines.every(line => line.scrollWidth <= line.clientWidth + 1 && line.scrollHeight <= line.clientHeight + 1)
+              }
+            })
+          )
+          .toEqual({ title: workspaceTitle, fits: true })
         const overflow = page.locator('.nav-header-mobile-actions')
         const search = page.getByRole('button', { name: 'Open search', exact: true })
-        for (const control of [overflow, search]) {
+        const entrance = page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
+        for (const control of [entrance, overflow, search]) {
           const bounds = await control.boundingBox()
           if (!bounds) throw new Error('Phone header action has no geometry')
           expect(bounds.width, 'Phone action target width').toBeGreaterThanOrEqual(44)
           expect(bounds.height, 'Phone action target height').toBeGreaterThanOrEqual(44)
         }
         await overflow.click()
-        const entrance = page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
-        await expect(entrance).toBeVisible()
+        await expect(entrance, 'Phone Agent is a direct header action, not an overflow item').toBeVisible()
         await expect(page.getByRole('link', { name: 'Browse by Tags', exact: true })).toHaveAttribute('href', '/t')
-        await entrance.focus()
-        await entrance.press('Escape')
+        await page.keyboard.press('Escape')
         await expect(overflow).toBeFocused()
         await expectResponsiveLayout(page, `Phone workspace title at ${width}px`)
       }
     })
   })
 
-  test('restores the phone overflow opener after enabled Agent Escape from Search', async ({ page }) => {
-    test.skip((page.viewportSize()?.width ?? 1280) >= 600, 'Phone overflow handoff requires the xs breakpoint.')
+  test('restores the direct phone Agent opener after enabled Agent Escape from Search', async ({ page }) => {
+    test.skip((page.viewportSize()?.width ?? 1280) >= 600, 'Direct phone handoff requires the xs breakpoint.')
     const fixture = await installEnabledAgentFixture(page, { mode: 'focus' })
     try {
       await page.setViewportSize({ width: 375, height: 812 })
       await openAuthenticatedPage(page, '/', '.nav-header')
       await openSearch(page)
       await expect(page.getByRole('dialog', { name: 'Search the Wiki', exact: true })).toBeVisible()
-      const overflow = page.locator('.nav-header-mobile-actions')
-      await overflow.click()
-      await page.getByRole('button', { name: 'Open Wiki Agent', exact: true }).click()
+      const entrance = page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
+      await entrance.click()
       const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
       await expect(agent).toBeVisible()
       await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeEnabled()
@@ -1386,7 +1623,7 @@ test.describe('responsive UI quality matrix', () => {
       await agent.getByRole('button', { name: 'History', exact: true }).focus()
       await page.keyboard.press('Escape')
       await expect(agent).toBeHidden()
-      await expect(overflow).toBeFocused()
+      await expect(entrance).toBeFocused()
     } finally {
       await fixture.dispose()
     }
@@ -1399,29 +1636,40 @@ test.describe('responsive UI quality matrix', () => {
       await page.setViewportSize({ width: 375, height: 812 })
       await page.emulateMedia({ reducedMotion: 'reduce' })
       await openAuthenticatedPage(page, '/', '.nav-header')
-      await page.locator('.nav-header-mobile-actions').click()
       await page.getByRole('button', { name: 'Open Wiki Agent', exact: true }).click()
       const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
       await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeEnabled()
       await expect(page.locator('.v-menu.v-overlay')).toBeHidden()
-      await expect.poll(async () => agent.evaluate(element => {
-        const dock = element.querySelector('.inline-agent__conversation-dock')
-        const controls = element.querySelectorAll('.inline-agent__composer button')
-        const control = controls[controls.length - 1]
-        if (!dock || !control) throw new Error('The ready workspace must expose its composer dock and controls.')
-        const gap = element.getBoundingClientRect().bottom - dock.getBoundingClientRect().bottom
-        return gap - control.getBoundingClientRect().height
-      }), { message: 'An empty conversation must not leave its bottom dock beyond a touch target of the panel edge.' }).toBeLessThanOrEqual(1)
+      await expect
+        .poll(
+          async () =>
+            agent.evaluate(element => {
+              const dock = element.querySelector('.inline-agent__conversation-dock')
+              const controls = element.querySelectorAll('.inline-agent__composer button')
+              const control = controls[controls.length - 1]
+              if (!dock || !control) throw new Error('The ready workspace must expose its composer dock and controls.')
+              const gap = element.getBoundingClientRect().bottom - dock.getBoundingClientRect().bottom
+              return gap - control.getBoundingClientRect().height
+            }),
+          { message: 'An empty conversation must not leave its bottom dock beyond a touch target of the panel edge.' }
+        )
+        .toBeLessThanOrEqual(1)
       const starter = agent.getByRole('button', { name: /Catch up/i }).first()
       await expect(starter).toBeEnabled()
       await starter.scrollIntoViewIfNeeded()
-      await expect.poll(async () => starter.evaluate(element => {
-        const rect = element.getBoundingClientRect()
-        return [rect.y + rect.height / 2, rect.bottom - Math.min(12, rect.height / 4)].every(y => {
-          const target = document.elementFromPoint(rect.x + rect.width / 2, y)
-          return target !== null && element.contains(target)
-        })
-      }), { message: 'The composer must not intercept the last starter action or its description.' }).toBe(true)
+      await expect
+        .poll(
+          async () =>
+            starter.evaluate(element => {
+              const rect = element.getBoundingClientRect()
+              return [rect.y + rect.height / 2, rect.bottom - Math.min(12, rect.height / 4)].every(y => {
+                const target = document.elementFromPoint(rect.x + rect.width / 2, y)
+                return target !== null && element.contains(target)
+              })
+            }),
+          { message: 'The composer must not intercept the last starter action or its description.' }
+        )
+        .toBe(true)
     } finally {
       await fixture.dispose()
     }
@@ -1434,7 +1682,13 @@ test.describe('responsive UI quality matrix', () => {
     const originalArticleId = await page.locator('article.contents').first().getAttribute('id')
     expect(originalPageTitle, 'The invoking page exposes a stable reader identity').not.toBe('')
     expect(originalArticleId, 'The invoking article has an identity to preserve').not.toBeNull()
-    expect(await page.locator('article.contents').first().evaluate(element => document.getElementById(element.id) === element), 'The invoking article identity resolves to the original reader').toBe(true)
+    expect(
+      await page
+        .locator('article.contents')
+        .first()
+        .evaluate(element => document.getElementById(element.id) === element),
+      'The invoking article identity resolves to the original reader'
+    ).toBe(true)
 
     const viewport = page.viewportSize()
     expect(viewport).not.toBeNull()
@@ -1445,30 +1699,27 @@ test.describe('responsive UI quality matrix', () => {
 
     if (viewport.width < 600) {
       const overflow = page.locator('.nav-header-mobile-actions')
-      await expectLocatorWithinViewport(overflow, 'Compact header actions')
-      await searchControl.focus()
-      await searchControl.press('Tab')
-      await expect(overflow).toBeFocused()
-      await overflow.press('Enter')
+      const entrance = page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
+      await expectLocatorWithinViewport(entrance, 'Direct phone Wiki Agent entrance')
+      await entrance.focus()
+      await entrance.press('Tab')
+      await expect(searchControl).toBeFocused()
+      await overflow.click()
       const browse = page.getByRole('link', { name: 'Browse by Tags', exact: true })
       await expectLocatorWithinViewport(browse, 'Browse by Tags menu link')
       await expect(browse).toHaveAttribute('href', '/t')
-      const entrance = page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
-      await entrance.focus()
-      await entrance.press('Escape')
+      await page.keyboard.press('Escape')
+      await expect(overflow).toBeFocused()
       await openSearch(page)
       await page.locator('.nav-header-search-control input:visible').first().fill('home')
       await expect(page.getByRole('dialog', { name: 'Search the Wiki', exact: true })).toBeVisible()
-      await overflow.click()
-      await entrance.focus()
-      await entrance.press('Enter')
+      await entrance.click()
       const openedAgent = page.getByRole('region', { name: 'Wiki Agent' })
       await expect(openedAgent).toBeVisible()
       await page.keyboard.press('Escape')
       await expect(openedAgent).toBeHidden()
-      await expect(overflow).toBeFocused()
+      await expect(entrance).toBeFocused()
     } else {
-
       const entrance = page.getByRole('button', { name: 'Open Wiki Agent', exact: true })
       await expectLocatorWithinViewport(entrance, 'Wiki Agent entrance')
       const browse = page.getByRole('link', { name: 'Browse by Tags', exact: true })
@@ -1587,10 +1838,12 @@ test.describe('responsive UI quality matrix', () => {
       await expect(memoryPanel).not.toHaveAttribute('aria-modal', 'true')
       await expect.poll(() => memoryPanel.evaluate(element => getComputedStyle(element).position)).toBe('relative')
       await expectLocatorWithinViewport(memoryPanel, 'Exclusive left Memory panel')
-      await expect.poll(async () => {
-        const [memoryBounds, memoryCard] = await Promise.all([memoryPanel.boundingBox(), card.boundingBox()])
-        return Boolean(memoryBounds && memoryCard && memoryBounds.x + memoryBounds.width <= memoryCard.x)
-      }).toBe(true)
+      await expect
+        .poll(async () => {
+          const [memoryBounds, memoryCard] = await Promise.all([memoryPanel.boundingBox(), card.boundingBox()])
+          return Boolean(memoryBounds && memoryCard && memoryBounds.x + memoryBounds.width <= memoryCard.x)
+        })
+        .toBe(true)
       await memoryPanel.getByRole('button', { name: 'Close agent memory' }).click()
       await expect(memoryPanel).toBeHidden()
       await expect(visibleSidePanels).toHaveCount(0)
@@ -1735,19 +1988,23 @@ test.describe('responsive UI quality matrix', () => {
       mode: 'latest',
       skillsEnabled: true,
       goalsEnabled: true,
-      firstMessageMedia: [{
-        id: earlierImageId,
-        kind: 'attachment',
-        filename: 'Earlier release evidence.svg',
-        mimeType: 'image/svg+xml',
-        byteLength: Buffer.byteLength(earlierImageBody),
-        available: true,
-        detached: false
-      }]
+      firstMessageMedia: [
+        {
+          id: earlierImageId,
+          kind: 'attachment',
+          filename: 'Earlier release evidence.svg',
+          mimeType: 'image/svg+xml',
+          byteLength: Buffer.byteLength(earlierImageBody),
+          available: true,
+          detached: false
+        }
+      ]
     })
     let releaseEarlierImage!: () => void
     let earlierImageRequested = false
-    const earlierImageGate = new Promise<void>(resolve => { releaseEarlierImage = resolve })
+    const earlierImageGate = new Promise<void>(resolve => {
+      releaseEarlierImage = resolve
+    })
     await page.route(`**/_api/agents/media/${earlierImageId}/content`, async route => {
       earlierImageRequested = true
       await earlierImageGate
@@ -1764,42 +2021,19 @@ test.describe('responsive UI quality matrix', () => {
       const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
       const composer = agent.locator('.agent-composer textarea')
       await expect(composer).toBeEnabled()
-      const moreOptions = agent.getByRole('button', { name: 'More options', exact: true })
+      const capabilities = agent.getByRole('button', { name: 'Capabilities', exact: true })
       const goal = agent.getByRole('button', { name: 'Goal', exact: true })
-      const moreMenu = page.locator('.agent-composer__more-menu')
-      await expect(moreOptions).toBeVisible()
-      const skillsOption = moreMenu.locator('.v-list-item').filter({ hasText: 'Skills' })
-      await moreOptions.focus()
-      await moreOptions.press('Enter')
-      await expect(skillsOption).toBeVisible()
-      await skillsOption.focus()
-      await skillsOption.press('Enter')
+      await expect(capabilities).toBeVisible()
+      await capabilities.focus()
+      await capabilities.press('Enter')
       const skillsDialog = page.getByRole('dialog', { name: 'Skills', exact: true })
       await expect(skillsDialog).toBeVisible()
       await page.keyboard.press('Escape')
       await expect(skillsDialog).toBeHidden()
-      if ((await moreOptions.getAttribute('aria-expanded')) === 'true') await page.keyboard.press('Escape')
-      await expect(moreOptions).toHaveAttribute('aria-expanded', 'false')
-      await expect(moreMenu).toBeHidden()
-      if (!(await goal.isVisible())) {
-        await moreOptions.click()
-        await expect(moreMenu.getByText('Goal', { exact: true })).toBeVisible()
-        await page.keyboard.press('Escape')
-        await expect(moreMenu).toBeHidden()
-      }
-      const controlPlacement = () =>
-        agent.locator('.agent-composer__context-controls').evaluate(element => {
-          const group = element.getBoundingClientRect()
-          return ['.agent-composer__goal-toggle', '.agent-composer__more-button'].flatMap(selector => {
-            const control = element.querySelector<HTMLElement>(selector)
-            if (!control) return []
-            const bounds = control.getBoundingClientRect()
-            return [{ selector, x: bounds.x - group.x, y: bounds.y - group.y, width: bounds.width, height: bounds.height }]
-          })
-        })
-
-      const beforeSources = await controlPlacement()
-      await agent.getByRole('button', { name: 'Add sources', exact: true }).click()
+      await expect(capabilities).toHaveAttribute('aria-expanded', 'false')
+      await expect(goal).toBeVisible()
+      await expect(goal).toHaveAttribute('aria-pressed', 'false')
+      await agent.getByRole('button', { name: 'Sources', exact: true }).click()
       const sourceDialog = page.getByRole('dialog', { name: 'Add sources', exact: true })
       await sourceDialog.getByRole('textbox', { name: 'Search pages', exact: true }).fill('release')
       await expect(sourceDialog.getByRole('checkbox')).toHaveCount(sources.length)
@@ -1808,34 +2042,32 @@ test.describe('responsive UI quality matrix', () => {
         await row.click()
         await expect(row.getByRole('checkbox')).toBeChecked()
       }
-      await sourceDialog.getByRole('button', { name: 'Add 3 selected sources', exact: true }).click()
+      await sourceDialog.getByRole('button', { name: 'Apply (3)', exact: true }).click()
       await expect(sourceDialog).toBeHidden()
-      await expect(agent.locator('.agent-context__sources .v-chip')).toHaveCount(3)
-      const afterSources = await controlPlacement()
-      expect(afterSources).toHaveLength(beforeSources.length)
-      for (const [index, before] of beforeSources.entries()) {
-        const after = afterSources[index]!
-        expect(after.selector).toBe(before.selector)
-        expect(Math.abs(after.x - before.x), 'Adding source chips keeps remaining composer controls stable').toBeLessThanOrEqual(1)
-        expect(Math.abs(after.y - before.y), 'Adding source chips keeps remaining composer controls stable').toBeLessThanOrEqual(1)
+      for (const source of sources) {
+        const group = agent.getByRole('group', { name: source.title, exact: true })
+        await expect(group.locator('.agent-context__source-preview')).toBeVisible()
+        await expect(group.getByRole('button', { name: `Remove source ${source.title}`, exact: true })).toBeVisible()
       }
-      const [sourceBounds, scopeBounds, editorBounds] = await Promise.all([
+      const [sourceBounds, editorBounds, controlBounds] = await Promise.all([
         agent.locator('.agent-context__sources').boundingBox(),
-        agent.locator('.agent-context__scope').boundingBox(),
-        agent.locator('.agent-composer__editor').boundingBox()
+        agent.locator('.agent-composer__editor').boundingBox(),
+        agent.getByRole('button', { name: 'Sources', exact: true }).boundingBox()
       ])
-      expect(sourceBounds).not.toBeNull()
-      expect(scopeBounds).not.toBeNull()
-      expect(editorBounds).not.toBeNull()
-      if (sourceBounds && scopeBounds && editorBounds) {
-        // D3 keeps attached page context in the composer, after the source
-        // controls and before the prompt; it must not obscure either control.
-        expect(sourceBounds.y).toBeGreaterThanOrEqual(scopeBounds.y + scopeBounds.height - 1)
-        expect(sourceBounds.y + sourceBounds.height).toBeLessThanOrEqual(editorBounds.y + 1)
+      if (!sourceBounds || !editorBounds || !controlBounds) throw new Error('Attached source and composer geometry is missing')
+      expect(editorBounds.y + editorBounds.height, 'Source chips do not cover the prompt').toBeLessThanOrEqual(sourceBounds.y + 1)
+      expect(
+        sourceBounds.x + sourceBounds.width <= controlBounds.x + 1 ||
+          controlBounds.x + controlBounds.width <= sourceBounds.x + 1 ||
+          sourceBounds.y + sourceBounds.height <= controlBounds.y + 1 ||
+          controlBounds.y + controlBounds.height <= sourceBounds.y + 1,
+        'Source chips do not cover source actions'
+      ).toBe(true)
+      // Remove explicit attachments, without discarding the independent current-page hint.
+      for (const source of sources) {
+        await agent.getByRole('button', { name: `Remove source ${source.title}`, exact: true }).click()
+        await expect(agent.getByRole('group', { name: source.title, exact: true })).toHaveCount(0)
       }
-      // Remove the chips after testing placement so the small viewport can focus on reading behavior.
-      for (const source of sources) await agent.getByRole('button', { name: `Remove source ${source.title}`, exact: true }).click()
-      await expect(agent.locator('.agent-context__sources')).toHaveCount(0)
       const transcript = agent.locator('.inline-agent__transcript')
       await composer.fill('Show enough release evidence to inspect the latest response navigation.')
       await agent.getByRole('button', { name: 'Send', exact: true }).click()
@@ -1871,9 +2103,13 @@ test.describe('responsive UI quality matrix', () => {
       await expect.poll(() => earlierImageRequested).toBe(true)
       const earlierImage = agent.getByRole('img', { name: 'Earlier release evidence.svg', exact: true })
       expect(await earlierImage.evaluate(element => (element as HTMLImageElement).naturalHeight)).toBe(0)
-      const readingMessage = agent.locator('.agent-message--assistant').first().locator('p').filter({
-        hasText: /^Verification checkpoint 3:/
-      })
+      const readingMessage = agent
+        .locator('.agent-message--assistant')
+        .first()
+        .locator('p')
+        .filter({
+          hasText: /^Verification checkpoint 3:/
+        })
       await readingMessage.evaluate(element => {
         const container = element.closest<HTMLElement>('.inline-agent__transcript')
         if (!container) throw new Error('The reading message has no transcript scrollport')
@@ -1886,9 +2122,12 @@ test.describe('responsive UI quality matrix', () => {
       const beforeImageReadingBounds = await readingMessage.boundingBox()
       const beforeImageBounds = await earlierImage.boundingBox()
       const beforeImageTranscriptBounds = await transcript.boundingBox()
-      if (!beforeImageReadingBounds || !beforeImageBounds || !beforeImageTranscriptBounds) throw new Error('The delayed image and reading message need native browser geometry')
+      if (!beforeImageReadingBounds || !beforeImageBounds || !beforeImageTranscriptBounds)
+        throw new Error('The delayed image and reading message need native browser geometry')
       expect(beforeImageReadingBounds.y).toBeGreaterThanOrEqual(beforeImageTranscriptBounds.y)
-      expect(beforeImageBounds.y + beforeImageBounds.height, 'The delayed attachment is above the currently read message').toBeLessThan(beforeImageTranscriptBounds.y)
+      expect(beforeImageBounds.y + beforeImageBounds.height, 'The delayed attachment is above the currently read message').toBeLessThan(
+        beforeImageTranscriptBounds.y
+      )
       const beforeImageScrollHeight = await transcript.evaluate(element => element.scrollHeight)
       releaseEarlierImage()
       await earlierImage.evaluate(async element => {
@@ -1896,10 +2135,16 @@ test.describe('responsive UI quality matrix', () => {
         await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       })
       expect(await earlierImage.evaluate(element => (element as HTMLImageElement).naturalHeight)).toBe(420)
-      expect(await transcript.evaluate(element => element.scrollHeight) - beforeImageScrollHeight, 'The delayed image causes genuine transcript growth').toBeGreaterThan(300)
+      expect(
+        (await transcript.evaluate(element => element.scrollHeight)) - beforeImageScrollHeight,
+        'The delayed image causes genuine transcript growth'
+      ).toBeGreaterThan(300)
       const afterImageReadingBounds = await readingMessage.boundingBox()
       if (!afterImageReadingBounds) throw new Error('The read message disappeared after image loading')
-      expect(Math.abs(afterImageReadingBounds.y - beforeImageReadingBounds.y), 'Native anchoring preserves the read message on desktop and phone').toBeLessThanOrEqual(1)
+      expect(
+        Math.abs(afterImageReadingBounds.y - beforeImageReadingBounds.y),
+        'Native anchoring preserves the read message on desktop and phone'
+      ).toBeLessThanOrEqual(1)
       await expect(latest).toBeVisible()
       await latest.click()
       await expect.poll(distanceFromBottom, { message: 'Latest still resumes following after delayed earlier media' }).toBeLessThanOrEqual(25)
@@ -1944,9 +2189,11 @@ test.describe('responsive UI quality matrix', () => {
       await expect(agent.locator('.agent-message--assistant').last()).toContainText(
         'The final checkpoint keeps the newest response at the end of the conversation.'
       )
-      await expect.poll(() => transcript.evaluate(element => element.scrollTop), {
-        message: 'The arriving response leaves the reader at the same earlier message'
-      }).toBeCloseTo(earlierScrollTop, 0)
+      await expect
+        .poll(() => transcript.evaluate(element => element.scrollTop), {
+          message: 'The arriving response leaves the reader at the same earlier message'
+        })
+        .toBeCloseTo(earlierScrollTop, 0)
       await expect.poll(distanceFromBottom).toBeGreaterThan(400)
       await expect(latest).toBeVisible()
       await readAtDistance(400)
@@ -2029,9 +2276,15 @@ test.describe('responsive UI quality matrix', () => {
       await authenticateAsAdmin(page)
       await page.goto('/en/home', { waitUntil: 'networkidle' })
       await expect(page.locator('.page-header-section')).toBeVisible()
-      await page.locator('.nav-header-agent:visible').first().click()
+      await openSearch(page)
+      const workingSet = page.getByRole('grid', { name: 'Recent pages & quick actions', exact: true })
+      await workingSet.getByRole('button', { name: 'Ask Agent about this page', exact: true }).click()
       const agent = page.getByRole('region', { name: 'Wiki Agent' })
       await expect(agent).toBeVisible()
+      expect(
+        fixture.requests.filter(request => request.includes('/messages')),
+        'Quick Ask opens a draft without submitting a message'
+      ).toHaveLength(0)
       const starterPrompt = 'Summarize the current Wiki page and cite the key sections.'
       const starter = agent.locator('.inline-agent__starter').filter({ hasText: 'Understand this page' }).first()
       await expect(starter).toBeVisible()
@@ -2040,10 +2293,12 @@ test.describe('responsive UI quality matrix', () => {
       const starterRequest = await starterRequestPromise
       const starterBody = starterRequest.postDataJSON() as {
         content?: unknown
+        presetId?: unknown
         currentPage?: { id?: unknown; locale?: unknown; path?: unknown; observedUpdatedAt?: unknown }
         knowledgeContext?: { scope?: { kind?: unknown }; sources?: unknown }
       }
       expect(starterBody.content).toBe(starterPrompt)
+      expect(starterBody.presetId).toBe('page-summary')
       expect(starterBody.currentPage).toEqual(
         expect.objectContaining({
           id: expect.any(Number),
@@ -2054,7 +2309,12 @@ test.describe('responsive UI quality matrix', () => {
       )
       expect(starterBody.knowledgeContext).toEqual(expect.objectContaining({ scope: { kind: 'all' }, sources: [] }))
       await expect(agent.locator('.agent-message--user')).toHaveCount(1)
-      await expect(agent.locator('.agent-message--user').first()).toContainText(starterPrompt)
+      const userMessage = agent.locator('.agent-message--user').first()
+      const fullPrompt = userMessage.locator('.agent-message__original-prompt')
+      await expect(fullPrompt).toBeHidden()
+      await userMessage.getByText('Show full prompt', { exact: true }).click()
+      await expect(fullPrompt).toBeVisible()
+      await expect(fullPrompt).toHaveText(starterPrompt)
       await expect(agent.locator('.agent-message--assistant').last()).toContainText('The release is ready for a deliberate review.')
       expect(fixture.requests.filter(request => request.includes('/messages'))).toHaveLength(1)
 
@@ -2150,14 +2410,15 @@ test.describe('responsive UI quality matrix', () => {
         expect(creates()).toBe(2)
         await sendContinuityPrompt(page, agent, 'A new conversation after the resume window.')
         // Return to real wall time before another document reads the bookmark.
-        await originalDateNow.evaluate(original => { Date.now = original })
+        await originalDateNow.evaluate(original => {
+          Date.now = original
+        })
         await originalDateNow.dispose()
         await closeContinuityAgent(page)
         agent = await openContinuityAgent(page, '/agent-context-fixture-b')
         await expect(agent.locator('.agent-message--user')).toContainText('A new conversation after the resume window.')
         expect(creates()).toBe(2)
-        // The context picker shows one compact page chip for the current page.
-        await expect(agent.locator('.agent-context__page-chip')).toContainText('Context page B')
+        await expect(agent.getByRole('group', { name: 'Context page B', exact: true })).toBeVisible()
         fixture.assertNoUnexpectedRequests()
       } finally {
         await fixture.dispose()
@@ -2174,7 +2435,11 @@ test.describe('responsive UI quality matrix', () => {
         const path = new URL(route.request().url()).pathname
         if (expired && route.request().method() === 'GET' && /^\/_api\/agents\/sessions\/[^/]+$/.test(path)) {
           expiredReads++
-          await route.fulfill({ status: 410, contentType: 'application/json', body: JSON.stringify({ error: 'Session expired', code: 'AGENT_RESOURCE_NOT_FOUND' }) })
+          await route.fulfill({
+            status: 410,
+            contentType: 'application/json',
+            body: JSON.stringify({ error: 'Session expired', code: 'AGENT_RESOURCE_NOT_FOUND' })
+          })
           return
         }
         if (route.request().method() === 'POST' && path === '/_api/agents/sessions') expired = false
@@ -2234,11 +2499,15 @@ test.describe('responsive UI quality matrix', () => {
         const second = await sendContinuityPrompt(page, agent, 'Continue on page B.')
         expect(second.currentPage?.id).toBe(902)
         expect(second.knowledgeContext.sources).toEqual([])
-        await agent.locator('.agent-context__page-chip').click()
-        await expect(agent.locator('.agent-context__page-chip')).toHaveAttribute('aria-pressed', 'false')
+        await withCurrentPageChoice(page, agent, async choice => {
+          await choice.click()
+          await expect(choice).toHaveAttribute('aria-pressed', 'false')
+        })
         await closeContinuityAgent(page)
         agent = await openContinuityAgent(page, '/agent-context-fixture-c')
-        await expect(agent.locator('.agent-context__page-chip')).toHaveAttribute('aria-pressed', 'false')
+        await withCurrentPageChoice(page, agent, async choice => {
+          await expect(choice).toHaveAttribute('aria-pressed', 'false')
+        })
         const third = await sendContinuityPrompt(page, agent, 'Continue without including the current page.')
         expect(third.currentPage).toBeUndefined()
         expect(third.knowledgeContext.sources).toEqual([])
@@ -2278,22 +2547,30 @@ test.describe('responsive UI quality matrix', () => {
         await sendContinuityPrompt(page, agent, 'One conversation, independent tab context.')
         await closeContinuityAgent(page)
         const opened = page.waitForEvent('popup')
-        await page.evaluate(() => { window.open('/agent-context-fixture-b', '_blank') })
+        await page.evaluate(() => {
+          window.open('/agent-context-fixture-b', '_blank')
+        })
         second = await opened
         await expect(second.locator('.page-header-section')).toBeVisible()
         let otherAgent = await openContinuityAgent(second)
         await expect(otherAgent.locator('.agent-message--user')).toContainText('One conversation, independent tab context.')
-        await otherAgent.locator('.agent-context__page-chip').click()
-        await expect(otherAgent.locator('.agent-context__page-chip')).toHaveAttribute('aria-pressed', 'false')
+        await withCurrentPageChoice(second, otherAgent, async choice => {
+          await choice.click()
+          await expect(choice).toHaveAttribute('aria-pressed', 'false')
+        })
         await closeContinuityAgent(second)
 
         await page.reload({ waitUntil: 'domcontentloaded' })
         agent = await openContinuityAgent(page)
         await expect(agent.locator('.agent-message--user')).toContainText('One conversation, independent tab context.')
-        await expect(agent.locator('.agent-context__page-chip')).toHaveAttribute('aria-pressed', 'true')
+        await withCurrentPageChoice(page, agent, async choice => {
+          await expect(choice).toHaveAttribute('aria-pressed', 'true')
+        })
         await second.reload({ waitUntil: 'domcontentloaded' })
         otherAgent = await openContinuityAgent(second)
-        await expect(otherAgent.locator('.agent-context__page-chip')).toHaveAttribute('aria-pressed', 'false')
+        await withCurrentPageChoice(second, otherAgent, async choice => {
+          await expect(choice).toHaveAttribute('aria-pressed', 'false')
+        })
         expect(fixture.requests.filter(value => value === 'POST /_api/agents/sessions')).toHaveLength(1)
         expect(fixture.requests.filter(value => value.includes('/messages'))).toHaveLength(1)
         fixture.assertNoUnexpectedRequests()
@@ -2342,7 +2619,10 @@ test.describe('responsive UI quality matrix', () => {
         const table = markdown.getByRole('table')
         await expect(table.getByRole('columnheader')).toHaveText(['Review checkpoint', 'Source record', 'Required evidence', 'Release decision'])
         await expect(table.getByRole('cell')).toHaveText([
-          'Source verification', 'Release guide overview', 'Completed verification sequence', 'Deliberate publication review'
+          'Source verification',
+          'Release guide overview',
+          'Completed verification sequence',
+          'Deliberate publication review'
         ])
         await expect(markdown.locator('.agent-markdown__table-shell + p > a[data-agent-citation]')).toHaveAttribute('data-citation-number', '2')
         await expect(markdown.locator('a[data-agent-citation]')).toHaveCount(4)
@@ -2582,10 +2862,14 @@ test.describe('responsive UI quality matrix', () => {
       if (pageId === undefined || sourceRevision === undefined) throw new Error('Reader Mermaid fixture response omitted page identity.')
 
       // Page creation acknowledges the source write before its exact render is published.
-      await waitForPageRender(async url => {
-        const response = await page.request.get(url)
-        return new Response(await response.body(), { status: response.status(), headers: response.headers() })
-      }, { id: pageId, sourceRevision, locale: 'en', path, visibility: 'public' }, AbortSignal.timeout(15_000))
+      await waitForPageRender(
+        async url => {
+          const response = await page.request.get(url)
+          return new Response(await response.body(), { status: response.status(), headers: response.headers() })
+        },
+        { id: pageId, sourceRevision, locale: 'en', path, visibility: 'public' },
+        AbortSignal.timeout(15_000)
+      )
 
       await openAuthenticatedPage(page, `/en/${path}`, '.page-header-section')
       const reader = page.locator('article.contents')
@@ -2624,24 +2908,34 @@ test.describe('responsive UI quality matrix', () => {
     }
   })
 
-  test('keeps enabled Agent panels modal, docked, and wide with nested focus', async ({ page }, testInfo) => {
+  test('keeps enabled Agent panels modal and non-modal with nested focus', async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'responsive-chromium-desktop', 'Enabled Agent panel geometry is owned by Chromium desktop.')
     const fixture = await installEnabledAgentFixture(page)
     const agent = await openFixtureAgentFromSearch(page)
-    const widths: readonly [number, 'modal' | 'docked' | 'wide'][] = [
+    await expect(agent.getByRole('button', { name: 'New chat', exact: true })).toBeEnabled()
+    for (const key of ['ArrowDown', 'ArrowUp'] as const) {
+      const moreActions = agent.getByRole('button', { name: 'More chat actions', exact: true })
+      await moreActions.focus()
+      await moreActions.press(key)
+      const menu = agent.locator('.v-menu.v-overlay--active')
+      const items = menu.getByRole('listitem')
+      await expect(key === 'ArrowDown' ? items.first() : items.last()).toBeFocused()
+      await page.keyboard.press('Escape')
+      await expect(menu).toBeHidden()
+      await expect(moreActions).toBeFocused()
+    }
+    const widths: readonly [number, 'modal' | 'non-modal'][] = [
       [320, 'modal'],
       [390, 'modal'],
       [430, 'modal'],
       [639, 'modal'],
       [640, 'modal'],
       [1023, 'modal'],
-      [1024, 'docked'],
-      [1759, 'docked'],
-      [1760, 'wide']
+      [1024, 'non-modal'],
+      [1760, 'non-modal']
     ]
     for (const [width, expectedMode] of widths) {
       await page.setViewportSize({ width, height: 420 })
-      await expect(agent).toHaveAttribute('data-panel-mode', expectedMode)
       await expectResponsiveLayout(page, `enabled Agent at ${width}px`)
       const historyToggle = agent.getByRole('button', { name: 'History', exact: true })
       await historyToggle.click()
@@ -2659,12 +2953,15 @@ test.describe('responsive UI quality matrix', () => {
         await panel.getByRole('button', { name: 'Close chat history' }).click()
       }
       await expect(panel).toBeHidden()
-      // History is visible even below 640px. Only Memory moves into More chat actions.
+      // Use the rendered header action: compact layouts move closed Memory into More.
       if (expectedMode === 'modal') await expect(historyToggle).toBeFocused()
-      if (expectedMode === 'modal' && width < 640) {
+      if (expectedMode === 'modal' && !(await agent.locator('.inline-agent__memory-toggle').isVisible())) {
         const moreActions = agent.getByRole('button', { name: 'More chat actions', exact: true })
-        await moreActions.click()
-        await agent.locator('.inline-agent__panel-menu-item--compact').click()
+        await moreActions.focus()
+        await moreActions.press('ArrowDown')
+        const memoryAction = agent.locator('.inline-agent__panel-menu-item--compact')
+        await expect(memoryAction).toBeFocused()
+        await memoryAction.press('Enter')
         const mobileMemory = agent.getByRole('dialog', { name: 'Agent memory' })
         await expect(mobileMemory).toBeVisible()
         await expect.poll(() => mobileMemory.evaluate(root => root.contains(document.activeElement))).toBe(true)
@@ -2674,11 +2971,33 @@ test.describe('responsive UI quality matrix', () => {
       }
     }
 
-    await page.setViewportSize({ width: 640, height: 420 })
-    // From 640px up, Memory has its own toggle beside History instead of a menu entry.
+    // At wide widths both non-modal panels remain usable beside the conversation.
+    const historyToggle = agent.getByRole('button', { name: 'History', exact: true })
+    await historyToggle.click()
+    await agent.locator('.inline-agent__memory-toggle').click()
+    const wideHistory = agent.getByRole('complementary', { name: 'Conversations' })
+    const wideMemory = agent.getByRole('complementary', { name: 'Agent memory' })
+    await expect(wideHistory).toBeVisible()
+    await expect(wideMemory).toBeVisible()
+    await expectLocatorWithinViewport(wideHistory, 'Simultaneous non-modal chat history')
+    await expectLocatorWithinViewport(wideMemory, 'Simultaneous non-modal Agent memory')
+    await wideMemory.getByRole('button', { name: 'Close agent memory', exact: true }).click()
+    await expect(wideMemory).toBeHidden()
+    await wideHistory.getByRole('button', { name: 'Close chat history', exact: true }).click()
+    await expect(wideHistory).toBeHidden()
+    await expect(historyToggle).toHaveAttribute('aria-expanded', 'false')
+    await expect(historyToggle).toBeFocused()
+
+    await page.setViewportSize({ width: 768, height: 420 })
+    // A visible tablet Memory toggle must open the modal panel with native Enter.
     const memoryToggle = agent.locator('.inline-agent__memory-toggle')
+    await expect(memoryToggle).toBeVisible()
+    await expect(memoryToggle).toBeEnabled()
+    await expect(memoryToggle).not.toHaveAttribute('aria-disabled', 'true')
+    await expect(memoryToggle).toHaveAttribute('aria-expanded', 'false')
     await memoryToggle.focus()
-    await memoryToggle.press('Enter')
+    await expect(memoryToggle).toBeFocused()
+    await page.keyboard.press('Enter')
     await expect(memoryToggle).toHaveAttribute('aria-expanded', 'true')
 
     const memoryPanel = agent.getByRole('dialog', { name: 'Agent memory' })
@@ -2936,7 +3255,8 @@ test.describe('responsive UI quality matrix', () => {
         // Scroll to the end and inspect the last column, not scrollWidth: stable scrollbar gutters can inflate it.
         wrapper.scrollLeft = wrapper.scrollWidth
         const lastColumn = table.querySelector('th:last-child')
-        const reachedEnd = wrapper.scrollLeft > 0 && Boolean(lastColumn && lastColumn.getBoundingClientRect().right <= wrapper.getBoundingClientRect().right + 2)
+        const reachedEnd =
+          wrapper.scrollLeft > 0 && Boolean(lastColumn && lastColumn.getBoundingClientRect().right <= wrapper.getBoundingClientRect().right + 2)
 
         wrappedResults.push({
           name: config.name,
@@ -3178,8 +3498,7 @@ test.describe('reader metadata rendering', () => {
     const authorName = '<strong data-e2e-author-markup="true">Ada</strong> & "quoted"'
     const spaAuthorName = '<em data-e2e-author-markup="true">Grace</em> & "next"'
     const spaUpdatedAt = '2001-04-05T09:30:00.000Z'
-    const historyHrefFor = ({ props }: WikiPagePayload): string =>
-      `${props.visibility === 'private' ? '/h/_private' : '/h'}/${props.locale}/${props.path}`
+    const historyHrefFor = ({ props }: WikiPagePayload): string => `${props.visibility === 'private' ? '/h/_private' : '/h'}/${props.locale}/${props.path}`
     await authenticateReaderMetadataAdmin(page)
     const readerLoads = await installReaderMetadataFixture(
       page,
@@ -3207,10 +3526,7 @@ test.describe('reader metadata rendering', () => {
     const coarsePointer = await page.evaluate(() => matchMedia('(pointer: coarse)').matches)
     const assertReaderUtilities = async (width: number): Promise<void> => {
       await page.setViewportSize({ width, height: initialViewport.height })
-      if (width < 1280) await expect(
-        page.locator('#page-navigation-drawer'),
-        `Resizing to ${width}px collapses the temporary navigation`
-      ).not.toBeInViewport()
+      if (width < 1280) await expect(page.locator('#page-navigation-drawer'), `Resizing to ${width}px collapses the temporary navigation`).not.toBeInViewport()
       const hero = page.locator('.page-hero')
       await expect(hero.locator('.page-document-provenance')).toBeVisible()
       for (const action of await hero.locator('.page-hero-actions .v-btn').all()) {
@@ -3231,10 +3547,8 @@ test.describe('reader metadata rendering', () => {
       await exit.press('Enter')
       await expect(dock).toHaveCount(0)
       await expect(focus, `Leaving Focus restores its keyboard target at ${width}px`).toBeFocused()
-      if (width < 1280) await expect(
-        page.locator('#page-navigation-drawer'),
-        `Leaving Focus at ${width}px does not reopen the collapsed navigation`
-      ).not.toBeInViewport()
+      if (width < 1280)
+        await expect(page.locator('#page-navigation-drawer'), `Leaving Focus at ${width}px does not reopen the collapsed navigation`).not.toBeInViewport()
 
       const share = hero.getByRole('button', { name: 'Share', exact: true })
       await share.focus()
@@ -3243,10 +3557,12 @@ test.describe('reader metadata rendering', () => {
       if (!sharePopupId) throw new Error('Share must identify its controlled popup.')
       const sharingMenu = page.locator(`[id=${JSON.stringify(sharePopupId)}]`)
       await expect(sharingMenu).toBeVisible()
-      await expect.poll(() => sharingMenu.evaluate(menu =>
-        menu.contains(document.activeElement) &&
-        document.activeElement?.matches('button:not(:disabled), a[href]')
-      ), `Keyboard Share enters an enabled sharing control at ${width}px`).toBe(true)
+      await expect
+        .poll(
+          () => sharingMenu.evaluate(menu => menu.contains(document.activeElement) && document.activeElement?.matches('button:not(:disabled), a[href]')),
+          `Keyboard Share enters an enabled sharing control at ${width}px`
+        )
+        .toBe(true)
       await page.keyboard.press('Escape')
       await expect(sharingMenu).toBeHidden()
       await expect(share, `Closing Share restores its keyboard trigger at ${width}px`).toBeFocused()
@@ -3262,25 +3578,26 @@ test.describe('reader metadata rendering', () => {
       }
 
       // Edit remains a separate real affordance, not another metadata utility.
-      if (width < 600) await test.step(`Keyboard Edit through the header at ${width}px`, async () => {
-        const pageActions = page.getByRole('banner').getByRole('button', { name: 'Page Actions', exact: true })
-        await expectLocatorWithinViewport(pageActions, `Page actions at ${width}px`)
-        await pageActions.focus()
-        await pageActions.press('ArrowDown')
-        await expect(pageActions).toHaveAttribute('aria-expanded', 'true')
-        const actionsMenu = page.locator('.page-actions-menu:visible')
-        const edit = actionsMenu.getByRole('button', { name: 'Edit', exact: true })
-        await expect.poll(() => actionsMenu.evaluate(menu => menu.contains(document.activeElement))).toBe(true)
-        for (let attempt = 0, count = await actionsMenu.getByRole('button').count(); attempt < count; attempt++) {
-          if (await edit.evaluate(element => element === document.activeElement)) break
-          await page.keyboard.press('ArrowDown')
-        }
-        await expect(edit, `Real Edit is keyboard reachable at ${width}px`).toBeFocused()
-        await expectLocatorWithinViewport(edit, `Edit action at ${width}px`)
-        await edit.press('Escape')
-        await expect(pageActions).toHaveAttribute('aria-expanded', 'false')
-        await expect(pageActions).toBeFocused()
-      })
+      if (width < 600)
+        await test.step(`Keyboard Edit through the header at ${width}px`, async () => {
+          const pageActions = page.getByRole('banner').getByRole('button', { name: 'Page Actions', exact: true })
+          await expectLocatorWithinViewport(pageActions, `Page actions at ${width}px`)
+          await pageActions.focus()
+          await pageActions.press('ArrowDown')
+          await expect(pageActions).toHaveAttribute('aria-expanded', 'true')
+          const actionsMenu = page.locator('.page-actions-menu:visible')
+          const edit = actionsMenu.getByRole('button', { name: 'Edit', exact: true })
+          await expect.poll(() => actionsMenu.evaluate(menu => menu.contains(document.activeElement))).toBe(true)
+          for (let attempt = 0, count = await actionsMenu.getByRole('button').count(); attempt < count; attempt++) {
+            if (await edit.evaluate(element => element === document.activeElement)) break
+            await page.keyboard.press('ArrowDown')
+          }
+          await expect(edit, `Real Edit is keyboard reachable at ${width}px`).toBeFocused()
+          await expectLocatorWithinViewport(edit, `Edit action at ${width}px`)
+          await edit.press('Escape')
+          await expect(pageActions).toHaveAttribute('aria-expanded', 'false')
+          await expect(pageActions).toBeFocused()
+        })
       // Focus restoration precedes the navigation drawer's opening transition.
       // Measure its settled layout rather than its intentionally off-canvas start.
       await test.step(`Settled responsive reader layout at ${width}px`, async () => {
@@ -3356,7 +3673,6 @@ test.describe('reader metadata rendering', () => {
     })
   }
 
-
   test('keeps a long enabled author inside the narrow reader card without exposing unauthorized history', async ({ page }) => {
     const authorName = 'VeryLongEditorName'.repeat(16)
     const viewport = page.viewportSize()
@@ -3416,6 +3732,12 @@ test.describe('focused reading', () => {
     await expect(page.locator('.page-navigation.v-navigation-drawer--active')).toHaveCount(0)
     await expect(page.locator('.page-toc-card')).toBeHidden()
     await expectLocatorWithinViewport(dock, 'Focused reading controls')
+    expect(
+      await dock
+        .locator('.page-reading-dock-title')
+        .evaluate(element => element.getAnimations({ subtree: true }).filter(animation => animation.effect?.getTiming().iterations === Infinity).length),
+      'The current reading location stays still instead of becoming a looping marquee'
+    ).toBe(0)
     const dockGlass = await dock.evaluate(element => {
       const styles = getComputedStyle(element)
       return {
@@ -3442,19 +3764,22 @@ test.describe('focused reading', () => {
   test('preserves the visible passage when leaving focus mode', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' })
     await page.locator('.page-header-section').waitFor({ state: 'visible', timeout: 15_000 })
-    await page.locator('article.contents > div').first().evaluate(element => {
-      element.replaceChildren()
-      for (const title of ['Opening section', 'Visible passage', 'Closing section']) {
-        const heading = document.createElement('h2')
-        heading.textContent = title
-        element.append(heading)
-        for (let paragraph = 0; paragraph < 24; paragraph += 1) {
-          const content = document.createElement('p')
-          content.textContent = `Reading paragraph ${paragraph + 1}: ordinary article content gives this section enough space to read and scroll.`
-          element.append(content)
+    await page
+      .locator('article.contents > div')
+      .first()
+      .evaluate(element => {
+        element.replaceChildren()
+        for (const title of ['Opening section', 'Visible passage', 'Closing section']) {
+          const heading = document.createElement('h2')
+          heading.textContent = title
+          element.append(heading)
+          for (let paragraph = 0; paragraph < 24; paragraph += 1) {
+            const content = document.createElement('p')
+            content.textContent = `Reading paragraph ${paragraph + 1}: ordinary article content gives this section enough space to read and scroll.`
+            element.append(content)
+          }
         }
-      }
-    })
+      })
     const headings = page.locator('article.contents h2:not(details h2):visible')
     await expect(headings).toHaveText(['Opening section', 'Visible passage', 'Closing section'])
     await page.getByRole('button', { name: 'Focus', exact: true }).click()
@@ -3469,21 +3794,19 @@ test.describe('focused reading', () => {
   test('keeps page position within bounds and excludes reader controls from print', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' })
     await page.locator('.page-header-section').waitFor({ state: 'visible', timeout: 15_000 })
-    // The position bar is decorative, so it is hidden from assistive technology.
-    const progress = page.locator('.page-position')
-    await expect(progress).toBeAttached()
-    await expect(progress).toHaveAttribute('aria-hidden', 'true')
-    await expect(page.getByRole('progressbar', { name: 'Page position', exact: true })).toHaveCount(0)
-    const progressScale = () => progress.locator('.page-position-fill').evaluate(fill => new DOMMatrixReadOnly(getComputedStyle(fill).transform).a)
-    const initial = await progressScale()
+    const position = page.getByRole('progressbar', { name: 'Article position', exact: true })
+    await expect(position).toHaveCount(1)
+    const initial = Number(await position.getAttribute('aria-valuenow'))
     expect(initial).toBeGreaterThanOrEqual(0)
-    expect(initial).toBeLessThanOrEqual(1)
+    expect(initial).toBeLessThanOrEqual(100)
     await page.getByRole('button', { name: 'Focus', exact: true }).click()
+    await expect(position, 'Focus replaces the top filament with one dock position, never duplicates it').toHaveCount(1)
+    await expect(page.locator('.page-position')).toHaveCount(0)
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
-    await expect.poll(progressScale).toBeCloseTo(1, 2)
+    await expect(position).toHaveAttribute('aria-valuenow', '100')
     await expectLocatorWithinViewport(page.locator('.page-reading-dock'), 'Exit focus at the end of the document')
     await page.emulateMedia({ media: 'print' })
-    await expect(progress).toBeHidden()
+    await expect(position).toHaveCount(0)
     await expect(page.locator('.page-reading-dock')).toBeHidden()
     await expect(page.locator('.page-focus-control')).toBeHidden()
     await expect(page.locator('article.contents')).toBeVisible()

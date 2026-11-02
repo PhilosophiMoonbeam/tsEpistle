@@ -14,7 +14,12 @@ const renderedPlainText = (render: string): string => {
   const $ = load(render)
   $('script, style, template, noscript, [hidden], [aria-hidden="true"], a.toc-anchor').remove()
   $('p, div, section, article, li, tr, h1, h2, h3, h4, h5, h6, br, pre').before('\n').after('\n')
-  return $.root().text().replace(/[\t ]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+  return $.root()
+    .text()
+    .replace(/[\t ]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
 }
 
 const queryMatch = (text: string, query: string): RegExpExecArray | null => {
@@ -56,16 +61,20 @@ export const searchExcerpt = (render: string, query: string, limit = 2400): { ex
 
 /** Authorized current-render projection only. Never affects the plain search producer. */
 export const structuredSearchExcerpt = (render: string, query: string, pageHref: string): WikiSourcePreview['structuredExcerpt'] => {
-  const fragment = previewSanitizer.sanitize(render, { ...wikiSourcePreviewSanitizerPolicy, RETURN_DOM_FRAGMENT: true })
-  fragment.querySelectorAll('[hidden], [aria-hidden="true"]').forEach(node => node.remove())
+  // Remove renderer-owned heading links before sanitization strips their class.
+  const $ = load(render)
+  $('a.toc-anchor').remove()
+  const fragment = previewSanitizer.sanitize($.html(), { ...wikiSourcePreviewSanitizerPolicy, RETURN_DOM_FRAGMENT: true })
+  fragment.querySelectorAll('[hidden], [aria-hidden="true"]').forEach(node => {
+    node.remove()
+  })
   for (const element of fragment.querySelectorAll('*')) {
     element.removeAttribute('hidden')
     element.removeAttribute('aria-hidden')
     if ((element.getAttribute('title') ?? '').length > 512) element.removeAttribute('title')
     if (element.tagName === 'OL') {
       if (element.hasAttribute('start')) {
-        if (/^[\t\n\f\r ]*[+-]?\d/u.test(element.getAttribute('start') ?? ''))
-          element.setAttribute('start', String((element as HTMLOListElement).start))
+        if (/^[\t\n\f\r ]*[+-]?\d/u.test(element.getAttribute('start') ?? '')) element.setAttribute('start', String((element as HTMLOListElement).start))
         else element.removeAttribute('start')
       }
       if (element.hasAttribute('reversed')) element.setAttribute('reversed', '')
@@ -114,12 +123,18 @@ export const structuredSearchExcerpt = (render: string, query: string, pageHref:
       else cell.removeAttribute('scope')
     }
     for (const cell of table.querySelectorAll('td, th')) {
-      const headers = (cell.getAttribute('headers') ?? '').split(/\s+/u).map(id => ids.get(id)).filter(Boolean).join(' ')
+      const headers = (cell.getAttribute('headers') ?? '')
+        .split(/\s+/u)
+        .map(id => ids.get(id))
+        .filter(Boolean)
+        .join(' ')
       if (headers) cell.setAttribute('headers', headers)
       else cell.removeAttribute('headers')
     }
   }
-  fragment.querySelectorAll(':not(th)[id]').forEach(node => node.removeAttribute('id'))
+  fragment.querySelectorAll(':not(th)[id]').forEach(node => {
+    node.removeAttribute('id')
+  })
 
   const units: HTMLElement[] = []
   const collect = (parent: ParentNode): void => {
@@ -142,20 +157,27 @@ export const structuredSearchExcerpt = (render: string, query: string, pageHref:
   }
   collect(fragment)
   const fits = (element: HTMLElement): boolean =>
-    element.outerHTML.length <= 24000 && (element.textContent ?? '').length <= 6000 && element.querySelectorAll('*').length <= 600 && element.querySelectorAll('tr').length <= 40
-  const selectedIndex = Math.max(0, units.findIndex(unit => queryMatch(unit.textContent ?? '', query)))
+    element.outerHTML.length <= 24000 &&
+    (element.textContent ?? '').length <= 6000 &&
+    element.querySelectorAll('*').length <= 600 &&
+    element.querySelectorAll('tr').length <= 40
+  const selectedIndex = Math.max(
+    0,
+    units.findIndex(unit => queryMatch(unit.textContent ?? '', query))
+  )
   let truncated = false
   const shrink = (original: HTMLElement): HTMLElement => {
     const element = original.cloneNode(true) as HTMLElement
     if (fits(element)) return element
     truncated = true
     if (element.tagName === 'TABLE' || element.tagName === 'UL' || element.tagName === 'OL' || element.tagName === 'DL') {
-      const children = element.tagName === 'TABLE'
-        ? Array.from(element.querySelectorAll('tr')).filter(row => row.closest('table') === element && !row.closest('thead'))
-        : Array.from(element.children)
+      const children =
+        element.tagName === 'TABLE'
+          ? Array.from(element.querySelectorAll('tr')).filter(row => row.closest('table') === element && !row.closest('thead'))
+          : Array.from(element.children)
       // Rows connected by rowspan are indivisible; never shift a retained cell into another column.
       const groups: Element[][] = []
-      for (let index = 0; index < children.length;) {
+      for (let index = 0; index < children.length; ) {
         let end = index + 1
         for (let cursor = index; cursor < end && cursor < children.length; cursor++) {
           for (const cell of children[cursor]!.querySelectorAll('[rowspan]'))
@@ -179,23 +201,36 @@ export const structuredSearchExcerpt = (render: string, query: string, pageHref:
           ordinal += step
         }
       }
-      const target = Math.max(0, groups.findIndex(group => group.some(child => queryMatch(child.textContent ?? '', query))))
+      const target = Math.max(
+        0,
+        groups.findIndex(group => group.some(child => queryMatch(child.textContent ?? '', query)))
+      )
       let start = Math.max(0, target - 2)
       let end = Math.min(groups.length, target + 5)
       const candidate = (): HTMLElement => {
         const copy = element.cloneNode(true) as HTMLElement
-        const retained = new Set(groups.slice(start, end).flat().map(child => children.indexOf(child)))
-        const rows = element.tagName === 'TABLE'
-          ? Array.from(copy.querySelectorAll('tr')).filter(row => row.closest('table') === copy && !row.closest('thead'))
-          : Array.from(copy.children)
-        rows.forEach((row, index) => { if (!retained.has(index)) row.remove() })
+        const retained = new Set(
+          groups
+            .slice(start, end)
+            .flat()
+            .map(child => children.indexOf(child))
+        )
+        const rows =
+          element.tagName === 'TABLE'
+            ? Array.from(copy.querySelectorAll('tr')).filter(row => row.closest('table') === copy && !row.closest('thead'))
+            : Array.from(copy.children)
+        rows.forEach((row, index) => {
+          if (!retained.has(index)) row.remove()
+        })
         if (copy.tagName === 'OL') {
-          const first = groups.slice(start, end).flat().find(child => child.tagName === 'LI')
+          const first = groups
+            .slice(start, end)
+            .flat()
+            .find(child => child.tagName === 'LI')
           const ordinal = first ? ordinals.get(first) : undefined
           // A reversed list's implicit start depends on its ORIGINAL item count,
           // even when only its suffix was omitted. Prefix resets also survive.
-          if (ordinal !== undefined && ordinal >= -2147483648 && ordinal <= 2147483647)
-            copy.setAttribute('start', String(ordinal))
+          if (ordinal !== undefined && ordinal >= -2147483648 && ordinal <= 2147483647) copy.setAttribute('start', String(ordinal))
           else copy.replaceChildren()
         }
         return copy
@@ -249,13 +284,19 @@ export const structuredSearchExcerpt = (render: string, query: string, pageHref:
   while (end < units.length) {
     const unit = units[end]!.cloneNode(true) as HTMLElement
     container.append(unit)
-    if (!fits(container)) { unit.remove(); break }
+    if (!fits(container)) {
+      unit.remove()
+      break
+    }
     end++
   }
   while (start > 0) {
     const unit = units[start - 1]!.cloneNode(true) as HTMLElement
     container.prepend(unit)
-    if (!fits(container)) { unit.remove(); break }
+    if (!fits(container)) {
+      unit.remove()
+      break
+    }
     start--
   }
   // Omitted over-budget content must not become a rendered empty shell.
@@ -267,7 +308,10 @@ export const structuredSearchExcerpt = (render: string, query: string, pageHref:
   // Drop references to headers omitted with an earlier row group.
   const retainedIds = new Set(Array.from(container.querySelectorAll('th[id]'), cell => cell.id))
   for (const cell of container.querySelectorAll('[headers]')) {
-    const headers = (cell.getAttribute('headers') ?? '').split(/\s+/u).filter(id => retainedIds.has(id)).join(' ')
+    const headers = (cell.getAttribute('headers') ?? '')
+      .split(/\s+/u)
+      .filter(id => retainedIds.has(id))
+      .join(' ')
     if (headers) cell.setAttribute('headers', headers)
     else cell.removeAttribute('headers')
   }

@@ -27,6 +27,7 @@ import { z, ZodError } from 'zod'
 
 import {
   AGENT_GENERATION_TOOLS,
+  AGENT_PRESET_IDS,
   AgentManualMemoryMutationContextSchema,
   AgentManualMemoryMutationReceiptFieldsSchema,
   isTerminalAgentRunStatus,
@@ -92,7 +93,12 @@ import {
 } from '../agents/repository.ts'
 import { streamOwnedAgentEvents } from '../agents/sse.ts'
 import createAgentControls, { type AgentControlServices } from './agent-controls.ts'
-import { EXTERNAL_MCP_OAUTH_CALLBACK_PATH, GOOGLE_WORKSPACE_CALLBACK_PATH, EXTERNAL_MCP_OAUTH_RETURN_PATH, EXTERNAL_MCP_OAUTH_CLIENT_METADATA_PATH } from '../agents/external-mcp-oauth.ts'
+import {
+  EXTERNAL_MCP_OAUTH_CALLBACK_PATH,
+  GOOGLE_WORKSPACE_CALLBACK_PATH,
+  EXTERNAL_MCP_OAUTH_RETURN_PATH,
+  EXTERNAL_MCP_OAUTH_CLIENT_METADATA_PATH
+} from '../agents/external-mcp-oauth.ts'
 
 interface AgentHostWiki extends AgentControlServices {
   readonly auth: {
@@ -277,6 +283,7 @@ const SubmitMessageSchema = z
     expectedSessionVersion: z.number().int().positive(),
     profileResolutionToken: z.string().min(1).max(4_096),
     content: z.string().max(32_000),
+    presetId: z.enum(AGENT_PRESET_IDS).optional(),
     attachmentIds: z.array(z.uuid()).max(4).optional(),
     responseMode: z.enum(['text', 'image', 'video', 'music']).optional(),
     generationTools: GenerationToolsSchema.optional(),
@@ -324,7 +331,11 @@ const DecisionSchema = z
       ...(input.confirmationPath === undefined ? {} : { confirmationPath: input.confirmationPath })
     })
   )
-const CreateMemorySchema = z.strictObject({ target: z.enum(['agent', 'user']), content: z.string().min(1).max(2_200), context: AgentManualMemoryMutationContextSchema })
+const CreateMemorySchema = z.strictObject({
+  target: z.enum(['agent', 'user']),
+  content: z.string().min(1).max(2_200),
+  context: AgentManualMemoryMutationContextSchema
+})
 const UpdateMemorySchema = z.strictObject({
   expectedVersion: z.number().int().positive(),
   target: z.enum(['agent', 'user']),
@@ -379,7 +390,12 @@ const proposalTargetId = (proposal: ProposalRecord, operation: z.infer<typeof Pr
   return id
 }
 
-const authorizeProposalMutation = async (req: Request, proposal: ProposalRecord, authority?: PageRuleAuthority, transaction?: Knex.Transaction): Promise<void> => {
+const authorizeProposalMutation = async (
+  req: Request,
+  proposal: ProposalRecord,
+  authority?: PageRuleAuthority,
+  transaction?: Knex.Transaction
+): Promise<void> => {
   if (!req.user) throw new AgentRepositoryError('AUTHENTICATION_REQUIRED', 'Authenticated user is required', 401)
   const operation = proposalMutationOperation(proposal)
   // Page operations capture WIKI at module load, so wait until wiki initialization.
@@ -542,21 +558,32 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     res.set({ 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' })
     let status: 'connected' | 'denied' | 'error' = 'error'
     try {
-      const query = z.object({
-        state: z.string().max(128), code: z.string().max(8_192).optional(), error: z.string().max(128).optional(),
-        iss: z.string().max(2_048).optional()
-      }).parse(req.query)
+      const query = z
+        .object({
+          state: z.string().max(128),
+          code: z.string().max(8_192).optional(),
+          error: z.string().max(128).optional(),
+          iss: z.string().max(2_048).optional()
+        })
+        .parse(req.query)
       if (wiki.externalMcp && req.sessionID && req.session && req.user && req.authContext?.kind === 'user' && req.user.id === req.authContext.userId) {
         const version: unknown = Reflect.get(req.user, 'authVersion')
         if (typeof version === 'number' && Number.isSafeInteger(version) && version >= 0)
-          status = await wiki.externalMcp.oauthCallback({ id: req.user.id, authVersion: version }, {
-            state: query.state, sessionId: req.sessionID, callbackPath: req.path,
-            ...(query.code === undefined ? {} : { code: query.code }),
-            ...(query.error === undefined ? {} : { error: query.error }),
-            ...(query.iss === undefined ? {} : { iss: query.iss })
-          })
+          status = await wiki.externalMcp.oauthCallback(
+            { id: req.user.id, authVersion: version },
+            {
+              state: query.state,
+              sessionId: req.sessionID,
+              callbackPath: req.path,
+              ...(query.code === undefined ? {} : { code: query.code }),
+              ...(query.error === undefined ? {} : { error: query.error }),
+              ...(query.iss === undefined ? {} : { iss: query.iss })
+            }
+          )
       }
-    } catch { /* Never expose provider errors, callback parameters, or credentials. */ }
+    } catch {
+      /* Never expose provider errors, callback parameters, or credentials. */
+    }
     return res.redirect(303, `${EXTERNAL_MCP_OAUTH_RETURN_PATH}?mcpOAuth=${status}#external-mcp-connections`)
   })
 
@@ -662,7 +689,8 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
     asyncRoute(async (req, res) => {
       const input = CreateMemorySchema.parse(req.body)
       const result = await memoryRepository.add(requestSkillPrincipal(req).userId, input.target, input.content, {
-        sessionId: input.context.sessionId, signingSecret: wiki.config.sessionSecret
+        sessionId: input.context.sessionId,
+        signingSecret: wiki.config.sessionSecret
       })
       return res.status(result.changed ? 201 : 200).json({ ...result, ...AgentManualMemoryMutationReceiptFieldsSchema.parse({ receipt: result.receipt }) })
     })
@@ -673,7 +701,8 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const memoryId = UUIDSchema.parse(routeParameter(req, 'memoryId'))
       const input = UpdateMemorySchema.parse(req.body)
       const result = await memoryRepository.update(requestSkillPrincipal(req).userId, memoryId, input.expectedVersion, input.target, input.content, {
-        sessionId: input.context.sessionId, signingSecret: wiki.config.sessionSecret
+        sessionId: input.context.sessionId,
+        signingSecret: wiki.config.sessionSecret
       })
       return res.json({ ...result, ...AgentManualMemoryMutationReceiptFieldsSchema.parse({ receipt: result.receipt }) })
     })
@@ -873,6 +902,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         expectedSessionVersion: input.expectedSessionVersion,
         profileResolutionToken: input.profileResolutionToken,
         content: input.content,
+        ...(input.presetId === undefined ? {} : { presetId: input.presetId }),
         ...(input.attachmentIds === undefined ? {} : { attachmentIds: input.attachmentIds }),
         ...(input.responseMode === undefined ? {} : { responseMode: input.responseMode }),
         ...(input.generationTools === undefined ? {} : { generationTools: input.generationTools }),
@@ -1023,8 +1053,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         decision: input.decision,
         ...(input.decisionNote === undefined ? {} : { decisionNote: input.decisionNote }),
         authorize: async ({ proposal, transaction }) => {
-          if (!wiki.auth.loadPageRuleAuthority)
-            throw new AgentRepositoryError('PAGE_AUTHORITY_UNAVAILABLE', 'Current page authorization is unavailable.', 503)
+          if (!wiki.auth.loadPageRuleAuthority) throw new AgentRepositoryError('PAGE_AUTHORITY_UNAVAILABLE', 'Current page authorization is unavailable.', 503)
           const authority = await wiki.auth.loadPageRuleAuthority(req.user, transaction)
           await authorizeProposalTarget(req, proposal, authority, transaction)
           await authorizeProposalMutation(req, proposal, authority, transaction)

@@ -1,7 +1,25 @@
 // Opt-in Admin workspace grammar; importing this module emits no global styles.
+// Apply to the actual scroll-content container, not every clean Admin page.
+// Consumers toggle .has-admin-draft-bar while their dock exists and publish its
+// ResizeObserver border-box height as --admin-draft-bar-height (a CSS length).
+@mixin admin-draft-clearance {
+  &.has-admin-draft-bar {
+    --admin-draft-clearance: calc(max(6.5rem, calc(var(--admin-draft-bar-height, 5rem) + 24px)) + var(--wiki-footer-height, 1rem) + .75rem + env(safe-area-inset-bottom, 0px));
+    padding-block-end: 6.5rem !important;
+    padding-block-end: var(--admin-draft-clearance) !important;
+    scroll-padding-block-end: 6.5rem;
+    scroll-padding-block-end: var(--admin-draft-clearance);
+
+    :where(input, textarea, select, button, a[href], [tabindex]) {
+      scroll-margin-block-end: 6.5rem;
+      scroll-margin-block-end: var(--admin-draft-clearance);
+    }
+  }
+}
+
 @mixin admin-draft-bar {
   position: sticky;
-  bottom: calc(var(--wiki-footer-height) + var(--wiki-space-3) + env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--wiki-footer-height, 1rem) + var(--wiki-space-3, .75rem) + env(safe-area-inset-bottom, 0px));
   z-index: 3;
   display: flex;
   align-items: center;
@@ -16,6 +34,13 @@
   box-shadow: var(--wiki-shadow-md);
 
   > * { min-width: 0; }
+
+  @media (forced-colors: active) {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    box-shadow: none;
+  }
 }
 
 @mixin admin-agent-control {

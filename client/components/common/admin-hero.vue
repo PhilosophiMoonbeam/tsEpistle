@@ -7,7 +7,7 @@
       .admin-hero__copy
         .admin-hero__eyebrow(v-if='eyebrow') {{ eyebrow }}
         h1.admin-hero__title.text-headline-medium(:id='headingId' tabindex='-1') {{ title }}
-        p.admin-hero__description.text-body-large(v-if='description') {{ description }}
+        p.admin-hero__description.text-body-large(v-if='description' :title='description') {{ description }}
         .admin-hero__extra(v-if='$slots.extra')
           slot(name='extra')
     .admin-hero__status(v-if='$slots.status')
@@ -89,5 +89,93 @@ const usesMdiIcon = computed(() => props.icon?.startsWith('mdi-') ?? false)
 }
 @media (forced-colors: active) {
   .admin-hero, .admin-hero__mark { border-color: CanvasText; background: Canvas; }
+}
+
+</style>
+
+<style lang='scss'>
+// Operational headers share one desktop row: copy, status/KPIs, then actions.
+// Only the subtitle is visually abbreviated; its full text remains in the DOM
+// and native title. Narrow screens restore full copy and independent rows.
+// Profile and Offline retain the larger standalone header and public slots.
+.admin .admin-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) fit-content(38%) auto;
+  align-items: center;
+  gap: .25rem 1rem;
+  margin-block-end: .5rem;
+  padding-block: .25rem .5rem;
+
+  .admin-hero__main {
+    min-width: 0;
+    grid-column: 1;
+    grid-row: 1;
+    gap: .65rem;
+    align-items: center;
+  }
+  .admin-hero__mark {
+    width: 2.25rem;
+    height: 2.25rem;
+    flex-basis: 2.25rem;
+    margin: 0;
+  }
+  .admin-hero__eyebrow {
+    margin-block-end: .1rem;
+    font-size: .6rem;
+    line-height: 1.2;
+    letter-spacing: .08em;
+  }
+  .admin-hero__title {
+    font-size: 1.4rem !important;
+    line-height: 1.15;
+    letter-spacing: -.025em !important;
+  }
+  .admin-hero__description {
+    max-width: none;
+    margin-block-start: .2rem;
+    font-size: .8rem !important;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .admin-hero__extra { margin-block-start: .25rem; }
+  .admin-hero__actions {
+    grid-column: 3;
+    grid-row: 1;
+    gap: .4rem;
+  }
+  .admin-hero__status {
+    grid-column: 2;
+    grid-row: 1;
+    max-width: 100%;
+    gap: .25rem .6rem;
+    font-size: .75rem;
+    line-height: 1.35;
+
+    > * { min-width: 0; max-width: 100%; }
+  }
+}
+
+@media (max-width: 959px) {
+  .admin .admin-hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: .5rem;
+
+    .admin-hero__description {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+    }
+    .admin-hero__status {
+      grid-column: 1;
+      grid-row: auto;
+    }
+    .admin-hero__actions {
+      grid-column: 1;
+      grid-row: auto;
+      justify-content: flex-start;
+    }
+  }
 }
 </style>

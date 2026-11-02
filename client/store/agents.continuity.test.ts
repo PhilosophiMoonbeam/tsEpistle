@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
-import type { AgentCurrentPageHint, AgentThreadState } from '../../shared/agents/contracts.ts'
+import type { AgentCurrentPageHint, AgentPresetId, AgentThreadState } from '../../shared/agents/contracts.ts'
 import type { WikiSource, WikiSourcePreview } from '../../shared/wiki-source.ts'
 import {
   AGENT_CHAT_RECENT_MAX_AGE,
@@ -31,10 +31,32 @@ const previewSource = (n: number): WikiSourcePreview => ({
   structuredExcerpt: { html: `<p>Private excerpt ${n}</p>`, truncated: false }
 })
 let fixtureOwnerId = 1
+// Fixture envelope only: these client tests do not exercise server signature verification.
+const admissionToken = (sessionId: string, ownerId: number): string => {
+  const kid = 'continuity-test'
+  const payload = {
+    v: 1,
+    kid,
+    ownerId,
+    sessionId,
+    sessionVersion: 1,
+    profileId: id(900),
+    profileVersionId: id(901),
+    profileVersion: 1,
+    profilePolicyVersion: 1,
+    defaultGeneration: 1,
+    executionMode: 'agent',
+    exp: 4_000_000_000
+  }
+  return `${kid}.${btoa(JSON.stringify(payload)).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '')}.fixture-signature`
+}
 const thread = (n: number): AgentThreadState => ({
   memoryContext: {
-    ownerId: fixtureOwnerId, sessionId: id(n), frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
-    latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } }, nextSession: { user: 'unknown', agent: 'unknown' }
+    ownerId: fixtureOwnerId,
+    sessionId: id(n),
+    frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+    latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } },
+    nextSession: { user: 'unknown', agent: 'unknown' }
   },
   session: {
     id: id(n),
@@ -45,7 +67,7 @@ const thread = (n: number): AgentThreadState => ({
     executionMode: 'agent',
     version: 1,
     providerProfileId: null,
-    profileResolutionToken: 'token',
+    profileResolutionToken: admissionToken(id(n), fixtureOwnerId),
     mediaCapabilities: null,
     skills: [],
     currentRun: null,
@@ -79,6 +101,9 @@ const fixture = () => {
   const sourceStatus = new Map<number, number>()
   let preview: ((n: number) => Promise<Response>) | undefined
   let sessionList: (() => Promise<Response>) | undefined
+  let threadRead: ((n: number) => Promise<Response>) | undefined
+  const messages = new Map<number, AgentThreadState['messages']>()
+  const submissions: Array<{ readonly sessionId: string; readonly endpoint: string; readonly body: Record<string, unknown> }> = []
   const fetchHost: { fetch: BrowserFetch } = window
   const fetcher = vi.spyOn(fetchHost, 'fetch').mockImplementation(async (input, init) => {
     const path = String(input)
@@ -101,14 +126,84 @@ const fixture = () => {
     }
     if (path.startsWith('/_api/agents/sessions/')) {
       if (method === 'DELETE') return Response.json({ deleted: true })
+      if (method === 'POST') {
+        const sessionId = path.split('/')[4]!
+        const endpoint = path.split('/')[5]!
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        submissions.push({ sessionId, endpoint, body })
+        const run = {
+          id: id(950),
+          sessionId,
+          status: 'queued',
+          attempt: 0,
+          eventSequence: 1,
+          canCancel: true,
+          createdAt: '2026-09-18T00:00:00Z',
+          startedAt: null,
+          completedAt: null,
+          errorCode: null,
+          errorMessage: null
+        }
+        if (endpoint === 'messages') {
+          messages.set(Number(sessionId.slice(-12)), [
+            {
+              id: id(951),
+              runId: run.id,
+              ordinal: 1,
+              role: 'user',
+              status: 'complete',
+              content: String(body.content),
+              citations: [],
+              createdAt: run.createdAt,
+              updatedAt: run.createdAt,
+              ...(body.presetId === undefined ? {} : { presetId: body.presetId as AgentPresetId })
+            }
+          ])
+          return Response.json({ run, replayed: false }, { status: 202 })
+        }
+        if (endpoint === 'goals') {
+          const goal: NonNullable<AgentThreadState['goal']> = {
+            id: String(body.goalId),
+            sessionId,
+            objective: String(body.objective),
+            status: 'active',
+            version: 1,
+            currentRunId: run.id,
+            continuationCount: 0,
+            maxContinuations: 3,
+            consumedTokens: 0,
+            maxTokens: 48_000,
+            consumedToolCalls: 0,
+            maxToolCalls: 96,
+            budgetPolicyVersion: 1,
+            budgetSelection: 'pending',
+            tokenTier: null,
+            tokenAllowance: null,
+            budgetCycle: 0,
+            budgetLimitReason: null,
+            canRenewTokenBudget: false,
+            startedAt: run.createdAt,
+            deadlineAt: '2026-09-18T01:00:00Z',
+            completedAt: null,
+            errorCode: null,
+            errorMessage: null,
+            completion: null
+          }
+          return Response.json({ goal, run, replayed: false }, { status: 202 })
+        }
+        throw new Error(`Unexpected admission endpoint ${endpoint}`)
+      }
       const sessionId = path.split('/').at(-1)!
       const status = readStatus.get(sessionId) ?? 200
-      return Response.json(status === 200 ? thread(Number(sessionId.slice(-12))) : { message: 'Session unavailable' }, { status })
+      const n = Number(sessionId.slice(-12))
+      if (status === 200 && threadRead) return threadRead(n)
+      return Response.json(status === 200 ? { ...thread(n), messages: messages.get(n) ?? [] } : { message: 'Session unavailable' }, { status })
     }
     throw new Error(`Unexpected ${method} ${path}`)
   })
   return {
     fetcher,
+    submissions,
     readStatus,
     sourceStatus,
     get created() {
@@ -122,6 +217,9 @@ const fixture = () => {
     },
     deferSessionList: (value: typeof sessionList) => {
       sessionList = value
+    },
+    deferThreadRead: (value: typeof threadRead) => {
+      threadRead = value
     }
   }
 }
@@ -340,9 +438,15 @@ describe('Automatic Agent conversation continuity', () => {
 
   it('uses owner-scoped memory when tab storage is denied, and logout clears that fallback', async () => {
     const api = fixture()
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new DOMException('Denied', 'SecurityError') })
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('Denied', 'SecurityError') })
-    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new DOMException('Denied', 'SecurityError') })
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('Denied', 'SecurityError')
+    })
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Denied', 'SecurityError')
+    })
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new DOMException('Denied', 'SecurityError')
+    })
     const store = createStore()
     await initialize(store)
     store.setDraft(id(1), 'Memory-only draft')
@@ -361,12 +465,16 @@ describe('Automatic Agent conversation continuity', () => {
 
   it('keeps memory authoritative through denied storage writes and removals, including after access recovers', () => {
     writeAgentChatRecent(1, id(20), Date.now())
-    const deniedWrite = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('Denied', 'SecurityError') })
+    const deniedWrite = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Denied', 'SecurityError')
+    })
     writeAgentChatRecent(1, id(40), Date.now())
     expect(readAgentChatRecent(1)?.sessionId).toBe(id(40))
     deniedWrite.mockRestore()
     expect(readAgentChatRecent(1)?.sessionId).toBe(id(40))
-    const deniedRemoval = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new DOMException('Denied', 'SecurityError') })
+    const deniedRemoval = vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new DOMException('Denied', 'SecurityError')
+    })
     clearAgentChatRecent()
     expect(readAgentChatRecent(1)).toBeNull()
     deniedRemoval.mockRestore()
@@ -425,7 +533,13 @@ describe('Automatic conversation source context', () => {
     store.updateDraft(id(1), { text: 'Secret draft', sources: [source(9), source(10)], includeCurrentPage: false })
     store.closeWorkspace()
     const raw = window.sessionStorage.getItem(AGENT_CHAT_RECENT_STORAGE_KEY)!
-    expect(JSON.parse(raw).context).toEqual({ includeCurrentPage: false, sources: [{ id: 9, locale: 'en' }, { id: 10, locale: 'en' }] })
+    expect(JSON.parse(raw).context).toEqual({
+      includeCurrentPage: false,
+      sources: [
+        { id: 9, locale: 'en' },
+        { id: 10, locale: 'en' }
+      ]
+    })
     expect(raw).not.toContain('Secret')
     expect(raw).not.toContain('excerpt')
     expect(raw).not.toContain('token')
@@ -436,7 +550,11 @@ describe('Automatic conversation source context', () => {
     expect(reloaded.drafts[id(1)]?.includeCurrentPage).toBe(false)
     expect(reloaded.drafts[id(1)]?.text).toBe('')
     expect(reloaded.contextTransferNotice).toContain('could not be restored')
-    expect(api.fetcher.mock.calls.filter(([url]) => String(url).startsWith('/_api/pages/preview')).map(([url]) => new URL(String(url), 'http://localhost').searchParams.get('id'))).toEqual(['9', '10'])
+    expect(
+      api.fetcher.mock.calls
+        .filter(([url]) => String(url).startsWith('/_api/pages/preview'))
+        .map(([url]) => new URL(String(url), 'http://localhost').searchParams.get('id'))
+    ).toEqual(['9', '10'])
     await initialize(reloaded, page(3))
     expect(reloaded.contextTransferNotice).toContain('could not be restored')
   })
@@ -545,7 +663,16 @@ describe('Automatic conversation source context', () => {
       { ...valid, page: { id: 1, locale: 'en' } },
       { ...valid, context: { includeCurrentPage: true, sources: [{ id: 9, locale: 'en', excerpt: 'Private' }] } },
       { ...valid, context: { includeCurrentPage: true, sources: Array.from({ length: 9 }, (_, n) => ({ id: n + 1, locale: 'en' })) } },
-      { ...valid, context: { includeCurrentPage: true, sources: [{ id: 9, locale: 'en' }, { id: 9, locale: 'en' }] } },
+      {
+        ...valid,
+        context: {
+          includeCurrentPage: true,
+          sources: [
+            { id: 9, locale: 'en' },
+            { id: 9, locale: 'en' }
+          ]
+        }
+      },
       'x'.repeat(4097)
     ]
     for (const value of invalid) {
@@ -596,11 +723,24 @@ describe('Automatic conversation source context', () => {
     await initialize(store, page(2))
     const historicalSource = { ...source(9), sourceRevision: '2' }
     const { id: sourceId, locale, path, title, visibility, sourceRevision } = historicalSource
-    store.thread = { ...store.thread!, messages: [{
-      id: id(101), runId: null, role: 'user', ordinal: 1, status: 'complete', content: 'Original request', citations: [],
-      createdAt: '2026-09-18T00:00:00Z', updatedAt: '2026-09-18T00:00:00Z',
-      currentPage: page(7), knowledgeContext: { scope: { kind: 'selected' }, sources: [{ id: sourceId, locale, path, title, visibility, sourceRevision }] }
-    }] }
+    store.thread = {
+      ...store.thread!,
+      messages: [
+        {
+          id: id(101),
+          runId: null,
+          role: 'user',
+          ordinal: 1,
+          status: 'complete',
+          content: 'Original request',
+          citations: [],
+          createdAt: '2026-09-18T00:00:00Z',
+          updatedAt: '2026-09-18T00:00:00Z',
+          currentPage: page(7),
+          knowledgeContext: { scope: { kind: 'selected' }, sources: [{ id: sourceId, locale, path, title, visibility, sourceRevision }] }
+        }
+      ]
+    }
     expect(await store.restoreRequest(id(101))).toBe('Original request')
     expect(store.drafts[id(1)]?.sources[0]?.sourceRevision).toBe('2')
     expect(store.sourceContext?.attachedSources[0]).toMatchObject({ source: { sourceRevision: '2' }, access: 'stale' })
@@ -609,5 +749,115 @@ describe('Automatic conversation source context', () => {
     expect(store.sourceContext?.currentPage.hint).toEqual(page(7))
     store.updateDraft(id(1), { currentPageOverride: null, includeCurrentPage: false })
     expect(store.sourceContext?.currentPage).toMatchObject({ included: false, origin: 'historical', hint: null })
+  })
+})
+
+describe('Explicit Agent preset admission', () => {
+  it('captures the clicked preset and original bytes before refresh, admits one POST and preserves a newer draft', async () => {
+    const api = fixture()
+    const store = createStore()
+    await initialize(store, page(2))
+    const original = '  # Full starter request\n\nPreserve all instructions and trailing space.  '
+    store.updateDraft(id(1), { text: original, scope: { kind: 'selected' }, sources: [source(9)], includeCurrentPage: true })
+    const pending = Promise.withResolvers<Response>()
+    const started = Promise.withResolvers<void>()
+    const capturedThread = structuredClone(store.thread!)
+    api.deferThreadRead(() => {
+      started.resolve()
+      return pending.promise
+    })
+    const options: { presetId: AgentPresetId } = { presetId: 'page-summary' }
+    const sending = store.send(original, [], 'message', undefined, undefined, options)
+    await Promise.race([
+      started.promise,
+      sending.then(() => {
+        throw new Error('Send settled without its admission refresh')
+      })
+    ])
+    options.presetId = 'catch-up'
+    store.setCurrentPage(page(3))
+    store.updateDraft(id(1), { text: 'A newer custom composition', sources: [source(10)], includeCurrentPage: false })
+    expect(await store.send('Duplicate click', [], 'message', undefined, undefined, { presetId: 'wiki-overview' })).toBe(false)
+    expect(await store.openSession(id(40))).toBe(false)
+    expect(store.thread?.session.id).toBe(id(1))
+    expect(api.fetcher.mock.calls.some(([url]) => url === `/_api/agents/sessions/${id(40)}`)).toBe(false)
+    expect(api.submissions).toEqual([])
+    api.deferThreadRead(undefined)
+    pending.resolve(Response.json(capturedThread))
+    expect(await sending).toBe(true)
+    expect(api.submissions).toHaveLength(1)
+    expect(api.submissions[0]).toMatchObject({
+      sessionId: id(1),
+      endpoint: 'messages',
+      body: {
+        presetId: 'page-summary',
+        content: original,
+        expectedSessionVersion: 1,
+        currentPage: page(2),
+        knowledgeContext: {
+          scope: { kind: 'selected' },
+          sources: [{ id: 9, locale: 'en', path: 'page-9', title: 'Page 9', visibility: 'public', sourceRevision: '1' }]
+        }
+      }
+    })
+    expect(store.drafts[id(1)]?.text).toBe('A newer custom composition')
+    expect(store.drafts[id(1)]?.sources.map(item => item.id)).toEqual([10])
+    expect(await store.openSession(id(40))).toBe(true)
+    expect(await store.openSession(id(1))).toBe(true)
+    expect(store.thread?.messages[0]).toMatchObject({ role: 'user', presetId: 'page-summary', content: original })
+  })
+
+  it('keeps custom messages untagged even when they resemble starters, and trims custom messages and goal objectives', async () => {
+    const api = fixture()
+    const store = createStore()
+    await initialize(store)
+    const original = '  Summarize the current page.\n\nUse my exact custom instructions.  '
+    store.setDraft(id(1), original)
+    expect(await store.send(original)).toBe(true)
+    expect(api.submissions[0]?.body.content).toBe('Summarize the current page.\n\nUse my exact custom instructions.')
+    expect(Object.hasOwn(api.submissions[0]!.body, 'presetId')).toBe(false)
+    expect(Object.hasOwn(store.thread!.messages[0]!, 'presetId')).toBe(false)
+    expect(await store.send('  Complete this custom goal.  ', [], 'goal', undefined, undefined, { presetId: 'catch-up' })).toBe(true)
+    expect(api.submissions).toHaveLength(2)
+    expect(api.submissions[1]?.endpoint).toBe('goals')
+    expect(api.submissions[1]?.body.objective).toBe('Complete this custom goal.')
+    expect(Object.hasOwn(api.submissions[1]!.body, 'presetId')).toBe(false)
+  })
+
+  it('does not send captured preset content when its workspace or owner is retired during refresh', async () => {
+    for (const retirement of ['close', 'owner']) {
+      const api = fixture()
+      const store = createStore()
+      await initialize(store)
+      const capturedThread = structuredClone(store.thread!)
+      const pending = Promise.withResolvers<Response>()
+      const started = Promise.withResolvers<void>()
+      api.deferThreadRead(n => {
+        if (n !== 1) return Promise.resolve(Response.json(thread(n)))
+        started.resolve()
+        return pending.promise
+      })
+      const sending = store.send('Private preset request', [], 'message', undefined, undefined, { presetId: 'wiki-connections' })
+      await Promise.race([
+        started.promise,
+        sending.then(() => {
+          throw new Error('Send settled without its admission refresh')
+        })
+      ])
+      if (retirement === 'close') store.closeWorkspace()
+      else expect(await initialize(store, page(3), 2)).toBe(true)
+      api.deferThreadRead(undefined)
+      pending.resolve(Response.json(capturedThread))
+      expect(await sending).toBe(false)
+      expect(api.submissions).toEqual([])
+      if (retirement === 'owner') {
+        expect(store.workspaceOwnerId).toBe(2)
+        expect(store.thread?.messages).toEqual([])
+      }
+      store.closeWorkspace()
+      vi.restoreAllMocks()
+      clearAgentChatRecent()
+      fixtureOwnerId = 1
+    }
   })
 })

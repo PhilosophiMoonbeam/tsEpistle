@@ -63,7 +63,7 @@ onBeforeUnmount(() => { disposed = true; generation++; controller?.abort(); serv
 </script>
 
 <style scoped>
-.external-connections { display: grid; gap: .75rem; }
+.external-connections { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: .75rem; }
 .external-connections__entry { min-width: 0; padding-top: 1rem; border-top: 1px solid rgb(var(--v-theme-outline-variant)); }
 .external-connections__entry h3 { font-size: 1rem; margin-bottom: .25rem; }
 .external-connections__entry p { overflow-wrap: anywhere; }

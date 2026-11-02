@@ -21,6 +21,15 @@ describe('general policy', () => {
     ])
       expect(validateGeneralPolicy({ ...valid(), host })).toMatchObject({ ok: true, value: { host } })
   })
+  it('keeps public social sharing off by default and requires an explicit Boolean in reviewed policies', () => {
+    expect(validateGeneralPolicy(valid())).toMatchObject({ ok: true, value: { publicSocialSharing: false } })
+    for (const publicSocialSharing of [false, true])
+      expect(validateGeneralPolicy({ ...valid(), publicSocialSharing })).toMatchObject({ ok: true, value: { publicSocialSharing } })
+    const { publicSocialSharing: _publicSocialSharing, ...missing } = valid()
+    expect(validateGeneralPolicy(missing).ok).toBe(false)
+    for (const publicSocialSharing of [undefined, null, 'true', 'false', 1, 0, [], {}])
+      expect(validateGeneralPolicy({ ...valid(), publicSocialSharing }).ok).toBe(false)
+  })
   it('rejects unsupported, contradictory and unsafe values', () => {
     for (const patch of [
       { host: 'javascript:alert(1)' },

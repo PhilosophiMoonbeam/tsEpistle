@@ -101,6 +101,9 @@ const hideBackground = (root: HTMLElement, additionalRoots: readonly HTMLElement
   }
 
   for (const protectedRoot of [root, ...additionalRoots]) {
+    // A portal attached inside this scope is already protected by root. Walking
+    // its internal ancestry would inert the modal's own toolbar/body siblings.
+    if (protectedRoot !== root && root.contains(protectedRoot)) continue
     let current: HTMLElement | null = protectedRoot
     while (current) {
       protectedElements.add(current)
@@ -154,7 +157,9 @@ const sameElements = (left: readonly HTMLElement[], right: readonly HTMLElement[
 const hasBackdrop = (element: HTMLElement): boolean => {
   if (!element.isConnected) return false
   const style = element.ownerDocument.defaultView?.getComputedStyle(element)
-  return Boolean(style && [style.getPropertyValue('backdrop-filter'), style.getPropertyValue('-webkit-backdrop-filter')].some(value => value && value !== 'none'))
+  return Boolean(
+    style && [style.getPropertyValue('backdrop-filter'), style.getPropertyValue('-webkit-backdrop-filter')].some(value => value && value !== 'none')
+  )
 }
 
 const reconcileBackgrounds = (document: Document, force = false): void => {
@@ -167,11 +172,7 @@ const reconcileBackgrounds = (document: Document, force = false): void => {
   for (const [index, state] of stack.entries()) {
     state.observedAdditionalRoots = nextAdditionalRoots[index]!
     const nestedRoots = stack.slice(index + 1).flatMap((nestedState, nestedIndex) => [nestedState.root, ...nextAdditionalRoots[index + nestedIndex + 1]!])
-    state.background = hideBackground(
-      state.root,
-      [...state.observedAdditionalRoots, ...nestedRoots],
-      state.active && state.backdropRoots().some(hasBackdrop)
-    )
+    state.background = hideBackground(state.root, [...state.observedAdditionalRoots, ...nestedRoots], state.active && state.backdropRoots().some(hasBackdrop))
   }
 }
 const restoreTargetElement = (target: RestoreTarget): HTMLElement | null => (typeof target === 'function' ? target() : target)
@@ -232,14 +233,17 @@ export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, ba
     }
     return changed
   }
-  const backgroundObserver = MutationObserverConstructor ? new MutationObserverConstructor(records => {
-    const ownersChanged = observeBackdropOwners()
-    // Content streaming within an existing modal cannot add background roots.
-    // New outside portals still require isolation, even without ownership changes.
-    const isolationChanged = records.some(record => record.type === 'attributes' ||
-      !stack.some(scope => isWithinModal(scope.root, scope.observedAdditionalRoots, record.target)))
-    reconcileBackgrounds(document, ownersChanged || isolationChanged)
-  }) : null
+  const backgroundObserver = MutationObserverConstructor
+    ? new MutationObserverConstructor(records => {
+        const ownersChanged = observeBackdropOwners()
+        // Content streaming within an existing modal cannot add background roots.
+        // New outside portals still require isolation, even without ownership changes.
+        const isolationChanged = records.some(
+          record => record.type === 'attributes' || !stack.some(scope => isWithinModal(scope.root, scope.observedAdditionalRoots, record.target))
+        )
+        reconcileBackgrounds(document, ownersChanged || isolationChanged)
+      })
+    : null
   if (document.body) backgroundObserver?.observe(document.body, { childList: true, subtree: true })
   observeBackdropOwners()
 
@@ -250,9 +254,10 @@ export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, ba
   }
   const backdropEvents = ['transitionrun', 'transitionend', 'transitioncancel', 'animationstart', 'animationend', 'animationcancel']
   if (backdropRoots) for (const event of backdropEvents) root.addEventListener(event, handleBackdropTransition)
-  const backdropMedia = backdropRoots && document.defaultView?.matchMedia
-    ? ['(prefers-reduced-transparency: reduce)', '(forced-colors: active)'].map(query => document.defaultView!.matchMedia(query))
-    : []
+  const backdropMedia =
+    backdropRoots && document.defaultView?.matchMedia
+      ? ['(prefers-reduced-transparency: reduce)', '(forced-colors: active)'].map(query => document.defaultView!.matchMedia(query))
+      : []
   const reconcileBackdrop = (): void => reconcileBackgrounds(document, true)
   for (const media of backdropMedia) media.addEventListener('change', reconcileBackdrop)
 

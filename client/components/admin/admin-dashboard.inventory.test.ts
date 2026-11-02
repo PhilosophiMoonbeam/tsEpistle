@@ -24,12 +24,22 @@ const compiled = compileTemplate({
 })
 if (compiled.errors.length) throw new Error(`Cannot compile dashboard: ${compiled.errors}`)
 const render = new Function('Vue', compiled.code)(Vue)
-const script = new Bun.Transpiler({ loader: 'ts' }).transformSync(
-  descriptor.script.content.replace(/^import .*$/gm, '').replace('export default', 'return')
-)
+const script = new Bun.Transpiler({ loader: 'ts' }).transformSync(descriptor.script.content.replace(/^import .*$/gm, '').replace('export default', 'return'))
 const evaluate = new Function(
-  'markRaw', 'inject', 'adminSummaryKey', 'AsyncState', 'AdminHero', 'AnimatedNumber', 'wikiStore',
-  'fetchRecentPages', 'fetchLastLogins', 'getErrorMessage', 'loadingStart', 'loadingStop', 'siteConfig', script
+  'markRaw',
+  'inject',
+  'adminSummaryKey',
+  'AsyncState',
+  'AdminHero',
+  'AnimatedNumber',
+  'wikiStore',
+  'fetchRecentPages',
+  'fetchLastLogins',
+  'getErrorMessage',
+  'loadingStart',
+  'loadingStop',
+  'siteConfig',
+  script
 )
 const passthrough = Vue.defineComponent({
   setup(_props, { attrs, slots }) {
@@ -53,25 +63,59 @@ afterEach(() => {
 const mountInventory = async (permissions = ['manage:system']) => {
   const summary = { loading: Vue.ref(true), error: Vue.ref(''), refresh: () => {} }
   const info = Vue.reactive({
-    pagesTotal: 0, tagsTotal: 0, usersTotal: 0, groupsTotal: 0,
-    assetsTotal: null as number | null, assetsBytes: null as number | null, commentsTotal: null as number | null,
+    pagesTotal: 0,
+    tagsTotal: 0,
+    usersTotal: 0,
+    groupsTotal: 0,
+    assetsTotal: null as number | null,
+    assetsBytes: null as number | null,
+    commentsTotal: null as number | null,
     product: { version: 'test' }
   })
   const summaryKey = Symbol('summary')
   const options = evaluate(
-    Vue.markRaw, Vue.inject, summaryKey, passthrough, passthrough, animatedNumber,
+    Vue.markRaw,
+    Vue.inject,
+    summaryKey,
+    passthrough,
+    passthrough,
+    animatedNumber,
     { admin: { info }, site: { title: 'Workspace' }, user: { permissions } },
-    async () => [], async () => [], String, () => {}, () => {}, { agentsEnabled: false }
+    async () => [],
+    async () => [],
+    String,
+    () => {},
+    () => {},
+    { agentsEnabled: false }
   )
   app = Vue.createApp({ ...options, render })
   app.provide(summaryKey, summary)
-  for (const name of ['v-container', 'v-btn', 'v-icon', 'v-alert', 'v-row', 'v-col', 'v-card', 'v-avatar', 'v-list-item-title', 'v-chip', 'v-list-item-subtitle', 'v-list-item', 'v-list', 'v-data-table']) app.component(name, passthrough)
-  app.component('router-link', Vue.defineComponent({
-    props: ['to'],
-    setup(props, { attrs, slots }) {
-      return () => Vue.h('a', { ...attrs, href: props.to }, slots.default?.())
-    }
-  }))
+  for (const name of [
+    'v-container',
+    'v-btn',
+    'v-icon',
+    'v-alert',
+    'v-row',
+    'v-col',
+    'v-card',
+    'v-avatar',
+    'v-list-item-title',
+    'v-chip',
+    'v-list-item-subtitle',
+    'v-list-item',
+    'v-list',
+    'v-data-table'
+  ])
+    app.component(name, passthrough)
+  app.component(
+    'router-link',
+    Vue.defineComponent({
+      props: ['to'],
+      setup(props, { attrs, slots }) {
+        return () => Vue.h('a', { ...attrs, href: props.to }, slots.default?.())
+      }
+    })
+  )
   app.config.globalProperties.$t = translateEnglish
   installVuetifyFixture(app)
   const host = document.createElement('div')
@@ -95,7 +139,40 @@ describe('dashboard inventory stability', () => {
 
     expect(document.activeElement).toBe(assetControl)
     expect(host.querySelector('.dashboard-inventory')?.getAttribute('aria-busy')).toBe('false')
+    expect(host.querySelector('.admin-stat[href="/assets"]')).toBe(assetControl)
+    expect(assetControl?.querySelector('.admin-stat__value')?.textContent).toContain('1')
+    expect(assetControl?.getAttribute('aria-label')).toContain('42 B')
     expect(host.querySelector('[role="status"]')?.textContent?.trim()).toBe('')
+  })
+
+  it('distinguishes unreported totals from measured zero and never presents cached counts as current during an error', async () => {
+    const { host, summary, info } = await mountInventory()
+    const assets = host.querySelector<HTMLAnchorElement>('.admin-stat[href="/assets"]')!
+    const comments = host.querySelector<HTMLAnchorElement>('.admin-stat[href="/comments"]')!
+    Object.assign(info, { commentsTotal: 0, assetsTotal: null, assetsBytes: 0 })
+    summary.loading.value = false
+    await Vue.nextTick()
+
+    expect(assets.querySelector('.admin-stat__value > .admin-stat__state')?.textContent).toBe(translateEnglish('admin:dashboard.inventoryState.missing'))
+    expect(assets.getAttribute('aria-label')).toContain('0 B')
+    expect(comments.querySelector('.admin-stat__value')?.textContent).toBe('0')
+    expect(comments.querySelector('.admin-stat__state')).toBeNull()
+    expect(comments.getAttribute('aria-label')).toMatch(/\b0\b/)
+
+    Object.assign(info, { assetsTotal: 7, assetsBytes: 1024, commentsTotal: 12 })
+    summary.error.value = 'Snapshot unavailable'
+    await Vue.nextTick()
+    expect(assets.querySelector('.admin-stat__value > .admin-stat__state')?.textContent).toBe(translateEnglish('admin:dashboard.inventoryState.error'))
+    expect(assets.querySelector('.admin-stat__storage')?.textContent).toBe(translateEnglish('admin:dashboard.inventoryState.error'))
+    expect(comments.querySelector('.admin-stat__value')?.textContent).toBe(translateEnglish('admin:dashboard.inventoryState.error'))
+    expect(comments.getAttribute('aria-label')).not.toMatch(/\b12\b/)
+
+    summary.error.value = ''
+    await Vue.nextTick()
+    expect(host.querySelector('.admin-stat[href="/assets"]')).toBe(assets)
+    expect(assets.getAttribute('aria-label')).toContain('1 KB')
+    expect(comments.querySelector('.admin-stat__value')?.textContent).toBe('12')
+    expect(host.querySelector('[role="alert"]')).toBeNull()
   })
 
   it('does not expose protected totals to a page-only editor while loading or unavailable', async () => {
@@ -110,5 +187,4 @@ describe('dashboard inventory stability', () => {
     expect(host.querySelectorAll('.admin-stat')).toHaveLength(1)
     expect(host.querySelector('[role="alert"]')).not.toBeNull()
   })
-
 })

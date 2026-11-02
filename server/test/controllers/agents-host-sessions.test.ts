@@ -12,7 +12,12 @@ import createKnex, { type Knex } from 'knex'
 import sharp from 'sharp'
 import { z } from 'zod'
 import { agentProviderMediaInputMimeTypes, type AgentMediaProviderConfig } from '../../../shared/agents/media-providers.ts'
-import { AGENT_FEATURE_FLAG_KEYS, AgentManualMemoryMutationReceiptFieldsSchema, type AgentActionName, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
+import {
+  AGENT_FEATURE_FLAG_KEYS,
+  AgentManualMemoryMutationReceiptFieldsSchema,
+  type AgentActionName,
+  type AgentFeatureFlags
+} from '../../../shared/agents/contracts.ts'
 import { createActionAuthority } from '../../agents/actions/kernel.ts'
 import { applyApprovedProposal } from '../../agents/proposals/execution.ts'
 import { persistProposal, type PersistedProposal } from '../../agents/proposals/repository.ts'
@@ -502,18 +507,26 @@ describe('ordinary-origin agent session API', () => {
       reservationMilliseconds: 60_000
     }
     return trackAuxiliaryRuntime(
-      new AgentProductRuntime(db, {
-        async resolve() {
-          return resolved
+      new AgentProductRuntime(
+        db,
+        {
+          async resolve() {
+            return resolved
+          },
+          async resolveCurrent() {
+            return resolved
+          }
         },
-        async resolveCurrent() {
-          return resolved
+        engine,
+        {
+          memorySigningSecret: 'agent-memory-test-signing-secret',
+          workerId: `goal-accounting-${maxTokens}`,
+          globalConcurrency: 1,
+          perUserConcurrency: 1,
+          utilityModel,
+          goals: { enabled: true, maxContinuations: 3, maxTokens, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 }
         }
-      }, engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: `goal-accounting-${maxTokens}`,
-      globalConcurrency: 1,
-      perUserConcurrency: 1,
-      utilityModel,
-      goals: { enabled: true, maxContinuations: 3, maxTokens, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 } })
+      )
     )
   }
   const insertAccountingSession = async (sessionId: string): Promise<void> => {
@@ -780,26 +793,34 @@ describe('ordinary-origin agent session API', () => {
       if (!version) throw new Error('HTTP provider resolution fixture is missing its immutable version')
       return { ...resolvedAdmission, transportKind: version.transportKind }
     }
-    runtime = new AgentProductRuntime(db, {
-      async resolve(transaction) {
-        return resolveAdmission(transaction)
+    runtime = new AgentProductRuntime(
+      db,
+      {
+        async resolve(transaction) {
+          return resolveAdmission(transaction)
+        },
+        async resolveCurrent(transaction) {
+          return resolveAdmission(transaction)
+        }
       },
-      async resolveCurrent(transaction) {
-        return resolveAdmission(transaction)
+      fakeEngine,
+      {
+        memorySigningSecret: 'agent-memory-test-signing-secret',
+        authorizeMedia: async () => {
+          mediaAuthorizationChecks += 1
+          if (!agentsEnabled || !mediaAuthorized) throw new AgentRepositoryError('AGENT_ACCESS_REVOKED', 'Wiki Agent access was revoked.', 403)
+        },
+        workerId: 'test-worker',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        goals: { enabled: true, maxContinuations: 3, maxTokens: 48_000, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 },
+        logger: {
+          error(value: unknown): void {
+            runtimeLogs.push(value)
+          }
+        }
       }
-    }, fakeEngine, { memorySigningSecret: 'agent-memory-test-signing-secret', authorizeMedia: async () => {
-      mediaAuthorizationChecks += 1
-      if (!agentsEnabled || !mediaAuthorized) throw new AgentRepositoryError('AGENT_ACCESS_REVOKED', 'Wiki Agent access was revoked.', 403)
-    },
-    workerId: 'test-worker',
-    globalConcurrency: 1,
-    perUserConcurrency: 1,
-    goals: { enabled: true, maxContinuations: 3, maxTokens: 48_000, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 },
-    logger: {
-      error(value: unknown): void {
-        runtimeLogs.push(value)
-      }
-    } })
+    )
     const app = express()
     app.use(cookieParser())
     app.use(session({ secret: 'ordinary-host-test-secret', resave: false, saveUninitialized: true }))
@@ -2423,7 +2444,10 @@ describe('ordinary-origin agent session API', () => {
     await enableTestMedia()
     const sessionId = randomUUID()
     await insertAccountingSession(sessionId)
-    const standalone = await projectAgentThread(db, 7, sessionId, { memorySigningSecret: 'agent-memory-test-signing-secret', profileResolutionToken: () => 'standalone-resolution' })
+    const standalone = await projectAgentThread(db, 7, sessionId, {
+      memorySigningSecret: 'agent-memory-test-signing-secret',
+      profileResolutionToken: () => 'standalone-resolution'
+    })
     expect(standalone.session.mediaCapabilities).toBeNull()
     const response = await fetch(`${baseUrl}/_api/agents/sessions/${sessionId}`, { headers: { cookie } })
     expect(response.status).toBe(200)
@@ -2957,6 +2981,47 @@ describe('ordinary-origin agent session API', () => {
     }
     await db('agentRuns').where({ id: runId }).update({ status: 'succeeded', completedAt: now })
   })
+  it('accepts only the five catalog preset identities and rejects malformed metadata before durable admission', async () => {
+    const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    for (const presetId of ['page-summary', 'wiki-overview', 'page-connections', 'wiki-connections', 'catch-up']) {
+      const created = await fetch(`${baseUrl}/_api/agents/sessions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ retention: 'saved' })
+      })
+      expect(created.status).toBe(201)
+      const state = (await created.json()) as { session: { id: string; version: number; profileResolutionToken: string } }
+      const input = {
+        clientRequestId: randomUUID(),
+        expectedSessionVersion: state.session.version,
+        profileResolutionToken: state.session.profileResolutionToken,
+        content: '# Goal\nA custom original prompt.'
+      }
+      const post = (metadata: unknown) =>
+        fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}/messages`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ ...input, presetId: metadata })
+        })
+      if (presetId === 'page-summary') {
+        for (const invalid of ['', 'find-gaps', 'PAGE-SUMMARY', 'page-summary ', null, 42, {}, ['page-summary']]) {
+          expect((await post(invalid)).status).toBe(400)
+        }
+        expect(await db('agentRuns').where({ sessionId: state.session.id })).toEqual([])
+        expect(await db('agentMessages').where({ sessionId: state.session.id })).toEqual([])
+        expect(await db('agentQuotaReservations')).toEqual([])
+        expect(await db('agentQuotaDaily')).toEqual([])
+        expect(await db('agentSessions').where({ id: state.session.id }).first('version')).toEqual({ version: state.session.version })
+      }
+      expect((await post(presetId)).status).toBe(202)
+      const reloaded = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
+      expect(reloaded.status).toBe(200)
+      const thread = (await reloaded.json()) as { messages: Array<{ role: string; content: string; presetId?: string }> }
+      expect(thread.messages[0]).toMatchObject({ role: 'user', content: input.content, presetId })
+      expect(thread.messages[1]).not.toHaveProperty('presetId')
+    }
+  })
+
   it('submits, executes, reconnects, and replays a deterministic engine run through REST and SSE', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
     const created = await fetch(`${baseUrl}/_api/agents/sessions`, {
@@ -2973,7 +3038,8 @@ describe('ordinary-origin agent session API', () => {
       clientRequestId: '00000000-0000-4000-8000-000000000071',
       expectedSessionVersion: state.session.version,
       profileResolutionToken: state.session.profileResolutionToken,
-      content: 'Answer deterministically.',
+      content: '  # Goal\r\nAnswer deterministically: café, e\u0301, and 🧭.\r\n  ',
+      presetId: 'page-summary',
       currentPage: { id: 42, locale: 'en', path: 'home', observedUpdatedAt: '2026-08-17T00:00:00.000Z' }
     }
     const admitted = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}/messages`, { method: 'POST', headers, body: JSON.stringify(request) })
@@ -3030,13 +3096,16 @@ describe('ordinary-origin agent session API', () => {
     expect(await runtime.runOnce()).toBe(true)
     expect(engineRunId).toBe(admission.run.id)
     expect(engineCurrentPage).toEqual(request.currentPage)
+    expect(engineMessages.filter(message => message.role === 'user').map(message => message.content)).toEqual([request.content])
     expect(engineMemory).toEqual({ user: [], agent: [] })
     const reconnected = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
     const thread = (await reconnected.json()) as {
-      messages: Array<{ role: string; status: string; content: string }>
+      messages: Array<{ role: string; status: string; content: string; presetId?: string; currentPage?: unknown }>
       historyWindow: { messageLimit: number; hasOlderMessages: boolean; runLimit: number; hasOlderRuns: boolean }
     }
     expect(thread.messages.at(-1)).toMatchObject({ role: 'assistant', status: 'complete', content: 'Hello from the deterministic engine.' })
+    expect(thread.messages[0]).toMatchObject({ role: 'user', content: request.content, presetId: request.presetId, currentPage: request.currentPage })
+    expect(thread.messages.at(-1)).not.toHaveProperty('presetId')
     expect(thread.historyWindow).toEqual({ messageLimit: 200, hasOlderMessages: false, runLimit: 200, hasOlderRuns: false })
     const completed = await fetch(`${baseUrl}/_api/agents/runs/${admission.run.id}`, { headers: { cookie } })
     const completedProjection = (await completed.json()) as { run: typeof admission.run }
@@ -3130,6 +3199,7 @@ describe('ordinary-origin agent session API', () => {
         expectedSessionVersion: 1,
         profileResolutionToken: 'test',
         content: 'Answer while live authorization runs.',
+        presetId: 'catch-up',
         generationTools: ['image']
       }
       const post = (body: unknown) =>
@@ -3198,7 +3268,7 @@ describe('ordinary-origin agent session API', () => {
         const holderPid = rows[0]!.pid
         authorize.resolve()
         const workerPid = await waitForBlockedBackend([holderPid])
-        changed = post({ ...input, content: `${input.content} Changed.` })
+        changed = post({ ...input, presetId: 'page-summary' })
         // Before the fix both transactions reached memberships holding SHARE
         // on users, then deadlocked upgrading after this barrier was released.
         // With the final owner lock first, admission waits on the worker instead.
@@ -3546,25 +3616,33 @@ describe('ordinary-origin agent session API', () => {
     let engineCalls = 0
     let originEngineRunId: string | undefined
     const originRuntime = trackAuxiliaryRuntime(
-      new AgentProductRuntime(db, {
-        async resolve() {
-          return resolved
+      new AgentProductRuntime(
+        db,
+        {
+          async resolve() {
+            return resolved
+          },
+          async resolveCurrent() {
+            return resolved
+          }
         },
-        async resolveCurrent() {
-          return resolved
+        {
+          preflight: preflightAgentRequest,
+          async execute(request, sink) {
+            engineCalls += 1
+            engineMessages = request.messages.map(message => ({ ...message }))
+            originEngineRunId = request.run.id
+            return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 2 }
+          }
+        },
+        {
+          memorySigningSecret: 'agent-memory-test-signing-secret',
+          workerId: `origin-boundary-${randomUUID()}`,
+          globalConcurrency: 1,
+          perUserConcurrency: 1,
+          goals: { enabled: false, maxContinuations: 1, maxTokens: 1_000_000, maxToolCalls: 1_000, maxDurationMilliseconds: 60_000 }
         }
-      }, {
-        preflight: preflightAgentRequest,
-        async execute(request, sink) {
-          engineCalls += 1
-          engineMessages = request.messages.map(message => ({ ...message }))
-          originEngineRunId = request.run.id
-          return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 2 }
-        }
-      }, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: `origin-boundary-${randomUUID()}`,
-      globalConcurrency: 1,
-      perUserConcurrency: 1,
-      goals: { enabled: false, maxContinuations: 1, maxTokens: 1_000_000, maxToolCalls: 1_000, maxDurationMilliseconds: 60_000 } })
+      )
     )
     type StateCase = {
       readonly name: string
@@ -5251,12 +5329,22 @@ describe('ordinary-origin agent session API', () => {
       { usageVersion: 2, inputTokens: 2, outputTokens: 1, totalTokens: 3, costMicros: 4 },
       { usageVersion: 2, inputTokens: 1, outputTokens: 2, totalTokens: 3, costMicros: 5 }
     ]
-    await db('agentEvents').insert(awaitingUsage.map((usage, index) => {
-      const data = JSON.stringify(usage)
-      return { id: randomUUID(), runId: awaiting.run.id, sequence: awaiting.run.eventSequence + index + 1,
-        type: 'model.turn', attempt: 1, schemaVersion: 1, data,
-        dataSha256: createHash('sha256').update(data).digest('hex'), createdAt: now }
-    }))
+    await db('agentEvents').insert(
+      awaitingUsage.map((usage, index) => {
+        const data = JSON.stringify(usage)
+        return {
+          id: randomUUID(),
+          runId: awaiting.run.id,
+          sequence: awaiting.run.eventSequence + index + 1,
+          type: 'model.turn',
+          attempt: 1,
+          schemaVersion: 1,
+          data,
+          dataSha256: createHash('sha256').update(data).digest('hex'),
+          createdAt: now
+        }
+      })
+    )
     await db('agentRuns')
       .where({ id: awaiting.run.id })
       .update({
@@ -5270,13 +5358,20 @@ describe('ordinary-origin agent session API', () => {
     const awaitingCancellationResponse = await fetch(`${baseUrl}/_api/agents/runs/${awaiting.run.id}/cancel`, { method: 'POST', headers })
     expect(awaitingCancellationResponse.status).toBe(200)
     await requestAgentRunCancellation(db, 7, awaiting.run.id)
-    expect(normalizeAccountingRow(await db('agentRuns').where({ id: awaiting.run.id })
-      .first('inputTokens', 'outputTokens', 'totalTokens', 'estimatedCostMicros'))).toEqual({
-      inputTokens: 3, outputTokens: 3, totalTokens: 6, estimatedCostMicros: 9
+    expect(
+      normalizeAccountingRow(await db('agentRuns').where({ id: awaiting.run.id }).first('inputTokens', 'outputTokens', 'totalTokens', 'estimatedCostMicros'))
+    ).toEqual({
+      inputTokens: 3,
+      outputTokens: 3,
+      totalTokens: 6,
+      estimatedCostMicros: 9
     })
-    expect(normalizeAccountingRow(await db('agentQuotaReservations').where({ runId: awaiting.run.id })
-      .first('status', 'consumedTokens', 'consumedCostMicros'))).toEqual({
-      status: 'consumed', consumedTokens: 6, consumedCostMicros: 9
+    expect(
+      normalizeAccountingRow(await db('agentQuotaReservations').where({ runId: awaiting.run.id }).first('status', 'consumedTokens', 'consumedCostMicros'))
+    ).toEqual({
+      status: 'consumed',
+      consumedTokens: 6,
+      consumedCostMicros: 9
     })
 
     const expired = await admit(
@@ -5592,38 +5687,63 @@ describe('ordinary-origin agent session API', () => {
     const MutationResponse = z.object(AgentManualMemoryMutationReceiptFieldsSchema.shape)
     const beforeEvents = await db('agentEvents').count<{ count: number }[]>('* as count')
     const missingContext = await fetch(`${baseUrl}/_api/agents/memories`, {
-      method: 'POST', headers, body: JSON.stringify({ target: 'user', content: 'Concise answers.' })
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ target: 'user', content: 'Concise answers.' })
     })
     expect(missingContext.status).toBe(400)
     // Correlation does not grant session access and needs no session lookup.
     const context = { sessionId: 'correlation-not-session-authority' }
     const created = await fetch(`${baseUrl}/_api/agents/memories`, {
-      method: 'POST', headers, body: JSON.stringify({ target: 'user', content: 'Concise answers.', context })
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ target: 'user', content: 'Concise answers.', context })
     })
     expect(created.status).toBe(201)
     const receipt = MutationResponse.parse(await created.json()).receipt!
     expect(receipt).toMatchObject({
-      ownerId: 7, sessionId: context.sessionId, origin: 'manual', operation: 'add', changed: true, entryVersion: 1,
-      runId: null, attempt: null, snapshotId: null, targets: [{ target: 'user', characters: 16, limit: 1375 }]
+      ownerId: 7,
+      sessionId: context.sessionId,
+      origin: 'manual',
+      operation: 'add',
+      changed: true,
+      entryVersion: 1,
+      runId: null,
+      attempt: null,
+      snapshotId: null,
+      targets: [{ target: 'user', characters: 16, limit: 1375 }]
     })
     expect(await db('agentMemories').where({ id: receipt.entryId, ownerId: 7 }).first('version')).toEqual({ version: receipt.entryVersion })
     const duplicate = await fetch(`${baseUrl}/_api/agents/memories`, {
-      method: 'POST', headers, body: JSON.stringify({ target: 'user', content: 'Concise answers.', context })
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ target: 'user', content: 'Concise answers.', context })
     })
     expect(duplicate.status).toBe(200)
     expect(MutationResponse.parse(await duplicate.json()).receipt).toBeNull()
     const updated = await fetch(`${baseUrl}/_api/agents/memories/${receipt.entryId}`, {
-      method: 'PUT', headers, body: JSON.stringify({ expectedVersion: 1, target: 'agent', content: 'Concise project notes.', context })
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ expectedVersion: 1, target: 'agent', content: 'Concise project notes.', context })
     })
     expect(updated.status).toBe(200)
     const replacement = MutationResponse.parse(await updated.json()).receipt!
     expect(replacement).toMatchObject({
-      ownerId: 7, sessionId: context.sessionId, entryId: receipt.entryId, entryVersion: 2, operation: 'replace',
-      targets: [{ target: 'user', characters: 0, limit: 1375 }, { target: 'agent', characters: 22, limit: 2200 }]
+      ownerId: 7,
+      sessionId: context.sessionId,
+      entryId: receipt.entryId,
+      entryVersion: 2,
+      operation: 'replace',
+      targets: [
+        { target: 'user', characters: 0, limit: 1375 },
+        { target: 'agent', characters: 22, limit: 2200 }
+      ]
     })
     expect(JSON.stringify(replacement)).not.toContain('Concise project')
     const conflict = await fetch(`${baseUrl}/_api/agents/memories/${receipt.entryId}`, {
-      method: 'PUT', headers, body: JSON.stringify({ expectedVersion: 1, target: 'agent', content: 'Stale write.', context })
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ expectedVersion: 1, target: 'agent', content: 'Stale write.', context })
     })
     expect(conflict.status).toBe(409)
     const removed = await fetch(`${baseUrl}/_api/agents/memories/${receipt.entryId}?expectedVersion=2`, { method: 'DELETE', headers })

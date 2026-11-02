@@ -1,9 +1,10 @@
 .v-data-table {
   overflow: hidden;
-  border: 1px solid var(--wiki-surface-border, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 14%, transparent));
+  border: 1px solid var(--wiki-well-border);
   border-radius: var(--wiki-control-radius, .75rem);
-  background: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
-  box-shadow: var(--wiki-shadow-xs, 0 1px 2px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent));
+  background: var(--wiki-surface-sunken, rgb(var(--v-theme-surface)));
+  background-image: none;
+  box-shadow: var(--wiki-shadow-inset);
   color: rgb(var(--v-theme-on-surface));
   font-variant-numeric: tabular-nums;
 

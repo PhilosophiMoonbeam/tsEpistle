@@ -134,6 +134,7 @@ export function offlinePresentation(): { config: SiteConfig; appearance: string 
       },
       availableEditors: [],
       featurePageRatings: false,
+      publicSocialSharing: false,
       agentsEnabled: false,
       agentProviderEnabled: false,
       agentSkillsEnabled: false,

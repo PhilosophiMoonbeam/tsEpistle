@@ -1,10 +1,9 @@
 <template>
   <!-- biome-ignore lint/a11y/noStaticElementInteractions: This wrapper only stops native child-control events from activating the enclosing conversation row. -->
   <div class="agent-history-session-actions" @click.stop @keydown.stop>
-    <v-menu content-class="agent-owned-overlay" location="bottom end">
+    <v-menu ref="menu" content-class="agent-owned-overlay" location="bottom end">
       <template #activator="{ props: menuProps }">
         <v-btn
-          ref="trigger"
           v-bind="menuProps"
           class="agent-history-session-actions__trigger"
           icon="mdi-dots-horizontal"
@@ -102,13 +101,8 @@ const emit = defineEmits<{
   rename: [restoreTarget: HTMLElement | null]
   remove: [restoreTarget: HTMLElement | null]
 }>()
-type ComponentRoot = { $el?: HTMLElement }
-const trigger = useTemplateRef<ComponentRoot | HTMLElement>('trigger')
-const triggerElement = (): HTMLElement | null => {
-  const value = trigger.value
-  if (!value) return null
-  return value instanceof HTMLElement ? value : value.$el ?? null
-}
+const menu = useTemplateRef<{ activatorEl?: HTMLElement }>('menu')
+const triggerElement = (): HTMLElement | null => menu.value?.activatorEl ?? null
 const requestNewFolder = (): void => emit('new-folder', props.session, triggerElement())
 const requestRename = (): void => emit('rename', triggerElement())
 const requestRemove = (): void => emit('remove', triggerElement())

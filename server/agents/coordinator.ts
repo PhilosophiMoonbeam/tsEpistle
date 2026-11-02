@@ -9,6 +9,7 @@ import {
   isTerminalAgentRunStatus,
   AGENT_GENERATION_TOOLS,
   type AgentGenerationTool,
+  type AgentPresetId,
   type AgentActionName,
   type AgentEventData,
   type AgentEventType,
@@ -694,6 +695,7 @@ export interface AdmitAgentRunInput {
   readonly expectedSessionVersion: number
   readonly profileResolutionSha256: string
   readonly content: string
+  readonly presetId?: AgentPresetId
   readonly currentPage?: Readonly<Record<string, unknown>>
   readonly knowledgeContext?: AgentKnowledgeContext
   readonly providerProfileVersionId: string
@@ -757,6 +759,8 @@ const admissionEnvelope = (input: AdmitAgentRunInput): string =>
     ...(input.mediaRequest ? { mediaRequest: input.mediaRequest } : {}),
     mediaBindings: input.mediaBindings ?? {},
     content: input.content,
+    // Omission deliberately preserves the admission identity of historical requests.
+    ...(input.presetId === undefined ? {} : { presetId: input.presetId }),
     ...(input.generationTools === undefined ? {} : { generationTools: input.generationTools }),
     currentPage: input.currentPage ?? null,
     ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext }),
@@ -784,11 +788,13 @@ const queuedEventData = (
   currentPage?: Readonly<Record<string, unknown>>,
   knowledgeContext?: AgentKnowledgeContext,
   generationTools?: readonly AgentGenerationTool[],
-  mediaBindings?: AgentMediaBindings
+  mediaBindings?: AgentMediaBindings,
+  presetId?: AgentPresetId
 ): { data: string; dataSha256: string } => {
   const value: AgentEventData = {
     runId,
     status: 'queued',
+    ...(presetId === undefined ? {} : { presetId }),
     ...(generationTools === undefined ? {} : { generationTools }),
     mediaBindings: mediaBindings ?? {},
     ...(currentPage === undefined ? {} : { currentPage }),
@@ -951,7 +957,7 @@ export const admitAgentRunInTransaction = async (
   if (input.skillVersionIds.length > 0)
     await transaction('agentRunSkills').insert(input.skillVersionIds.map((skillVersionId, ordinal) => ({ runId, skillVersionId, ordinal })))
   await reserveQuotaInTransaction(transaction, runId, input.ownerId, input.quota, input.quotaLimits, now, input.reservationExpiresAt)
-  const event = queuedEventData(runId, input.currentPage, input.knowledgeContext, input.generationTools, input.mediaBindings)
+  const event = queuedEventData(runId, input.currentPage, input.knowledgeContext, input.generationTools, input.mediaBindings, input.presetId)
   await transaction('agentEvents').insert({
     id: input.queuedEventId ?? randomUUID(),
     runId,

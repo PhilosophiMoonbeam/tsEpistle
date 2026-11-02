@@ -11,7 +11,10 @@ describe('source preview excerpts', () => {
     expect(result.excerptTruncated).toBe(true)
   })
   it('keeps paragraphs readable and reports complete short content', () => {
-    expect(searchExcerpt('<h1><a class="toc-anchor" href="#title">¶</a>Title</h1><p>First</p><p>Second</p>', '')).toEqual({ excerpt: 'Title\n\nFirst\n\nSecond', excerptTruncated: false })
+    expect(searchExcerpt('<h1><a class="toc-anchor" href="#title">¶</a>Title</h1><p>First</p><p>Second</p>', '')).toEqual({
+      excerpt: 'Title\n\nFirst\n\nSecond',
+      excerptTruncated: false
+    })
   })
 
   for (const query of [
@@ -104,15 +107,29 @@ describe('inline matching passages', () => {
 
 describe('structured current-render passages', () => {
   it('retains zero-to-end row spans and explicit group-header associations', () => {
-    const result = structuredSearchExcerpt('<table><tbody><tr><th id="group" rowspan="0" scope="rowgroup">Group A</th><td headers="group">First</td></tr><tr><td headers="group">Second</td></tr></tbody></table>', '', '/en/table')
+    const result = structuredSearchExcerpt(
+      '<table><tbody><tr><th id="group" rowspan="0" scope="rowgroup">Group A</th><td headers="group">First</td></tr><tr><td headers="group">Second</td></tr></tbody></table>',
+      '',
+      '/en/table'
+    )
     const $ = load(result.html)
     expect($('tbody > tr').length).toBe(2)
     expect($('th').attr('rowspan')).toBe('2')
     expect($('th').attr('scope')).toBe('rowgroup')
-    expect($('tbody > tr').last().children().map((_index, cell) => $(cell).text()).get()).toEqual(['Second'])
+    expect(
+      $('tbody > tr')
+        .last()
+        .children()
+        .map((_index, cell) => $(cell).text())
+        .get()
+    ).toEqual(['Second'])
     for (const cell of $('td').toArray()) {
       const header = $(cell).attr('headers')!
-      expect($('th').filter((_index, node) => $(node).attr('id') === header).text()).toBe('Group A')
+      expect(
+        $('th')
+          .filter((_index, node) => $(node).attr('id') === header)
+          .text()
+      ).toBe('Group A')
     }
     expect(result.truncated).toBe(false)
   })
@@ -127,18 +144,38 @@ describe('structured current-render passages', () => {
   it('preserves native automatic association for column headers without an explicit thead', () => {
     const result = structuredSearchExcerpt('<table><tr><th>Name</th><th>Amount</th></tr><tr><td>Example</td><td>42</td></tr></table>', '', '/en/table')
     const $ = load(result.html)
-    expect($('th').map((_index, cell) => $(cell).text()).get()).toEqual(['Name', 'Amount'])
+    expect(
+      $('th')
+        .map((_index, cell) => $(cell).text())
+        .get()
+    ).toEqual(['Name', 'Amount'])
     expect($('th[scope]').length).toBe(0)
-    expect($('tr').last().children().map((_index, cell) => $(cell).text()).get()).toEqual(['Example', '42'])
+    expect(
+      $('tr')
+        .last()
+        .children()
+        .map((_index, cell) => $(cell).text())
+        .get()
+    ).toEqual(['Example', '42'])
   })
 
   for (const reversed of [false, true]) {
     it(`keeps effective ordered-list numbers after truncation (${reversed ? 'implicit reverse' : 'preceding reset'})`, () => {
-      const count = 35, target = reversed ? 1 : 20
-      const items = Array.from({ length: count }, (_, index) => `<li${!reversed && index === 0 ? ' value="100"' : ''}>Step ${index + 1}: ${'context '.repeat(70)}${index + 1 === target ? 'needlemarker' : ''}</li>`).join('')
+      const count = 35,
+        target = reversed ? 1 : 20
+      const items = Array.from(
+        { length: count },
+        (_, index) =>
+          `<li${!reversed && index === 0 ? ' value="100"' : ''}>Step ${index + 1}: ${'context '.repeat(70)}${index + 1 === target ? 'needlemarker' : ''}</li>`
+      ).join('')
       const result = structuredSearchExcerpt(`<ol${reversed ? ' reversed' : ''}>${items}</ol>`, 'needlemarker', '/en/steps')
       const $ = load(result.html)
-      const first = Number($('ol > li').first().text().match(/^Step (\d+):/u)![1])
+      const first = Number(
+        $('ol > li')
+          .first()
+          .text()
+          .match(/^Step (\d+):/u)![1]
+      )
       expect(Number($('ol').attr('start'))).toBe(reversed ? count - first + 1 : 99 + first)
       expect($('ol').is('[reversed]')).toBe(reversed)
       expect($('ol').text()).toContain('needlemarker')
@@ -146,14 +183,22 @@ describe('structured current-render passages', () => {
     })
   }
 
-  it('retains passive structure while removing resource, executable, hidden and unsafe-link payloads', () => {
-    const render = '<p onclick="attack()">Visible <strong>evidence</strong></p><ul><li>One</li></ul><p hidden>hidden-secret</p><p aria-hidden="true">aria-secret</p><img src="https://egress.invalid/image"><svg><image href="https://egress.invalid/svg"></image></svg><iframe src="https://egress.invalid/frame"></iframe><style>body{background:url(https://egress.invalid/css)}</style><script>script-secret</script><form><input autofocus></form><a href="javascript:attack()">Unsafe</a>'
+  it('retains passive structure and authored pilcrows while removing generated anchors and unsafe payloads', () => {
+    const render =
+      '<h2><a class="toc-anchor" href="#evidence">¶</a>Evidence</h2><p onclick="attack()">Visible <strong>evidence</strong>; authored ¶ and <code>¶</code>, <a href="#authored">¶</a>, <span class="toc-anchor">authored ¶ span</span></p><ul><li>One</li></ul><p hidden>hidden-secret</p><p aria-hidden="true">aria-secret</p><img src="https://egress.invalid/image"><svg><image href="https://egress.invalid/svg"></image></svg><iframe src="https://egress.invalid/frame"></iframe><style>body{background:url(https://egress.invalid/css)}</style><script>script-secret</script><form><input autofocus></form><a href="javascript:attack()">Unsafe</a>'
     const result = structuredSearchExcerpt(render, 'evidence', '/_private/en/source')
     const $ = load(result.html)
     expect($('strong').text()).toBe('evidence')
+    expect($('h2').text()).toBe('Evidence')
+    expect($('h2 a').length).toBe(0)
+    expect($('p').first().text()).toContain('authored ¶')
+    expect($('code').text()).toBe('¶')
+    expect($('a[href]').text()).toBe('¶')
+    expect($('a[href]').attr('href')).toBe('/_private/en/source#authored')
+    expect($.root().text()).toContain('authored ¶ span')
     expect($('ul > li').text()).toBe('One')
     expect($('img,svg,iframe,style,script,form,input,[onclick],[style],[src],[srcset]').length).toBe(0)
-    expect($('a').attr('href')).toBeUndefined()
+    expect($('a').last().attr('href')).toBeUndefined()
     expect($.root().text()).not.toMatch(/hidden-secret|aria-secret|script-secret|egress\.invalid/u)
   })
 })

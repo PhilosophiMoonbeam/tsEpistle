@@ -18,6 +18,9 @@ import {
 import { currentOfflineReadingEpoch, currentOfflineReadingHandle, OFFLINE_READING_STATE_EVENT } from '../../helpers/offline-session.ts'
 import { readPrivateCorpus } from '../../helpers/offline-crypto.ts'
 import { mergeOfflineSearchCorpora, prepareOfflineSearchCorpus, searchPreparedOfflineDocumentsAsync } from '../../helpers/offline-search.ts'
+import * as workingSet from '../../helpers/page-working-set.ts'
+import * as searchNavigation from '../../helpers/search-navigation-events.ts'
+import * as readerActions from '../../helpers/page-action-events.ts'
 
 const compileSearchMethods = (source, names, dependencies, section = 'methods') => {
   const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)?.[1]
@@ -243,18 +246,22 @@ const createPrivateExpirySearch = (source, { deferFirstRanking = false, targetWi
   let onStorageClose = null
   const storage = {
     readSnapshotCorpus: async () => ({
-      snapshots: targetWindow ? [{
-        ...pairs[1].record,
-        siteId: origin,
-        pageId: 3,
-        snapshot: {
-          ...pairs[1].snapshot,
-          pageId: 3,
-          title: 'Quasar public reference',
-          path: 'public/reference',
-          canonicalPath: '/en/public/reference'
-        }
-      }] : [],
+      snapshots: targetWindow
+        ? [
+            {
+              ...pairs[1].record,
+              siteId: origin,
+              pageId: 3,
+              snapshot: {
+                ...pairs[1].snapshot,
+                pageId: 3,
+                title: 'Quasar public reference',
+                path: 'public/reference',
+                canonicalPath: '/en/public/reference'
+              }
+            }
+          ]
+        : [],
       corpusRevision,
       sessionGeneration: 1
     }),
@@ -349,7 +356,10 @@ const createPrivateExpirySearch = (source, { deferFirstRanking = false, targetWi
     state,
     methods,
     dependencies,
-    nextSearchFinished: () => new Promise(resolve => { onStorageClose = resolve }),
+    nextSearchFinished: () =>
+      new Promise(resolve => {
+        onStorageClose = resolve
+      }),
     scheduler,
     expiresAt,
     rankingStarted,
@@ -396,11 +406,22 @@ const mountPrivateExpirySearch = async (source, options = {}) => {
       searchRestrictPath: false
     }
   })
-  const passthrough = (tag = 'div') => Vue.defineComponent({
-    setup(_props, { attrs, slots }) {
-      return () => Vue.h(tag, attrs, [slots.prepend?.(), slots.default?.(), slots.append?.()])
-    }
-  })
+  if (options.online) {
+    store.site.search = ''
+    store.user.permissions = ['use:agents']
+    store.user.authVersion = 3
+  }
+  const connection = Vue.reactive(
+    options.online
+      ? { connectionState: 'online', serverReachable: true, serverHealthy: true }
+      : { connectionState: 'offline', serverReachable: false, serverHealthy: false }
+  )
+  const passthrough = (tag = 'div') =>
+    Vue.defineComponent({
+      setup(_props, { attrs, slots }) {
+        return () => Vue.h(tag, attrs, [slots.prepend?.(), slots.default?.(), slots.append?.()])
+      }
+    })
   const dependencies = {
     // Inject imported boundaries only; the complete script declares its own adapters.
     openOfflineStorage: harness.dependencies.openOfflineStorage,
@@ -422,11 +443,15 @@ const mountPrivateExpirySearch = async (source, options = {}) => {
     }),
     createAsyncComponent: () => Vue.defineComponent({ render: () => null }),
     wikiStore: store,
-    siteConfig: { agentsEnabled: false },
-    pwaState: { connectionState: 'offline', serverReachable: false, serverHealthy: false },
+    siteConfig: { agentsEnabled: options.online === true },
+    pwaState: connection,
     useAgentsStore: () => ({ setCurrentPage() {}, closeWorkspace() {} }),
-    onSearchEnter() {}, onSearchExit() {}, onSearchMove() {},
-    offSearchEnter() {}, offSearchExit() {}, offSearchMove() {},
+    onSearchEnter() {},
+    onSearchExit() {},
+    onSearchMove() {},
+    offSearchEnter() {},
+    offSearchExit() {},
+    offSearchMove() {},
     emitSearchFocus() {},
     subscribeOfflineStorageChanges: () => () => {},
     OFFLINE_READING_STATE_EVENT,
@@ -436,13 +461,25 @@ const mountPrivateExpirySearch = async (source, options = {}) => {
     createModalFocusScope,
     activeOwnedOverlayRoots,
     offlinePageHref,
-    requestOfflineSavedPageOpen
+    requestOfflineSavedPageOpen,
+    ...workingSet,
+    ...searchNavigation,
+    ...readerActions,
+    navigateToWikiPage:
+      options.navigate ??
+      (() => {
+        throw new Error('Unexpected page navigation')
+      }),
+    isWikiNavigationClick: event => event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey
   }
   const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)[1]
   const parsed = ts.createSourceFile('search-results.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const executable = ts.transpileModule(
-    parsed.statements.filter(statement => !ts.isImportDeclaration(statement))
-      .map(statement => statement.getText(parsed)).join('\n').replace('export default', 'return'),
+    parsed.statements
+      .filter(statement => !ts.isImportDeclaration(statement))
+      .map(statement => statement.getText(parsed))
+      .join('\n')
+      .replace('export default', 'return'),
     { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }
   ).outputText
   const component = new Function(...Object.keys(dependencies), executable)(...Object.values(dependencies))
@@ -459,12 +496,33 @@ const mountPrivateExpirySearch = async (source, options = {}) => {
   })
   if (template.errors.length) throw template.errors[0]
   const container = document.createElement('div')
-  container.innerHTML = '<header class="nav-header"><label class="nav-header-search-control"><input aria-label="Search"></label></header><div class="fixture-search-host"></div>'
+  container.innerHTML =
+    '<header class="nav-header"><label class="nav-header-search-control"><input aria-label="Search"></label></header><div class="fixture-search-host"></div>'
   document.body.append(container)
   const input = container.querySelector('input')
+  // JSDOM has no layout; native traversal/geometry remains in the browser lane.
+  const rects = Object.getOwnPropertyDescriptor(browserWindow.HTMLElement.prototype, 'getClientRects')
+  Object.defineProperty(browserWindow.HTMLElement.prototype, 'getClientRects', {
+    configurable: true,
+    value: () => [{ width: 100, height: 44 }]
+  })
   input.value = store.site.search
-  input.addEventListener('focus', () => { store.site.searchIsFocused = true })
-  input.addEventListener('input', () => { store.site.search = input.value })
+  input.addEventListener('focus', () => {
+    store.site.searchIsFocused = true
+  })
+  input.addEventListener('input', () => {
+    store.site.search = input.value
+  })
+  input.addEventListener('keydown', event => {
+    if (event.isComposing) return
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      searchNavigation.emitSearchMove(event.key === 'ArrowDown' ? 'down' : 'up')
+    } else if (event.key === 'Enter' && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      event.preventDefault()
+      searchNavigation.emitSearchEnter()
+    }
+  })
   const app = Vue.createApp({ ...component, render: new Function('Vue', template.code)(Vue) })
   for (const name of ['v-list', 'v-list-item', 'v-list-item-title', 'v-list-item-subtitle', 'v-chip', 'v-icon', 'v-divider', 'v-tooltip']) {
     app.component(name, passthrough())
@@ -478,6 +536,9 @@ const mountPrivateExpirySearch = async (source, options = {}) => {
     ...harness,
     container,
     instance,
+    store,
+    connection,
+    input,
     async completeSearch() {
       const finished = harness.nextSearchFinished()
       harness.scheduler.runNext(300)
@@ -495,11 +556,340 @@ const mountPrivateExpirySearch = async (source, options = {}) => {
     restore() {
       app.unmount()
       container.remove()
+      if (rects) Object.defineProperty(browserWindow.HTMLElement.prototype, 'getClientRects', rects)
+      else delete browserWindow.HTMLElement.prototype.getClientRects
       harness.restore()
       setLocation(previousLocation)
     }
   }
 }
+
+const workingIdentity = { origin: 'https://wiki.example.test', installation: 'search-consumer', accountId: 7, authVersion: 3 }
+const workingPage = id => ({
+  id,
+  locale: 'en',
+  path: `guides/page-${id}`,
+  title: `Reader page ${id}`,
+  visibility: id === 12 ? 'private' : 'public',
+  ownerId: id === 12 ? 7 : null,
+  hash: `hash-${id}`,
+  description: '',
+  content: 'Authorized body',
+  contentType: 'markdown',
+  createdAt: '2026-10-22T00:00:00.000Z',
+  updatedAt: '2026-10-22T00:00:00.000Z',
+  sourceRevision: '1',
+  capabilities: { viewStewardContacts: false },
+  accuracy: {
+    sourceRevision: '1',
+    updatedAt: '2026-10-22T00:00:00.000Z',
+    author: null,
+    latestAttestation: null,
+    canVerify: false,
+    asOf: '2026-10-22T00:00:00.000Z',
+    status: 'needs-verification'
+  },
+  changeReason: null
+})
+
+const mountWorkingSearch = async (source, options = {}) => {
+  const previousFetch = browserWindow.fetch
+  const previousLocation = browserWindow.location.href
+  setLocation(workingIdentity.origin)
+  workingSet.invalidatePageWorkingSet()
+  workingSet.establishPageWorkingSet(workingIdentity)
+  const scope = workingSet.capturePageWorkingSetScope()
+  workingSet.recordPageVisit(11, scope)
+  workingSet.pinPage(11, scope)
+  workingSet.pinPage(12, scope)
+  browserWindow.fetch = async url => {
+    const id = Number(String(url).split('/').at(-1))
+    return new Response(JSON.stringify((options.pageForId ?? workingPage)(id)), { headers: { 'Content-Type': 'application/json' } })
+  }
+  const harness = await mountPrivateExpirySearch(source, { ...options, online: true })
+  await harness.instance.refreshWorkingSet()
+  await Vue.nextTick()
+  return {
+    ...harness,
+    restore() {
+      harness.restore()
+      workingSet.invalidatePageWorkingSet()
+      browserWindow.fetch = previousFetch
+      setLocation(previousLocation)
+    }
+  }
+}
+
+describe('zero-query Search consumer', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
+
+  test('connects the header combobox to deduplicated working rows and quick actions, then enters the selected private page', async () => {
+    const destinations = []
+    const harness = await mountWorkingSearch(source, { navigate: href => destinations.push(href) })
+    const { input, container } = harness
+    const key = async value => {
+      input.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }))
+      await Vue.nextTick()
+    }
+    try {
+      input.focus()
+      await Vue.nextTick()
+      expect(input.getAttribute('role')).toBe('combobox')
+      const grid = document.getElementById(input.getAttribute('aria-controls'))
+      expect(grid?.getAttribute('role')).toBe('grid')
+      expect([...grid.querySelectorAll('.search-results-working-row a')].map(link => link.getAttribute('href'))).toEqual([
+        '/en/guides/page-11',
+        '/_private/en/guides/page-12'
+      ])
+      expect(input.hasAttribute('aria-activedescendant')).toBe(false)
+      const tab = (target, shiftKey = false) => {
+        const event = new browserWindow.KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true, cancelable: true })
+        target.dispatchEvent(event)
+        return event
+      }
+      expect(tab(input).defaultPrevented).toBe(false)
+      const controls = [...container.querySelectorAll('.search-results [tabindex="0"], .search-results button:not([disabled]), .search-results a[href]')]
+      expect(controls).toContain(container.querySelector('.search-results-syntax > summary'))
+      for (const control of controls.slice(0, -1)) {
+        control.focus()
+        expect(tab(control).defaultPrevented).toBe(false)
+        expect(harness.store.site.searchIsFocused).toBe(true)
+      }
+      const lastControl = controls.at(-1)
+      lastControl.focus()
+      expect(tab(lastControl).defaultPrevented).toBe(true)
+      expect(document.activeElement).toBe(input)
+      expect(tab(input, true).defaultPrevented).toBe(true)
+      expect(document.activeElement).toBe(lastControl)
+      input.focus()
+      await key('Enter')
+      expect(destinations).toEqual([])
+      await key('ArrowUp')
+      let selected = document.getElementById(input.getAttribute('aria-activedescendant'))
+      expect(selected.getAttribute('aria-selected')).toBe('true')
+      expect(selected.querySelector('a').getAttribute('href')).toBe('/t')
+      harness.instance.cursor = -1
+      await key('ArrowDown')
+      selected = document.getElementById(input.getAttribute('aria-activedescendant'))
+      expect(selected.querySelector('a').getAttribute('href')).toBe('/en/guides/page-11')
+      await key('ArrowDown')
+      expect(container.querySelectorAll('[aria-selected="true"]')).toHaveLength(1)
+      await key('Enter')
+      expect(destinations).toEqual(['/_private/en/guides/page-12'])
+      expect(harness.store.site.searchIsFocused).toBe(false)
+    } finally {
+      harness.restore()
+    }
+  })
+
+  test.each([11, 12])('preserves encoded working-page identity for normal and native modified navigation: %s', async id => {
+    const destinations = []
+    const pageForId = pageId => ({
+      ...workingPage(pageId),
+      locale: 'fr',
+      path: 'guides/日本語#question?100%/café'
+    })
+    const expectedPath = `${id === 12 ? '/_private' : ''}/fr/guides/%E6%97%A5%E6%9C%AC%E8%AA%9E%23question%3F100%25/caf%C3%A9`
+    const harness = await mountWorkingSearch(source, { pageForId, navigate: href => destinations.push(new URL(href, workingIdentity.origin)) })
+    try {
+      const link = [...harness.container.querySelectorAll('.search-results-working-link')].find(candidate =>
+        candidate.textContent.includes(`Reader page ${id}`)
+      )
+      expect(link).toBeDefined()
+      const assertIdentity = destination => {
+        expect(destination.origin).toBe(workingIdentity.origin)
+        expect(destination.pathname).toBe(expectedPath)
+        expect(destination.search).toBe('')
+        expect(destination.hash).toBe('')
+        expect(destination.pathname.split('/').map(decodeURIComponent).join('/')).toBe(`${id === 12 ? '/_private' : ''}/fr/${pageForId(id).path}`)
+      }
+      assertIdentity(new URL(link.getAttribute('href'), workingIdentity.origin))
+      for (const options of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }]) {
+        const event = new browserWindow.MouseEvent(options.button === 1 ? 'auxclick' : 'click', { bubbles: true, cancelable: true, ...options })
+        link.dispatchEvent(event)
+        expect(event.defaultPrevented).toBe(false)
+        expect(destinations).toEqual([])
+        expect(harness.store.site.searchIsFocused).toBe(true)
+        assertIdentity(new URL(link.getAttribute('href'), workingIdentity.origin))
+      }
+      const click = new browserWindow.MouseEvent('click', { bubbles: true, cancelable: true })
+      link.dispatchEvent(click)
+      expect(click.defaultPrevented).toBe(true)
+      expect(destinations).toHaveLength(1)
+      assertIdentity(destinations[0])
+      expect(harness.store.site.searchIsFocused).toBe(false)
+    } finally {
+      harness.restore()
+    }
+  })
+
+  test('real pin rehydration restores the remounted toggle, and disappearing unpinned rows return focus to Search', async () => {
+    const harness = await mountWorkingSearch(source)
+    try {
+      const pin = harness.container.querySelector('[data-working-pin="11"]')
+      pin.focus()
+      pin.click()
+      await Vue.nextTick()
+      await harness.instance.refreshWorkingSet()
+      await Vue.nextTick()
+      const replacement = harness.container.querySelector('[data-working-pin="11"]')
+      expect(replacement).not.toBe(pin)
+      expect(replacement.getAttribute('aria-pressed')).toBe('false')
+      expect(document.activeElement).toBe(replacement)
+      replacement.click()
+      await Vue.nextTick()
+      await harness.instance.refreshWorkingSet()
+      await Vue.nextTick()
+      expect(harness.container.querySelector('[data-working-pin="11"]').getAttribute('aria-pressed')).toBe('true')
+      const pinnedOnly = harness.container.querySelector('[data-working-pin="12"]')
+      pinnedOnly.focus()
+      pinnedOnly.click()
+      await Vue.nextTick()
+      await harness.instance.refreshWorkingSet()
+      await Vue.nextTick()
+      expect(harness.container.querySelector('[data-working-pin="12"]')).toBeNull()
+      expect(document.activeElement).toBe(harness.input)
+      expect(harness.input.hasAttribute('aria-activedescendant')).toBe(false)
+    } finally {
+      harness.restore()
+    }
+  })
+
+  test('retires prior-account rows during verification and distinguishes server loss from a failed online refresh', async () => {
+    const destinations = []
+    const harness = await mountWorkingSearch(source, { navigate: href => destinations.push(href) })
+    try {
+      const staleLink = harness.container.querySelector('.search-results-working-row a')
+      const onlineMessage = harness.container.querySelector('#wiki-search-working-status').textContent
+      harness.store.authRefreshPending = true
+      await Vue.nextTick()
+      expect(harness.container.querySelector('.search-results-working-row')).toBeNull()
+      const verificationMessage = harness.container.querySelector('#wiki-search-working-status').textContent
+      expect(verificationMessage).not.toBe(onlineMessage)
+      const staleClick = new browserWindow.MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true })
+      staleLink.dispatchEvent(staleClick)
+      expect(staleClick.defaultPrevented).toBe(true)
+      expect(destinations).toEqual([])
+      workingSet.establishPageWorkingSet({ ...workingIdentity, accountId: 8 })
+      harness.store.user.id = 8
+      harness.store.authRefreshPending = false
+      await Vue.nextTick()
+      await harness.instance.refreshWorkingSet()
+      await Vue.nextTick()
+      expect(harness.container.textContent).not.toContain('Reader page 11')
+      harness.connection.serverHealthy = false
+      await Vue.nextTick()
+      expect(harness.container.querySelector('.search-results-capability-note button')).not.toBeNull()
+      const offlineMessage = harness.container.querySelector('#wiki-search-working-status').textContent
+      expect(offlineMessage).not.toBe(verificationMessage)
+      const tags = harness.container.querySelector('.search-results-working-action a')
+      expect(tags.getAttribute('aria-disabled')).toBe('true')
+      tags.click()
+      expect(destinations).toEqual([])
+      harness.connection.serverHealthy = true
+      browserWindow.fetch = async () => new Response('Unavailable', { status: 503 })
+      workingSet.recordPageVisit(13, workingSet.capturePageWorkingSetScope())
+      await Vue.nextTick()
+      await harness.instance.refreshWorkingSet()
+      await Vue.nextTick()
+      expect(harness.container.querySelector('.search-results-capability-note')).toBeNull()
+      expect(harness.container.querySelector('#wiki-search-working-status').textContent).not.toBe(offlineMessage)
+      expect(harness.container.querySelector('.search-results-working button')).not.toBeNull()
+      expect(harness.container.querySelector('.search-results-working-row')).toBeNull()
+    } finally {
+      harness.restore()
+    }
+  })
+
+  test('uses the registered guarded Create bridge, and never infers a current reader from retained page metadata', async () => {
+    const harness = await mountWorkingSearch(source)
+    let allowed = true
+    let opens = 0
+    const unregister = searchNavigation.registerSearchQuickCreate({
+      canCreate: () => allowed,
+      open: () => {
+        opens++
+        return true
+      }
+    })
+    try {
+      Object.assign(harness.store.page, workingPage(11), { mode: 'view' })
+      await Vue.nextTick()
+      const actions = harness.container.querySelectorAll('.search-results-working-action')
+      expect(actions[0].querySelector('button').getAttribute('aria-disabled')).toBe('true')
+      actions[0].querySelector('button').click()
+      expect(harness.store.site.searchMode).toBe('search')
+      actions[1].querySelector('button').click()
+      expect(opens).toBe(1)
+      expect(harness.store.site.searchIsFocused).toBe(true)
+      allowed = false
+      actions[1].querySelector('button').click()
+      expect(opens).toBe(1)
+      expect(harness.store.site.searchMode).toBe('search')
+    } finally {
+      unregister()
+      harness.restore()
+    }
+  })
+
+  test.each(['current reader', 'reader changed', 'reader revision changed', 'non-reader view', 'reader unmounted', 'account changed'])(
+    'Quick Ask prepares only a current-reader draft: %s',
+    async transition => {
+      const harness = await mountWorkingSearch(source)
+      const { store, instance } = harness
+      const prepared = []
+      const sent = []
+      Object.assign(store.page, workingPage(11), { mode: 'view' })
+      const reader = request =>
+        request.reply({
+          page: { pageId: 11, locale: 'en', path: 'guides/page-11', visibility: 'public', sourceRevision: '1' },
+          ready: true,
+          actions: {}
+        })
+      readerActions.onReaderPageActionsRequest(reader)
+      readerActions.emitReaderPageActionsChanged()
+      try {
+        await Vue.nextTick()
+        const ask = harness.container.querySelector('.search-results-working-action button')
+        expect(ask.hasAttribute('aria-disabled')).toBe(false)
+        const pending = instance.askCurrentPage()
+        await Vue.nextTick()
+        expect(prepared).toEqual([])
+        if (transition === 'reader changed') store.page.path = 'different-page'
+        if (transition === 'reader revision changed') store.page.sourceRevision = '2'
+        if (transition === 'non-reader view') store.page.mode = 'edit'
+        if (transition === 'reader unmounted') {
+          readerActions.offReaderPageActionsRequest(reader)
+          readerActions.emitReaderPageActionsChanged()
+        }
+        if (transition === 'account changed') store.user.authVersion++
+        await Vue.nextTick()
+        instance.setInlineAgent({
+          preparePrompt: async (...args) => {
+            prepared.push(args)
+          },
+          sendPrompt: async (...args) => {
+            sent.push(args)
+            return true
+          },
+          focusComposer: async () => {},
+          focusConversation: async () => {}
+        })
+        await pending
+        expect(sent).toEqual([])
+        if (transition === 'current reader') {
+          expect(prepared).toHaveLength(1)
+          expect(prepared[0][0]).toContain('Reader page 11')
+          expect(prepared[0].slice(1)).toEqual([undefined, { kind: 'all' }])
+          expect(instance.agentPageId).toBe(11)
+        } else expect(prepared).toEqual([])
+      } finally {
+        readerActions.offReaderPageActionsRequest(reader)
+        harness.restore()
+      }
+    }
+  )
+})
 
 describe('inline Ask mode contract', () => {
   const searchPath = path.join(process.cwd(), 'client/components/common/search-results.vue')
@@ -863,7 +1253,11 @@ describe('inline Ask mode contract', () => {
 
   test('Ask waits through loading refs and their transient removal before preparing the clicked scope', async () => {
     const prepared = []
-    const methods = compileSearchMethods(search, ['askCurrentQuery', 'agentSearchScope', 'waitForInlineAgent', 'setInlineAgent', 'resolveInlineAgentWaiters'], {})
+    const methods = compileSearchMethods(
+      search,
+      ['askCurrentQuery', 'agentSearchScope', 'waitForInlineAgent', 'setInlineAgent', 'resolveInlineAgentWaiters'],
+      {}
+    )
     const state = {
       ...methods,
       canAsk: true,
@@ -877,7 +1271,9 @@ describe('inline Ask mode contract', () => {
       searchRestrictLocale: true,
       searchRestrictPath: true,
       searchMode: 'search',
-      get isAgentOpen() { return this.searchMode === 'ask' },
+      get isAgentOpen() {
+        return this.searchMode === 'ask'
+      },
       latchAgentOpeningPage() {},
       activeModalOpener: () => null,
       focusInlineAgent: async () => {},
@@ -900,7 +1296,9 @@ describe('inline Ask mode contract', () => {
       focusComposer: async () => {},
       focusConversation: async () => {},
       preparePrompt: async (...args) => prepared.push(args),
-      sendPrompt: () => { throw new Error('A search handoff must not submit.') }
+      sendPrompt: () => {
+        throw new Error('A search handoff must not submit.')
+      }
     })
     await handoff
     expect(state.normalizedSearch).toBe('pizza')
@@ -919,7 +1317,9 @@ describe('inline Ask mode contract', () => {
       inlineAgent: null,
       inlineAgentWaiters: [],
       searchMode: 'search',
-      get isAgentOpen() { return this.searchMode === 'ask' },
+      get isAgentOpen() {
+        return this.searchMode === 'ask'
+      },
       captureAgentExcursion() {},
       latchAgentOpeningPage() {},
       focusInlineAgent: async () => {},
@@ -943,7 +1343,9 @@ describe('inline Ask mode contract', () => {
     state.setInlineAgent({
       focusComposer: async () => {},
       focusConversation: async () => {},
-      sendPrompt: () => { throw new Error('A source handoff must not submit.') },
+      sendPrompt: () => {
+        throw new Error('A source handoff must not submit.')
+      },
       preparePrompt: async (...args) => prepared.push(args)
     })
     await reopened
@@ -957,7 +1359,9 @@ describe('inline Ask mode contract', () => {
     const state = {
       ...methods,
       search: 'send after load',
-      get normalizedSearch() { return this.search },
+      get normalizedSearch() {
+        return this.search
+      },
       isAgentOpen: true,
       directPromptHandoffId: 0,
       directPromptHandoffPending: false,
@@ -975,8 +1379,13 @@ describe('inline Ask mode contract', () => {
     state.setInlineAgent({
       focusComposer: async () => {},
       preparePrompt: async () => {},
-      sendPrompt: async prompt => { sent.push(prompt); return true },
-      focusConversation: async () => { focused += 1 }
+      sendPrompt: async prompt => {
+        sent.push(prompt)
+        return true
+      },
+      focusConversation: async () => {
+        focused += 1
+      }
     })
     await handoff
     expect(sent).toEqual(['send after load'])
@@ -990,7 +1399,9 @@ describe('inline Ask mode contract', () => {
     const state = {
       ...methods,
       search: 'keep this query',
-      get normalizedSearch() { return this.search },
+      get normalizedSearch() {
+        return this.search
+      },
       isAgentOpen: true,
       directPromptHandoffId: 0,
       directPromptHandoffPending: false,
@@ -1010,7 +1421,9 @@ describe('inline Ask mode contract', () => {
       focusComposer: async () => {},
       focusConversation: async () => {},
       preparePrompt: async () => {},
-      sendPrompt: () => { throw new Error('A dismissed handoff must not send.') }
+      sendPrompt: () => {
+        throw new Error('A dismissed handoff must not send.')
+      }
     })
     expect(state.search).toBe('keep this query')
     expect(state.directPromptHandoffPending).toBe(false)
@@ -1138,6 +1551,7 @@ describe('inline Ask mode contract', () => {
       },
       cursor: -1,
       hasFreshResponse: true,
+      normalizedSearch: 'guide',
       results: [{ id: 1 }, { id: 2 }, { id: 3 }],
       searchIsLoading: false,
       searchMode: 'search',

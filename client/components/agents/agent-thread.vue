@@ -91,12 +91,20 @@
               v-if="entry.message.role === 'assistant' && entry.run?.tasks.length"
               :tasks="entry.run?.tasks ?? []"
             />
+            <template v-if="entry.message.role === 'user' && entry.message.presetId">
+              <p class="agent-message__preset-intent"><v-icon icon="mdi-creation-outline" size="16" aria-hidden="true" /> {{ presetLabel(entry.message.presetId) }}</p>
+              <details class="agent-message__full-prompt">
+                <summary>{{ $t('common:agentThread.showFullPrompt') }}</summary>
+                <div class="agent-message__original-prompt">{{ entry.message.content }}</div>
+              </details>
+            </template>
             <AgentMarkdown
-              v-if="entry.message.content"
+              v-else-if="entry.message.content"
               :content="entry.message.content"
               :citations="entry.message.citations"
+              :preview-context="entry.previewContext"
               source-previews
-              @preview-source="previewSelector = $event"
+              @preview-source="entry.openPreview"
               :streaming="entry.message.status === 'streaming'"
             />
             <div
@@ -337,7 +345,7 @@
 </template>
 
 <script setup lang="ts">
-import type { AgentGoogleSearchCitation, AgentMediaView, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
+import type { AgentGoogleSearchCitation, AgentMediaView, AgentPresetId, AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
 import { computed, onUnmounted, ref, watch } from 'vue'
 import i18next from 'i18next'
@@ -384,6 +392,7 @@ const props = defineProps<{
   imageEditingEnabled?: boolean
   networkBlocked?: boolean
   correctionUnavailableReason?: string
+  previewContext?: string
 }>()
 const emit = defineEmits<{
   editImage: [media: AgentMediaView]
@@ -413,6 +422,18 @@ const confirmReattach = (media: AgentMediaView): void => {
   emit('reattach', media)
 }
 const previewSelector = ref<WikiSourceSelector | null>(null)
+const authorityContext = computed(() => `${props.previewContext ?? ''}:${props.thread.memoryContext.ownerId}:${props.thread.session.id}`)
+let previewsRetired = false
+onUnmounted(() => { previewsRetired = true })
+watch(authorityContext, () => { previewSelector.value = null }, { flush: 'sync' })
+const presetLabelKeys: Record<AgentPresetId, string> = {
+  'page-summary': 'common:agentThread.presetPageSummary',
+  'wiki-overview': 'common:agentThread.presetWikiOverview',
+  'page-connections': 'common:agentThread.presetPageConnections',
+  'wiki-connections': 'common:agentThread.presetWikiConnections',
+  'catch-up': 'common:agentThread.presetCatchUp'
+}
+const presetLabel = (presetId: AgentPresetId): string => t(presetLabelKeys[presetId])
 const previewCitation = (event: MouseEvent, selector: WikiSourceSelector | null): void => {
   if (!selector || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
   event.preventDefault()
@@ -505,6 +526,8 @@ type ProjectedMessage = Omit<AgentMessagePresentation, 'run' | 'citationGroups' 
   readonly recovery: { readonly title: string; readonly description: string } | null
   readonly temporal: MessageTemporalMetadata
   readonly googleSearchCitations: readonly ProjectedGoogleSearchCitation[]
+  readonly previewContext: string
+  readonly openPreview: (selector: WikiSourceSelector) => void
 }
 interface ThreadProjection {
   readonly orderedMessages: readonly ProjectedMessage[]
@@ -516,6 +539,7 @@ interface CachedProjectedMessage {
 let projectionSessionId = ''
 let projectionLocaleRevision = -1
 let projectionOrigin = ''
+let projectionAuthority = ''
 let projectedMessages = new Map<string, CachedProjectedMessage>()
 let projectedRuns = new Map<AgentRunPresentation, ProjectedRun>()
 let projectedCitationGroups = new Map<AgentCitationGroup, ProjectedCitationGroup>()
@@ -526,7 +550,8 @@ const threadProjection = computed<ThreadProjection>(() => {
   const sessionId = props.thread.session.id
   const revision = localeRevision.value
   const origin = typeof window === 'undefined' ? 'https://wiki.invalid' : window.location.origin
-  if (sessionId !== projectionSessionId || revision !== projectionLocaleRevision || origin !== projectionOrigin) {
+  const authority = authorityContext.value
+  if (sessionId !== projectionSessionId || revision !== projectionLocaleRevision || origin !== projectionOrigin || authority !== projectionAuthority) {
     projectedMessages.clear()
     projectedRuns.clear()
     projectedCitationGroups.clear()
@@ -536,6 +561,7 @@ const threadProjection = computed<ThreadProjection>(() => {
     projectionSessionId = sessionId
     projectionLocaleRevision = revision
     projectionOrigin = origin
+    projectionAuthority = authority
   }
   const nextMessages = new Map<string, CachedProjectedMessage>()
   const nextRuns = new Map<AgentRunPresentation, ProjectedRun>()
@@ -613,6 +639,11 @@ const threadProjection = computed<ThreadProjection>(() => {
       })
       projected = {
         ...entry,
+        previewContext: `${authority}:${entry.message.id}`,
+        openPreview: selector => {
+          if (previewsRetired || authority !== authorityContext.value || !props.thread.messages.some(message => message.id === entry.message.id)) return
+          previewSelector.value = selector
+        },
         statusLabel,
         ariaLabel: t(entry.ariaLabel.key, { status: statusLabel || t('common:agentThread.complete'), interpolation: { escapeValue: false } }),
         temporal,
@@ -889,13 +920,17 @@ watch(
 }
 
 .agent-message--assistant .agent-message__surface {
-  background: var(--wiki-surface-raised);
-  border: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-gradient);
+  border: 1px solid var(--wiki-material-border);
   border-inline-start: 2px solid transparent;
   border-radius: var(--wiki-control-radius);
-  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
   padding: var(--wiki-space-3) var(--wiki-space-4);
 }
+.agent-message__preset-intent { display: flex; align-items: baseline; gap: var(--wiki-space-1); margin: 0; overflow-wrap: anywhere; }
+.agent-message__full-prompt summary { min-height: 44px; align-content: center; cursor: pointer; color: var(--wiki-text-muted); }
+.agent-message__full-prompt summary:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
+.agent-message__original-prompt { white-space: pre-wrap; overflow-wrap: anywhere; padding: var(--wiki-space-2); background: var(--wiki-surface-sunken); border: 1px solid var(--wiki-well-border); box-shadow: var(--wiki-shadow-inset); }
 
 .agent-message--assistant.agent-message--pending .agent-message__surface,
 .agent-message--assistant.agent-message--streaming .agent-message__surface {

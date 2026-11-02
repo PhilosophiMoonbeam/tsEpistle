@@ -12,6 +12,7 @@ export interface GeneralPolicy {
   banner: SiteBannerConfig
   pageExtensions: string[]
   featureGlossary: boolean
+  publicSocialSharing: boolean
   editFab: boolean
   editMenuBar: boolean
   editMenuBtn: boolean
@@ -33,6 +34,7 @@ export const generalPolicyDefaults: GeneralPolicy = {
   banner: disabledSiteBanner(),
   pageExtensions: ['md', 'html', 'txt'],
   featureGlossary: true,
+  publicSocialSharing: false,
   editFab: true,
   editMenuBar: true,
   editMenuBtn: true,
@@ -54,6 +56,7 @@ export const generalFieldLabels: Record<keyof GeneralPolicy, string> = {
   banner: 'Announcement',
   pageExtensions: 'Page URL extensions',
   featureGlossary: 'Glossary',
+  publicSocialSharing: 'Public social sharing',
   editFab: 'Floating edit button',
   editMenuBar: 'Page action bar',
   editMenuBtn: 'Edit action',
@@ -156,7 +159,7 @@ export const validateGeneralPolicy = (input: unknown): { ok: true; value: Genera
   if (!out.title || /[<>"\r\n]/.test(out.title)) issues.push('Workspace name is required and cannot contain line breaks or < > ".')
   if (typeof value.contentLicense !== 'string' || !licenses.includes(value.contentLicense)) issues.push('Choose a supported content license.')
   else out.contentLicense = value.contentLicense
-  for (const key of ['featureGlossary', 'editFab', 'editMenuBar', 'editMenuBtn', 'editMenuExternalBtn'] as const) {
+  for (const key of ['featureGlossary', 'publicSocialSharing', 'editFab', 'editMenuBar', 'editMenuBtn', 'editMenuExternalBtn'] as const) {
     if (typeof value[key] !== 'boolean') issues.push(`${generalFieldLabels[key]} must be on or off.`)
     else out[key] = value[key]
   }

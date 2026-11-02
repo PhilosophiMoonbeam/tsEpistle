@@ -67,4 +67,84 @@ Additional *context*.`)
     expect(container.querySelector('img')).toBeNull()
     expect([...container.querySelectorAll('em')].map(element => element.textContent)).toEqual(['context'])
   })
+
+  it('keeps detached citation paragraphs intact unless the Agent explicitly opts in', () => {
+    const content = 'Supported answer.\n\n[[cite:verified]]'
+    const resolveCitation = (evidenceId: string) => (evidenceId === 'verified' ? { evidenceId, number: 1, label: 'Verified source', href: '/en/guide' } : null)
+    for (const options of [undefined, { resolveCitation }, { normalizeCitationParagraphs: true }]) {
+      const container = document.createElement('div')
+      container.innerHTML = renderSafeMarkdown(content, options)
+      expect(container.querySelectorAll(':scope > p')).toHaveLength(2)
+      expect(container.querySelector('p')?.textContent).toBe('Supported answer.')
+    }
+  })
+
+  it('attaches resolved citation-only paragraphs to adjacent Agent prose without reordering sources', () => {
+    const resolveCitation = (evidenceId: string) => ({
+      evidenceId,
+      number: evidenceId === 'first' ? 1 : 2,
+      label: evidenceId,
+      href: `/en/${evidenceId}`
+    })
+    for (const streaming of [false, true]) {
+      for (const content of [
+        'Answer.\n\n[[cite:first]]\n[[cite:second]]',
+        '[[cite:first]] [[cite:second]]\n\nAnswer.',
+        '# Answer.\n\n[[cite:first]]\n\n[[cite:second]]'
+      ]) {
+        const container = document.createElement('div')
+        container.innerHTML = renderSafeMarkdown(content, { resolveCitation, streaming, normalizeCitationParagraphs: true })
+        expect(container.children).toHaveLength(1)
+        expect(container.firstElementChild?.textContent).toBe('Answer.12')
+        expect([...container.querySelectorAll('a')].map(anchor => anchor.getAttribute('href'))).toEqual(['/en/first', '/en/second'])
+      }
+    }
+  })
+
+  it('preserves authored link labels containing resolved citation markers with and without Agent normalization', () => {
+    const resolveCitation = (evidenceId: string) => ({ evidenceId, number: 1, label: 'Guide', href: '/en/guide' })
+    for (const normalizeCitationParagraphs of [false, true]) {
+      for (const authoredLink of ['[[[cite:verified]]](/en/authored)', '[[[cite:verified]]][authored]\n\n[authored]: /en/authored']) {
+        const container = document.createElement('div')
+        container.innerHTML = renderSafeMarkdown(`Answer.\n\n${authoredLink}`, { resolveCitation, normalizeCitationParagraphs })
+
+        expect(container.querySelectorAll(':scope > p')).toHaveLength(2)
+        expect(container.querySelector('p')?.textContent).toBe('Answer.')
+        expect(container.querySelectorAll('a')).toHaveLength(1)
+        const anchor = container.querySelector('a')
+        expect(anchor?.getAttribute('href')).toBe('/en/authored')
+        expect(anchor?.textContent).toBe('[[cite:verified]]')
+        expect(container.querySelector('[data-agent-citation]')).toBeNull()
+      }
+    }
+  })
+
+  it('does not relocate unresolved, escaped, authored-link or structured citation content', () => {
+    const resolveCitation = (evidenceId: string) => (evidenceId === 'verified' ? { evidenceId, number: 1, label: 'Guide', href: '/en/guide' } : null)
+    const cases = [
+      { content: 'Answer.\n\n[[cite:missing]] [[cite:verified]]', selector: ':scope > p:last-child', text: '[[cite:missing]] 1' },
+      {
+        content: String.raw`Answer.
+
+\[\[cite:verified\]\]`,
+        selector: ':scope > p:last-child',
+        text: '[[cite:verified]]'
+      },
+      { content: 'Answer.\n\n`[[cite:verified]]`', selector: 'code', text: '[[cite:verified]]' },
+      { content: 'Answer.\n\n```\n[[cite:verified]]\n```', selector: 'pre code', text: '[[cite:verified]]\n' },
+      { content: 'Answer.\n\n- [[cite:verified]]', selector: 'li', text: '1' },
+      { content: 'Answer.\n\n> [[cite:verified]]', selector: 'blockquote p', text: '1' },
+      { content: 'Answer.\n\n| Source |\n| --- |\n| [[cite:verified]] |', selector: 'td', text: '1' },
+      { content: 'Answer.\n\n[1](/en/guide)', selector: ':scope > p:last-child', text: '1' },
+      { content: 'Answer.\n\n[[[cite:verified]]](/en/authored)', selector: ':scope > p:last-child', text: '[[cite:verified]]' },
+      { content: 'Answer.\n\nExplanation [[cite:verified]]', selector: ':scope > p:last-child', text: 'Explanation 1' }
+    ]
+    for (const { content, selector, text } of cases) {
+      const container = document.createElement('div')
+      container.innerHTML = renderSafeMarkdown(content, { resolveCitation, normalizeCitationParagraphs: true })
+      expect(container.firstElementChild?.textContent).toBe('Answer.')
+      expect(container.querySelector(selector)?.textContent).toBe(text)
+      expect(container.children.length).toBeGreaterThan(1)
+    }
+  })
 })

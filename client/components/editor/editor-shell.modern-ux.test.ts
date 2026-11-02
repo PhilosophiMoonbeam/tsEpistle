@@ -19,9 +19,24 @@ import { EditorView } from '@codemirror/view'
 import { createSourceAuthoring } from '../../helpers/editor-source-authoring'
 import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
 import * as imagePropertiesHelpers from '../../helpers/editor-image-properties'
-import { discardCollaborationDraft, isPageRenderPending, waitForPageRender, type PageConflictLatest, type PageRenderTarget, type PageWriteInput } from '../../helpers/pages-api.ts'
+import {
+  discardCollaborationDraft,
+  isPageRenderPending,
+  waitForPageRender,
+  type PageConflictLatest,
+  type PageRenderTarget,
+  type PageWriteInput
+} from '../../helpers/pages-api.ts'
 import { EditorAdapterController, type EditorAdapterSafety as PublicAdapterSafety } from './common/editor-adapter.ts'
 import type { OfflineEditorDraftIdentity } from '../../helpers/offline-editor-drafts.ts'
+import {
+  capturePageWorkingSetScope,
+  establishPageWorkingSet,
+  invalidatePageWorkingSet,
+  recordPageEdit,
+  usePageWorkingSet
+} from '../../helpers/page-working-set.ts'
+import { describePageVisibility, type PageVisibilitySummary } from './common/page-visibility.ts'
 import type { BrowserFetch as Fetch } from '../../helpers/json-transport.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
@@ -67,7 +82,8 @@ const cardTemplate = compileTemplate({
 if (cardTemplate.errors.length) throw cardTemplate.errors[0]
 const cardRender = new Function('Vue', cardTemplate.code)(Vue)
 // Compile the owner's invocation unchanged, rather than supplying dialog props in the test.
-const shellMarkup = cheerio.load(pug.render(shellSfc.descriptor.template?.content ?? '', { doctype: 'html' }))
+// Vue slot templates are syntax, not HTML template-content fragments.
+const shellMarkup = cheerio.load(pug.render(shellSfc.descriptor.template?.content ?? '', { doctype: 'html' }), { xml: true })
 const ownerUnsavedInvocation = shellMarkup('editor-modal-unsaved')
 if (ownerUnsavedInvocation.length !== 1) throw new Error('Editor unsaved dialog invocation is missing or ambiguous')
 const ownerUnsavedTemplate = compileTemplate({
@@ -78,14 +94,26 @@ const ownerUnsavedTemplate = compileTemplate({
 })
 if (ownerUnsavedTemplate.errors.length) throw ownerUnsavedTemplate.errors[0]
 const ownerUnsavedRender = new Function('Vue', ownerUnsavedTemplate.code)(Vue)
+const ownerHeaderActions = shellMarkup('nav-header > template').filter((_index, element) => shellMarkup(element).attr('v-slot:actions') !== undefined)
+if (ownerHeaderActions.length !== 1) throw new Error('Editor header actions slot is missing or ambiguous')
+// Keep the owner's visibility guard: published pages legitimately have no chip.
+const ownerVisibility = shellMarkup('.editor-visibility-chip').parent().clone().removeAttr('v-slot:append-inner')
 const ownerSaveTemplate = compileTemplate({
-  source: `<v-app><div v-if="$vuetify.display.mdAndUp">${shellMarkup('.editor-save-status, .editor-save-action, .editor-save-close-action, .editor-close-action, .editor-change-reason-action').toString()}</div>${shellMarkup('.editor-change-reason-popover, .editor-mobile-actions').toString()}${ownerUnsavedInvocation.toString()}</v-app>`,
+  source: `<v-app>${ownerVisibility.toString()}${ownerHeaderActions.html()}${shellMarkup('.editor-change-reason-popover, .editor-mobile-actions').toString()}${ownerUnsavedInvocation.toString()}</v-app>`,
   filename: shellPath,
   id: 'editor-owner-save-test',
   compilerOptions: { mode: 'function' }
 })
 if (ownerSaveTemplate.errors.length) throw ownerSaveTemplate.errors[0]
 const ownerSaveRender = new Function('Vue', ownerSaveTemplate.code)(Vue)
+const recoveryTemplate = compileTemplate({
+  source: `<v-app>${shellMarkup('.editor-draft-recovery-actions, .editor-draft-review-actions').toString()}</v-app>`,
+  filename: shellPath,
+  id: 'editor-recovery-actions-test',
+  compilerOptions: { mode: 'function' }
+})
+if (recoveryTemplate.errors.length) throw recoveryTemplate.errors[0]
+const recoveryRender = new Function('Vue', recoveryTemplate.code)(Vue)
 const initialViewportWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth')
 const setViewportWidth = (width: number) => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: width, writable: true })
@@ -93,6 +121,7 @@ const setViewportWidth = (width: number) => {
 const modalUnmounts: Array<() => void> = []
 afterEach(() => {
   for (const unmount of modalUnmounts.splice(0)) unmount()
+  invalidatePageWorkingSet()
   if (initialViewportWidth) Object.defineProperty(window, 'innerWidth', initialViewportWidth)
   else Reflect.deleteProperty(window, 'innerWidth')
   vi.useRealTimers()
@@ -320,7 +349,8 @@ type ShellBehavior = {
     saveStatusText: (this: ShellContext) => string
     saveStatusIcon: (this: ShellContext) => string
     saveActionLabel: (this: ShellContext) => string
-    mobileSaveLabel: (this: ShellContext) => string
+    saveCommitmentActive: (this: ShellContext) => boolean
+    pageVisibility: (this: ShellContext) => PageVisibilitySummary
     renderWaitOwnerKey: (this: ShellContext) => string
     changeReasonErrors: (this: ShellContext) => string[]
     sourceEditorReady: (this: { currentEditor: string; warmAuthenticatedActor: boolean }) => boolean
@@ -589,6 +619,9 @@ const loadShellBehavior = (store: EditorStore, testWindow: TestWindow, overrides
     'clearOfflineCreateIdentity',
     'scopeEditorPageCss',
     'PageChangeReasonSchema',
+    'capturePageWorkingSetScope',
+    'recordPageEdit',
+    'describePageVisibility',
     `${executableShellBehavior}\nreturn shellBehavior`
   ) as (...args: unknown[]) => ShellBehavior
   return evaluate(
@@ -622,7 +655,10 @@ const loadShellBehavior = (store: EditorStore, testWindow: TestWindow, overrides
     () => undefined,
     () => undefined,
     (css: string) => css,
-    PageChangeReasonSchema
+    PageChangeReasonSchema,
+    capturePageWorkingSetScope,
+    recordPageEdit,
+    describePageVisibility
   )
 }
 
@@ -866,10 +902,15 @@ const settleReasonPopover = async (): Promise<void> => {
 const mountSaveActions = (store: EditorStore, testWindow: TestWindow, overrides: Partial<ApiDependencies> = {}, width = 1440) => {
   const context = createShellHarness(store, testWindow, overrides)
   const behavior = loadShellBehavior(store, testWindow, overrides)
-  for (const name of ['saveStatusText', 'saveStatusIcon', 'saveActionLabel', 'mobileSaveLabel', 'renderWaitOwnerKey', 'changeReasonErrors'] as const) {
-    const compute: (this: ShellContext) => string | string[] = behavior.computed[name]
-    Object.defineProperty(context, name, { get: () => compute.call(context) })
-  }
+  Object.defineProperties(context, {
+    saveStatusText: { get: () => behavior.computed.saveStatusText.call(context) },
+    saveStatusIcon: { get: () => behavior.computed.saveStatusIcon.call(context) },
+    saveActionLabel: { get: () => behavior.computed.saveActionLabel.call(context) },
+    saveCommitmentActive: { get: () => behavior.computed.saveCommitmentActive.call(context) },
+    pageVisibility: { get: () => behavior.computed.pageVisibility.call(context) },
+    renderWaitOwnerKey: { get: () => behavior.computed.renderWaitOwnerKey.call(context) },
+    changeReasonErrors: { get: () => behavior.computed.changeReasonErrors.call(context) }
+  })
   let action: Promise<boolean> | undefined
   const save = context.save
   const saveAndClose = context.saveAndClose
@@ -931,26 +972,47 @@ const mountSaveActions = (store: EditorStore, testWindow: TestWindow, overrides:
       if (!(field instanceof HTMLInputElement)) throw new Error('The reason disclosure did not open its input')
       return field
     },
-    async closeFromMobile(): Promise<boolean> {
-      const more = host.querySelector<HTMLButtonElement>('.editor-mobile-actions [aria-haspopup="menu"]')
-      if (!more) throw new Error('The mobile editor actions are not mounted')
-      more.click()
-      await settleReasonPopover()
-      const close = Array.from(document.querySelectorAll<HTMLElement>('.editor-mobile-menu .v-list-item'))
-        .find(item => item.textContent?.trim() === translateEnglish('editor:save.saveAndClose'))
-      if (!close) throw new Error('Mobile Save and close is not reachable')
-      close.click()
-      if (!action) throw new Error('Mobile Save and close did not run')
-      return action
+    closeFromMobile(): Promise<boolean> {
+      return this.click('close')
     },
-    click(actionName: 'save' | 'close' = 'close'): Promise<boolean> {
-      const button = host.querySelector<HTMLButtonElement>(actionName === 'save' ? '.editor-save-action, .editor-mobile-save' : '.editor-save-close-action')
-      if (!button) throw new Error('The editor save action is not mounted')
-      button.click()
+    async click(actionName: 'save' | 'close' = 'close'): Promise<boolean> {
+      await Vue.nextTick()
+      let control: HTMLElement | null = host.querySelector(actionName === 'save' ? '.editor-save-action' : '.editor-save-close-action')
+      if (!control && actionName === 'save') {
+        const more = host.querySelector<HTMLButtonElement>('.editor-mobile-actions [aria-haspopup="menu"]')
+        if (!more) throw new Error('The mobile editor actions are not mounted')
+        more.click()
+        await settleReasonPopover()
+        control =
+          Array.from(document.querySelectorAll<HTMLElement>('.editor-mobile-menu .v-list-item')).find(
+            item => item.textContent?.trim() === translateEnglish('common:actions.save')
+          ) ?? null
+      }
+      if (!control) throw new Error('The editor save action is not mounted')
+      action = undefined
+      control.click()
       if (!action) throw new Error('The editor save action did not run')
       return action
     }
   }
+}
+
+const mountRecoveryActions = async (context: ShellContext, rows: Array<Record<string, string>> = []) => {
+  context.offlineDraftRows = rows
+  context.pendingDraftDiscard = null
+  context.busyRecoveryRow = null
+  const host = document.createElement('div')
+  document.body.append(host)
+  const app = Vue.createApp({ setup: () => context, render: recoveryRender })
+  app.config.globalProperties.$t = translateEnglish
+  app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+  app.mount(host)
+  modalUnmounts.push(() => {
+    app.unmount()
+    host.remove()
+  })
+  await Vue.nextTick()
+  return host
 }
 
 const holdRecoveryCaptureAfterSubmission = (context: ShellContext) => {
@@ -1053,16 +1115,78 @@ const applyEveryEdit = (store: EditorStore) => {
 
 describe('modern editor shell interaction contract', () => {
   for (const width of [1440, 390]) {
+    test(`saved status and the sole actionable commitment follow edits at ${width}px`, async () => {
+      const store = Vue.reactive(createStore())
+      store.page.visibility = 'private'
+      const mounted = mountSaveActions(store, createTestWindow(), {}, width)
+      await Vue.nextTick()
+      const status = mounted.host.querySelector<HTMLElement>('.editor-save-status')!
+      expect(status.getAttribute('role')).toBe('status')
+      expect(status.getAttribute('aria-live')).toBe('polite')
+      expect(status.textContent?.trim()).toBe(translateEnglish('editor:save.saved'))
+      expect(status.closest('button, [role="button"]')).toBeNull()
+      expect(mounted.context.lastSavedAt).toBeNull()
+      expect(mounted.host.querySelector('.editor-save-action')).toBeNull()
+      expect(mounted.host.querySelector('[data-commitment="active"]')).toBeNull()
+      const properties = mounted.host.querySelectorAll<HTMLButtonElement>(`button[aria-label="${translateEnglish('editor:props.pageProperties')}"]`)
+      expect(properties).toHaveLength(1)
+      const visibility = mounted.host.querySelector<HTMLElement>('.editor-visibility-chip')!
+      expect(visibility.matches('button, [role="button"], [tabindex="0"]')).toBe(false)
+      visibility.click()
+      expect(mounted.context.dialogProps).toBe(false)
+      properties[0]!.click()
+      expect(mounted.context.dialogProps).toBe(true)
+      mounted.context.dialogProps = false
+
+      store.page.title = 'Unsaved page title'
+      await Vue.nextTick()
+      const primary = mounted.host.querySelectorAll<HTMLButtonElement>('[data-commitment="active"]')
+      expect(primary).toHaveLength(1)
+      expect(primary[0]!.getAttribute('aria-label')).toBe(translateEnglish('editor:save.saveAndClose'))
+      expect(mounted.host.querySelectorAll('.editor-save-close-action')).toHaveLength(1)
+      mounted.context.serverSaveDisabled = true
+      await Vue.nextTick()
+      expect(mounted.host.querySelector('[data-commitment="active"]')).toBeNull()
+      expect(primary[0]!.disabled).toBe(true)
+      mounted.context.serverSaveDisabled = false
+      store.page.title = mounted.context.savedState.title
+      await Vue.nextTick()
+      expect(mounted.host.querySelector('[data-commitment="active"]')).toBeNull()
+      mounted.context.changeReason = 'Explain an otherwise unchanged page'
+      await Vue.nextTick()
+      expect(mounted.host.querySelectorAll('[data-commitment="active"]')).toHaveLength(1)
+      expect(await mounted.click('save')).toBe(true)
+      await Vue.nextTick()
+      expect(mounted.context.isDirty).toBe(false)
+      expect(mounted.host.querySelector('[data-commitment="active"]')).toBeNull()
+      expect(mounted.host.querySelector('.editor-save-action')).toBeNull()
+    })
+  }
+
+  test('a new page is actionable without claiming it has already been saved', async () => {
+    const mounted = mountSaveActions(Vue.reactive(createStore('create')), createTestWindow())
+    await Vue.nextTick()
+    expect(mounted.host.querySelector('.editor-save-status')?.textContent?.trim()).toBe('')
+    expect(mounted.host.querySelectorAll('[data-commitment="active"]')).toHaveLength(1)
+    expect(mounted.host.querySelector('[data-commitment="active"]')?.getAttribute('aria-label')).toBe(translateEnglish('editor:save.saveAndClose'))
+  })
+
+  for (const width of [1440, 390]) {
     test(`reason disclosure at ${width}px retains its value through Done and immediate reopened Escape`, async () => {
       const store = Vue.reactive(createStore())
       const testWindow = createTestWindow()
       const writes: PageInput[] = []
-      const mounted = mountSaveActions(store, testWindow, {
-        updatePage: async (_fetch, _id, input) => {
-          writes.push(input)
-          return { sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }
-        }
-      }, width)
+      const mounted = mountSaveActions(
+        store,
+        testWindow,
+        {
+          updatePage: async (_fetch, _id, input) => {
+            writes.push(input)
+            return { sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }
+          }
+        },
+        width
+      )
       expect(document.getElementById(mounted.context.changeReasonId) === null).toBe(true)
       const field = await mounted.openReason()
       const trigger = mounted.host.querySelector<HTMLButtonElement>('.editor-change-reason-action, .editor-mobile-reason')
@@ -1197,12 +1321,17 @@ describe('modern editor shell interaction contract', () => {
     const store = Vue.reactive(createStore())
     const testWindow = createTestWindow()
     const writes: PageInput[] = []
-    const mounted = mountSaveActions(store, testWindow, {
-      updatePage: async (_fetch, _id, input) => {
-        writes.push(input)
-        return { sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }
-      }
-    }, 390)
+    const mounted = mountSaveActions(
+      store,
+      testWindow,
+      {
+        updatePage: async (_fetch, _id, input) => {
+          writes.push(input)
+          return { sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }
+        }
+      },
+      390
+    )
     const mobileField = await mounted.openReason()
     expect(mounted.host.querySelector('.editor-change-reason-action') === null).toBe(true)
     mobileField.value = 'One reason across screen sizes'
@@ -1216,7 +1345,9 @@ describe('modern editor shell interaction contract', () => {
     expect(document.querySelectorAll(`#${mounted.context.changeReasonId}`).length).toBe(1)
     desktopField.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await settleReasonPopover()
-    expect(document.activeElement === mounted.host.querySelector('.editor-change-reason-action'), 'Escape returns focus to the current desktop trigger').toBe(true)
+    expect(document.activeElement === mounted.host.querySelector('.editor-change-reason-action'), 'Escape returns focus to the current desktop trigger').toBe(
+      true
+    )
     mounted.setWidth(390)
     await Vue.nextTick()
     expect(await mounted.closeFromMobile()).toBe(true)
@@ -1238,8 +1369,9 @@ describe('modern editor shell interaction contract', () => {
     mounted.context.changeReason = 'Invalid\u202Econtext'
     await mounted.context.exit()
     await settleReasonPopover()
-    const saveAndClose = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button'))
-      .find(button => button.textContent?.trim() === translateEnglish('editor:save.saveAndClose'))
+    const saveAndClose = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')).find(
+      button => button.textContent?.trim() === translateEnglish('editor:save.saveAndClose')
+    )
     if (!saveAndClose) throw new Error('The unsaved confirmation is not mounted')
     saveAndClose.click()
     await settleReasonPopover()
@@ -1284,6 +1416,7 @@ describe('modern editor shell interaction contract', () => {
 
   for (const outcome of ['success', 'rejected', 'unknown', 'post-write'] as const) {
     test(`mounted save reason follows the captured save and ${outcome === 'success' ? 'clears only after confirmation' : `survives ${outcome} outcome without retry`}`, async () => {
+      establishPageWorkingSet({ origin: 'https://wiki.example.test', installation: 'editor-save-test', accountId: 42, authVersion: 1 })
       const store = Vue.reactive(createStore())
       const testWindow = createTestWindow()
       const started = Promise.withResolvers<void>()
@@ -1318,6 +1451,7 @@ describe('modern editor shell interaction contract', () => {
       expect(await saving).toBe(outcome === 'success')
       expect(mounted.context.changeReason).toBe(outcome === 'success' ? '' : 'Explain this exact source')
       expect(inputs).toHaveLength(1)
+      expect(usePageWorkingSet().recentIds).toEqual(outcome === 'success' ? [12] : [])
     })
   }
 
@@ -1359,11 +1493,11 @@ describe('modern editor shell interaction contract', () => {
     const testWindow = createTestWindow()
     let writes = 0
     const previews: Array<{ url: string; credentials: RequestCredentials | undefined }> = []
-    mockRenderPreviews(testWindow, (async (input, init) => {
+    mockRenderPreviews(testWindow, async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : input, testWindow.location.origin)
       previews.push({ url: `${url.pathname}${url.search}`, credentials: init?.credentials })
       return Response.json(createRenderPreview(store))
-    }))
+    })
     const mounted = mountSaveActions(store, testWindow, {
       updatePage: async () => {
         writes++
@@ -1385,7 +1519,7 @@ describe('modern editor shell interaction contract', () => {
     expect(mounted.context.saveFeedback).toBe('saved')
     expect(mounted.context.offlineDraftCoordinator?.hasUnresolvedSubmission).toBe(false)
     expect(mounted.context.editorAdapter.snapshot()).toMatchObject({ editVersion: capturedVersion, nonPersisted: false })
-    expect(mounted.host.querySelector('[role="status"]')?.textContent).toContain('Saved. Preparing the page for viewing')
+    expect(mounted.host.querySelector('[role="status"]')?.textContent).toContain(translateEnglish('editor:save.waitingForRender'))
     expect(await mounted.context.saveAndClose()).toBe(false)
 
     recovery.release()
@@ -1414,10 +1548,10 @@ describe('modern editor shell interaction contract', () => {
       const testWindow = createTestWindow()
       let writes = 0
       let previews = 0
-      mockRenderPreviews(testWindow, (async () => {
+      mockRenderPreviews(testWindow, async () => {
         previews++
         return Response.json(createRenderPreview(store))
-      }))
+      })
       const mounted = mountSaveActions(store, testWindow, {
         updatePage: async () => {
           writes++
@@ -1489,10 +1623,10 @@ describe('modern editor shell interaction contract', () => {
     const testWindow = createTestWindow()
     let writes = 0
     let previews = 0
-    mockRenderPreviews(testWindow, (async () => {
+    mockRenderPreviews(testWindow, async () => {
       previews++
       return Response.json(createRenderPreview(store))
-    }))
+    })
     const mounted = mountSaveActions(store, testWindow, {
       updatePage: async () => {
         writes++
@@ -1524,10 +1658,10 @@ describe('modern editor shell interaction contract', () => {
       const testWindow = createTestWindow()
       let writes = 0
       let previews = 0
-      mockRenderPreviews(testWindow, (async () => {
+      mockRenderPreviews(testWindow, async () => {
         previews++
         return Response.json(createRenderPreview(store))
-      }))
+      })
       const mounted = mountSaveActions(store, testWindow, {
         updatePage: async () => {
           writes++
@@ -1576,10 +1710,10 @@ describe('modern editor shell interaction contract', () => {
       let ready = false
       let writes = 0
       let previews = 0
-      mockRenderPreviews(testWindow, (async () => {
+      mockRenderPreviews(testWindow, async () => {
         previews++
         return Response.json(ready ? createRenderPreview(store) : { error: 'Still rendering', code: 'PAGE_RENDER_PENDING' }, { status: ready ? 200 : 503 })
-      }))
+      })
       const written = async () => {
         writes++
         expect(mounted.context.editorAdapter.snapshot().collaborationBacklog).toBe(backlog)
@@ -1624,8 +1758,8 @@ describe('modern editor shell interaction contract', () => {
         collaborationBacklog: backlog
       })
       expect(testWindow.location.assigned).toEqual([])
-      expect(mounted.host.querySelector('[role="status"]')?.textContent).toContain('Saved. Preparing the page for viewing')
-      expect(mounted.host.querySelector<HTMLButtonElement>('.editor-save-action')?.disabled).toBe(true)
+      expect(mounted.host.querySelector('[role="status"]')?.textContent).toContain(translateEnglish('editor:save.waitingForRender'))
+      expect(mounted.host.querySelector('.editor-save-action')).toBeNull()
       expect(mounted.host.querySelector<HTMLButtonElement>('.editor-save-close-action')?.disabled).toBe(true)
       expect(await mounted.context.save()).toBe(false)
       expect(await mounted.context.saveAndClose()).toBe(false)
@@ -1657,14 +1791,14 @@ describe('modern editor shell interaction contract', () => {
       let writes = 0
       let retryReady = false
       let previews = 0
-      mockRenderPreviews(testWindow, (async () => {
+      mockRenderPreviews(testWindow, async () => {
         previews++
         if (retryReady) return Response.json(createRenderPreview(store))
         if (failure === 'timeout') return Response.json({ error: 'Still rendering', code: 'PAGE_RENDER_PENDING' }, { status: 503 })
         if (failure === 'forbidden') return Response.json({ error: 'Page access was revoked.' }, { status: 403 })
         if (failure === 'untyped service failure') return Response.json({ error: 'Rendering service failed.' }, { status: 503 })
         return Response.json(createRenderPreview(store, '3'))
-      }))
+      })
       const mounted = mountSaveActions(store, testWindow, {
         updatePage: async () => {
           writes++
@@ -1693,7 +1827,7 @@ describe('modern editor shell interaction contract', () => {
       expect(testWindow.location.assigned).toEqual([])
       expect(testWindow.location.replaced).toEqual([])
       expect(store.notifications.at(-1)?.style).toBe('warning')
-      expect(mounted.host.querySelector('[role="status"]')?.textContent).not.toContain('Not saved')
+      expect(mounted.host.querySelector('[role="status"]')?.textContent).not.toContain(translateEnglish('editor:save.notSaved'))
       if (failure !== 'timeout') expect(previews).toBe(1)
       if (failure === 'forbidden') expect(String(store.notifications.at(-1)?.message)).toContain('Page access was revoked.')
       if (failure === 'untyped service failure') expect(String(store.notifications.at(-1)?.message)).toContain('Rendering service failed.')
@@ -1726,12 +1860,12 @@ describe('modern editor shell interaction contract', () => {
       const testWindow = createTestWindow()
       let release!: (response: Response) => void
       let previewSignal: AbortSignal | undefined
-      mockRenderPreviews(testWindow, (async (_url, init) => {
+      mockRenderPreviews(testWindow, async (_url, init) => {
         previewSignal = init?.signal ?? undefined
         return new Promise<Response>(resolve => {
           release = resolve
         })
-      }))
+      })
       const mounted = mountSaveActions(store, testWindow, {
         updatePage: async () => ({ sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }),
         fetchPage: async () => {
@@ -1794,10 +1928,9 @@ describe('modern editor shell interaction contract', () => {
     const testWindow = createTestWindow()
     let creates = 0
     let ready = false
-    mockRenderPreviews(testWindow, (async () =>
-      ready
-        ? Response.json(createRenderPreview(store))
-        : Response.json({ error: 'Still rendering', code: 'PAGE_RENDER_PENDING' }, { status: 503 })))
+    mockRenderPreviews(testWindow, async () =>
+      ready ? Response.json(createRenderPreview(store)) : Response.json({ error: 'Still rendering', code: 'PAGE_RENDER_PENDING' }, { status: 503 })
+    )
     const mounted = mountSaveActions(store, testWindow, {
       createPage: async () => {
         creates++
@@ -1832,12 +1965,12 @@ describe('modern editor shell interaction contract', () => {
     let writes = 0
     let previews = 0
     let release!: (response: Response) => void
-    mockRenderPreviews(testWindow, (async () => {
+    mockRenderPreviews(testWindow, async () => {
       previews++
       return new Promise<Response>(resolve => {
         release = resolve
       })
-    }))
+    })
     const mounted = mountSaveActions(store, testWindow, {
       updatePage: async () => {
         writes++
@@ -2042,10 +2175,15 @@ describe('modern editor shell interaction contract', () => {
       store.editor.editor = editor === 'markdown' ? 'editorMarkdown' : 'editorCkeditor'
       const testWindow = createTestWindow()
       const remote: PageConflictLatest = {
-        updatedAt: '2026-09-03T12:00:00.000Z', sourceRevision: '2',
+        updatedAt: '2026-09-03T12:00:00.000Z',
+        sourceRevision: '2',
         content: editor === 'markdown' ? '# Reviewed remote R2\n' : '<p>Reviewed remote R2</p>',
-        authorName: 'Independent writer', title: store.page.title, description: store.page.description,
-        locale: store.page.locale, path: store.page.path, visibility: store.page.visibility
+        authorName: 'Independent writer',
+        title: store.page.title,
+        description: store.page.description,
+        locale: store.page.locale,
+        path: store.page.path,
+        visibility: store.page.visibility
       }
       let writes = 0
       let previews = 0
@@ -2067,12 +2205,20 @@ describe('modern editor shell interaction contract', () => {
       let editorText = store.editor.content
       const adapter = new EditorAdapterController({
         readText: () => editorText,
-        writeText: text => { editorText = text; store.editor.content = text },
-        clearText: () => { editorText = ''; store.editor.content = '' }
+        writeText: text => {
+          editorText = text
+          store.editor.content = text
+        },
+        clearText: () => {
+          editorText = ''
+          store.editor.content = ''
+        }
       })
       adapter.initialize()
       context.editorAdapter = Vue.markRaw(adapter)
-      adapter.onState(safety => { context.editorAdapterSafety = safety })
+      adapter.onState(safety => {
+        context.editorAdapterSafety = safety
+      })
       try {
         adapter.replaceText(remote.content)
         const acceptedVersion = adapter.capture().editVersion
@@ -2115,19 +2261,33 @@ describe('modern editor shell interaction contract', () => {
       const store = createStore()
       const context = createShellHarness(store, createTestWindow())
       const remote: PageConflictLatest = {
-        updatedAt: '2026-09-03T12:00:00.000Z', sourceRevision: '2', content: 'Reviewed remote R2',
-        authorName: 'Independent writer', title: store.page.title, description: store.page.description,
-        locale: store.page.locale, path: store.page.path, visibility: store.page.visibility
+        updatedAt: '2026-09-03T12:00:00.000Z',
+        sourceRevision: '2',
+        content: 'Reviewed remote R2',
+        authorName: 'Independent writer',
+        title: store.page.title,
+        description: store.page.description,
+        locale: store.page.locale,
+        path: store.page.path,
+        visibility: store.page.visibility
       }
       let editorText = store.editor.content
       const adapter = new EditorAdapterController({
         readText: () => editorText,
-        writeText: text => { editorText = text; store.editor.content = text },
-        clearText: () => { editorText = ''; store.editor.content = '' }
+        writeText: text => {
+          editorText = text
+          store.editor.content = text
+        },
+        clearText: () => {
+          editorText = ''
+          store.editor.content = ''
+        }
       })
       adapter.initialize()
       context.editorAdapter = Vue.markRaw(adapter)
-      adapter.onState(safety => { context.editorAdapterSafety = safety })
+      adapter.onState(safety => {
+        context.editorAdapterSafety = safety
+      })
       try {
         adapter.replaceText(pending === 'local merge' ? 'Local merge on R2' : remote.content)
         if (pending === 'metadata') store.page.title = 'Unsaved local title'
@@ -2197,12 +2357,20 @@ describe('modern editor shell interaction contract', () => {
         let editorText = store.editor.content
         const adapter = new EditorAdapterController({
           readText: () => editorText,
-          writeText: text => { editorText = text; store.editor.content = text },
-          clearText: () => { editorText = ''; store.editor.content = '' }
+          writeText: text => {
+            editorText = text
+            store.editor.content = text
+          },
+          clearText: () => {
+            editorText = ''
+            store.editor.content = ''
+          }
         })
         adapter.initialize()
         context.editorAdapter = Vue.markRaw(adapter)
-        adapter.onState(safety => { context.editorAdapterSafety = safety })
+        adapter.onState(safety => {
+          context.editorAdapterSafety = safety
+        })
         adapter.replaceText(remote.content)
         store.page.sourceRevision = remote.sourceRevision
         context.checkoutDateActive = remote.updatedAt
@@ -2248,9 +2416,15 @@ describe('modern editor shell interaction contract', () => {
     const testWindow = createTestWindow()
     const context = createShellHarness(store, testWindow)
     const remote: PageConflictLatest = {
-      updatedAt: '2026-09-03T12:00:00.000Z', sourceRevision: '2', content: 'Reviewed remote R2',
-      authorName: 'Independent writer', title: store.page.title, description: store.page.description,
-      locale: store.page.locale, path: store.page.path, visibility: store.page.visibility
+      updatedAt: '2026-09-03T12:00:00.000Z',
+      sourceRevision: '2',
+      content: 'Reviewed remote R2',
+      authorName: 'Independent writer',
+      title: store.page.title,
+      description: store.page.description,
+      locale: store.page.locale,
+      path: store.page.path,
+      visibility: store.page.visibility
     }
     context.editorAdapter.replaceText('Unsaved local merge on R2')
     store.page.sourceRevision = remote.sourceRevision
@@ -2277,12 +2451,12 @@ describe('modern editor shell interaction contract', () => {
       let release!: (response: Response) => void
       let previewCalls = 0
       let writes = 0
-      mockRenderPreviews(testWindow, (async () => {
+      mockRenderPreviews(testWindow, async () => {
         previewCalls++
         return await new Promise<Response>(resolve => {
           release = resolve
         })
-      }))
+      })
       const context = createShellHarness(store, testWindow, {
         waitForPageRender,
         updatePage: async () => {
@@ -2371,7 +2545,7 @@ describe('modern editor shell interaction contract', () => {
           live = false
           context.handleCollaborationState({ active: false, discarded: false, generation: null })
         },
-        collaborationBacklog: () => live ? 1 : 0
+        collaborationBacklog: () => (live ? 1 : 0)
       })
       adapter.initialize()
       context.editorAdapter = Vue.markRaw(adapter)
@@ -2691,8 +2865,6 @@ describe('modern editor shell interaction contract', () => {
     await Vue.nextTick()
     const dialog = document.querySelector('[role="alertdialog"]')
     expect(dialog?.querySelector('[role="alert"]')?.textContent?.trim()).toBe(context.discardError)
-    // Main must execute the behavioral replacement before retiring this former binding guard.
-    expect(shellSfc.descriptor.template?.content ?? '').toMatch(/editor-modal-unsaved\([\s\S]*:error='discardError'/)
   })
 
   test('unsaved dialog shows a spinner on Discard and keeps it apart from Save and close', async () => {
@@ -2712,9 +2884,10 @@ describe('modern editor shell interaction contract', () => {
     })
     await Vue.nextTick()
     const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button'))
-    expect(buttons.map(button => button.textContent?.trim())).toEqual(['Discard Changes', 'Cancel', 'Save and close'])
-    expect(buttons[0]?.classList.contains('v-btn--loading')).toBe(true)
-    expect(buttons[2]?.classList.contains('v-btn--loading')).toBe(false)
+    const discard = buttons.find(button => button.textContent?.trim() === translateEnglish('common:actions.discardChanges'))!
+    const saveAndClose = buttons.find(button => button.textContent?.trim() === translateEnglish('editor:save.saveAndClose'))!
+    expect(discard.classList.contains('v-btn--loading')).toBe(true)
+    expect(saveAndClose.classList.contains('v-btn--loading')).toBe(false)
     expect(buttons.every(button => button.disabled)).toBe(true)
   })
 
@@ -2782,6 +2955,7 @@ describe('modern editor shell interaction contract', () => {
   })
 
   test('records a successful create before Save and close navigates', async () => {
+    establishPageWorkingSet({ origin: 'https://wiki.example.test', installation: 'editor-save-test', accountId: 42, authVersion: 1 })
     const store = createStore('create')
     const testWindow = createTestWindow()
     const records: unknown[] = []
@@ -2806,6 +2980,7 @@ describe('modern editor shell interaction contract', () => {
     })
     expect(assignedAtRecord).toBe(0)
     expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
+    expect(usePageWorkingSet().recentIds).toEqual([91])
   })
 
   test('does not record metadata for failed, excluded, or ineligible saves', async () => {
@@ -2902,6 +3077,30 @@ describe('modern editor shell interaction contract', () => {
     const warnings = store.notifications.filter(notification => notification.style === 'warning')
     expect(warnings).toHaveLength(1)
     expect(String(warnings[0]?.message)).toContain('quota exhausted')
+  })
+
+  test('session storage exhaustion cannot turn a committed edit into a failed save or prevent closing', async () => {
+    establishPageWorkingSet({ origin: 'https://wiki.example.test', installation: 'editor-save-test', accountId: 42, authVersion: 1 })
+    const store = createStore()
+    const testWindow = createTestWindow()
+    const context = createShellHarness(store, testWindow)
+    context.editorAdapter.replaceText('Committed despite session storage exhaustion')
+    const prototype = Object.getPrototypeOf(window.sessionStorage)
+    const persist = vi.spyOn(prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota exhausted')
+    })
+    try {
+      expect(await context.saveAndClose()).toBe(true)
+      expect(context.savedState.content).toBe('Committed despite session storage exhaustion')
+      expect(context.isDirty).toBe(false)
+      expect(context.saveFeedback).toBe('saved')
+      expect(usePageWorkingSet().recentIds).toEqual([12])
+      expect(usePageWorkingSet().storage).toBe('unavailable')
+      expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
+      expect(store.notifications.some(notification => notification.style === 'error')).toBe(false)
+    } finally {
+      persist.mockRestore()
+    }
   })
 
   test('successful update Save and close persists edits and cancels the stale edit redirect', async () => {
@@ -3451,7 +3650,11 @@ describe('modern editor shell interaction contract', () => {
     expect(missingStore.notifications).toHaveLength(3)
     for (const notification of missingStore.notifications) expect(notification.style).toBe('warning')
 
-    expect(shellSfc.descriptor.template?.content ?? '').toMatch(/offlineDraftStatus === `locked` \|\| !offlineDraftCoordinator/)
+    for (const context of [lockedContext, missingContext]) {
+      const host = await mountRecoveryActions(context)
+      const buttons = Array.from(host.querySelectorAll('button'))
+      expect(buttons.map(button => button.textContent?.trim())).toEqual([translateEnglish('editor:offline.reloadEditor')])
+    }
   })
   test('blocks unavailable resource publication without converting it into identity lock recovery', async () => {
     const store = createStore()
@@ -3472,9 +3675,19 @@ describe('modern editor shell interaction contract', () => {
     expect(updateCalls).toBe(0)
     expect(store.notifications).toHaveLength(1)
     expect(store.notifications[0]?.style).toBe('warning')
-    expect(shellSfc.descriptor.template?.content ?? '').toMatch(/offlineDraftStatus === `locked` \|\| !offlineDraftCoordinator/)
-    expect(shellSfc.descriptor.template?.content ?? '').toMatch(/editor-draft-review-actions\(v-if='offlineDraftRows.length > 0'\)/)
-    expect(shellSfc.descriptor.template?.content ?? '').not.toMatch(/editor-draft-recovery-actions\(v-if='offlineDraftStatus === `unavailable`'/)
+    const host = await mountRecoveryActions(context, [
+      {
+        key: 'retained-draft',
+        title: 'Retained local changes',
+        relativeTime: 'Recently',
+        exactTime: '2026-09-03T12:00:00.000Z',
+        shortTime: '12:00',
+        delta: 'Changed body'
+      }
+    ])
+    const buttons = Array.from(host.querySelectorAll('button'))
+    expect(buttons.some(button => button.textContent?.trim() === translateEnglish('editor:offline.reloadEditor'))).toBe(false)
+    expect(buttons.some(button => button.textContent?.trim() === translateEnglish('editor:offline.restoreDraftAt', { time: '12:00' }))).toBe(true)
   })
   test('requests the global identity boundary for a receiptless unauthorized save', async () => {
     const store = createStore()
@@ -3716,7 +3929,10 @@ describe('modern editor shell interaction contract', () => {
     })
     app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
     app.mount(host)
-    modalUnmounts.push(() => { app.unmount(); host.remove() })
+    modalUnmounts.push(() => {
+      app.unmount()
+      host.remove()
+    })
     expect(Boolean(host.querySelector('.editor-bootstrap-notice'))).toBe(false)
     const message = 'Historical CSS <img id="bootstrap-notice-probe" src="missing"> was not copied.'
     notice.value = message

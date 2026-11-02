@@ -1,8 +1,8 @@
 <template lang="pug">
-  v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus && !talkActive && !linksActive, "wiki-page--full-width": readerFullWidth }]')
+  v-app.wiki-page(v-scroll='upBtnScroll', @keydown.esc='readerSectionsEscape', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus && !talkActive && !linksActive, "wiki-page--full-width": readerFullWidth, "wiki-page--inline-outline": isTocCompact }]')
     a.page-skip-link(:href='linksActive ? `#page-links` : talkActive ? `#discussion` : `#${pageArticleId}`', @click.prevent='linksActive ? focusLinks() : talkActive ? goToComments() : focusArticle()') {{$t('common:page.skipToContent')}}
     glossary-reader(v-if='!printView', :locale='locale', :page-key='`${pageId}:${navigationKey}:${sourceRevision}`', :content-root='readerContentRoot', :request-pin='requestGlossaryPin', :pin-state='glossaryPinState', @pin-selection='selectGlossaryPin', v-slot='{ glossary }')
-      nav-header(reserve-actions, :before-search-exit='glossary.canLeave', :navigation-breakpoint='1280')
+      nav-header(reserve-actions, :before-search-exit='glossary.canLeave', :navigation-breakpoint='1280', :reading-mode='readerDockVisible', @reading-chrome-change='refreshReadingChromeGeometry')
         template(v-slot:navigationToggle)
           v-btn.page-navigation-control(
             v-if='navMode !== `NONE` && (!readerFocus || talkActive || linksActive)'
@@ -18,22 +18,19 @@
       search-results(:glossary='glossary')
     //- Navigation is indeterminate; the header spinner and aria-busy own status.
     .page-navigation-progress(v-if='!printView && showPageProgress && navigationPending', aria-hidden='true')
-    //- Decorative: a live progressbar would announce every scroll step.
-    .page-position(v-if='!printView', aria-hidden='true', :style='{ insetInlineStart: pagePositionInsetStart }')
-      .page-position-fill(:style='{ transform: $t(`common:page.scalex`, { value: readingProgress / 100, interpolation: { escapeValue: false } }) }')
-    .page-reading-chrome(v-show='readerFocus && !printView && !talkActive && !linksActive', @keydown.esc.capture='readerSectionsEscape')
+    //- Scalar position is separate from stored earned-reading coverage.
+    .page-position(v-if='!printView && !talkActive && !linksActive && !readerDockVisible && !readerHasSections', role='progressbar', :aria-label='$t(`common:page.articlePosition`)', :aria-valuenow='readingProgress', aria-valuemin='0', aria-valuemax='100', :style='{ insetInlineStart: pagePositionInsetStart }')
+      .page-position-fill(:style='{ transform: `scaleX(${readingProgress / 100})` }')
+    .page-reading-chrome(v-show='readerFocus && !printView && !talkActive && !linksActive')
       .page-reading-dock(ref='readingDock', v-if='readerFocus && !printView && !talkActive && !linksActive', role='region', :aria-label='$t(`common:page.focusReading`)')
         .page-reading-progress(
-          v-if='readingProgressAvailable'
           role='progressbar'
-          :aria-label='$t(`common:page.personalReadingProgress`)'
-          :aria-valuenow='measuredReading.progress'
-          :aria-valuetext='readingProgressDescription'
-          :title='readingProgressDescription'
+          :aria-label='$t(`common:page.articlePosition`)'
+          :aria-valuenow='readingProgress'
           aria-valuemin='0'
           aria-valuemax='100'
         )
-          .page-reading-progress-fill(:style='{ height: `${measuredReading.progress}%` }')
+          .page-reading-progress-fill(:style='{ transform: `scaleX(${readingProgress / 100})` }')
         v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
         .page-reading-dock-context
           span.page-reading-dock-title
@@ -44,9 +41,6 @@
           .page-reading-dock-meta(v-if='readerSection || readingProgressAvailable')
             span.page-reading-dock-position(v-if='readerSection') {{ $t('common:page.sectionPosition', { current: readerSectionIndex + 1, total: tocFlattened.length }) }}
             span.page-reading-dock-document(v-if='readerSection') {{ title }}
-            span.page-reading-dock-progress(v-if='readingProgressAvailable', :title='readingProgressDescription')
-              span.d-sr-only {{ $t('common:page.personalReadingProgress') }}:
-              | {{ $t('common:page.readingSectionProgress', { percent: measuredReading.progress }) }}
           v-btn.page-reading-dock-top(
             v-if='upBtnShown'
             variant='text'
@@ -121,7 +115,7 @@
     v-main.page-main(
       ref='content'
       :aria-busy='navigationPending ? `true` : undefined'
-      :class='{ "page-main--with-rail": tocPosition !== `off` && !printView && (!readerFocus || talkActive || linksActive), "page-main--with-edit-fab": showEditFab }'
+      :class='{ "page-main--with-rail": readerHasSections && !isTocCompact && !printView && !readerDockVisible && !talkActive && !linksActive, "page-main--with-edit-fab": showEditFab }'
     )
       v-container.page-hero(
         fluid
@@ -185,32 +179,38 @@
                     p(v-else) {{ $t('common:page.accuracyUnknown') }}
                     p(v-if='accuracyUnavailableReason') {{ accuracyUnavailableReason }}
                     p(v-if='accuracyError', role='status') {{ accuracyError }}
-                    button.page-accuracy-verify(
+                    v-btn.page-accuracy-verify(
                       v-if='isAuthenticated'
-                      type='button'
+                      variant='tonal'
+                      size='small'
+                      prepend-icon='mdi-check-decagram-outline'
                       :disabled='!accuracyActionReady || accuracyPending'
                       :aria-busy='accuracyPending'
                       @click='verifyAccuracy'
                     ) {{ $t(accuracyPending ? 'common:page.accuracyVerifying' : 'common:page.verifyAccuracy') }}
                     a(v-if='accuracyReviewRequired', :href='pageUrl') {{ $t('common:page.accuracyReloadReview') }}
-                    button.page-accuracy-verify(v-else-if='!accuracyPending', type='button', @click='loadAccuracy') {{ $t('common:page.accuracyRefresh') }}
+                    v-btn(v-else-if='!accuracyPending', variant='text', size='small', prepend-icon='mdi-refresh', @click='loadAccuracy') {{ $t('common:page.accuracyRefresh') }}
             .page-hero-actions(v-if='!printView')
               v-btn.page-focus-control(
-                v-if='!readerFocus && !talkActive && !linksActive'
-                variant='outlined'
+                v-if='!talkActive && !linksActive'
+                variant='tonal'
                 size='small'
                 prepend-icon='mdi-book-open-page-variant-outline'
-                :aria-label='$t(`common:page.focusReading`)'
+                :aria-label='$t(readerFocus ? `common:page.exitFocusEscape` : `common:page.focusReading`)'
                 :aria-pressed='readerFocus'
                 @click='toggleReaderFocus'
-              ) {{$t('common:page.focusReading')}}
+              ) {{$t(readerFocus ? 'common:page.exitFocusEscape' : 'common:page.focusReading')}}
+              v-menu(v-model='shareMenuOpen', location='bottom end', min-width='280', max-width='360', :close-on-content-click='false', :content-props='shareMenuContentProps')
+                template(v-slot:activator='{ props }')
+                  v-btn(v-bind='props', data-reader-share-trigger, variant='tonal', size='small', prepend-icon='mdi-share-variant', aria-haspopup='dialog', :aria-label='$t(`common:page.share`)', @keydown.capture='handleShareMenuKeydown') {{$t('common:page.share')}}
+                social-sharing(:url='pageUrl', :title='title', :description='description', :section-anchor='shareSectionAnchor', :public-context-eligible='publicSharingContextEligible', @keydown.capture='handleShareMenuKeydown')
               v-tooltip(:disabled='readerFocus', :close-delay='0', :transition='false', location='bottom', max-width='320')
                 template(v-slot:activator='{ props }')
                   v-btn.page-offline-control(
                     v-bind='props'
-                    variant='outlined'
+                    variant='tonal'
                     size='small'
-                    :prepend-icon='offlineControl.icon'
+                    :icon='offlineControl.icon'
                     :class='[`page-offline-control--${offlineControl.tone}`, { "page-offline-control--blocked": offlineControl.blocked }]'
                     :loading='offlineActionLoading'
                     :aria-disabled='offlineControl.blocked ? `true` : undefined'
@@ -219,15 +219,16 @@
                     :aria-describedby='[props["aria-describedby"], offlineStatusId].filter(Boolean).join(" ")'
                     :data-offline-state='offlineControl.state'
                     @click='toggleOfflinePage'
-                  ) {{offlineControl.label}}
+                  )
                 .page-offline-tooltip
                   strong.page-offline-tooltip__title {{ offlineControl.title }}
                   span.page-offline-tooltip__detail(v-if='offlineControl.detail') {{ offlineControl.detail }}
               span.page-offline-status(:id='offlineStatusId', role='status') {{ offlineStatusLabel }}
-              v-menu(v-model='shareMenuOpen', location='bottom end', min-width='280', max-width='360')
-                template(v-slot:activator='{ props }')
-                  v-btn(v-bind='props', data-reader-share-trigger, variant='outlined', size='small', prepend-icon='mdi-share-variant', :aria-label='$t(`common:page.share`)', @keydown.capture='handleShareMenuKeydown') {{$t('common:page.share')}}
-                social-sharing(:url='pageUrl', :title='title', :description='description', @keydown.capture='handleShareMenuKeydown')
+              .page-edit-shortcuts(v-if='showHeaderEditButton || (editShortcutsObj.editMenuBar && editShortcutsObj.editMenuExternalBtn && editMenuExternalUrl)')
+                v-btn(v-if='showHeaderEditButton', @click='pageEdit', variant='tonal', size='small', prepend-icon='mdi-pencil', :aria-label='$t(`common:actions.edit`)')
+                  span.text-none {{$t('common:actions.edit')}}
+                v-btn(v-if='editShortcutsObj.editMenuBar && editShortcutsObj.editMenuExternalBtn && editMenuExternalUrl', :href='editMenuExternalUrl', target='_blank', rel='noopener', variant='text', size='small', :prepend-icon='editShortcutsObj.editMenuExternalIcon', :aria-label='$t(`common:page.editExternal`, { name: editShortcutsObj.editMenuExternalName })')
+                  span.text-none {{$t('common:page.editExternal', { name: editShortcutsObj.editMenuExternalName })}}
             nav.page-header-path(
               v-if='!printView && path !== `home`'
               role='navigation'
@@ -258,32 +259,10 @@
             .page-header-unpublished(v-if='!isPublished', role='note')
               v-chip.page-unpublished-chip(size='small', color='warning', variant='tonal', prepend-icon='mdi-eye-off-outline') {{$t('common:page.unpublished')}}
               span.page-header-unpublished-text.text-body-small {{$t('common:page.unpublishedWarning')}}
-            .page-edit-shortcuts(
-              v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
-              :class='tocPosition === `right` ? `is-right` : ``'
-            )
-              v-btn(
-                v-if='showHeaderEditButton'
-                @click='pageEdit'
-                variant="flat"
-                size="small"
-              )
-                v-icon.mr-2(size="small") mdi-pencil
-                span.text-none {{$t(`common:actions.edit`)}}
-              v-btn(
-                v-if='editShortcutsObj.editMenuExternalBtn && editMenuExternalUrl'
-                :href='editMenuExternalUrl'
-                target='_blank'
-                rel='noopener'
-                variant="flat"
-                size="small"
-              )
-                v-icon.mr-2(size="small") {{ editShortcutsObj.editMenuExternalIcon }}
-                span.text-none {{$t(`common:page.editExternal`, { name: editShortcutsObj.editMenuExternalName })}}
       v-container.page-body(fluid)
         v-row
           v-col.page-col-sd(
-            v-if='tocPosition !== `off`'
+            v-if='readerHasSections && !isTocCompact'
             v-show='!printView'
             cols='12'
             :class='tocPosition === `right` ? `page-col-sd--toc-right` : `page-col-sd--toc-left`'
@@ -293,7 +272,7 @@
 
           v-col.page-col-content(
             cols='12'
-            :class='[tocPosition === `right` ? `page-col-content--toc-right` : `page-col-content--toc-left`, { "page-col-content--with-toc": tocPosition !== `off`, "page-col-content--toc-off": tocPosition === `off` }]'
+            :class='[tocPosition === `right` ? `page-col-content--toc-right` : `page-col-content--toc-left`, { "page-col-content--with-toc": readerHasSections && !isTocCompact, "page-col-content--toc-off": !readerHasSections || isTocCompact }]'
             )
             #page-inline-toc.page-inline-toc
             v-menu(
@@ -308,11 +287,9 @@
                   v-bind='props'
                   :aria-label='$t(`common:header.pageActions`)'
                 )
-                  v-icon {{ hasWritePagesPermission ? 'mdi-pencil' : 'mdi-dots-horizontal' }}
+                  v-icon mdi-dots-horizontal
               v-list(density='compact', nav)
                 v-list-subheader {{$t('common:header.pageActions')}}
-                v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-pencil', @click='pageEdit')
-                  v-list-item-title {{$t('common:page.editPage')}}
                 v-list-item(v-if='hasReadHistoryPermission', prepend-icon='mdi-history', @click='pageHistory')
                   v-list-item-title {{$t('common:header.history')}}
                 v-list-item(v-if='hasReadSourcePermission', prepend-icon='mdi-code-tags', @click='pageSource')
@@ -362,20 +339,18 @@
           Teleport(
             defer
             :to='readerSectionsOpen ? `#page-reading-sections-host` : isTocCompact ? `#page-inline-toc` : `#page-desktop-rail`'
-            :disabled='printView || tocPosition === `off`'
+            :disabled='printView || !readerHasSections'
           )
-              v-card.page-toc-card(v-if='tocPosition !== `off` && !talkActive && !linksActive', tag='nav', :aria-label='$t(`common:page.onThisPage`)')
+              v-card.page-toc-card(v-show='readerHasSections && !talkActive && !linksActive', tag='nav', :aria-label='$t(`common:page.onThisPage`)')
                 .page-reading-progress(
-                  v-if='readingProgressAvailable'
+                  v-if='!readerDockVisible && readerHasSections'
                   role='progressbar'
-                  :aria-label='$t(`common:page.personalReadingProgress`)'
-                  :aria-valuenow='measuredReading.progress'
-                  :aria-valuetext='readingProgressDescription'
-                  :title='readingProgressDescription'
+                  :aria-label='$t(`common:page.articlePosition`)'
+                  :aria-valuenow='readingProgress'
                   aria-valuemin='0'
                   aria-valuemax='100'
                 )
-                  .page-reading-progress-fill(:style='{ height: `${measuredReading.progress}%` }')
+                  .page-reading-progress-fill(:style='{ transform: `scaleX(${readingProgress / 100})` }')
                 //- In the picker the outline is always disclosed.
                 .page-toc-summary(v-if='isTocCompact && !readerSectionsOpen')
                   v-btn.page-toc-toggle.text-none(
@@ -386,9 +361,6 @@
                   )
                     span.page-toc-heading-label.text-label-small {{$t('common:page.onThisPage')}}
                     span.page-toc-toggle-meta
-                      span.page-reading-progress-label(v-if='readingProgressAvailable', :title='readingProgressDescription')
-                        span.d-sr-only {{ $t('common:page.personalReadingProgress') }}:
-                        | {{ $t('common:page.readingSectionProgress', { percent: measuredReading.progress }) }}
                       span.page-toc-count(aria-hidden='true') {{ tocFlattened.length }}
                       span.d-sr-only {{ $t('common:page.sectionsCount', { count: tocFlattened.length }) }}
                       v-icon(size='small', aria-hidden='true') {{ tocDisclosureExpanded ? `mdi-chevron-up` : `mdi-chevron-down` }}
@@ -404,9 +376,6 @@
                   span.page-toc-heading-label.text-label-small {{$t('common:page.onThisPage')}}
                   span.page-toc-count(aria-hidden='true') {{ tocFlattened.length }}
                   span.d-sr-only {{ $t('common:page.sectionsCount', { count: tocFlattened.length }) }}
-                span.page-reading-progress-label.page-toc-progress-label(v-if='!isTocCompact && !readerSectionsOpen && readingProgressAvailable', :title='readingProgressDescription')
-                  span.d-sr-only {{ $t('common:page.personalReadingProgress') }}:
-                  | {{ $t('common:page.readingSectionProgress', { percent: measuredReading.progress }) }}
 
                 div#page-toc-content.page-toc-content(
                   v-show='readerSectionsOpen || tocDisclosureExpanded'
@@ -794,6 +763,7 @@ import { composeDiscussionAnnotation, onJumpDiscussionAnnotation } from '@/helpe
 import type { DiscussionAnnotationAnchor } from '../../../../shared/discussion-annotations.ts'
 import { fetchPage, verifyPageAccuracy } from '@/helpers/pages-api'
 import { PageAccuracyViewSchema, PAGE_ACCURACY_DAY_MS, type PageAccuracyView } from '../../../../shared/page-accuracy.ts'
+import { publicationBoundaryTimestamp, publicationWindowOpen } from '../../../../shared/publication-window.ts'
 import {
   buildOutlineTree,
   filterOutlineTree,
@@ -1365,6 +1335,7 @@ const PageTocTree = defineComponent({
             reading?.completed ? 'page-toc-item--completed' : ''
           ],
           'aria-current': isActive ? 'location' : undefined,
+          title: node.title,
           onClick: (e: MouseEvent) => props.onNavigate(e, node.anchor)
         },
         [
@@ -1375,10 +1346,6 @@ const PageTocTree = defineComponent({
             },
             [h('span', { class: 'page-toc-item-title-text' }, node.title)]
           ),
-          reading ? h('span', { class: 'd-sr-only' }, `, ${props.t(
-            reading.completed ? 'common:page.readingSectionCompleted' : 'common:page.readingSectionProgress',
-            { percent: reading.progress }
-          )}`) : null,
           reading?.completed ? h('span', { class: 'page-reading-completed', 'aria-hidden': 'true' }, [
             h('i', { class: ['mdi', 'mdi-check'] })
           ]) : null
@@ -1535,6 +1502,22 @@ export default defineComponent({
       type: Boolean,
       default: false
     },
+    effectiveIsPublished: {
+      type: Boolean,
+      default: false
+    },
+    publicSharingEligible: {
+      type: Boolean,
+      default: false
+    },
+    publishStartDate: {
+      type: String as PropType<string | null>,
+      default: null
+    },
+    publishEndDate: {
+      type: String as PropType<string | null>,
+      default: null
+    },
     visibility: {
       type: String as PropType<'public' | 'private'>,
       default: 'public'
@@ -1650,6 +1633,8 @@ export default defineComponent({
       accuracyReviewRequired: false,
       accuracyTimer: null as ReturnType<typeof setTimeout> | null,
       accuracyVisibilityHandler: null as (() => void) | null,
+      publicationClock: Date.now(),
+      publicationTimer: null as ReturnType<typeof setTimeout> | null,
       measuredReading: { status: 'disabled', progress: 0, sections: [], completedAnchors: [] } as PageReadingProgressState,
       readingContentAuthority: null as string | null,
       readingAdmittedContentKey: '',
@@ -1788,7 +1773,7 @@ export default defineComponent({
       set (value: boolean) { if (!this.readerFocus || this.talkActive || this.linksActive) this.navShown = value }
     },
     navDrawerWidth (): number {
-      return this.wideViewport ? 269.6 : 244
+      return this.wideViewport ? 256 : 244
     },
     // Below 1280 the drawer floats over the content, so the reading bar keeps
     // its full width; docked, it starts where the sidebar ends.
@@ -2001,6 +1986,9 @@ export default defineComponent({
     accuracyMenuContentProps () {
       return { role: 'dialog', 'aria-label': this.$t('common:page.accuracyDetails') }
     },
+    shareMenuContentProps () {
+      return { role: 'dialog', 'aria-label': this.$t('common:page.share') }
+    },
     accuracyCurrent (): PageAccuracyView | null {
       if (this.accuracyReadyKey !== this.accuracyContextKey || !this.pageTransportVerified ||
         wikiStore.authRefreshPending || !wikiStore.authRefreshSettled || this.navigationPending ||
@@ -2065,15 +2053,12 @@ export default defineComponent({
     editShortcutsObj () {
       return wikiStore.page.editShortcuts
     },
-    // Small screens show one edit control: the page-actions button when it is
-    // enabled, otherwise the header Edit button.
+    // The hero owns Edit; the configured FAB retains other page actions.
     showEditFab (): boolean {
       return Boolean(this.hasAnyPagePermissions && this.editShortcutsObj.editFab && this.$vuetify.display.smAndDown)
     },
     showHeaderEditButton (): boolean {
-      if (!this.editShortcutsObj.editMenuBtn) return false
-      if (!this.hasWritePagesPermission) return true
-      return this.$vuetify.display.smAndDown && !this.showEditFab
+      return this.hasWritePagesPermission && Boolean((this.editShortcutsObj.editMenuBar && this.editShortcutsObj.editMenuBtn) || this.editShortcutsObj.editFab)
     },
     // i18next places {{author}} anywhere in the sentence; split around it so the
     // name renders in an isolated <bdi> without breaking word order.
@@ -2123,8 +2108,9 @@ export default defineComponent({
     },
     pageUrl (): string {
       const scope = this.visibility === 'private' ? '/_private' : ''
-      const locale = this.locales.length > 0 ? `/${this.locale}` : ''
-      return new URL(`${scope}${locale}/${this.path}`, window.location.origin).href
+      const locale = this.locales.length > 0 ? `/${encodeURIComponent(this.locale)}` : ''
+      const path = this.path.split('/').map(segment => encodeURIComponent(segment)).join('/')
+      return new URL(`${scope}${locale}/${path}`, window.location.origin).href
     },
     offlinePrivatePath (): boolean {
       void this.offlineReadingStateVersion
@@ -2211,7 +2197,7 @@ export default defineComponent({
       return this.tocTree
     },
     readerHasSections (): boolean {
-      return this.tocPosition !== 'off' && this.tocFlattened.length > 0
+      return this.tocPosition !== 'off' && this.tocFlattened.length >= 2
     },
     readerSectionsAvailable (): boolean {
       return this.readerFocus && !this.printView && !this.talkActive && !this.linksActive && this.readerHasSections
@@ -2226,6 +2212,23 @@ export default defineComponent({
     },
     readerSection (): FlattenedTableOfContentsNode | null {
       return this.readerHasSections ? this.tocFlattened[this.readerSectionIndex] ?? null : null
+    },
+    shareSectionAnchor (): string {
+      const id = decodePageAnchor(this.activeAnchor).replace(/^#/, '')
+      const container = this.$refs.container
+      if (!id || this.navigationPending || this.selectedPageView !== 'article' || !(container instanceof HTMLElement)) return ''
+      return this.tocFlattened.some(entry => decodePageAnchor(entry.anchor).replace(/^#/, '') === id) &&
+        Array.from(container.querySelectorAll<HTMLElement>('[id]')).some(element => element.id === id) ? id : ''
+    },
+    currentPublicationEligible (): boolean {
+      return this.effectiveIsPublished === true && this.isPublished &&
+        publicationWindowOpen(this, Math.max(this.publicationClock, Date.now()))
+    },
+    publicSharingContextEligible (): boolean {
+      return this.publicSharingEligible === true && this.visibility === 'public' && this.currentPublicationEligible && this.pageTransportVerified &&
+        Boolean(this.readingReaderAuthority) && this.readingContentAuthority === this.readingReaderAuthority &&
+        this.readingAdmittedContentKey === this.readingContentKey && this.readingContentNode === this.$refs.container &&
+        !this.offlineDisposed && !this.navigationPending && !this.printView && this.selectedPageView === 'article'
     },
     // Signed-in readers whose account could not load and who have no saved
     // time zone see the browser zone; name it so the time is not misread.
@@ -2246,7 +2249,7 @@ export default defineComponent({
       return this.lastEditorVisible && Boolean(this.authorName && this.authorName.trim() && this.authorName.toLowerCase() !== 'unknown')
     },
     isTocCompact (): boolean {
-      return !this.wideViewport
+      return !this.wideViewport || (this.tocPosition === 'left' && this.navigationOpen)
     },
     tocDisclosureExpanded (): boolean {
       return !this.isTocCompact || this.tocExpanded
@@ -2298,6 +2301,20 @@ export default defineComponent({
     }
   },
   watch: {
+    isTocCompact () {
+      const focused = document.activeElement instanceof HTMLElement && document.activeElement.closest('.page-toc-card')
+        ? document.activeElement : null
+      this.$nextTick(() => {
+        this.setupTocResizeObserver()
+        this.ensureActiveTocVisible()
+        this.outlineCleanup?.refresh()
+        if (focused?.isConnected) {
+          const target = this.isTocCompact && !this.tocExpanded && !this.readerSectionsOpen
+            ? (this.$el as HTMLElement).querySelector<HTMLElement>('.page-toc-toggle') : focused
+          target?.focus({ preventScroll: true })
+        }
+      })
+    },
     readerCitedCopyContextKey: {
       flush: 'sync',
       handler () {
@@ -2328,6 +2345,9 @@ export default defineComponent({
         })
       }
     },
+    effectiveIsPublished () { this.refreshPublicationClock() },
+    publishStartDate () { this.refreshPublicationClock() },
+    publishEndDate () { this.refreshPublicationClock() },
     title () {
       this.$nextTick(() => {
         if (!this.offlineDisposed) this.refreshPageContent()
@@ -2476,7 +2496,9 @@ export default defineComponent({
   },
   mounted () {
     onReaderPageActionsRequest(this.provideReaderPageActions)
+    this.refreshPublicationClock()
     this.accuracyVisibilityHandler = () => {
+      this.refreshPublicationClock()
       this.invalidateAccuracy()
       if (document.visibilityState === 'visible') void this.loadAccuracy()
     }
@@ -2562,6 +2584,8 @@ export default defineComponent({
     }
   },
   beforeUnmount () {
+    if (this.publicationTimer !== null) clearTimeout(this.publicationTimer)
+    this.publicationTimer = null
     this.invalidateAccuracy()
     if (this.accuracyVisibilityHandler) document.removeEventListener('visibilitychange', this.accuracyVisibilityHandler)
     offReaderPageActionsRequest(this.provideReaderPageActions)
@@ -2620,6 +2644,18 @@ export default defineComponent({
     this.contentExtensionCleanup = null
   },
   methods: {
+    refreshPublicationClock (): void {
+      if (this.publicationTimer !== null) clearTimeout(this.publicationTimer)
+      this.publicationTimer = null
+      this.publicationClock = Date.now()
+      if (this.offlineDisposed || !this.effectiveIsPublished) return
+      const end = publicationBoundaryTimestamp(this.publishEndDate)
+      if (end === null || !Number.isFinite(end) || end < this.publicationClock) return
+      this.publicationTimer = setTimeout(() => {
+        this.publicationTimer = null
+        this.refreshPublicationClock()
+      }, Math.max(1, Math.min(60_000, end - this.publicationClock + 1)))
+    },
     invalidateAccuracy (): void {
       this.accuracyRequestId += 1
       this.accuracyReadyKey = ''
@@ -2771,7 +2807,7 @@ export default defineComponent({
         if (!target) {
           const overlayId = trigger.getAttribute('aria-controls')
           const controls = overlayId
-            ? document.getElementById(overlayId)?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href]')
+            ? document.getElementById(overlayId)?.querySelectorAll<HTMLElement>('input:not(:disabled), button:not(:disabled), a[href]')
             : null
           target = (focusLast ? controls?.[controls.length - 1] : controls?.[0]) ?? null
         }
@@ -2807,6 +2843,9 @@ export default defineComponent({
       if (identity === this.pageBrandingIdentity) this.brandingFailureIdentity = identity
     },
     async toggleReaderFocus(): Promise<void> {
+      const page = this.readerPageIdentity
+      const authority = this.readingReaderAuthority
+      const originalFocus = document.activeElement
       const container = this.$refs.container as HTMLElement
       const headerBottom = document.querySelector('.nav-header')?.getBoundingClientRect().bottom ?? 64
       const blocks = Array.from(container.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6, p, li, summary, pre, table'))
@@ -2822,9 +2861,16 @@ export default defineComponent({
       this.cancelScheduledScroll()
       this.scrollAnimationFrame = requestAnimationFrame(() => {
         this.scrollAnimationFrame = null
+        if (this.offlineDisposed || !sameReaderPageIdentity(page, this.readerPageIdentity) ||
+          authority !== this.readingReaderAuthority ||
+          (document.activeElement !== originalFocus && !(originalFocus instanceof HTMLElement &&
+            !originalFocus.isConnected && document.activeElement === document.body))) return
         if (previousScrollY > 0 && anchor && previousTop !== undefined) window.scrollBy(0, anchor.getBoundingClientRect().top - previousTop)
-        const target = this.$el.querySelector(this.readerFocus ? '.page-reading-exit' : '.page-focus-control') as HTMLElement | null
-        target?.focus({ preventScroll: true })
+        if (!this.readerFocus && !this.offlineDisposed && this.selectedPageView === 'article' &&
+          !document.querySelector('.v-overlay--active')) {
+          const target = this.$el.querySelector('.page-focus-control') as HTMLElement | null
+          target?.focus({ preventScroll: true })
+        }
       })
     },
     async toggleReaderSections(): Promise<void> {
@@ -2856,10 +2902,16 @@ export default defineComponent({
       }
     },
     readerSectionsEscape(event: KeyboardEvent): void {
-      if (!this.readerSectionsOpen) return
-      event.preventDefault()
-      event.stopPropagation()
-      this.closeReaderSections(true)
+      if (event.isComposing || event.defaultPrevented) return
+      if (this.readerSectionsOpen) {
+        event.preventDefault()
+        event.stopPropagation()
+        this.closeReaderSections(true)
+      } else if (this.readerDockVisible && !document.querySelector('.v-overlay--active')) {
+        event.preventDefault()
+        event.stopPropagation()
+        void this.toggleReaderFocus()
+      }
     },
     moveReaderSection(direction: -1 | 1): void {
       if (!this.readerSectionsAvailable) return
@@ -3625,32 +3677,6 @@ export default defineComponent({
         this.tocScrollBound = true
       }
     },
-    applyTocActiveMarquee (active: HTMLElement | null): void {
-      if (typeof window === 'undefined') return
-      const root = this.$el as HTMLElement
-      if (!root) return
-      for (const el of [...root.querySelectorAll<HTMLElement>('.page-toc-item-title--marquee')]) {
-        if (active && el.parentElement === active) continue
-        el.classList.remove('page-toc-item-title--marquee')
-        el.style.removeProperty('--toc-marquee-shift')
-        el.style.removeProperty('--toc-marquee-duration')
-      }
-      if (!active) return
-      const title = active.querySelector<HTMLElement>('.page-toc-item-title')
-      if (!title) return
-      const overflow = title.scrollWidth - title.clientWidth
-      if (overflow <= 2) return
-      const rtl = getComputedStyle(title).direction === 'rtl'
-      const desiredShift = `${rtl ? overflow : -overflow}px`
-      // Keep the running animation untouched when re-measured with the same
-      // values; re-adding the class would restart the oscillation.
-      if (title.classList.contains('page-toc-item-title--marquee')
-        && title.style.getPropertyValue('--toc-marquee-shift') === desiredShift) return
-      title.classList.add('page-toc-item-title--marquee')
-      title.style.setProperty('--toc-marquee-shift', desiredShift)
-      const duration = Math.min(8, Math.max(2.5, 2 + overflow / 24))
-      title.style.setProperty('--toc-marquee-duration', `${duration.toFixed(2)}s`)
-    },
     ensureActiveTocVisible(): void {
       if (this.tocUserScrollAt && performance.now() - this.tocUserScrollAt < 900) return
       if (this.tocRevealRafId !== null || !this.$el) return
@@ -3661,7 +3687,6 @@ export default defineComponent({
         const visible = (item: HTMLElement): boolean => item.getClientRects().length > 0
         let active = links.find(item => item.getAttribute('aria-current') === 'location' && visible(item))
         if (!active) active = links.find(item => item.classList.contains('page-toc-item--descendant-active') && visible(item))
-        this.applyTocActiveMarquee(active ?? null)
         if (!active) return
         const row = active.closest('.page-toc-row') as HTMLElement | null
         if (!row) return
@@ -3739,6 +3764,10 @@ export default defineComponent({
       this.outlineCleanup?.dispose()
       this.outlineCleanup = null
       this.measuredReading = { status: 'disabled', progress: 0, sections: [], completedAnchors: [] }
+    },
+    refreshReadingChromeGeometry (): void {
+      this.outlineCleanup?.refresh()
+      this.updateReadingDockClearance()
     },
     setupPageOutline (): void {
       const container = this.$refs.container
@@ -4796,7 +4825,7 @@ export default defineComponent({
   --page-toc-empty-height: calc(var(--wiki-grid-size) * 2);
   --page-layout-shell-max: 132rem;
   --page-reader-shell-max: var(--page-layout-shell-max);
-  --page-toc-rail-width: 220px;
+  --page-toc-rail-width: 224px;
   --page-reader-column-gap: var(--wiki-space-6);
   --page-reader-inline-gutter: min(var(--wiki-page-gutter), var(--wiki-space-6));
   --page-reader-copy-max: var(--wiki-reader-copy-width, 74ch);
@@ -4902,17 +4931,7 @@ export default defineComponent({
   p { margin-block: 0 8px; }
   a { display: block; }
 }
-.page-accuracy-verify {
-  min-height: 44px;
-  padding-inline: 8px;
-  border: none;
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
-  color: var(--wiki-primary-ink);
-  text-decoration: underline;
-  &:disabled { color: var(--wiki-text-muted); cursor: not-allowed; }
-}
+.page-accuracy-verify { min-height: 44px; }
 .page-accuracy-pill:focus-visible,
 .page-accuracy-details :is(button, a):focus-visible {
   outline: 2px solid currentColor;
@@ -5271,7 +5290,7 @@ export default defineComponent({
     align-items: start;
     align-content: start;
     padding:
-      calc(var(--wiki-space-2) + 2px)
+      var(--wiki-space-4)
       var(--page-reader-inline-gutter) !important;
   }
 
@@ -5282,13 +5301,14 @@ export default defineComponent({
 
   .page-hero-actions {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
     gap: var(--wiki-space-2);
     margin-block-start: var(--wiki-space-2);
 
     .v-btn {
-      min-width: 0;
+      min-width: 44px;
+      min-height: 44px;
       border-color: var(--wiki-surface-border-strong);
       border-radius: var(--wiki-radius-pill);
       text-transform: none;
@@ -5404,39 +5424,12 @@ export default defineComponent({
   }
 
   .page-edit-shortcuts {
-    position: relative;
-    z-index: 2;
     display: flex;
-    justify-content: flex-end;
-    gap: var(--wiki-space-2);
-    align-self: center;
-    overflow: visible;
-
-    .v-btn {
-      height: 1.625rem;
-      min-height: 1.625rem;
-      padding-inline: var(--wiki-space-3);
-      border: 1px solid var(--wiki-surface-border) !important;
-      border-radius: var(--wiki-radius-md) !important;
-      background: var(--wiki-surface-raised) !important;
-      color: rgb(var(--v-theme-on-surface));
-      font-size: .75rem;
-      box-shadow: var(--wiki-shadow-sm);
-      transition:
-        border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-        box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease),
-        transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
-
-      .v-icon {
-        color: var(--wiki-primary-ink);
-      }
-
-      &:hover {
-        border-color: color-mix(in srgb, var(--wiki-accent-warm) 38%, var(--wiki-surface-border)) !important;
-        box-shadow: var(--wiki-shadow-md);
-        transform: translateY(calc(var(--wiki-space-1) * -.5));
-      }
-    }
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+    margin-inline-start: auto;
+    .v-btn { min-height: 44px; }
   }
 }
 .wiki-page.is-rtl .page-header-headings--branded {
@@ -5471,23 +5464,6 @@ export default defineComponent({
     --page-branding-mark-size: 128px;
   }
 
-  .page-header-section > .is-page-header {
-    grid-template-columns: minmax(0, 1fr) max-content;
-    column-gap: var(--page-reader-column-gap);
-  }
-
-  .page-header-section > .is-page-header > .page-hero-actions {
-    grid-column: 2;
-    grid-row: 1 / span 3;
-    align-self: start;
-    justify-content: end;
-    max-width: 25rem;
-    margin-block-start: 0;
-  }
-
-  .page-header-section > .is-page-header > :is(.page-header-headings, .page-header-summary, .page-document-provenance) {
-    grid-column: 1;
-  }
 }
 
 
@@ -5518,7 +5494,7 @@ export default defineComponent({
 }
 
 .wiki-page--reading .page-body {
-  padding-block-end: max(5.5rem, calc(var(--page-reading-dock-height, 0px) + var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px) + 2rem)) !important;
+  padding-block-end: max(6rem, calc(var(--page-reading-dock-height, 0px) + var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px) + 1rem + 24px)) !important;
 }
 
 .page-body > .v-row {
@@ -5591,39 +5567,24 @@ export default defineComponent({
 }
 
 
-// Earned viewport coverage, separate from the active-location row. These
-// overlays/text do not add a control or change the 40px compact summary.
+// Scalar article position, never earned-reading coverage.
 .page-reading-progress {
   position: absolute;
   z-index: 1;
-  inset-inline-start: 0;
-  inset-block: var(--wiki-space-2);
-  width: 2px;
+  inset-inline: 0;
+  inset-block-start: 0;
+  height: 2px;
   overflow: hidden;
-  border-radius: var(--wiki-radius-pill);
-  background: var(--wiki-surface-border);
   pointer-events: none;
 }
-
 .page-reading-progress-fill {
-  width: 2px;
-  background: linear-gradient(180deg, var(--wiki-accent-warm), var(--wiki-accent-spectral));
+  width: 100%;
+  height: 2px;
+  background: var(--wiki-accent-warm);
+  transform-origin: left;
 }
+.is-rtl .page-reading-progress-fill { transform-origin: right; }
 
-.page-reading-progress-label,
-.page-reading-dock-progress {
-  color: var(--wiki-text-muted);
-  font-size: .6875rem;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.4;
-  white-space: nowrap;
-}
-
-.page-toc-progress-label {
-  flex: 0 0 auto;
-  padding-inline: var(--wiki-space-4);
-  padding-block-end: var(--wiki-space-2);
-}
 
 .page-toc-summary .page-toc-heading-label {
   min-width: 0;
@@ -5665,11 +5626,11 @@ export default defineComponent({
   display: flex;
   min-height: var(--page-toc-empty-height);
   flex-direction: column;
-  border: 1px solid var(--wiki-surface-border) !important;
-  border-radius: var(--wiki-panel-radius);
-  background-color: var(--wiki-surface-raised) !important;
-  background-image: var(--wiki-surface-gradient) !important;
-  box-shadow: var(--wiki-specular-border), var(--wiki-shadow-xs);
+  border: 0 !important;
+  border-inline-start: 1px solid var(--wiki-surface-border) !important;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none !important;
 
   > .page-toc-heading {
     flex: 0 0 auto;
@@ -5788,24 +5749,6 @@ export default defineComponent({
     border-color 180ms var(--wiki-motion-ease),
     color 180ms var(--wiki-motion-ease);
 
-  // Faint amber glow behind the active row. Each row owns its glow (it fades
-  // in and out in place instead of sliding across the list) and it is clipped
-  // by the card's rounded overflow box. Text and icons stay sharp above it.
-  &::after {
-    content: '';
-    position: absolute;
-    z-index: -1;
-    inset: -7px -10px;
-    border-radius: var(--wiki-radius-sm);
-    background: radial-gradient(
-      62% 95% at 32% 50%,
-      color-mix(in srgb, var(--wiki-accent-warm) 26%, transparent),
-      transparent 76%
-    );
-    opacity: 0;
-    transition: opacity 180ms var(--wiki-motion-ease);
-    pointer-events: none;
-  }
 
   &:hover {
     background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
@@ -5834,29 +5777,6 @@ export default defineComponent({
       font-weight: 500;
     }
 
-    &::before {
-      content: '';
-      position: absolute;
-      inset-inline-start: -2px;
-      inset-inline-end: 0;
-      inset-block: 0;
-      height: auto;
-      border-radius: inherit;
-      background-image: linear-gradient(to right, rgb(var(--v-theme-primary)), transparent);
-      background-position: bottom;
-      background-size: 100% 2px;
-      background-repeat: no-repeat;
-      pointer-events: none;
-    }
-
-    &[dir='rtl']::before,
-    [dir='rtl'] &::before {
-      background-image: linear-gradient(to left, rgb(var(--v-theme-primary)), transparent);
-    }
-
-    &::after {
-      opacity: 1;
-    }
   }
 
   &.page-toc-item--descendant-active {
@@ -5885,30 +5805,13 @@ export default defineComponent({
   text-overflow: ellipsis;
 }
 
-// Long active headings oscillate: the text starts clipped at its end, eases
-// left until the beginning is clipped, then eases back and repeats. Runs
-// unconditionally so the behavior does not depend on the reduced-motion
-// media query.
-// The animated span slides out of the clipped title box (whole box would
-// leave the highlight), so the oscillation targets an inner text span while
-// the title box itself stretches across the full highlight width; the clip
-// edge then coincides with the highlight's own left/right edges.
-.page-toc-item-title--marquee {
-  margin-inline: calc(var(--wiki-space-1) * -1);
-  padding-inline: var(--wiki-space-1) !important;
-  text-overflow: clip;
-}
-
-.page-toc-item-title--marquee .page-toc-item-title-text {
-  display: inline-block;
-  animation: page-toc-marquee var(--toc-marquee-duration, 4s) ease-in-out infinite;
-  will-change: transform;
-}
-
-@keyframes page-toc-marquee {
-  0%, 32% { transform: translateX(0); }
-  62%, 84% { transform: translateX(var(--toc-marquee-shift, 0px)); }
-  100% { transform: translateX(0); }
+.page-toc-item:is(:hover, :focus-visible, [aria-current='location']) .page-toc-item-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .page-toc-item-title--depth-0 {
@@ -5979,6 +5882,7 @@ export default defineComponent({
     // Keep prose comfortable while tables, diagrams and code use the canvas.
     > :where(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
       max-inline-size: var(--page-reader-copy-max);
+      margin-inline: auto;
     }
   }
 
@@ -6137,7 +6041,7 @@ export default defineComponent({
   .page-toc-row, .page-toc-item { min-height: 2.5rem; }
   .page-toc-content .page-toc-list { max-height: 48dvh; }
   .page-col-content > .contents { padding-block-start: 0; }
-  .page-header-section > .is-page-header { padding-block: var(--wiki-space-1) !important; }
+  .page-header-section > .is-page-header { padding-block: var(--wiki-space-4) var(--wiki-space-3) !important; }
   .page-header-section .page-document-label {
     position: absolute;
     width: 1px;
@@ -6149,11 +6053,11 @@ export default defineComponent({
   }
   .page-header-section .page-title { font-size: clamp(1.5rem, 1.25rem + 1vw, 2rem); line-height: 1.05; }
   .page-header-section .page-description { font-size: .875rem; line-height: 1.35; }
-  .page-header-section .page-document-provenance { margin-block-start: 2px; font-size: .6875rem; line-height: 1.35; }
+  .page-header-section .page-document-provenance { margin-block-start: 12px; font-size: .6875rem; line-height: 1.35; }
   .page-header-section .page-hero-actions {
-    gap: var(--wiki-space-1);
-    margin-block-start: var(--wiki-space-1);
-    .v-btn { min-height: 1.75rem; height: auto; padding: .25rem .5rem; font-size: .75rem; }
+    gap: 8px;
+    margin-block-start: var(--wiki-space-2);
+    .v-btn { min-width: 44px; min-height: 44px; height: auto; padding-inline: .5rem; font-size: .75rem; }
   }
   .page-header-section .breadcrumbs-nav .v-btn { min-height: 1.25rem; height: auto; font-size: .6875rem; }
   .page-view-tabs { margin-block-end: var(--wiki-space-1); }
@@ -6501,15 +6405,12 @@ export default defineComponent({
 .page-position-fill {
   width: 100%;
   height: 100%;
-  /* Reading-position wash: very faint at the reading start, strengthening
-     along the scroll direction up to a strong accent at the leading edge. */
-  background: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-ink) 25%, transparent), color-mix(in srgb, var(--wiki-accent-ink) 85%, transparent));
+  background: var(--wiki-accent-warm);
   transform-origin: left;
 }
 
 .is-rtl .page-position-fill {
   transform-origin: right;
-  background: linear-gradient(270deg, color-mix(in srgb, var(--wiki-accent-ink) 25%, transparent), color-mix(in srgb, var(--wiki-accent-ink) 85%, transparent));
 }
 
 
@@ -6524,6 +6425,21 @@ export default defineComponent({
   max-width: min(46rem, calc(100vw - 2rem - env(safe-area-inset-left) - env(safe-area-inset-right)));
   margin-inline: auto;
 }
+.page-reading-chrome::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset-inline: -1rem;
+  inset-block-start: 100%;
+  height: 36px;
+  background:
+    linear-gradient(to top, var(--wiki-canvas-bg) 35%, transparent) bottom / 100% 32px no-repeat,
+    linear-gradient(to top, var(--wiki-canvas-bg) 40%, transparent);
+  pointer-events: none;
+}
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .page-reading-chrome::after { background: none; }
+}
 
 .page-reading-dock {
   position: relative;
@@ -6537,7 +6453,7 @@ export default defineComponent({
   border-radius: var(--wiki-radius-pill);
   background: var(--wiki-reading-dock-surface) !important;
   color: rgb(var(--v-theme-on-surface));
-  box-shadow: var(--wiki-shadow-md);
+  box-shadow: var(--wiki-glass-specular), var(--wiki-shadow-md);
   -webkit-backdrop-filter: var(--wiki-hud-filter) !important;
   backdrop-filter: var(--wiki-hud-filter) !important;
 
@@ -6678,7 +6594,7 @@ export default defineComponent({
   .page-col-sd,
   .page-inline-toc,
   .page-metadata,
-  .page-hero-actions,
+  .page-hero-actions > :not(.page-focus-control),
   .page-edit-shortcuts,
   .page-edit-fab { display: none !important; }
 
@@ -6779,11 +6695,62 @@ export default defineComponent({
 @media (pointer: coarse) and (max-width: 1279px) {
   // Keep real touch targets without restoring the retired above-prose stack.
   .page-header-section .page-hero-actions .v-btn { min-height: 2.75rem; }
-  .page-header-section > .is-page-header { padding-block: 2px !important; }
+  .page-header-section > .is-page-header { padding-block: var(--wiki-space-4) var(--wiki-space-3) !important; }
   .page-body { padding-block-start: 2px !important; }
   .page-inline-toc { margin-block-end: 2px; }
   .page-view-tabs { margin-block-end: 0; }
   .page-col-content > .contents { padding-block-start: 0; }
+}
+.wiki-page--inline-outline:not(.wiki-page--reading) .page-inline-toc {
+  display: block;
+  position: sticky;
+  inset-block-start: var(--v-layout-top, 56px);
+  z-index: 4;
+}
+.page-toc-summary, .page-toc-heading, .page-toc-filter { flex-shrink: 0; }
+.page-toc-summary { display: flex; }
+.page-toc-toggle { flex: 1 1 auto; min-width: 0; }
+.page-toc-toggle > .v-btn__content { width: 100%; justify-content: space-between; }
+.page-header-section .page-document-provenance { grid-row: 4; margin-block-start: 12px; }
+.page-header-section .page-hero-actions { grid-row: 3; }
+.page-hero-actions { container-type: inline-size; container-name: reader-actions; }
+.page-focus-control { order: 1; }
+[data-reader-share-trigger] { order: 2; }
+.page-offline-control { order: 3; }
+.page-hero-actions .page-edit-shortcuts { order: 4; }
+@container reader-actions (max-width: 42rem) {
+  .page-header-section .page-hero-actions .v-btn__prepend { margin-inline: 0; }
+  .page-header-section .page-hero-actions .page-focus-control > .v-btn__content,
+  .page-header-section .page-hero-actions [data-reader-share-trigger] > .v-btn__content,
+  .page-header-section .page-edit-shortcuts .v-btn > .v-btn__content { display: none; }
+  .page-header-section .page-hero-actions .page-focus-control[aria-pressed='true'] > .v-btn__content { display: flex; }
+}
+.page-header-section > .is-page-header {
+  width: min(100%, calc(var(--page-reader-copy-max) + 2 * var(--page-reader-inline-gutter)));
+  margin-inline: auto;
+}
+@media (min-width: 1280px) {
+  .page-header-section {
+    box-sizing: border-box;
+    padding-inline: var(--page-reader-inline-gutter) max(var(--wiki-page-gutter), calc(var(--page-return-top-inset) + 4rem));
+  }
+  .page-header-section > .is-page-header {
+    width: min(100%, var(--page-reader-copy-max));
+    padding-inline: 0 !important;
+  }
+  .wiki-page--reading .page-header-section { padding-inline: var(--page-reader-inline-gutter); }
+  .page-main--with-rail .page-header-section {
+    box-sizing: border-box;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--page-toc-rail-width);
+    column-gap: var(--page-reader-column-gap);
+    padding-inline: var(--page-reader-inline-gutter) max(var(--wiki-page-gutter), calc(var(--page-return-top-inset) + 4rem));
+  }
+  .page-main--with-rail .page-header-section > .is-page-header { grid-column: 1; padding-inline: 0 !important; }
+  .page-main--with-rail:has(.page-col-sd--toc-left) .page-header-section {
+    grid-template-columns: var(--page-toc-rail-width) minmax(0, 1fr);
+  }
+  .page-main--with-rail:has(.page-col-sd--toc-left) .page-header-section > .is-page-header { grid-column: 2; }
 }
 
 @media print {

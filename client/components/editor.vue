@@ -24,8 +24,7 @@
               size='small'
               variant='tonal'
               :prepend-icon='pageVisibility.icon'
-              :aria-label='$t(`editor:props.visibilityChipAction`, { state: $t(pageVisibility.chipKey ?? ``) })'
-              @click.stop='openPropsModal'
+              :aria-label='$t(pageVisibility.summaryKey, pageVisibility.values)'
             )
               | {{ $t(pageVisibility.chipKey ?? '') }}
               v-tooltip(activator='parent', location='bottom') {{ $t(pageVisibility.summaryKey, pageVisibility.values) }}
@@ -48,39 +47,49 @@
         )
           .text-label-small.mr-3(v-if='$vuetify.display.mdAndUp') {{ $t('editor:conflict.label') }}
           status-indicator(intermediary, pulse)
+        .editor-secondary-actions(v-if='$vuetify.display.mdAndUp', role='group', :aria-label='$t(`editor:actions.pageDetails`)')
+          v-btn.editor-page-action(
+            variant='text'
+            @click='openPropsModal'
+            :class='{ "is-icon": $vuetify.display.mdAndDown }'
+            :aria-label='$t(`editor:props.pageProperties`)'
+          )
+            v-icon(:start='$vuetify.display.lgAndUp') mdi-file-cog-outline
+            span(v-if='$vuetify.display.lgAndUp') {{ $t('editor:props.pageProperties') }}
+            v-tooltip(v-if='$vuetify.display.mdAndDown', activator='parent', location='bottom') {{ $t('editor:props.pageProperties') }}
+          v-btn.editor-change-reason-action(
+            ref='changeReasonDesktopTrigger'
+            type='button'
+            variant='text'
+            :color='changeReasonErrors.length ? `error` : undefined'
+            :class='{ "is-icon": $vuetify.display.mdAndDown }'
+            :aria-label='$t(`editor:save.changeReason`)'
+            aria-haspopup='dialog'
+            :aria-expanded='changeReasonOpen ? `true` : `false`'
+            :aria-controls='`${changeReasonId}-popover`'
+            @click='toggleChangeReason($event)'
+          )
+            v-icon(:start='$vuetify.display.lgAndUp') {{ changeReasonErrors.length ? 'mdi-alert-circle-outline' : changeReason.trim() ? 'mdi-comment-check-outline' : 'mdi-comment-text-outline' }}
+            span(v-if='$vuetify.display.lgAndUp') {{ $t('editor:save.reasonAction') }}
+            v-tooltip(activator='parent', location='bottom') {{ $t('editor:save.changeReason') }}
         v-btn.editor-save-action(
-          :variant='mode === `create` || isDirty ? `flat` : `text`'
-          color='primary'
+          v-if='$vuetify.display.mdAndUp && (mode === `create` || isDirty)'
+          variant='text'
           @click='save()'
           :loading='isSaving'
           :disabled='isSaving || collaborationDiscarded || serverSaveDisabled || offlineMutationBlocked'
           :class='{ "is-icon": $vuetify.display.mdAndDown }'
           :aria-label='saveActionLabel'
-          )
-          v-icon(:start='$vuetify.display.lgAndUp') mdi-check
-          span.text-medium-emphasis(v-if='$vuetify.display.lgAndUp && mode !== `create` && !isDirty') {{ $t('editor:save.saved') }}
-          span(v-else-if='$vuetify.display.lgAndUp') {{ mode === 'create' ? $t('common:actions.create') : $t('common:actions.save') }}
-          v-tooltip(v-if='$vuetify.display.mdAndDown', activator='parent', location='bottom') {{ $t(`editor:editor.ctrlS`, { saveActionLabel, interpolation: { escapeValue: false } }) }}
-        v-btn.editor-change-reason-action(
-          ref='changeReasonDesktopTrigger'
-          v-if='$vuetify.display.mdAndUp'
-          type='button'
-          :variant='changeReason.trim() || changeReasonErrors.length ? `tonal` : `text`'
-          :color='changeReasonErrors.length ? `error` : changeReason.trim() ? `primary` : undefined'
-          :class='{ "is-icon": $vuetify.display.mdAndDown }'
-          :aria-label='$t(`editor:save.changeReason`)'
-          aria-haspopup='dialog'
-          :aria-expanded='changeReasonOpen ? `true` : `false`'
-          :aria-controls='`${changeReasonId}-popover`'
-          @click='toggleChangeReason($event)'
         )
-          v-icon(:start='$vuetify.display.lgAndUp') {{ changeReasonErrors.length ? 'mdi-alert-circle-outline' : changeReason.trim() ? 'mdi-comment-check-outline' : 'mdi-comment-text-outline' }}
-          span(v-if='$vuetify.display.lgAndUp') {{ $t('editor:save.reasonAction') }}
-          v-tooltip(activator='parent', location='bottom') {{ $t('editor:save.changeReason') }}
+          v-icon(:start='$vuetify.display.lgAndUp') mdi-content-save-outline
+          span(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.save') }}
+          v-tooltip(v-if='$vuetify.display.mdAndDown', activator='parent', location='bottom') {{ $t(`editor:editor.ctrlS`, { saveActionLabel, interpolation: { escapeValue: false } }) }}
         v-btn.editor-save-close-action(
           v-if='$vuetify.display.mdAndUp'
           variant='tonal'
           color='primary'
+          :data-commitment='saveCommitmentActive ? `active` : undefined'
+          :loading='isSaving'
           :class='{ "is-icon": $vuetify.display.mdAndDown }'
           :aria-label='$t(`editor:save.saveAndClose`)'
           @click='saveAndClose'
@@ -89,21 +98,9 @@
           v-icon(:start='$vuetify.display.lgAndUp') mdi-content-save-move-outline
           span(v-if='$vuetify.display.lgAndUp') {{ $t('editor:save.saveAndClose') }}
           v-tooltip(v-if='$vuetify.display.mdAndDown', activator='parent', location='bottom') {{ $t('editor:save.saveAndClose') }}
-        v-btn.editor-page-action(
-          v-if='$vuetify.display.mdAndUp'
-          variant="tonal"
-          color='primary'
-          @click='openPropsModal'
-          :class='{ "is-icon": $vuetify.display.mdAndDown, "mx-0": !welcomeMode, "ml-0": welcomeMode }'
-          :aria-label='$t(`common:actions.page`)'
-          )
-          v-icon(:start='$vuetify.display.lgAndUp') mdi-tag-text-outline
-          span(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.page') }}
-          v-tooltip(v-if='$vuetify.display.mdAndDown', activator='parent', location='bottom') {{ $t('common:actions.page') }}
         v-btn.editor-close-action(
           v-if='!welcomeMode && $vuetify.display.mdAndUp'
           variant="text"
-          color='error'
           :class='{ "is-icon": $vuetify.display.mdAndDown }'
           :aria-label='$t(`common:actions.close`)'
           @click='exit'
@@ -343,21 +340,21 @@
       grow
       :elevation='0'
     )
-      v-btn.editor-mobile-save(
-        :class='{ "is-clean": mode !== `create` && !isDirty }'
+      v-btn.editor-mobile-save.editor-save-close-action(
+        variant='tonal'
         color='primary'
-        @click.exact='saveFromMobile'
+        :data-commitment='saveCommitmentActive ? `active` : undefined'
+        @click='saveAndClose'
         :loading='isSaving'
         :disabled='isSaving || collaborationDiscarded || serverSaveDisabled || offlineMutationBlocked'
-        :aria-disabled='mode !== `create` && !isDirty ? `true` : undefined'
-        :aria-label='saveActionLabel'
+        :aria-label='$t(`editor:save.saveAndClose`)'
       )
-        v-icon {{ mode !== 'create' && !isDirty ? 'mdi-check-circle-outline' : 'mdi-check' }}
-        span {{ mobileSaveLabel }}
+        v-icon mdi-content-save-move-outline
+        span {{ $t('editor:save.saveAndClose') }}
       v-btn.editor-mobile-reason(
         ref='changeReasonMobileTrigger'
         type='button'
-        :color='changeReasonErrors.length ? `error` : changeReason.trim() ? `primary` : undefined'
+        :color='changeReasonErrors.length ? `error` : undefined'
         :aria-label='$t(`editor:save.changeReason`)'
         aria-haspopup='dialog'
         :aria-expanded='changeReasonOpen ? `true` : `false`'
@@ -366,9 +363,9 @@
       )
         v-icon {{ changeReasonErrors.length ? 'mdi-alert-circle-outline' : changeReason.trim() ? 'mdi-comment-check-outline' : 'mdi-comment-text-outline' }}
         span {{ $t('editor:save.reasonAction') }}
-      v-btn(color='primary', @click='openPropsModal', :aria-label='$t(`common:actions.page`)')
-        v-icon mdi-tag-text-outline
-        span {{ $t('common:actions.page') }}
+      v-btn(@click='openPropsModal', :aria-label='$t(`editor:props.pageProperties`)')
+        v-icon mdi-file-cog-outline
+        span {{ $t('editor:props.pageProperties') }}
       v-menu(location='top end', min-width='240')
         template(v-slot:activator='{ props }')
           v-btn(
@@ -383,13 +380,13 @@
             template(v-slot:prepend)
               v-icon(color='warning') mdi-alert-outline
             v-list-item-title {{ $t('editor:conflict.resolveAction') }}
-          v-list-item(:disabled='isSaving || collaborationDiscarded || serverSaveDisabled || offlineMutationBlocked', @click='saveAndClose')
+          v-list-item(v-if='mode === `create` || isDirty', :disabled='isSaving || collaborationDiscarded || serverSaveDisabled || offlineMutationBlocked', @click='save()')
             template(v-slot:prepend)
-              v-icon(color='primary') mdi-content-save-move-outline
-            v-list-item-title {{ $t('editor:save.saveAndClose') }}
+              v-icon mdi-content-save-outline
+            v-list-item-title {{ $t('common:actions.save') }}
           v-list-item(v-if='!welcomeMode', @click='exit')
             template(v-slot:prepend)
-              v-icon(color='error') mdi-close
+              v-icon mdi-close
             v-list-item-title {{ $t('common:actions.close') }}
 </template>
 
@@ -402,6 +399,7 @@ import * as _ from 'lodash-es'
 import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, discardCollaborationDraft, fetchPage, isPageRenderPending, updatePage, waitForPageRender, type PageConflictLatest, type PageDetails, type PageRenderTarget, type PageWriteInput } from '../helpers/pages-api'
 import { openOfflineStorage, type OfflineStorage } from '../helpers/offline-storage.ts'
 import { wikiStore } from '@/store/index.ts'
+import { capturePageWorkingSetScope, recordPageEdit } from '../helpers/page-working-set.ts'
 import { translate } from '../modules/localization.ts'
 import { notifyReloadSafetyChanged, pwaState, setReloadSafetyProvider } from '../helpers/pwa.ts'
 import { Base64 } from 'js-base64'
@@ -992,7 +990,7 @@ export default defineComponent({
       const time = this.lastSavedAt === null ? '' : moment(this.lastSavedAt).format('LT')
       if (this.lastSaveKind === 'device' && time) return this.$t('editor:save.savedOfflineAt', { time })
       if (this.isDirty) return this.mode === 'create' ? '' : this.$t('editor:save.unsavedChanges')
-      return time ? this.$t('editor:save.savedAt', { time }) : ''
+      return time ? this.$t('editor:save.savedAt', { time }) : this.mode === 'create' ? '' : this.$t('editor:save.saved')
     },
     saveStatusIcon(): string {
       if (this.renderWaitController !== null) return 'mdi-progress-clock'
@@ -1000,18 +998,15 @@ export default defineComponent({
       if (this.saveFeedback === 'failed') return 'mdi-alert-circle-outline'
       if (this.lastSaveKind === 'device' && this.lastSavedAt !== null) return 'mdi-cloud-off-outline'
       if (this.isDirty) return 'mdi-circle-medium'
-      return 'mdi-check'
+      return 'mdi-circle-small'
     },
     saveActionLabel(): string {
       if (this.mode === 'create') return this.$t('common:actions.create')
       if (this.isSaving) return this.$t('editor:save.saving')
-      return this.isDirty ? `${this.$t('common:actions.save')} (${SAVE_SHORTCUT_LABEL})` : this.$t('editor:save.saved')
+      return `${this.$t('common:actions.save')} (${SAVE_SHORTCUT_LABEL})`
     },
-    mobileSaveLabel(): string {
-      if (this.mode === 'create') return this.$t('common:actions.create')
-      if (this.isDirty) return this.$t('common:actions.save')
-      const time = this.lastSavedAt === null ? '' : moment(this.lastSavedAt).format('LT')
-      return time ? this.$t('editor:save.savedAt', { time }) : this.$t('editor:save.saved')
+    saveCommitmentActive(): boolean {
+      return (this.mode === 'create' || this.isDirty) && !this.isSaving && !this.collaborationDiscarded && !this.serverSaveDisabled && !this.offlineMutationBlocked
     },
     offlineDraftSource(): readonly string[] {
       return [
@@ -2033,13 +2028,6 @@ export default defineComponent({
       const field = this.$refs.changeReasonField as { $el?: HTMLElement } | undefined
       field?.$el?.querySelector<HTMLInputElement>('input:not(:disabled)')?.focus({ preventScroll: true })
     },
-    saveFromMobile() {
-      if (this.mode !== 'create' && !this.isDirty) {
-        wikiStore.showNotification({ message: this.$t('editor:save.noChanges'), style: 'info', icon: 'check' })
-        return
-      }
-      void this.save()
-    },
     handleEditorConflictReset(baseline: PageConflictLatest) {
       if (wikiStore.page.sourceRevision !== baseline.sourceRevision || this.checkoutDateActive !== baseline.updatedAt) return
       // A conflict choice accepts this reviewed canonical baseline, not local metadata
@@ -2256,6 +2244,7 @@ export default defineComponent({
       const capturedAccountId = this.accountId
       const capturedOfflineIdentityEpoch = wikiStore.offlineIdentityEpoch
       const capturedLifecycleGeneration = this.lifecycleGeneration
+      const workingSetScope = capturePageWorkingSetScope()
       const collaborationGenerationAtSave = this.collaborationActive ? this.collaborationGeneration ?? undefined : undefined
       const coordinator = this.offlineDraftCoordinator
 
@@ -2490,6 +2479,7 @@ export default defineComponent({
         }
 
         this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
+        if (authoritativePageId !== null && postWriteError === null) recordPageEdit(authoritativePageId, workingSetScope)
         const currentSnapshot = this.isCurrentSaveSnapshot(capture)
         if (currentSnapshot && postWriteError === null && authoritativePageId === wikiStore.page.id && this.offlineDraftCoordinator === coordinator && this.changeReason === capture.changeReason) this.changeReason = ''
         this.markSaveSnapshotPersisted(capture)
@@ -3033,11 +3023,6 @@ export default defineComponent({
       rgb(var(--v-theme-background));
   }
 
-  .nav-header {
-    border-bottom: 1px solid var(--wiki-surface-border) !important;
-    background: var(--wiki-surface-raised) !important;
-    box-shadow: var(--wiki-shadow-xs) !important;
-  }
 
   .nav-header-slot-actions {
     display: flex;
@@ -3164,27 +3149,6 @@ export default defineComponent({
   &-title-input {
     width: min(100%, 42rem);
 
-    .v-field {
-      border: 1px solid var(--wiki-surface-border);
-      border-radius: var(--wiki-control-radius);
-      background: var(--wiki-surface-sunken) !important;
-      box-shadow: var(--wiki-shadow-inset);
-      transition:
-        border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-        background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
-        box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
-    }
-
-    .v-field:hover {
-      border-color: var(--wiki-surface-border-strong);
-      background: var(--wiki-surface-raised) !important;
-    }
-
-    .v-field--focused {
-      border-color: color-mix(in srgb, var(--wiki-focus-color) 58%, transparent);
-      background: var(--wiki-surface-raised) !important;
-      box-shadow: var(--wiki-focus-ring), var(--wiki-shadow-inset);
-    }
 
     input {
       color: rgb(var(--v-theme-on-surface));
@@ -3221,6 +3185,14 @@ export default defineComponent({
   text-transform: none;
 }
 
+.editor-secondary-actions {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-sunken);
+}
+
 .editor-save-status {
   display: inline-flex;
   align-items: center;
@@ -3250,21 +3222,13 @@ export default defineComponent({
 .editor-mobile-actions {
   padding-bottom: env(safe-area-inset-bottom);
   border-top: 1px solid var(--wiki-surface-border) !important;
-  background: var(--wiki-surface-raised) !important;
+  background: var(--wiki-chrome-surface) !important;
+  backdrop-filter: var(--wiki-chrome-filter);
   box-shadow: 0 calc(var(--wiki-space-2) * -1) var(--wiki-space-8) var(--wiki-shadow-color) !important;
 
   .v-btn {
     min-width: 0;
-    border-radius: 0;
-    color: rgb(var(--v-theme-on-surface));
-
-    &:first-child {
-      color: var(--wiki-primary-ink);
-    }
-
-    &.editor-mobile-save.is-clean {
-      color: var(--wiki-text-muted);
-    }
+    border-radius: var(--wiki-control-radius);
   }
 
   .v-btn__content {
@@ -3291,9 +3255,6 @@ export default defineComponent({
   background: var(--wiki-surface-raised);
   box-shadow: var(--wiki-shadow-md);
 
-  .v-field--focused {
-    box-shadow: var(--wiki-focus-ring);
-  }
 
   .v-counter {
     color: rgb(var(--v-theme-on-surface));

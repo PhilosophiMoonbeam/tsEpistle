@@ -81,10 +81,7 @@ async function openReaderCopyFixture(page: Page) {
       <pre id="native-ordinary-copy" class="prismjs"><code class="language-javascript">const ordinary = "${'wide readable source '.repeat(30)}";</code></pre>
       <section id="native-framed-copy" class="codeblock-framed"><header>Example</header><pre class="prismjs"><code class="language-javascript">const framed = 2;</code></pre></section>
       <pre id="native-empty-copy" class="prismjs"><code class="language-javascript"></code></pre>${paragraphs}`
-    const body = document.replace(
-      /(<template\b[^>]*data-wiki-page-contents[^>]*>)[\s\S]*?<\/template>/u,
-      `$1<div>${content}</div></template>`
-    )
+    const body = document.replace(/(<template\b[^>]*data-wiki-page-contents[^>]*>)[\s\S]*?<\/template>/u, `$1<div>${content}</div></template>`)
     if (body === document) throw new Error('Reader bootstrap omitted its normal contents slot')
     await route.fulfill({ response, body })
   })
@@ -96,7 +93,9 @@ async function pauseNextSweep(locator: Locator, name: string) {
   await locator.evaluate((element, animationName) => {
     const pause = (event: Event) => {
       if ((event as AnimationEvent).animationName !== animationName) return
-      const animation = element.getAnimations({ subtree: true }).find(candidate => candidate instanceof CSSAnimation && candidate.animationName === animationName)
+      const animation = element
+        .getAnimations({ subtree: true })
+        .find(candidate => candidate instanceof CSSAnimation && candidate.animationName === animationName)
       if (!animation) throw new Error(`Missing active ${animationName}`)
       animation.pause()
       element.removeEventListener('animationstart', pause)
@@ -106,10 +105,6 @@ async function pauseNextSweep(locator: Locator, name: string) {
 }
 
 /** Chromium serializes wide-gamut/translucent tokens as `color(srgb r g b / a)`, legacy colors as `rgba(...)`. */
-function blurRadius(value: string): number {
-  return Number(/blur\(([\d.]+)px\)/u.exec(value)?.[1] ?? 0)
-}
-
 function cssColorAlpha(value: string): number {
   if (value === 'transparent') return 0
   const slash = /\/\s*([\d.]+)\s*\)$/u.exec(value)
@@ -120,47 +115,75 @@ function cssColorAlpha(value: string): number {
 }
 
 function rgbDistance(left: Buffer, right: Buffer, offset: number): number {
-  return Math.max(
-    Math.abs(left[offset]! - right[offset]!),
-    Math.abs(left[offset + 1]! - right[offset + 1]!),
-    Math.abs(left[offset + 2]! - right[offset + 2]!)
-  )
+  return Math.max(Math.abs(left[offset]! - right[offset]!), Math.abs(left[offset + 1]! - right[offset + 1]!), Math.abs(left[offset + 2]! - right[offset + 2]!))
 }
 
 async function expectCopySweepPaint(page: Page, panel: Locator, name: string, pseudo: string, positions: readonly number[], testInfo: TestInfo) {
-  await expect.poll(() => panel.evaluate((element, animationName) =>
-    element.getAnimations({ subtree: true }).some(animation => animation instanceof CSSAnimation && animation.animationName === animationName && animation.playState === 'paused'), name)
-  ).toBe(true)
+  await expect
+    .poll(() =>
+      panel.evaluate(
+        (element, animationName) =>
+          element
+            .getAnimations({ subtree: true })
+            .some(animation => animation instanceof CSSAnimation && animation.animationName === animationName && animation.playState === 'paused'),
+        name
+      )
+    )
+    .toBe(true)
   if (pseudo) {
-    await panel.locator('xpath=ancestor-or-self::*[contains(@class,"codeblock-framed") or contains(@class,"code-toolbar")][1]').locator('.toolbar').evaluate(element => {
-      for (const animation of element.getAnimations({ subtree: true })) if (animation instanceof CSSTransition) animation.finish()
-    })
+    await panel
+      .locator('xpath=ancestor-or-self::*[contains(@class,"codeblock-framed") or contains(@class,"code-toolbar")][1]')
+      .locator('.toolbar')
+      .evaluate(element => {
+        for (const animation of element.getAnimations({ subtree: true })) if (animation instanceof CSSTransition) animation.finish()
+      })
   }
   const before = await panel.evaluate(element => ({
-    x: window.scrollX, y: window.scrollY, left: element.scrollLeft, top: element.scrollTop,
-    width: element.scrollWidth, height: element.scrollHeight, documentWidth: document.documentElement.scrollWidth
+    x: window.scrollX,
+    y: window.scrollY,
+    left: element.scrollLeft,
+    top: element.scrollTop,
+    width: element.scrollWidth,
+    height: element.scrollHeight,
+    documentWidth: document.documentElement.scrollWidth
   }))
   const frames: Buffer[] = []
   const toolbarFrames: Buffer[] = []
   for (const [index, progress] of [0, 0.5, 1].entries()) {
-    const frame = await panel.evaluate((element, sample) => {
-      const animation = element.getAnimations({ subtree: true }).find(candidate => candidate instanceof CSSAnimation && candidate.animationName === sample.name)
-      if (!animation) throw new Error('Copy sweep disappeared before its paint sample')
-      const duration = Number(animation.effect?.getComputedTiming().duration)
-      // Stay one microsecond inside the end frame; finish() below exercises
-      // the real animationend cleanup only after that frame is captured.
-      animation.currentTime = duration * sample.progress - (sample.progress === 1 ? 0.001 : 0)
-      // Finish color transitions, not the sweep under observation.
-      for (const candidate of element.getAnimations()) if (candidate instanceof CSSTransition) candidate.finish()
-      const style = getComputedStyle(element, sample.pseudo || null)
-      return {
-        duration, position: Number.parseFloat(style.backgroundPositionX), transform: style.transform,
-        inset: [style.top, style.right, style.bottom, style.left], size: style.backgroundSize,
-        gradient: style.backgroundImage, z: Number(style.zIndex),
-        scroll: { x: window.scrollX, y: window.scrollY, left: element.scrollLeft, top: element.scrollTop,
-          width: element.scrollWidth, height: element.scrollHeight, documentWidth: document.documentElement.scrollWidth }
-      }
-    }, { name, pseudo, progress })
+    const frame = await panel.evaluate(
+      (element, sample) => {
+        const animation = element
+          .getAnimations({ subtree: true })
+          .find(candidate => candidate instanceof CSSAnimation && candidate.animationName === sample.name)
+        if (!animation) throw new Error('Copy sweep disappeared before its paint sample')
+        const duration = Number(animation.effect?.getComputedTiming().duration)
+        // Stay one microsecond inside the end frame; finish() below exercises
+        // the real animationend cleanup only after that frame is captured.
+        animation.currentTime = duration * sample.progress - (sample.progress === 1 ? 0.001 : 0)
+        // Finish color transitions, not the sweep under observation.
+        for (const candidate of element.getAnimations()) if (candidate instanceof CSSTransition) candidate.finish()
+        const style = getComputedStyle(element, sample.pseudo || null)
+        return {
+          duration,
+          position: Number.parseFloat(style.backgroundPositionX),
+          transform: style.transform,
+          inset: [style.top, style.right, style.bottom, style.left],
+          size: style.backgroundSize,
+          gradient: style.backgroundImage,
+          z: Number(style.zIndex),
+          scroll: {
+            x: window.scrollX,
+            y: window.scrollY,
+            left: element.scrollLeft,
+            top: element.scrollTop,
+            width: element.scrollWidth,
+            height: element.scrollHeight,
+            documentWidth: document.documentElement.scrollWidth
+          }
+        }
+      },
+      { name, pseudo, progress }
+    )
     expect(frame.duration, 'Inline and block acknowledgment both last .95 seconds').toBe(950)
     expect(frame.position, `Sweep position at ${progress}`).toBeCloseTo(positions[index]!, 1)
     expect(frame.transform, 'Stationary gradient does not enlarge scrollable overflow').toBe('none')
@@ -170,21 +193,31 @@ async function expectCopySweepPaint(page: Page, panel: Locator, name: string, ps
     expect(frame.scroll, `Copy acknowledgment leaves every scroll coordinate and extent unchanged at ${progress}`).toEqual(before)
     if (pseudo) {
       expect(frame.inset, 'Copy band reaches all four panel edges').toEqual(['0px', '0px', '0px', '0px'])
-      const toolbarZ = await panel.locator('xpath=ancestor-or-self::*[contains(@class,"codeblock-framed") or contains(@class,"code-toolbar")][1]').locator('.toolbar').evaluate(element => Number(getComputedStyle(element).zIndex))
+      const toolbarZ = await panel
+        .locator('xpath=ancestor-or-self::*[contains(@class,"codeblock-framed") or contains(@class,"code-toolbar")][1]')
+        .locator('.toolbar')
+        .evaluate(element => Number(getComputedStyle(element).zIndex))
       expect(frame.z, 'Acknowledgment paints above the attached Copy toolbar').toBeGreaterThan(toolbarZ)
     }
     const image = await panel.screenshot({ animations: 'allow', caret: 'hide', scale: 'css' })
     await testInfo.attach(`${name}-${pseudo ? 'block' : 'inline'}-${progress}`, { body: image, contentType: 'image/png' })
     frames.push(image)
-    expect(await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY })), 'Paint capture does not move the reader').toEqual({ x: before.x, y: before.y })
+    expect(await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY })), 'Paint capture does not move the reader').toEqual({
+      x: before.x,
+      y: before.y
+    })
     if (pseudo && progress !== 1) {
-      const button = panel.locator('xpath=ancestor-or-self::*[contains(@class,"codeblock-framed") or contains(@class,"code-toolbar")][1]').getByRole('button', { name: 'Copy', exact: true })
+      const button = panel
+        .locator('xpath=ancestor-or-self::*[contains(@class,"codeblock-framed") or contains(@class,"code-toolbar")][1]')
+        .getByRole('button', { name: 'Copy', exact: true })
       await button.evaluate(element => {
         for (const animation of element.getAnimations()) if (animation instanceof CSSTransition) animation.finish()
       })
       if (progress === 0.5) {
         await panel.evaluate((element, animationName) => {
-          const animation = element.getAnimations({ subtree: true }).find(candidate => candidate instanceof CSSAnimation && candidate.animationName === animationName)
+          const animation = element
+            .getAnimations({ subtree: true })
+            .find(candidate => candidate instanceof CSSAnimation && candidate.animationName === animationName)
           if (!animation) throw new Error('Copy band is missing before its toolbar crossing')
           animation.currentTime = Number(animation.effect?.getComputedTiming().duration) * 0.67
         }, name)
@@ -230,7 +263,10 @@ async function expectCopySweepPaint(page: Page, panel: Locator, name: string, ps
     expect(paintedPixels / count, 'The acknowledgment band visibly crosses above the Copy toolbar, not underneath its opaque button').toBeGreaterThan(0.05)
   }
   await panel.evaluate((element, animationName) => {
-    element.getAnimations({ subtree: true }).find(candidate => candidate instanceof CSSAnimation && candidate.animationName === animationName)?.finish()
+    element
+      .getAnimations({ subtree: true })
+      .find(candidate => candidate instanceof CSSAnimation && candidate.animationName === animationName)
+      ?.finish()
   }, name)
 }
 
@@ -262,8 +298,10 @@ test.describe('release accessibility profiles', () => {
       await page.reload({ waitUntil: 'domcontentloaded' })
       await expect(page.locator('.page-header-section')).toBeVisible()
       await expect(page.locator('.approval-surface')).toHaveCount(0)
-      expect(fixture.requests.filter(request => /^POST \/_api\/agents\/sessions(?:$|[/?])/.test(request)),
-        'Reviewing an external request must not create a conversation or submit provider work').toEqual([])
+      expect(
+        fixture.requests.filter(request => /^POST \/_api\/agents\/sessions(?:$|[/?])/.test(request)),
+        'Reviewing an external request must not create a conversation or submit provider work'
+      ).toEqual([])
     } finally {
       authority.resolve()
     }
@@ -285,12 +323,16 @@ test.describe('release accessibility profiles', () => {
         prepared.set(heading, { before: window.scrollY, headingTop: heading.getBoundingClientRect().top })
       })
       observer.observe(document, { childList: true, subtree: true })
-      document.addEventListener('focus', event => {
-        const heading = event.target
-        if (!(heading instanceof HTMLElement) || !heading.matches('.admin-main h1')) return
-        const baseline = prepared.get(heading)
-        if (baseline) samples.push({ title: heading.textContent?.trim() ?? '', ...baseline, after: window.scrollY })
-      }, true)
+      document.addEventListener(
+        'focus',
+        event => {
+          const heading = event.target
+          if (!(heading instanceof HTMLElement) || !heading.matches('.admin-main h1')) return
+          const baseline = prepared.get(heading)
+          if (baseline) samples.push({ title: heading.textContent?.trim() ?? '', ...baseline, after: window.scrollY })
+        },
+        true
+      )
     })
     await openAuthenticatedPage(page, '/a/dashboard', '.admin-dashboard')
     const dashboard = page.locator('.admin-main h1')
@@ -300,14 +342,20 @@ test.describe('release accessibility profiles', () => {
     await expect(dashboard).toHaveCSS('box-shadow', 'none')
     // Native router link activation, not a manually invoked focus method.
     await page.getByRole('textbox', { name: 'Find an administration setting', exact: true }).fill('Pages')
-    await page.locator('#admin-navigation').getByRole('link').filter({ has: page.getByText('Pages', { exact: true }) }).click()
+    await page
+      .locator('#admin-navigation')
+      .getByRole('link')
+      .filter({ has: page.getByText('Pages', { exact: true }) })
+      .click()
     await expect(page).toHaveURL('/a/pages')
     const pages = page.locator('.admin-main h1')
     await expect(pages).toBeFocused()
     await expect(pages).toHaveCSS('outline-style', 'none')
     await expect(pages).toHaveCSS('box-shadow', 'none')
-    const samples = await page.evaluate(() =>
-      (window as typeof window & { __nativeAdminFocusSamples: Array<{ title: string; before: number; after: number; headingTop: number }> }).__nativeAdminFocusSamples
+    const samples = await page.evaluate(
+      () =>
+        (window as typeof window & { __nativeAdminFocusSamples: Array<{ title: string; before: number; after: number; headingTop: number }> })
+          .__nativeAdminFocusSamples
     )
     for (const title of [await pages.textContent()]) {
       const sample = samples.find(candidate => candidate.title === title?.trim())
@@ -328,13 +376,13 @@ test.describe('release accessibility profiles', () => {
     const expectNativeFocus = async (control: Locator, variant: 'outlined' | 'solo', forcedColors = false) => {
       const field = control.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " v-field ")][1]')
       await expect(field).toHaveClass(/v-field--focused/u)
-      // Wait for finite native transitions, including floating labels and the
-      // halo, without finishing animations or sleeping past a guessed duration.
+      // Wait for native focus and floating-label transitions without sleeping
+      // past a guessed duration or bypassing the real popup focus state.
       await field.evaluate(async element => {
         getComputedStyle(element).boxShadow
-        const transitions = element.getAnimations({ subtree: true }).filter(animation =>
-          animation instanceof CSSTransition && Number.isFinite(animation.effect?.getComputedTiming().endTime)
-        )
+        const transitions = element
+          .getAnimations({ subtree: true })
+          .filter(animation => animation instanceof CSSTransition && Number.isFinite(animation.effect?.getComputedTiming().endTime))
         await Promise.all(transitions.map(animation => animation.finished))
       })
       await expect(field).toHaveCSS('outline-style', 'none')
@@ -346,9 +394,9 @@ test.describe('release accessibility profiles', () => {
         }))
       })
       for (const border of wrapperBorders) {
-        // A transparent resting-frame border may retain layout geometry, but
-        // must never paint a second crisp boundary around the native outline.
-        if (border.width > 0) expect(cssColorAlpha(border.color), 'The wrapper must not paint a second crisp rectangle').toBe(0)
+        // Outlined fields must not draw a second rectangle through their label.
+        // Solo search retains its independently useful resting well border.
+        if (variant === 'outlined' && border.width > 0) expect(cssColorAlpha(border.color), 'The wrapper must not paint a second crisp rectangle').toBe(0)
       }
       const outline = field.locator(':scope > .v-field__outline')
       await expect(outline, 'One native boundary owns field focus').toHaveCount(1)
@@ -366,12 +414,21 @@ test.describe('release accessibility profiles', () => {
         }
         const notch = outline.locator('.v-field__outline__notch')
         await expect(notch.locator('.v-field-label')).toBeVisible()
-        const gap = await notch.evaluate(element => ({
-          width: element.getBoundingClientRect().width,
-          top: getComputedStyle(element, '::before').opacity,
-          bottom: getComputedStyle(element, '::after').borderBottomWidth
-        }))
-        expect(gap.width, 'The real floating label has an open notch, not a line through its text').toBeGreaterThan(0)
+        const gap = await notch.evaluate(element => {
+          const label = element.querySelector('.v-field-label')!
+          const text = document.createRange()
+          text.selectNodeContents(label)
+          const glyphs = text.getBoundingClientRect()
+          const opening = element.getBoundingClientRect()
+          return {
+            left: glyphs.left - opening.left,
+            right: opening.right - glyphs.right,
+            top: getComputedStyle(element, '::before').opacity,
+            bottom: getComputedStyle(element, '::after').borderBottomWidth
+          }
+        })
+        expect(gap.left, 'Rendered label text clears the left native notch segment by 6px').toBeGreaterThanOrEqual(6)
+        expect(gap.right, 'Rendered label text clears the right native notch segment by 6px').toBeGreaterThanOrEqual(6)
         expect(gap.top).toBe('0')
         expect(gap.bottom).toBe('2px')
       } else {
@@ -392,11 +449,6 @@ test.describe('release accessibility profiles', () => {
           return color
         })
         await expect(outline, 'System Highlight keeps the native boundary visible in forced colors').toHaveCSS('color', highlight)
-      } else {
-        const shadow = await field.evaluate(element => getComputedStyle(element).boxShadow)
-        const halo = /^(.*\)) 0px 0px 0px 3px$/u.exec(shadow)
-        expect(halo, 'The settled focus halo is one soft 3px band, not an outer outline').not.toBeNull()
-        expect(cssColorAlpha(halo?.[1] ?? 'transparent')).toBeCloseTo(0.18, 2)
       }
     }
 
@@ -430,7 +482,7 @@ test.describe('release accessibility profiles', () => {
 
     await page.goto('/e/en/home', { waitUntil: 'networkidle' })
     await expect(page.locator('.editor-markdown')).toBeVisible()
-    await page.getByRole('button', { name: 'Page', exact: true }).click()
+    await page.getByRole('button', { name: 'Page Properties', exact: true }).click()
     const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
     await expect(properties).toBeVisible()
     const title = properties.getByRole('textbox', { name: 'Title', exact: true })
@@ -508,18 +560,22 @@ test.describe('release accessibility profiles', () => {
     const release = Promise.withResolvers<void>()
     const delivered = Promise.withResolvers<void>()
     let held = false
-    await page.route('**/_api/users/profile', async route => {
-      const response = await route.fetch()
-      expect(response.ok(), 'The delayed response belongs to the signed-in fixture account').toBe(true)
-      held = true
-      started.resolve()
-      try {
-        await release.promise
-        await route.fulfill({ response })
-      } finally {
-        delivered.resolve()
-      }
-    }, { times: 1 })
+    await page.route(
+      '**/_api/users/profile',
+      async route => {
+        const response = await route.fetch()
+        expect(response.ok(), 'The delayed response belongs to the signed-in fixture account').toBe(true)
+        held = true
+        started.resolve()
+        try {
+          await release.promise
+          await route.fulfill({ response })
+        } finally {
+          delivered.resolve()
+        }
+      },
+      { times: 1 }
+    )
     try {
       await page.goto('/p/profile', { waitUntil: 'domcontentloaded' })
       await started.promise
@@ -532,7 +588,7 @@ test.describe('release accessibility profiles', () => {
       await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
       await context.setOffline(false)
       const verification = await anonymous
-      expect((await verification.json() as { authenticated: unknown }).authenticated).toBe(false)
+      expect(((await verification.json()) as { authenticated: unknown }).authenticated).toBe(false)
       await expect(workspace.getByRole('alert')).toBeVisible()
       await expect(workspace.getByRole('button', { name: /try again|retry/iu })).toBeVisible()
       await expect(workspace.getByRole('status')).toHaveCount(0)
@@ -563,14 +619,17 @@ test.describe('release accessibility profiles', () => {
         'data-lpignore': 'true',
         'data-bwignore': 'true',
         'data-form-type': 'other'
-      })) await expect(control).toHaveAttribute(name, value)
+      }))
+        await expect(control).toHaveAttribute(name, value)
     }
     // Real installed definitions and SDK controls; drafts are never enabled or
     // published, so no identity-provider or storage connection is attempted.
     await openAuthenticatedPage(page, '/a/auth', '.identity-register')
     await page.getByRole('button', { name: 'Add provider', exact: true }).click()
-    await page.getByRole('dialog', { name: 'Add a sign-in provider', exact: true })
-      .getByRole('button', { name: /^SAML 2\.0\b/u }).click()
+    await page
+      .getByRole('dialog', { name: 'Add a sign-in provider', exact: true })
+      .getByRole('button', { name: /^SAML 2\.0\b/u })
+      .click()
     await expectProtection(page.getByRole('textbox', { name: 'Certificate', exact: true }), 'off')
     await page.getByRole('button', { name: /^Advanced protocol settings\b/u }).click()
     await expectProtection(page.getByRole('spinbutton', { name: 'Accepted Clock Skew Milleseconds', exact: true }), 'off')
@@ -589,10 +648,12 @@ test.describe('release accessibility profiles', () => {
     await expect(replacementKey).toHaveCount(0)
 
     await page.goto('/a/storage', { waitUntil: 'networkidle' })
-    await page.getByRole('navigation', { name: 'Storage sections', exact: true })
-      .getByRole('button', { name: 'Targets', exact: true }).click()
-    await page.getByRole('navigation', { name: 'Storage targets', exact: true })
-      .getByRole('button').filter({ has: page.getByText('Git', { exact: true }) }).click()
+    await page.getByRole('navigation', { name: 'Storage sections', exact: true }).getByRole('button', { name: 'Targets', exact: true }).click()
+    await page
+      .getByRole('navigation', { name: 'Storage targets', exact: true })
+      .getByRole('button')
+      .filter({ has: page.getByText('Git', { exact: true }) })
+      .click()
     await page.getByRole('combobox', { name: 'Scheduled synchronization', exact: true }).press('ArrowDown')
     await page.getByRole('option', { name: 'Custom interval', exact: true }).click()
     await expectProtection(page.getByRole('textbox', { name: 'Custom interval (ISO 8601)', exact: true }), 'off')
@@ -627,7 +688,10 @@ test.describe('release accessibility profiles', () => {
     })
     const actions = page.getByRole('banner').getByRole('button', { name: 'Page Actions', exact: true })
     await actions.click()
-    await page.locator('.page-actions-menu').getByRole('button', { name: /^delete(?: page)?$/iu }).click()
+    await page
+      .locator('.page-actions-menu')
+      .getByRole('button', { name: /^delete(?: page)?$/iu })
+      .click()
     const dialog = page.getByRole('dialog', { name: 'Delete Page', exact: true })
     await expect(dialog).toHaveAccessibleDescription(new RegExp(`delete[\\s\\S]*${titlePattern}`, 'iu'))
     const cancel = dialog.getByRole('button', { name: 'Cancel', exact: true })
@@ -677,7 +741,10 @@ test.describe('release accessibility profiles', () => {
     const inline = page.locator('#native-inline-copy')
     await inline.scrollIntoViewIfNeeded()
     await inline.hover()
-    expect(await inline.evaluate(element => element.getAnimations().filter(animation => animation instanceof CSSAnimation).length), 'Inline hover does not acknowledge a copy').toBe(0)
+    expect(
+      await inline.evaluate(element => element.getAnimations().filter(animation => animation instanceof CSSAnimation).length),
+      'Inline hover does not acknowledge a copy'
+    ).toBe(0)
     const inlineScroll = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))
     await pauseNextSweep(inline, 'wiki-inline-code-shimmer-sweep')
     await inline.click()
@@ -691,7 +758,11 @@ test.describe('release accessibility profiles', () => {
       const copy = wrapper.getByRole('button', { name: 'Copy', exact: true })
       await copy.scrollIntoViewIfNeeded()
       await copy.hover()
-      await copy.evaluate(element => element.getAnimations({ subtree: true }).forEach(animation => { animation.finish() }))
+      await copy.evaluate(element =>
+        element.getAnimations({ subtree: true }).forEach(animation => {
+          animation.finish()
+        })
+      )
       if (await panel.evaluate(element => element.scrollWidth > element.clientWidth)) {
         const scrolled = await panel.evaluate(element => {
           element.scrollLeft = 64
@@ -701,17 +772,55 @@ test.describe('release accessibility profiles', () => {
         await pauseNextSweep(panel, 'wiki-code-block-copy-sweep')
         await copy.click()
         await expect(copy).toHaveAttribute('data-copy-state', 'success')
-        expect(await panel.evaluate(element => ({ x: window.scrollX, y: window.scrollY, left: element.scrollLeft, top: element.scrollTop, width: element.scrollWidth }))).toEqual(scrolled)
-        await expect.poll(() => panel.evaluate(element => element.getAnimations({ subtree: true }).some(animation => animation instanceof CSSAnimation && animation.animationName === 'wiki-code-block-copy-sweep' && animation.playState === 'paused'))).toBe(true)
-        await panel.evaluate(element => element.getAnimations({ subtree: true }).forEach(animation => { animation.finish() }))
+        expect(
+          await panel.evaluate(element => ({
+            x: window.scrollX,
+            y: window.scrollY,
+            left: element.scrollLeft,
+            top: element.scrollTop,
+            width: element.scrollWidth
+          }))
+        ).toEqual(scrolled)
+        await expect
+          .poll(() =>
+            panel.evaluate(element =>
+              element
+                .getAnimations({ subtree: true })
+                .some(
+                  animation => animation instanceof CSSAnimation && animation.animationName === 'wiki-code-block-copy-sweep' && animation.playState === 'paused'
+                )
+            )
+          )
+          .toBe(true)
+        await panel.evaluate(element =>
+          element.getAnimations({ subtree: true }).forEach(animation => {
+            animation.finish()
+          })
+        )
         await expect(panel).not.toHaveClass(/wiki-code-copy-flash-run/u)
-        await panel.evaluate(element => { element.scrollLeft = 0 })
+        await panel.evaluate(element => {
+          element.scrollLeft = 0
+        })
       }
-      const initial = await panel.evaluate(element => ({ x: window.scrollX, y: window.scrollY, left: element.scrollLeft, top: element.scrollTop, width: element.scrollWidth }))
+      const initial = await panel.evaluate(element => ({
+        x: window.scrollX,
+        y: window.scrollY,
+        left: element.scrollLeft,
+        top: element.scrollTop,
+        width: element.scrollWidth
+      }))
       await pauseNextSweep(panel, 'wiki-code-block-copy-sweep')
       await copy.click()
       await expect(copy).toHaveAttribute('data-copy-state', 'success')
-      expect(await panel.evaluate(element => ({ x: window.scrollX, y: window.scrollY, left: element.scrollLeft, top: element.scrollTop, width: element.scrollWidth }))).toEqual(initial)
+      expect(
+        await panel.evaluate(element => ({
+          x: window.scrollX,
+          y: window.scrollY,
+          left: element.scrollLeft,
+          top: element.scrollTop,
+          width: element.scrollWidth
+        }))
+      ).toEqual(initial)
       await expectCopySweepPaint(page, panel, 'wiki-code-block-copy-sweep', '::after', [90, 50, 10], testInfo)
       await expect(panel).not.toHaveClass(/wiki-code-copy-flash-run/u)
     }
@@ -721,7 +830,11 @@ test.describe('release accessibility profiles', () => {
     const emptyCopy = empty.locator('..').getByRole('button', { name: 'Copy', exact: true })
     await emptyCopy.scrollIntoViewIfNeeded()
     await emptyCopy.hover()
-    await emptyCopy.evaluate(element => element.getAnimations({ subtree: true }).forEach(animation => { animation.finish() }))
+    await emptyCopy.evaluate(element =>
+      element.getAnimations({ subtree: true }).forEach(animation => {
+        animation.finish()
+      })
+    )
     const emptyScroll = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))
     await emptyCopy.click()
     await expect(emptyCopy).toHaveAttribute('data-copy-state', 'error')
@@ -735,7 +848,14 @@ test.describe('release accessibility profiles', () => {
     // Fail only the browser clipboard boundary; production click/feedback and
     // animation behavior stay real, including the legacy fallback attempt.
     await page.addInitScript(() => {
-      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new DOMException('Clipboard denied', 'NotAllowedError') } } })
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: {
+          writeText: async () => {
+            throw new DOMException('Clipboard denied', 'NotAllowedError')
+          }
+        }
+      })
       document.execCommand = () => false
     })
     await openReaderCopyFixture(page)
@@ -765,10 +885,14 @@ test.describe('release accessibility profiles', () => {
         value: (handler: TimerHandler, delay?: number, ...args: unknown[]) => {
           if (typeof handler !== 'function') return setTimeout(handler, delay, ...args)
           const scheduledAt = performance.now()
-          return setTimeout((...values: unknown[]) => {
-            executedTimerOrigin = scheduledAt
-            Reflect.apply(handler, window, values)
-          }, delay, ...args)
+          return setTimeout(
+            (...values: unknown[]) => {
+              executedTimerOrigin = scheduledAt
+              Reflect.apply(handler, window, values)
+            },
+            delay,
+            ...args
+          )
         }
       })
       const observed = new WeakSet<Animation>()
@@ -780,7 +904,9 @@ test.describe('release accessibility profiles', () => {
           mounted = true
           Object.defineProperty(window, '__nativeToolbarMountedAt', { value: performance.now() })
         }
-        const animation = button.getAnimations({ subtree: true }).find(candidate => candidate instanceof CSSAnimation && candidate.animationName === 'wiki-code-copy-shimmer-sweep')
+        const animation = button
+          .getAnimations({ subtree: true })
+          .find(candidate => candidate instanceof CSSAnimation && candidate.animationName === 'wiki-code-copy-shimmer-sweep')
         if (animation && !observed.has(animation)) {
           observed.add(animation)
           // Mutation delivery follows the whole mounting task. Measure the
@@ -804,8 +930,8 @@ test.describe('release accessibility profiles', () => {
     await copy.scrollIntoViewIfNeeded()
     await page.mouse.move(1, 1)
     const mountedAt = await page.evaluate(() => (window as typeof window & { __nativeToolbarMountedAt: number }).__nativeToolbarMountedAt)
-    while (await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts.length) < 1) {
-      const remaining = mountedAt + 18_000 - await page.evaluate(() => performance.now())
+    while ((await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts.length)) < 1) {
+      const remaining = mountedAt + 18_000 - (await page.evaluate(() => performance.now()))
       if (remaining <= 0) break
       await page.clock.runFor(Math.min(100, remaining))
     }
@@ -815,18 +941,34 @@ test.describe('release accessibility profiles', () => {
     const cadenceStartedAt = await page.evaluate(() => (window as typeof window & { __nativeToolbarCadenceStartedAt: number }).__nativeToolbarCadenceStartedAt)
     expect(ambient - cadenceStartedAt, 'An unhovered toolbar first animates after 9–18 seconds').toBeGreaterThanOrEqual(9000)
     expect(ambient - cadenceStartedAt).toBeLessThanOrEqual(18_000)
-    await copy.evaluate(element => element.getAnimations({ subtree: true }).forEach(animation => { animation.finish() }))
+    await copy.evaluate(element =>
+      element.getAnimations({ subtree: true }).forEach(animation => {
+        animation.finish()
+      })
+    )
     await expect(copy).not.toHaveClass(/wiki-copy-shimmer-run/u)
     const firstHoverTime = await page.evaluate(() => performance.now())
     await panel.locator('pre').hover()
-    await expect.poll(() => copy.evaluate(element => element.getAnimations({ subtree: true }).some(animation => animation instanceof CSSAnimation && animation.playState === 'paused'))).toBe(true)
+    await expect
+      .poll(() =>
+        copy.evaluate(element =>
+          element.getAnimations({ subtree: true }).some(animation => animation instanceof CSSAnimation && animation.playState === 'paused')
+        )
+      )
+      .toBe(true)
     await panel.locator('.toolbar').evaluate(element => {
       for (const animation of element.getAnimations({ subtree: true })) if (animation instanceof CSSTransition) animation.finish()
     })
     const hoverFrames: Buffer[] = []
-    for (const [progress, travel] of [[0, -1.3], [0.5, 0], [1, 1.3]] as const) {
+    for (const [progress, travel] of [
+      [0, -1.3],
+      [0.5, 0],
+      [1, 1.3]
+    ] as const) {
       const sample = await copy.evaluate((element, progress) => {
-        const animation = element.getAnimations({ subtree: true }).find(candidate => candidate instanceof CSSAnimation && candidate.animationName === 'wiki-code-copy-shimmer-sweep')
+        const animation = element
+          .getAnimations({ subtree: true })
+          .find(candidate => candidate instanceof CSSAnimation && candidate.animationName === 'wiki-code-copy-shimmer-sweep')
         if (!animation) throw new Error('First-hover sweep is missing')
         const duration = Number(animation.effect?.getComputedTiming().duration)
         animation.currentTime = progress * duration - (progress === 1 ? 0.001 : 0)
@@ -853,18 +995,28 @@ test.describe('release accessibility profiles', () => {
     }
     expect(painted / pixels, 'First-hover attractor visibly paints the Copy button midpoint').toBeGreaterThan(0.05)
     expect(remainingPaint / pixels, 'The attractor leaves the button again at its end').toBeLessThan(0.05)
-    await copy.evaluate(element => element.getAnimations({ subtree: true }).forEach(animation => { animation.finish() }))
+    await copy.evaluate(element =>
+      element.getAnimations({ subtree: true }).forEach(animation => {
+        animation.finish()
+      })
+    )
     await expect(copy).not.toHaveClass(/wiki-copy-shimmer-run/u)
     // Cross descendants with real pointer movement, then leave/re-enter.
     await panel.locator('pre code').hover()
     await copy.hover()
     await page.mouse.move(1, 1)
     await panel.locator('pre').hover()
-    expect(await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts)).toEqual([ambient, firstHoverTime])
+    expect(await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts)).toEqual([
+      ambient,
+      firstHoverTime
+    ])
     await page.clock.runFor(13_899)
-    expect(await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts)).toEqual([ambient, firstHoverTime])
-    while (await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts.length) < 3) {
-      const remaining = firstHoverTime + 22_900 - await page.evaluate(() => performance.now())
+    expect(await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts)).toEqual([
+      ambient,
+      firstHoverTime
+    ])
+    while ((await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts.length)) < 3) {
+      const remaining = firstHoverTime + 22_900 - (await page.evaluate(() => performance.now()))
       if (remaining <= 0) break
       await page.clock.runFor(Math.min(100, remaining))
     }
@@ -872,9 +1024,13 @@ test.describe('release accessibility profiles', () => {
     const resumed = await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts[2]!)
     expect(resumed - firstHoverTime, 'Ambient resumes only after 1.9s sweep + 3s pause + 9–18s cadence').toBeGreaterThanOrEqual(13_900)
     expect(resumed - firstHoverTime).toBeLessThanOrEqual(22_900)
-    await copy.evaluate(element => element.getAnimations({ subtree: true }).forEach(animation => { animation.finish() }))
-    while (await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts.length) < 4) {
-      const remaining = resumed + 18_000 - await page.evaluate(() => performance.now())
+    await copy.evaluate(element =>
+      element.getAnimations({ subtree: true }).forEach(animation => {
+        animation.finish()
+      })
+    )
+    while ((await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts.length)) < 4) {
+      const remaining = resumed + 18_000 - (await page.evaluate(() => performance.now()))
       if (remaining <= 0) break
       await page.clock.runFor(Math.min(100, remaining))
     }
@@ -882,7 +1038,10 @@ test.describe('release accessibility profiles', () => {
     const next = await page.evaluate(() => (window as typeof window & { __nativeToolbarSweepStarts: number[] }).__nativeToolbarSweepStarts[3]!)
     expect(next - resumed, 'Subsequent ambient sweeps retain their independent 9–18s cadence').toBeGreaterThanOrEqual(9000)
     expect(next - resumed).toBeLessThanOrEqual(18_000)
-    expect(await page.evaluate(() => (window as typeof window & { __nativeInlineSweepStarts: number[] }).__nativeInlineSweepStarts), 'No idle-time inline acknowledgment was painted anywhere in the observation window').toEqual([])
+    expect(
+      await page.evaluate(() => (window as typeof window & { __nativeInlineSweepStarts: number[] }).__nativeInlineSweepStarts),
+      'No idle-time inline acknowledgment was painted anywhere in the observation window'
+    ).toEqual([])
     await expect(page.locator('#native-inline-copy')).not.toHaveAttribute('data-inline-copy-state', /success|error/u)
   })
   test('meets WCAG gates on primary desktop surfaces', async ({ page }, testInfo) => {
@@ -943,33 +1102,41 @@ test.describe('release accessibility profiles', () => {
           /(<template\b[^>]*data-wiki-page-contents[^>]*>)[\s\S]*?<\/template>/u,
           '$1<div><p id="native-short-footer-content">A short reader page.</p></div></template>'
         )
-        if (!configured || !body.includes('id="native-short-footer-content"')) throw new Error('Footer fixture omitted its normal configuration or contents slot')
+        if (!configured || !body.includes('id="native-short-footer-content"'))
+          throw new Error('Footer fixture omitted its normal configuration or contents slot')
         await route.fulfill({ response, body })
       })
       const footer = page.locator('.nav-footer')
-      const measureFooterTextExtent = () => footer.evaluate(element => {
-        const bounds = element.getBoundingClientRect()
-        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
-        const textBounds: Array<{ left: number; top: number; right: number; bottom: number }> = []
-        const hiddenText: string[] = []
-        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-          if (!node.textContent?.trim()) continue
-          const parent = node.parentElement
-          if (!parent) throw new Error('Footer text has no containing element')
-          const style = getComputedStyle(parent)
-          const range = document.createRange()
-          range.selectNodeContents(node)
-          const fragments = Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0)
-          if (!fragments.length || style.visibility !== 'visible' || Number(style.opacity) === 0) hiddenText.push(node.textContent)
-          for (const rect of fragments) textBounds.push({ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom })
-        }
-        return {
-          top: bounds.top, bottom: bounds.bottom, height: bounds.height,
-          contentHeight: Math.max(...textBounds.map(rect => rect.bottom)) - Math.min(...textBounds.map(rect => rect.top)),
-          textBounds, hiddenText, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
-          documentHeight: document.documentElement.scrollHeight, scrollY: window.scrollY
-        }
-      })
+      const measureFooterTextExtent = () =>
+        footer.evaluate(element => {
+          const bounds = element.getBoundingClientRect()
+          const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+          const textBounds: Array<{ left: number; top: number; right: number; bottom: number }> = []
+          const hiddenText: string[] = []
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (!node.textContent?.trim()) continue
+            const parent = node.parentElement
+            if (!parent) throw new Error('Footer text has no containing element')
+            const style = getComputedStyle(parent)
+            const range = document.createRange()
+            range.selectNodeContents(node)
+            const fragments = Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0)
+            if (!fragments.length || style.visibility !== 'visible' || Number(style.opacity) === 0) hiddenText.push(node.textContent)
+            for (const rect of fragments) textBounds.push({ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom })
+          }
+          return {
+            top: bounds.top,
+            bottom: bounds.bottom,
+            height: bounds.height,
+            contentHeight: Math.max(...textBounds.map(rect => rect.bottom)) - Math.min(...textBounds.map(rect => rect.top)),
+            textBounds,
+            hiddenText,
+            viewportWidth: window.innerWidth,
+            viewportHeight: window.innerHeight,
+            documentHeight: document.documentElement.scrollHeight,
+            scrollY: window.scrollY
+          }
+        })
       let compactHeight = 0
       for (expanded of [false, true]) {
         await page.setViewportSize({ width, height: 1600 })
@@ -980,10 +1147,12 @@ test.describe('release accessibility profiles', () => {
         let firstHeight = 0
         for (const height of [1600, 2200]) {
           await page.setViewportSize({ width, height })
-          await expect.poll(async () => {
-            const geometry = await measureFooterTextExtent()
-            return Math.abs(geometry.bottom - geometry.viewportHeight)
-          }, 'Short-page footer reaches the viewport bottom without scrolling').toBeLessThanOrEqual(1)
+          await expect
+            .poll(async () => {
+              const geometry = await measureFooterTextExtent()
+              return Math.abs(geometry.bottom - geometry.viewportHeight)
+            }, 'Short-page footer reaches the viewport bottom without scrolling')
+            .toBeLessThanOrEqual(1)
           const geometry = await measureFooterTextExtent()
           expect(geometry.scrollY, 'A genuinely short reader needs no scroll to see its footer').toBe(0)
           expect(geometry.documentHeight, 'Short content and the footer fit in the viewport').toBeLessThanOrEqual(geometry.viewportHeight + 1)
@@ -992,7 +1161,9 @@ test.describe('release accessibility profiles', () => {
           expect(article.y + article.height, 'Real reader content leaves substantial viewport remainder').toBeLessThan(geometry.viewportHeight / 2)
           expect(geometry.hiddenText, 'All legal and product attribution text remains rendered').toEqual([])
           expect(geometry.height, 'The attribution retains a thin readable minimum').toBeGreaterThanOrEqual(15)
-          expect(geometry.height, 'Footer extent follows its text, not the unused viewport remainder').toBeLessThanOrEqual(Math.max(32, geometry.contentHeight + 2))
+          expect(geometry.height, 'Footer extent follows its text, not the unused viewport remainder').toBeLessThanOrEqual(
+            Math.max(32, geometry.contentHeight + 2)
+          )
           for (const rect of geometry.textBounds) {
             expect(rect.left, 'Footer text stays inside the viewport').toBeGreaterThanOrEqual(-1)
             expect(rect.right).toBeLessThanOrEqual(geometry.viewportWidth + 1)
@@ -1013,7 +1184,8 @@ test.describe('release accessibility profiles', () => {
             expect(geometry.height, 'Wrapping legal content grows the footer rather than escaping a fixed-height bar').toBeGreaterThan(compactHeight + 12)
           }
           await testInfo.attach(`native-footer-${expanded ? 'wrapped' : 'compact'}-${width}x${height}`, {
-            body: await page.screenshot({ animations: 'disabled' }), contentType: 'image/png'
+            body: await page.screenshot({ animations: 'disabled' }),
+            contentType: 'image/png'
           })
         }
       }
@@ -1178,6 +1350,7 @@ test.describe('release accessibility profiles', () => {
       await openAuthenticatedPage(page, '/', '.page-header-section')
       const header = page.locator('.nav-header')
       const headerBackground = await header.evaluate(element => getComputedStyle(element).backgroundColor)
+      const headerImage = await header.evaluate(element => getComputedStyle(element).backgroundImage)
       const agent = page.getByRole('region', { name: 'Wiki Agent', exact: true })
       const search = page.getByRole('dialog', { name: 'Search the Wiki', exact: true })
       const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent', exact: true })
@@ -1187,6 +1360,7 @@ test.describe('release accessibility profiles', () => {
         await expect(agent).toBeVisible()
         await expect(header, 'The background header does not reblur beneath Agent glass').toHaveCSS('backdrop-filter', 'none')
         await expect(header).toHaveCSS('background-color', headerBackground)
+        await expect(header, 'Backdrop suppression preserves the header material image').toHaveCSS('background-image', headerImage)
         if (testInfo.project.name === 'accessibility-mobile') {
           await expect.poll(() => agent.evaluate(element => element.contains(document.activeElement))).toBe(true)
           await expect(composer, 'Opening on a phone does not summon the soft keyboard').not.toBeFocused()
@@ -1217,7 +1391,10 @@ test.describe('release accessibility profiles', () => {
         const searchControl = page.locator('.nav-header-search-control:visible').first()
         await expect(searchControl).toHaveCSS('backdrop-filter', 'none')
         await expect(searchControl.locator('.v-field')).toHaveCSS('backdrop-filter', 'none')
-        await expect.poll(async () => cssColorAlpha(await searchControl.locator('.v-field').evaluate(element => getComputedStyle(element).backgroundColor))).toBeCloseTo(.54, 4)
+        await expect(searchControl.locator('.v-field')).toHaveCSS('background-image', 'none')
+        await expect
+          .poll(async () => cssColorAlpha(await searchControl.locator('.v-field').evaluate(element => getComputedStyle(element).backgroundColor)))
+          .toBe(1)
         if (testInfo.project.name === 'accessibility-mobile') {
           await expect(header.locator('.v-toolbar__extension')).toHaveCSS('backdrop-filter', 'none')
           await expect(header.locator('.nav-header-mobile-search')).toHaveCSS('backdrop-filter', 'none')
@@ -1239,8 +1416,8 @@ test.describe('release accessibility profiles', () => {
       const agent = await openEnabledAgent(page)
       await expect(agent).toHaveClass(/inline-agent--contextual/)
       const composerSurround = agent.locator('.inline-agent__composer')
-      await expect(composerSurround).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-      await expect(composerSurround).toHaveCSS('box-shadow', 'none')
+      await expect(composerSurround).toHaveCSS('background-image', /linear-gradient/u)
+      await expect(composerSurround).toHaveCSS('backdrop-filter', /blur\(/u)
       const greetingBackdrop = await agent.locator('.inline-agent__welcome-title').evaluate(element => {
         const styles = getComputedStyle(element, '::before')
         return { background: styles.backgroundImage, filter: styles.filter, pointerEvents: styles.pointerEvents }
@@ -1289,22 +1466,53 @@ test.describe('release accessibility profiles', () => {
       }
       const expectOpaque = async (locator: Locator, surface: string): Promise<void> => {
         await expect(locator, `${surface} finishes entering at full element opacity`).toHaveCSS('opacity', '1')
-        await expect.poll(async () => (await readSurfaceStyle(locator)).backgroundAlpha, { message: `${surface} keeps an opaque background` }).toBe(1)
+        // An opaque gradient has a transparent background-color in CSSOM.
+        // Compare native interior paint over two hostile ancestor backings,
+        // rather than mistaking that serialization for a translucent surface.
+        const previous = await locator.evaluate(element => element.parentElement!.getAttribute('style'))
+        const captures: Buffer[] = []
+        try {
+          for (const background of ['#FF00FF', '#00FF00']) {
+            await locator.evaluate((element, color) => {
+              element.parentElement!.style.background = color
+            }, background)
+            captures.push(await locator.screenshot({ animations: 'disabled', caret: 'hide', scale: 'css' }))
+          }
+        } finally {
+          await locator.evaluate((element, style) => {
+            if (style === null) element.parentElement!.removeAttribute('style')
+            else element.parentElement!.setAttribute('style', style)
+          }, previous)
+        }
+        const [first, second] = await Promise.all(captures.map(capture => sharp(capture).removeAlpha().raw().toBuffer({ resolveWithObject: true })))
+        if (!first || !second) throw new Error(`${surface}: native backing captures are unavailable`)
+        expect(second.info).toEqual(first.info)
+        let changed = 0
+        for (let y = Math.floor(first.info.height * 0.3); y < first.info.height * 0.7; y += 1) {
+          for (let x = Math.floor(first.info.width * 0.3); x < first.info.width * 0.7; x += 1) {
+            if (rgbDistance(first.data, second.data, (y * first.info.width + x) * first.info.channels) > 1) changed += 1
+          }
+        }
+        expect(changed, `${surface} paints an opaque interior independent of content behind it`).toBe(0)
         await expect(locator, `${surface} does not become a glass layer`).toHaveCSS('backdrop-filter', 'none')
       }
       const expectContextualGlass = async (reduced: boolean) => {
-        const bodyAlpha = await body.evaluate(element => element.closest('.v-theme--dark') ? .84 : .86)
-        for (const [name, locator] of [['toolbar', toolbar], ['body', body]] as const) {
+        for (const [name, locator] of [
+          ['toolbar', toolbar],
+          ['body', body]
+        ] as const) {
           await expect(locator, `The Agent ${name} finishes entering at full opacity`).toHaveCSS('opacity', '1')
           await expect(locator).toHaveCSS('backdrop-filter', reduced ? 'none' : /blur\(/u)
           if (reduced) {
-            await expect.poll(async () => (await readSurfaceStyle(locator)).backgroundAlpha, { message: `Reduced transparency makes the Agent ${name} opaque` }).toBe(1)
+            await expect
+              .poll(async () => (await readSurfaceStyle(locator)).backgroundAlpha, { message: `Reduced transparency makes the Agent ${name} opaque` })
+              .toBe(1)
+            await expect(locator).toHaveCSS('background-image', 'none')
           } else {
-            await expect.poll(async () => (await readSurfaceStyle(locator)).backgroundAlpha, { message: `The Agent ${name} keeps its independent contextual material` }).toBeCloseTo(name === 'toolbar' ? .64 : bodyAlpha, 4)
+            await expect(locator, `The Agent ${name} retains its contextual gradient backing`).toHaveCSS('background-image', /linear-gradient/u)
           }
         }
-        const [toolbarStyles, bodyStyles] = await Promise.all([readSurfaceStyle(toolbar), readSurfaceStyle(body)])
-        return { toolbarStyles, bodyStyles }
+        return { bodyStyles: await readSurfaceStyle(body) }
       }
       const expectOpaqueWorkspaceSurfaces = async (): Promise<void> => {
         const messageSurfaces = agent.locator('.agent-message__surface')
@@ -1328,9 +1536,7 @@ test.describe('release accessibility profiles', () => {
         await expect(memory).toBeHidden()
       }
 
-      const { toolbarStyles, bodyStyles } = await expectContextualGlass(false)
-      // The toolbar is a harder glass than the conversation so page text under it stays unreadable.
-      expect(blurRadius(toolbarStyles.backdropFilter)).toBeGreaterThan(blurRadius(bodyStyles.backdropFilter))
+      const { bodyStyles } = await expectContextualGlass(false)
       const card = agent.locator('.inline-agent__card')
       const included = agent.locator('.agent-context__page-chip')
       await expect(included).toBeEnabled()

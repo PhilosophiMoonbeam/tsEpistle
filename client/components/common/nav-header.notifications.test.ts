@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import i18next from 'i18next'
 
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
@@ -8,6 +9,7 @@ import { browserWindow, resetBody, setLocation } from '../../test/browser-dom.mt
 import { translateEnglish } from '../../test/english-translate.mts'
 import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session.ts'
 import * as pageActionEvents from '../../helpers/page-action-events.ts'
+import * as searchNavigationEvents from '../../helpers/search-navigation-events.ts'
 import type { ReaderPageActionsState, ReaderPageActionRequest } from '../../helpers/page-action-events.ts'
 import type { PageApprovalInboxItem, PageWatchNotification } from '../../../shared/site-notifications.ts'
 import type { Component } from 'vue'
@@ -285,7 +287,8 @@ globals.__headerInvalidateOfflineIdentity = async () => true
 globals.__headerOfflineIdentityCleanupFailureMessage = 'Offline identity cleanup failed. Reconnect and try again.'
 globals.siteConfig = {
   agentsEnabled: false,
-  devMode: false
+  devMode: false,
+  lang: 'en'
 }
 globals.siteLangs = []
 
@@ -339,6 +342,10 @@ const bundle = await Bun.build({
         }))
         build.onResolve({ filter: /^\.\.\/\.\.\/helpers\/page-action-events$/ }, () => ({
           path: 'page-action-events',
+          external: true
+        }))
+        build.onResolve({ filter: /^\.\.\/\.\.\/helpers\/search-navigation-events$/ }, () => ({
+          path: 'search-navigation-events',
           external: true
         }))
         build.onResolve({ filter: /^.*$/ }, args => ({ path: args.path, namespace: 'header-notifications-stub' }))
@@ -400,13 +407,6 @@ const bundle = await Bun.build({
           if (args.path === '../../store/agents.ts') {
             return { contents: 'export const useAgentsStore = () => ({ destroyWorkspace: globalThis.__headerDestroyAgents })', loader: 'js' }
           }
-          if (args.path.endsWith('/search-navigation-events')) {
-            return {
-              contents:
-                'export const emitSearchEnter=()=>{}; export const emitSearchExit=()=>{}; export const emitSearchMove=()=>{}; export const onSearchFocus=()=>{}; export const offSearchFocus=()=>{}',
-              loader: 'js'
-            }
-          }
           return {
             contents: "import { defineComponent } from 'vue'; export default defineComponent({ name: 'HeaderAsyncStub', setup: () => () => null })",
             loader: 'js'
@@ -439,6 +439,7 @@ moduleFactory(
   specifier => {
     if (specifier === 'vue') return VueRuntime
     if (specifier === 'page-action-events') return pageActionEvents
+    if (specifier === 'search-navigation-events') return searchNavigationEvents
     throw new Error(`Unexpected import in nav-header.vue: ${specifier}`)
   },
   compiledModule,
@@ -458,6 +459,11 @@ interface HeaderVm {
   runPageMenuAction: (handler: string, menuRef: 'pageActions' | 'mobilePageActions') => Promise<void>
   pageActionsAreOpen: boolean
   mobilePageActionsAreOpen: boolean
+  newPageModal: boolean
+  newPageSeed: { path: string; locale: string }
+  searchIsFocused: boolean
+  searchMode: 'search' | 'ask'
+  openAgent: () => Promise<void>
 }
 
 const mountedApps: Array<() => void> = []
@@ -487,16 +493,20 @@ interface HeaderMountOptions {
   xs?: boolean
   smAndDown?: boolean
   dense?: boolean
+  beforeSearchExit?: () => boolean
 }
 
-const mountHeader = async ({ hideSearch = true, xs = false, smAndDown = xs, dense = true }: HeaderMountOptions = {}) => {
+const mountHeader = async ({ hideSearch = true, xs = false, smAndDown = xs, dense = true, beforeSearchExit }: HeaderMountOptions = {}) => {
   installBrowserGlobals()
   const host = browserWindow.document.createElement('div')
   browserWindow.document.body.append(host)
-  const app = testRenderer.createApp(NavHeader, { dense, hideSearch })
+  const app = testRenderer.createApp(NavHeader, { dense, hideSearch, beforeSearchExit })
   app.component('v-menu', menuSlotForwardingStub)
   app.component('v-tooltip', slotForwardingStub)
   app.config.globalProperties.$t = translate
+  const locale = i18next.createInstance()
+  await locale.init({ lng: 'fr-CA', fallbackLng: 'fr', resources: {}, initAsync: false })
+  app.config.globalProperties.$i18n = locale
   installVuetifyFixture(app, { ssr: { clientWidth: xs ? 375 : smAndDown ? 700 : 1280, clientHeight: 768 } })
   app.mount(host)
   await settle()
@@ -519,6 +529,9 @@ afterEach(() => {
   Object.assign(connection, { connection: 'online', connectionState: 'online', serverReachable: true, serverHealthy: true })
   wikiStore.site.title = 'Wiki'
   wikiStore.site.search = ''
+  wikiStore.site.searchMode = 'search'
+  wikiStore.site.searchIsFocused = false
+  globals.siteLangs = []
   wikiStore.user = user(1)
   Object.assign(wikiStore.page, { path: 'home', mode: 'view', locale: 'en', visibility: 'public', id: 1, sourceRevision: '' })
   Object.assign(wikiStore.page.effectivePermissions.pages, { write: false, manage: false, delete: false })
@@ -537,7 +550,7 @@ afterEach(() => {
 describe('search header affordances', () => {
   it.each([false, true])('retains a dismissed search and allows explicit clear and replacement (small screen: %s)', async smAndDown => {
     const mounted = await mountHeader({ hideSearch: false, smAndDown })
-    const vm = mounted.vm as unknown as { search: string | null, searchIsFocused: boolean, searchClose: () => void }
+    const vm = mounted.vm as unknown as { search: string | null; searchIsFocused: boolean; searchClose: () => void }
     const currentSearch = (): string | null => vm.search
     vm.search = 'initial query'
     vm.searchIsFocused = true
@@ -558,31 +571,59 @@ describe('search header affordances', () => {
   it('omits Browse by Tags from the desktop header when search is hidden', async () => {
     const mounted = await mountHeader({ hideSearch: true, smAndDown: false })
 
-    expect(mounted.host.querySelector('.nav-header-browse')).toBeNull()
+    expect(mounted.host.querySelector('[href="/t"]')).toBeNull()
   })
 
   it.each([false, true])('omits Browse by Tags when mobile search is hidden (phone: %s)', async xs => {
     const mounted = await mountHeader({ hideSearch: true, smAndDown: true, xs })
 
-    expect(mounted.host.querySelector('.nav-header-browse')).toBeNull()
+    expect(mounted.host.querySelector('[href="/t"]')).toBeNull()
   })
 
-  it('keeps tag browsing reachable on phones without granting anonymous visitors an Agent action', async () => {
+  it('keeps anonymous phone tag browsing in the bounded overflow without an Agent action or duplicate header control', async () => {
     globals.siteConfig = { ...globals.siteConfig, agentsEnabled: true }
     wikiStore.user = user(0)
     wikiStore.authRefreshOutcome = 'anonymous'
     try {
       const mounted = await mountHeader({ hideSearch: false, xs: true, dense: false })
-      expect(mounted.host.querySelector('.nav-header-mobile-actions')).not.toBeNull()
-      expect(mounted.host.querySelector('.menu-stub__content [href="/t"]')).not.toBeNull()
-      expect(mounted.host.querySelector('.nav-header-menu__note')).toBeNull()
+      expect(mounted.host.querySelector('.nav-header-browse')).toBeNull()
+      const overflow = mounted.host.querySelector('.nav-header-mobile-actions')
+      expect(overflow).not.toBeNull()
+      const tags = overflow!.closest('.menu-stub')!.querySelector('[href="/t"]')
+      expect(tags).not.toBeNull()
+      expect(tags!.closest('.menu-stub__content')).not.toBeNull()
+      expect(mounted.host.querySelectorAll('[href="/t"]')).toHaveLength(1)
       expect(mounted.host.querySelector('[aria-label="Ouvrir l’agent"]')).toBeNull()
     } finally {
       globals.siteConfig = { ...globals.siteConfig, agentsEnabled: false }
     }
   })
-})
 
+  it.each([false, true])('keeps Search but removes every Tags entry while authoring (phone: %s)', async xs => {
+    wikiStore.page.mode = 'edit'
+    const { host } = await mountHeader({ hideSearch: false, xs, dense: false })
+    expect(host.querySelector('[href="/t"]')).toBeNull()
+    expect(host.querySelector(xs ? '.nav-header-search-toggle' : '.nav-header-search-control')).not.toBeNull()
+  })
+
+  it('keeps the authenticated phone Agent opener outside overflow menus', async () => {
+    globals.siteConfig = { ...globals.siteConfig, agentsEnabled: true }
+    wikiStore.user.permissions = ['use:agents']
+    try {
+      const { host } = await mountHeader({ hideSearch: false, xs: true, dense: false })
+      const opener = host.querySelector<HTMLElement>('.nav-header-agent')!
+      expect(opener.closest('.menu-stub__content')).toBeNull()
+      expect(opener.getAttribute('aria-label')).toBe('Ouvrir l’agent')
+      wikiStore.site.searchMode = 'ask'
+      wikiStore.site.searchIsFocused = true
+      await settle()
+      expect(host.querySelector('.nav-header-agent')).toBe(opener)
+      expect(host.querySelectorAll('.nav-header-agent')).toHaveLength(1)
+    } finally {
+      globals.siteConfig = { ...globals.siteConfig, agentsEnabled: false }
+    }
+  })
+})
 
 describe('notification header identity recovery', () => {
   it('recovers an A-to-B shared-cookie identity without displaying stale items or retrying while stale', async () => {
@@ -919,7 +960,11 @@ describe('account continuity without a verified connection', () => {
     const form = host.querySelector('form[action="/logout"]')
     if (!form) throw new Error('Logout form missing')
     let submitted = false
-    Object.defineProperty(form, 'submit', { value: () => { submitted = true } })
+    Object.defineProperty(form, 'submit', {
+      value: () => {
+        submitted = true
+      }
+    })
     form.dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
     await settle()
     expect(submitted).toBe(false)
@@ -976,6 +1021,65 @@ describe('reader-owned header page actions', () => {
     }
   })
 
+  it('seeds quick create from the current reader only, snapshots the selector context and falls back to the supported UI locale', async () => {
+    wikiStore.user.permissions = ['write:pages']
+    globals.siteLangs = [
+      { code: 'en', name: 'English' },
+      { code: 'fr', name: 'French' }
+    ]
+    Object.assign(wikiStore.page, { path: 'guides/current', locale: 'en' })
+    const state = readerState()
+    const reply = (request: pageActionEvents.ReaderPageActionsRequest) => request.reply(state)
+    pageActionEvents.onReaderPageActionsRequest(reply)
+    try {
+      const { vm } = await mountHeader({ hideSearch: false, dense: false })
+      vm.searchIsFocused = true
+      expect(searchNavigationEvents.requestSearchQuickCreate()).toBe(true)
+      expect(vm.newPageModal).toBe(true)
+      expect(vm.searchIsFocused).toBe(false)
+      expect(vm.newPageSeed).toEqual({ path: 'guides/new-page', locale: 'en' })
+      const seed = vm.newPageSeed
+      wikiStore.page.path = 'different/retained-metadata'
+      pageActionEvents.emitReaderPageActionsChanged()
+      await settle()
+      expect(vm.newPageSeed).toBe(seed)
+      expect(vm.newPageSeed).toEqual({ path: 'guides/new-page', locale: 'en' })
+      vm.newPageModal = false
+      expect(searchNavigationEvents.requestSearchQuickCreate()).toBe(true)
+      expect(vm.newPageSeed).toEqual({ path: 'new-page', locale: 'fr' })
+    } finally {
+      pageActionEvents.offReaderPageActionsRequest(reply)
+      pageActionEvents.emitReaderPageActionsChanged()
+    }
+  })
+
+  it('does not discard Search or a guarded draft when quick-create permission, identity, connectivity or mode changes', async () => {
+    wikiStore.user.permissions = ['write:pages']
+    let canLeave = false
+    const { vm } = await mountHeader({ hideSearch: false, dense: false, beforeSearchExit: () => canLeave })
+    vm.searchIsFocused = true
+    const seed = vm.newPageSeed
+    expect(searchNavigationEvents.requestSearchQuickCreate()).toBe(false)
+    expect(vm.newPageModal).toBe(false)
+    expect(vm.searchIsFocused).toBe(true)
+    expect(vm.newPageSeed).toBe(seed)
+    canLeave = true
+    for (const guard of ['permission', 'identity', 'connection', 'editing']) {
+      wikiStore.user.permissions = guard === 'permission' ? [] : ['write:pages']
+      wikiStore.authRefreshPending = guard === 'identity'
+      connection.serverHealthy = guard !== 'connection'
+      wikiStore.page.mode = guard === 'editing' ? 'edit' : 'view'
+      await settle()
+      expect(searchNavigationEvents.requestSearchQuickCreate()).toBe(false)
+      expect(vm.newPageModal).toBe(false)
+      expect(vm.searchIsFocused).toBe(true)
+      expect(vm.newPageSeed).toBe(seed)
+    }
+    wikiStore.page.mode = 'view'
+    await settle()
+    expect(searchNavigationEvents.requestSearchQuickCreate()).toBe(true)
+    expect(vm.newPageModal).toBe(true)
+  })
 
   it.each([false, true])('closes before dispatch and refuses disabled, changed-page and retired reader commands (mobile: %s)', async mobile => {
     const state = VueRuntime.reactive(readerState())

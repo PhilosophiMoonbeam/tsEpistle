@@ -22,19 +22,26 @@ v-container.profile-notification-preferences(fluid)
       thead
         tr
           th#profile-notifications-event(scope='col') {{ $t('profile:notificationPreferences.event', { defaultValue: 'Event' }) }}
-          th#profile-notifications-in-app.profile-notification-preferences__channel-heading(scope='col') {{ $t('profile:notificationPreferences.inApp', { defaultValue: 'In-App' }) }}
-          th#profile-notifications-email.profile-notification-preferences__channel-heading(scope='col') {{ $t('profile:notificationPreferences.email', { defaultValue: 'Email' }) }}
+          th#profile-notifications-in-app.profile-notification-preferences__channel-heading(scope='col')
+            span#profile-notifications-in-app-label {{ $t('profile:notificationPreferences.inApp', { defaultValue: 'In-App' }) }}
+            input.profile-notification-preferences__bulk(type='checkbox', role='switch', :checked='channelCounts.inApp === categories.length', :disabled='!canEdit', :aria-label='$t(`profile:notificationPreferences.bulkInApp`, { defaultValue: `Enable In-App for all displayed events` })', aria-describedby='profile-notifications-in-app-count profile-notifications-bulk-help', @change='setChannel(`inApp`, $event)')
+            span#profile-notifications-in-app-count.profile-notification-preferences__count {{ channelDescription('inApp') }}
+          th#profile-notifications-email.profile-notification-preferences__channel-heading(scope='col')
+            span#profile-notifications-email-label {{ $t('profile:notificationPreferences.email', { defaultValue: 'Email' }) }}
+            input.profile-notification-preferences__bulk(type='checkbox', role='switch', :checked='channelCounts.email === categories.length', :disabled='!canEdit', :aria-label='$t(`profile:notificationPreferences.bulkEmail`, { defaultValue: `Enable Email for all displayed events` })', aria-describedby='profile-notifications-email-count profile-notifications-bulk-help', @change='setChannel(`email`, $event)')
+            span#profile-notifications-email-count.profile-notification-preferences__count {{ channelDescription('email') }}
       tbody
         tr(v-for='category in categories', :key='category.key')
           th(:id='`profile-notifications-${category.key}`', scope='row')
             span.text-title-small(:id='`profile-notifications-${category.key}-label`') {{ category.label }}
             p.profile-notification-preferences__description.text-body-small.text-medium-emphasis(:id='`profile-notifications-${category.key}-description`') {{ category.description }}
           td(:headers='`profile-notifications-${category.key} profile-notifications-in-app`')
-            v-checkbox.profile-notification-preferences__toggle(:model-value='draft[category.key].inApp', :aria-labelledby='`profile-notifications-${category.key}-label profile-notifications-in-app`', :aria-describedby='`profile-notifications-${category.key}-description`', :disabled='saving', hide-details, density='comfortable', @update:model-value='setDeliveryPreference(category.key, `inApp`, $event)')
+            v-checkbox.profile-notification-preferences__toggle(:model-value='draft[category.key].inApp', :aria-labelledby='`profile-notifications-${category.key}-label profile-notifications-in-app-label`', :aria-describedby='`profile-notifications-${category.key}-description`', :disabled='!canEdit', hide-details, density='comfortable', @update:model-value='setDeliveryPreference(category.key, `inApp`, $event)')
           td(:headers='`profile-notifications-${category.key} profile-notifications-email`')
-            v-checkbox.profile-notification-preferences__toggle(:model-value='draft[category.key].email', :aria-labelledby='`profile-notifications-${category.key}-label profile-notifications-email`', :aria-describedby='`profile-notifications-${category.key}-description`', :disabled='saving', hide-details, density='comfortable', @update:model-value='setDeliveryPreference(category.key, `email`, $event)')
+            v-checkbox.profile-notification-preferences__toggle(:model-value='draft[category.key].email', :aria-labelledby='`profile-notifications-${category.key}-label profile-notifications-email-label`', :aria-describedby='`profile-notifications-${category.key}-description`', :disabled='!canEdit', hide-details, density='comfortable', @update:model-value='setDeliveryPreference(category.key, `email`, $event)')
+    p#profile-notifications-bulk-help.text-body-small.mt-3 {{ $t('profile:notificationPreferences.bulkHelp', { defaultValue: 'Header switches change only the displayed events in that channel. Save preferences to apply your changes, or Cancel changes to discard them.' }) }}
     .d-flex.flex-wrap.ga-3.mt-6
-      v-btn(type='submit', color='primary', :disabled='!dirty || saving', :loading='saving') Save preferences
+      v-btn(type='submit', variant='tonal', :data-commitment='dirty && canEdit ? `active` : undefined', :disabled='!dirty || !canEdit', :loading='saving') Save preferences
       v-btn(variant='text', :disabled='!dirty || saving', @click='cancel') Cancel changes
 </template>
 
@@ -42,6 +49,7 @@ v-container.profile-notification-preferences(fluid)
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AdminHero from '../common/admin-hero.vue'
 import { wikiStore } from '../../store/index.ts'
+import { translate } from '../../modules/localization.ts'
 import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session.ts'
 import { fetchNotificationPreferences, notificationIdentityInvalidated, updateNotificationPreferences } from '../../helpers/site-notifications-api.ts'
 import { NOTIFICATION_CATEGORIES, type NotificationCategory, type NotificationPreferences } from '../../../shared/site-notifications.ts'
@@ -70,7 +78,8 @@ const copy = (preferences: NotificationPreferences): NotificationPreferences => 
 const ownerId = computed(() => wikiStore.user.authenticated && Number.isSafeInteger(wikiStore.user.id) && wikiStore.user.id > 0 ? wikiStore.user.id : null)
 const draft = ref<NotificationPreferences>(defaults())
 const setDeliveryPreference = (category: NotificationCategory, channel: 'inApp' | 'email', value: boolean | null): void => {
-  if (value !== null) draft.value[category][channel] = value
+  if (!canEdit.value || value === null) return
+  draft.value[category][channel] = value
 }
 const saved = ref<NotificationPreferences | null>(null)
 const draftOwner = ref<number | null>(null)
@@ -82,6 +91,21 @@ const error = ref('')
 const success = ref('')
 const dirty = computed(() => saved.value !== null && NOTIFICATION_CATEGORIES.some(category =>
   saved.value?.[category].inApp !== draft.value[category].inApp || saved.value?.[category].email !== draft.value[category].email))
+const canEdit = computed(() => !disposed && !!saved.value && ownerId.value !== null && draftOwner.value === ownerId.value && !blocked.value && !loading.value && !saving.value && !refreshingIdentity.value)
+const channelCounts = computed(() => ({
+  inApp: categories.filter(category => draft.value[category.key].inApp).length,
+  email: categories.filter(category => draft.value[category.key].email).length
+}))
+const channelDescription = (channel: 'inApp' | 'email'): string => {
+  const selected = channelCounts.value[channel]
+  const key = selected === categories.length ? 'bulkAll' : selected === 0 ? 'bulkNone' : 'bulkMixed'
+  const defaultValue = selected === categories.length ? 'All enabled: {{selected}} of {{total}}.' : selected === 0 ? 'None enabled: {{selected}} of {{total}}.' : 'Some enabled: {{selected}} of {{total}}.'
+  return translate(`profile:notificationPreferences.${key}`, { defaultValue, selected, total: categories.length })
+}
+const setChannel = (channel: 'inApp' | 'email', event: Event): void => {
+  if (!canEdit.value || !(event.target instanceof HTMLInputElement)) return
+  for (const category of categories) draft.value[category.key][channel] = event.target.checked
+}
 let generation = 0
 let controller: AbortController | undefined
 let disposed = false
@@ -197,6 +221,7 @@ onBeforeUnmount(() => {
 
 <style scoped lang='scss'>
 .profile-notification-preferences { max-width: 70rem; }
+.profile-notification-preferences form { max-width: 760px; }
 .profile-notification-preferences__matrix {
   width: 100%;
   table-layout: fixed;
@@ -209,6 +234,35 @@ onBeforeUnmount(() => {
   text-align: start;
 }
 .profile-notification-preferences__channel-column { width: 4.75rem; }
+.profile-notification-preferences__matrix thead { background: var(--wiki-surface-sunken); }
+.profile-notification-preferences__matrix tbody tr:is(:hover, :focus-within) { background: var(--wiki-surface-elevated, var(--wiki-surface-raised)); }
+.profile-notification-preferences__bulk {
+  display: block;
+  inline-size: 2.75rem;
+  block-size: 2.75rem;
+  margin-inline: auto;
+  accent-color: rgb(var(--v-theme-primary));
+  cursor: pointer;
+  appearance: none;
+  border: 0;
+  border-radius: .25rem;
+  background:
+    radial-gradient(circle at 25% 50%, rgb(var(--v-theme-on-surface)) .42rem, transparent .46rem) center / 2.5rem 1.35rem no-repeat,
+    linear-gradient(var(--wiki-surface-border), var(--wiki-surface-border)) center / 2.5rem 1.35rem no-repeat;
+}
+.profile-notification-preferences__bulk:checked {
+  background:
+    radial-gradient(circle at 75% 50%, rgb(var(--v-theme-on-primary)) .42rem, transparent .46rem) center / 2.5rem 1.35rem no-repeat,
+    linear-gradient(rgb(var(--v-theme-primary)), rgb(var(--v-theme-primary))) center / 2.5rem 1.35rem no-repeat;
+}
+.profile-notification-preferences__bulk:disabled { cursor: not-allowed; opacity: .55; }
+.profile-notification-preferences__bulk:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
+.profile-notification-preferences__count { display: block; font-weight: 400; }
+@media (forced-colors: active) {
+  .profile-notification-preferences__bulk,
+  .profile-notification-preferences__bulk:checked { appearance: auto; background: none; }
+  .profile-notification-preferences__matrix tbody tr:is(:hover, :focus-within) { outline: 1px solid Highlight; outline-offset: -1px; }
+}
 .profile-notification-preferences__matrix th,
 .profile-notification-preferences__matrix td {
   padding: 1rem .25rem;

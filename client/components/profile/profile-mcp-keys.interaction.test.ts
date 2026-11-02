@@ -247,7 +247,7 @@ it('keeps the setup selectable and reports clipboard failure without disclosing 
     configurable: true,
     value: {
       writeText: async () => {
-        throw new Error('clipboard provider details')
+        throw new Error('clipboard provider details: private-key')
       }
     }
   })
@@ -260,5 +260,22 @@ it('keeps the setup selectable and reports clipboard failure without disclosing 
   expect(snippet(mounted.host)).toBe(text)
   expect(mounted.host.querySelector('.profile-mcp__snippet')?.getAttribute('tabindex')).toBe('0')
   expect(mounted.host.textContent).not.toContain('clipboard provider details')
+  await startIssue(mounted.host)
+  button(mounted.host, 'Copy key').click()
+  await settle()
+  const secret = mounted.host.querySelector<HTMLInputElement>('.profile-mcp__secret input')!
+  expect(secret.type).toBe('password')
+  expect(secret.value).toBe('private-key')
+  expect(mounted.host.querySelector('[role="alert"]')?.textContent).toContain('Reveal the key and copy it manually')
+  expect(mounted.host.textContent).not.toContain('private-key')
+  expect(snippet(mounted.host)).toBe(text)
+  button(mounted.host, 'Reveal key').click()
+  await settle()
+  expect(secret.type).toBe('text')
+  expect(secret.value).toBe('private-key')
+  button(mounted.host, 'Done').click()
+  await settle()
+  expect(mounted.host.querySelector('.profile-mcp__secret')).toBeNull()
+  expect(mounted.host.querySelector('.profile-mcp__keys')?.textContent).toContain('Desktop')
   expect(mounted.errors).toEqual([])
 })

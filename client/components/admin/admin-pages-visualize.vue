@@ -1,10 +1,25 @@
 <template>
   <v-container fluid class="pages-atlas">
-    <admin-hero :title="$t('admin:pagesVisualize.pageAtlas')" :description="$t('admin:pagesVisualize.seeHowKnowledgeOrganized')" icon="mdi-graph-outline"><template #actions><v-btn variant="text" prepend-icon="mdi-arrow-left" to="/pages">{{ $t('admin:pagesVisualize.pageRegister') }}</v-btn><v-btn variant="outlined" prepend-icon="mdi-refresh" :disabled="loading" @click="loadPages">{{ $t('common:actions.refresh') }}</v-btn></template></admin-hero>
-    <section class="atlas-intro"><div><span class="atlas-kicker">{{ $t('admin:pagesVisualize.structureRelationships') }}</span><h2>{{ $t('admin:pagesVisualize.followShapeKnowledge') }}</h2><p>{{ $t('admin:pagesVisualize.foldersRevealOrganizationPage') }}</p></div><dl><div><dt>{{ $t('admin:pagesVisualize.pages', { currentLocale, interpolation: { escapeValue: false } }) }}</dt><dd>{{ pages.length }}</dd></div><div><dt>{{ $t('admin:pagesVisualize.linksWithinView') }}</dt><dd>{{ internalLinkCount }}</dd></div></dl></section>
-    <div class="atlas-controls"><v-select v-model="currentLocale" :items="locales" item-value="code" item-title="name" :label="$t('admin:pagesVisualize.language')" variant="outlined" density="compact" hide-details /><v-btn-toggle v-model="directory" mandatory color="primary" :aria-label="$t('admin:pagesVisualize.atlasView')"><v-btn :value="false">{{ $t('admin:pagesVisualize.diagram') }}</v-btn><v-btn :value="true">{{ $t('admin:pagesVisualize.connectionDirectory') }}</v-btn></v-btn-toggle><v-select v-if="!directory" v-model="graphMode" :items="[{ title: $t('admin:pagesVisualize.folderTree'), value: 'htree' }, { title: $t('admin:pagesVisualize.radialFolders'), value: 'hradial' }, { title: $t('admin:pagesVisualize.pageRelationships'), value: 'rradial' }]" :label="$t('admin:pagesVisualize.diagramStructure')" variant="outlined" density="compact" hide-details /><v-btn v-if="!directory" variant="text" :disabled="loading" @click="redraw">{{ $t('admin:pagesVisualize.resetView') }}</v-btn></div>
+    <admin-hero :title="$t('admin:pagesVisualize.pageAtlas')" :description="$t('admin:pagesVisualize.seeHowKnowledgeOrganized')" icon="mdi-graph-outline">
+      <template #status><dl class="atlas-counts"><div><dt>{{ $t('admin:pagesVisualize.pages', { currentLocale, interpolation: { escapeValue: false } }) }}</dt><dd>{{ pages.length }}</dd></div><div><dt>{{ $t('admin:pagesVisualize.linksWithinView') }}</dt><dd>{{ internalLinkCount }}</dd></div></dl></template>
+      <template #actions><v-btn variant="text" prepend-icon="mdi-arrow-left" to="/pages">{{ $t('admin:pagesVisualize.pageRegister') }}</v-btn><v-btn variant="outlined" prepend-icon="mdi-refresh" :disabled="loading" @click="loadPages">{{ $t('common:actions.refresh') }}</v-btn></template>
+    </admin-hero>
+    <div class="atlas-controls"><v-select v-model="currentLocale" :items="locales" item-value="code" item-title="name" :label="$t('admin:pagesVisualize.language')" variant="outlined" density="compact" hide-details /><v-btn-toggle v-model="directory" mandatory color="primary" :aria-label="$t('admin:pagesVisualize.atlasView')"><v-btn :value="false">{{ $t('admin:pagesVisualize.diagram') }}</v-btn><v-btn :value="true">{{ $t('admin:pagesVisualize.connectionDirectory') }}</v-btn></v-btn-toggle><v-select v-if="!directory" v-model="graphMode" :items="[{ title: $t('admin:pagesVisualize.folderTree'), value: 'htree' }, { title: $t('admin:pagesVisualize.radialFolders'), value: 'hradial' }, { title: $t('admin:pagesVisualize.pageRelationships'), value: 'rradial' }]" :label="$t('admin:pagesVisualize.diagramStructure')" variant="outlined" density="compact" hide-details /><v-btn v-if="!directory" variant="text" :disabled="loading || !pages.length" @click="fitDiagram">{{ $t('admin:pagesVisualize.resetView') }}</v-btn></div>
     <async-state v-if="loading" state="loading" :title="$t('admin:pagesVisualize.loadingAtlas')" :message="$t('admin:pagesVisualize.fetchingAccessiblePageConnections')" /><async-state v-else-if="errorMessage" state="error" :title="$t('admin:pagesVisualize.atlasCouldNotLoaded')" :message="errorMessage" :retry-label="$t('admin:pagesVisualize.tryAgain')" @retry="loadPages" /><async-state v-else-if="!pages.length" state="empty" :title="$t('admin:pagesVisualize.noPages', { currentLocale, interpolation: { escapeValue: false } })" :message="$t('admin:pagesVisualize.chooseAnotherLanguageReturn')" />
-    <template v-else><div v-show="!directory" class="atlas-diagram"><p>{{ $t('admin:pagesVisualize.useTabFocusPage', { value: graphMode === 'rradial' ? $t('admin:pagesVisualize.focusPageLabelHighlight3') : $t('admin:pagesVisualize.pageLabelsOpenTheir'), interpolation: { escapeValue: false } }) }}</p><div ref="svgContainer" class="admin-pages-visualize-svg" /></div><section v-show="directory" class="atlas-directory" :aria-label="$t('admin:pagesVisualize.pageConnectionDirectory')"><v-text-field v-model="search" :label="$t('admin:pagesVisualize.findPageLinkedPath')" prepend-inner-icon="mdi-magnify" variant="outlined" hide-details clearable /><p role="status">{{ $t('admin:pagesVisualize.pages2', { directoryPagesCount: directoryPages.length, interpolation: { escapeValue: false } }) }}</p><article v-for="page in directoryPages" :key="page.id"><div><router-link :to="`/pages/${page.id}`">{{ page.title }}</router-link><code>{{ page.path }}</code></div><div><span>{{ $t('admin:pagesVisualize.outgoingLinksCount', { count: page.links.length }) }}</span><ul v-if="page.links.length"><li v-for="link in page.links" :key="link"><router-link v-if="pages.some(item => item.path === link)" :to="`/pages/${pages.find(item => item.path === link)?.id}`">{{ link }}</router-link><code v-else>{{ link }}</code></li></ul><small v-else>{{ $t('admin:pagesVisualize.noOutgoingPageLinks') }}</small></div></article></section></template>
+    <template v-else>
+      <div v-show="!directory" class="atlas-diagram">
+        <p>{{ $t('admin:pagesVisualize.foldersRevealOrganizationPage') }} {{ $t('admin:pagesVisualize.useTabFocusPage', { value: graphMode === 'rradial' ? $t('admin:pagesVisualize.focusPageLabelHighlight3') : $t('admin:pagesVisualize.pageLabelsOpenTheir'), interpolation: { escapeValue: false } }) }}</p>
+        <div class="atlas-canvas wiki-surface-well">
+        <section ref="svgContainer" class="admin-pages-visualize-svg" :aria-label="$t('admin:pagesVisualize.diagramCanvas')" />
+        <fieldset class="atlas-zoom-controls" :aria-label="$t('admin:pagesVisualize.diagramControls')">
+          <v-btn variant="text" icon="mdi-magnify-plus-outline" :aria-label="$t('admin:pagesVisualize.zoomIn')" :title="$t('admin:pagesVisualize.zoomIn')" @click="zoomDiagram(1.25)" />
+          <v-btn variant="text" icon="mdi-magnify-minus-outline" :aria-label="$t('admin:pagesVisualize.zoomOut')" :title="$t('admin:pagesVisualize.zoomOut')" @click="zoomDiagram(0.8)" />
+          <v-btn variant="text" prepend-icon="mdi-fit-to-screen-outline" @click="fitDiagram">{{ $t('admin:pagesVisualize.fitDiagram') }}</v-btn>
+        </fieldset>
+        </div>
+      </div>
+      <section v-show="directory" class="atlas-directory" :aria-label="$t('admin:pagesVisualize.pageConnectionDirectory')"><v-text-field v-model="search" :label="$t('admin:pagesVisualize.findPageLinkedPath')" prepend-inner-icon="mdi-magnify" variant="outlined" hide-details clearable /><p role="status">{{ $t('admin:pagesVisualize.pages2', { directoryPagesCount: directoryPages.length, interpolation: { escapeValue: false } }) }}</p><article v-for="page in directoryPages" :key="page.id"><div><router-link :to="`/pages/${page.id}`">{{ page.title }}</router-link><code>{{ page.path }}</code></div><div><span>{{ $t('admin:pagesVisualize.outgoingLinksCount', { count: page.links.length }) }}</span><ul v-if="page.links.length"><li v-for="link in page.links" :key="link"><router-link v-if="pages.some(item => item.path === link)" :to="`/pages/${pages.find(item => item.path === link)?.id}`">{{ link }}</router-link><code v-else>{{ link }}</code></li></ul><small v-else>{{ $t('admin:pagesVisualize.noOutgoingPageLinks') }}</small></div></article></section>
+    </template>
     <p class="atlas-footnote">{{ $t('admin:pagesVisualize.onlyPagesLinksVisible') }}</p>
   </v-container>
 </template>
@@ -59,6 +74,15 @@ type TreeRootMetadata = {
 type TreeHierarchyRoot = d3.HierarchyNode<PageGraphNode> & TreeRootMetadata
 type TreePointRoot = d3.HierarchyPointNode<PageGraphNode> & TreeRootMetadata
 
+type DiagramRuntime = {
+  svg: SVGSVGElement
+  content: SVGGElement
+  zoom: d3.ZoomBehavior<SVGSVGElement, undefined>
+  layout: (scale: number) => void
+  spacing: number
+  fitted: boolean
+}
+
 type AdminPagesVisualizeState = {
   graphMode: GraphMode
   directory: boolean
@@ -72,6 +96,10 @@ type AdminPagesVisualizeState = {
   currentLocale: string
   loading: boolean
   errorMessage: string
+  diagram: DiagramRuntime | null
+  resizeObserver: ResizeObserver | null
+  geometryFrame: number
+  disposed: boolean
 }
 
 /* global siteConfig, siteLangs */
@@ -93,7 +121,11 @@ export default defineComponent({
       locales: markRaw(siteLangs),
       currentLocale: siteConfig.lang,
       loading: false,
-      errorMessage: ''
+      errorMessage: '',
+      diagram: null,
+      resizeObserver: null,
+      geometryFrame: 0,
+      disposed: false
     }
   },
   computed: {
@@ -112,11 +144,147 @@ export default defineComponent({
     graphMode () {
       this.redraw()
     },
+    directory () {
+      this.$nextTick(() => this.scheduleGeometry())
+    },
     currentLocale () {
       this.loadPages()
     }
   },
   methods: {
+    scheduleGeometry (): void {
+      if (this.disposed || this.geometryFrame) return
+      this.geometryFrame = requestAnimationFrame(() => {
+        this.geometryFrame = 0
+        const container = this.$refs.svgContainer as HTMLElement | undefined
+        if (!container || this.directory || !container.clientWidth || !container.clientHeight) return
+        if (!this.diagram) this.redraw()
+        else this.measureDiagram()
+      })
+    },
+    attachDiagram (
+      container: HTMLElement,
+      svg: SVGSVGElement,
+      content: SVGGElement,
+      zoom: d3.ZoomBehavior<SVGSVGElement, undefined>,
+      layout: (scale: number) => void
+    ): void {
+      zoom.duration(0).filter(event => !event.ctrlKey && !event.metaKey && !event.button)
+      container.appendChild(svg)
+      this.diagram = markRaw({ svg, content, zoom, layout, spacing: 1, fitted: true })
+      this.resizeObserver?.disconnect()
+      this.resizeObserver?.observe(container)
+      this.scheduleGeometry()
+    },
+    measureDiagram (): void {
+      const diagram = this.diagram
+      const container = this.$refs.svgContainer as HTMLElement | undefined
+      if (!diagram || !container || this.directory || !container.clientWidth || !container.clientHeight) return
+      // Measure in the attached SVG's own unzoomed coordinate space. Retain the
+      // same text/link elements through font, resize and directory visibility changes.
+      const previous = d3.zoomTransform(diagram.svg)
+      d3.select<SVGSVGElement, undefined>(diagram.svg).call(diagram.zoom.transform, d3.zoomIdentity)
+      const labels = Array.from(diagram.content.querySelectorAll<SVGTextElement>('text:not([aria-hidden="true"])'))
+      labels.forEach(label => { label.style.fontWeight = 'bold' })
+      diagram.layout(diagram.spacing)
+      const boxes = labels.map(label => {
+        // Reserve the relationship highlight's bold metrics as well.
+        const box = label.getBBox()
+        const matrix = label.getCTM()!
+        const x = matrix.a * (box.x + box.width / 2) + matrix.c * (box.y + box.height / 2) + matrix.e
+        const y = matrix.b * (box.x + box.width / 2) + matrix.d * (box.y + box.height / 2) + matrix.f
+        const halfWidth = (Math.abs(matrix.a) * box.width + Math.abs(matrix.c) * box.height) / 2
+        const halfHeight = (Math.abs(matrix.b) * box.width + Math.abs(matrix.d) * box.height) / 2
+        return {
+          x: matrix.e, y: matrix.f,
+          left: x - halfWidth, right: x + halfWidth,
+          top: y - halfHeight, bottom: y + halfHeight
+        }
+      })
+      labels.forEach(label => { label.style.removeProperty('font-weight') })
+      let left = Infinity; let right = -Infinity; let top = Infinity; let bottom = -Infinity
+      let glyphLeft = -3; let glyphRight = 3; let glyphTop = -3; let glyphBottom = 3
+      for (const box of boxes) {
+        left = Math.min(left, box.x); right = Math.max(right, box.x)
+        top = Math.min(top, box.y); bottom = Math.max(bottom, box.y)
+        glyphLeft = Math.min(glyphLeft, box.left - box.x); glyphRight = Math.max(glyphRight, box.right - box.x)
+        glyphTop = Math.min(glyphTop, box.top - box.y); glyphBottom = Math.max(glyphBottom, box.bottom - box.y)
+      }
+      const width = Math.max(1, container.clientWidth - 64)
+      const height = Math.max(1, container.clientHeight - 64)
+      // Bound the fitted content by anchor span + glyph overhang. Solving the
+      // gap against both viewport axes reserves six *screen* pixels even when
+      // Fit scales down; no iterative render/measure loop is needed.
+      const spanX = (right - left) * 6 / width
+      const spanY = (bottom - top) * 6 / height
+      const overhangX = (glyphRight - glyphLeft) * 6 / width
+      const overhangY = (glyphBottom - glyphTop) * 6 / height
+      const separation = (distance: number, clearance: number): number => {
+        if (distance <= spanX || distance <= spanY) return Infinity
+        return Math.max(
+          1 + (clearance + 6) / distance,
+          (distance + clearance + overhangX) / (distance - spanX),
+          (distance + clearance + overhangY) / (distance - spanY)
+        )
+      }
+      let expansion = 1
+      // Solve one uniform position expansion analytically. All pairs matter:
+      // labels not touching now can cross while their anchors move apart.
+      // Glyph sizes stay intrinsic; only positions expand before viewport fit.
+      for (let i = 0; i < boxes.length; i++) {
+        const a = boxes[i]
+        for (let j = i + 1; j < boxes.length; j++) {
+          const b = boxes[j]
+          const dx = b.x - a.x
+          const dy = b.y - a.y
+          const horizontal = dx > 0 ? separation(dx, a.right - b.left) : dx < 0 ? separation(-dx, b.right - a.left) : Infinity
+          const vertical = dy > 0 ? separation(dy, a.bottom - b.top) : dy < 0 ? separation(-dy, b.bottom - a.top) : Infinity
+          const required = Math.min(horizontal, vertical)
+          const distance = Math.hypot(dx, dy)
+          if (Number.isFinite(required)) expansion = Math.max(expansion, required)
+          if (distance > 0) expansion = Math.max(expansion, 22 / distance)
+        }
+      }
+      if (expansion > 1) diagram.spacing *= expansion + 0.02
+      diagram.layout(diagram.spacing)
+      if (diagram.fitted) this.fitDiagram()
+      else {
+        this.sizeDiagram()
+        d3.select<SVGSVGElement, undefined>(diagram.svg).call(diagram.zoom.transform, previous)
+      }
+    },
+    sizeDiagram (): d3.ZoomTransform | null {
+      const diagram = this.diagram
+      const container = this.$refs.svgContainer as HTMLElement | undefined
+      if (!diagram || !container || this.directory || !container.clientWidth || !container.clientHeight) return null
+      const width = container.clientWidth
+      const height = container.clientHeight
+      const bounds = diagram.content.getBBox()
+      const scale = Math.min(1, Math.max(1, width - 64) / Math.max(1, bounds.width), Math.max(1, height - 64) / Math.max(1, bounds.height))
+      d3.select(diagram.svg).attr('width', width).attr('height', height).attr('viewBox', `0 0 ${width} ${height}`)
+      // Large graphs may need less than .25 to fit; user zoom still reaches 8.
+      diagram.zoom.extent([[0, 0], [width, height]]).scaleExtent([Math.min(0.25, scale), 8])
+      return d3.zoomIdentity.translate(
+        (width - bounds.width * scale) / 2 - bounds.x * scale,
+        (height - bounds.height * scale) / 2 - bounds.y * scale
+      ).scale(scale)
+    },
+    fitDiagram (): void {
+      const diagram = this.diagram
+      const fitted = this.sizeDiagram()
+      if (!diagram || !fitted) return
+      d3.select<SVGSVGElement, undefined>(diagram.svg).interrupt().call(diagram.zoom.transform, fitted)
+      diagram.fitted = true
+    },
+    zoomDiagram (factor: number): void {
+      const diagram = this.diagram
+      const container = this.$refs.svgContainer as HTMLElement | undefined
+      if (!diagram || !container) return
+      diagram.fitted = false
+      const center: [number, number] = [container.clientWidth / 2, container.clientHeight / 2]
+      // Immediate zoom also respects reduced motion without an animation branch.
+      d3.select<SVGSVGElement, undefined>(diagram.svg).interrupt().call(diagram.zoom.scaleBy, factor, center)
+    },
     async loadPages (): Promise<void> {
       const requestId = ++this.pageLoadRequestId
       this.pageLoadController?.abort()
@@ -125,6 +293,9 @@ export default defineComponent({
       const locale = this.currentLocale
 
       this.loading = true
+      if (this.diagram) d3.select(this.diagram.svg).interrupt().on('.zoom', null)
+      this.diagram = null
+      this.resizeObserver?.disconnect()
       this.errorMessage = ''
       this.pages = []
       wikiStore.startLoading('admin-pages-refresh')
@@ -234,7 +405,7 @@ export default defineComponent({
     /**
      * Relational Radial
      */
-    drawRelations (container: HTMLDivElement): void {
+    drawRelations (container: HTMLElement): void {
       const data = this.hierarchy(this.pages)
 
       const line = d3.lineRadial<RelationPointNode>()
@@ -250,15 +421,16 @@ export default defineComponent({
       const root = tree(this.bilink(hierarchyRoot)) as RelationPointNode
 
       const svg = d3.create('svg')
-        .attr('viewBox', [-this.width / 2, -this.width / 2, this.width, this.width])
       svg.append('title').text(this.$t('admin:pagesVisualize.interactivePageRelationshipDiagram'))
       svg.append('desc').text(this.$t('admin:pagesVisualize.focusPageLabelHighlight'))
 
-      const g = svg.append('g')
+      const gZoom = svg.append('g')
+      const g = gZoom.append('g')
 
       const zoom = d3.zoom<SVGSVGElement, undefined>()
         .on('zoom', (event: d3.D3ZoomEvent<SVGSVGElement, undefined>) => {
-          g.attr('transform', event.transform.toString())
+          if (event.sourceEvent && this.diagram) this.diagram.fitted = false
+          gZoom.attr('transform', event.transform.toString())
         })
       svg.call(zoom)
 
@@ -279,6 +451,7 @@ export default defineComponent({
         .selectAll<SVGGElement, RelationPointNode>('g')
         .data(root.descendants())
         .join('g')
+        .attr('class', 'atlas-node')
         .attr('transform', node => `rotate(${node.x * 180 / Math.PI - 90}) translate(${node.y},0)`)
         .append('text')
         .attr('dy', '0.31em')
@@ -342,32 +515,27 @@ export default defineComponent({
         ).attr('fill', null).attr('font-weight', null)
       }
 
-      const svgNode = svg.node()
-      if (svgNode) {
-        container.appendChild(svgNode)
-      }
+      const positions = root.descendants().map(node => ({ node, radius: node.y }))
+      this.attachDiagram(container, svg.node()!, g.node()!, zoom, scale => {
+        positions.forEach(({ node, radius }) => { node.y = radius * scale })
+        g.selectAll<SVGGElement, RelationPointNode>('.atlas-node')
+          .attr('transform', node => `rotate(${node.x * 180 / Math.PI - 90}) translate(${node.y},0)`)
+        link.attr('d', ([source, target]) => line(source.path(target)))
+      })
     },
     /**
      * Hierarchical Tree
      */
-    drawTree (container: HTMLDivElement): void {
+    drawTree (container: HTMLElement): void {
       const data = this.hierarchy(this.pages)
 
       const treeRoot = d3.hierarchy<PageGraphNode>(data) as TreeHierarchyRoot
-      treeRoot.dx = 10
-      treeRoot.dy = this.width / (treeRoot.height + 1)
+      treeRoot.dx = 22
+      treeRoot.dy = Math.max(160, this.width / (treeRoot.height + 1))
       const root = d3.tree<PageGraphNode>()
         .nodeSize([treeRoot.dx, treeRoot.dy])(treeRoot) as TreePointRoot
 
-      let x0 = Infinity
-      let x1 = -x0
-      root.each(node => {
-        if (node.x > x1) x1 = node.x
-        if (node.x < x0) x0 = node.x
-      })
-
       const svg = d3.create('svg')
-        .attr('viewBox', [0, 0, this.width, x1 - x0 + root.dx * 2])
       svg.append('title').text(this.$t('admin:pagesVisualize.interactivePageHierarchy'))
       svg.append('desc').text(this.$t('admin:pagesVisualize.focusPageLabelHighlight2'))
 
@@ -377,6 +545,7 @@ export default defineComponent({
       const gZoom = svg.append('g')
       const zoom = d3.zoom<SVGSVGElement, undefined>()
         .on('zoom', (event: d3.D3ZoomEvent<SVGSVGElement, undefined>) => {
+          if (event.sourceEvent && this.diagram) this.diagram.fitted = false
           gZoom.attr('transform', event.transform.toString())
         })
       svg.call(zoom)
@@ -384,7 +553,6 @@ export default defineComponent({
       const g = gZoom.append('g')
         .attr('font-family', 'inherit')
         .attr('font-size', 'var(--wiki-font-size-label, 12px)')
-        .attr('transform', `translate(${root.dy / 3},${root.dx - x0})`)
 
       g.append('g')
         .attr('fill', 'none')
@@ -431,15 +599,19 @@ export default defineComponent({
         .attr('pointer-events', 'none')
         .attr('stroke', 'rgb(var(--v-theme-background))')
 
-      const svgNode = svg.node()
-      if (svgNode) {
-        container.appendChild(svgNode)
-      }
+      const positions = root.descendants().map(node => ({ node, x: node.x, y: node.y }))
+      const horizontal = d3.linkHorizontal<d3.HierarchyPointLink<PageGraphNode>, d3.HierarchyPointNode<PageGraphNode>>()
+        .x(node => node.y).y(node => node.x)
+      this.attachDiagram(container, svg.node()!, g.node()!, zoom, scale => {
+        positions.forEach(({ node, x, y }) => { node.x = x * scale; node.y = y * scale })
+        node.attr('transform', descendant => `translate(${descendant.y},${descendant.x})`)
+        g.selectAll<SVGPathElement, d3.HierarchyPointLink<PageGraphNode>>('path').attr('d', horizontal)
+      })
     },
     /**
      * Hierarchical Radial
      */
-    drawRadialTree (container: HTMLDivElement): void {
+    drawRadialTree (container: HTMLElement): void {
       const data = this.hierarchy(this.pages)
 
       const tree = d3.tree<PageGraphNode>()
@@ -455,10 +627,12 @@ export default defineComponent({
       svg.append('title').text(this.$t('admin:pagesVisualize.interactiveRadialPageHierarchy'))
       svg.append('desc').text(this.$t('admin:pagesVisualize.focusPageLabelHighlight2'))
 
-      const g = svg.append('g')
+      const gZoom = svg.append('g')
+      const g = gZoom.append('g')
       const zoom = d3.zoom<SVGSVGElement, undefined>()
         .on('zoom', (event: d3.D3ZoomEvent<SVGSVGElement, undefined>) => {
-          g.attr('transform', event.transform.toString())
+          if (event.sourceEvent && this.diagram) this.diagram.fitted = false
+          gZoom.attr('transform', event.transform.toString())
         })
       svg.call(zoom)
 
@@ -516,24 +690,21 @@ export default defineComponent({
         .attr('pointer-events', 'none')
         .attr('stroke', 'rgb(var(--v-theme-background))')
 
-      const svgNode = svg.node()
-      if (svgNode) {
-        container.appendChild(svgNode)
-      }
-
-      function autoBox (this: SVGSVGElement): [number, number, number, number] {
-        const { x, y, width, height } = this.getBBox()
-        const side = Math.max(width, height, 1) + 24
-        return [x + width / 2 - side / 2, y + height / 2 - side / 2, side, side]
-      }
-
-      svg.attr('viewBox', autoBox)
+      const positions = root.descendants().map(node => ({ node, radius: node.y }))
+      const radial = d3.linkRadial<d3.HierarchyPointLink<PageGraphNode>, d3.HierarchyPointNode<PageGraphNode>>()
+        .angle(node => node.x).radius(node => node.y)
+      this.attachDiagram(container, svg.node()!, g.node()!, zoom, scale => {
+        positions.forEach(({ node, radius }) => { node.y = radius * scale })
+        node.attr('transform', descendant => `rotate(${descendant.x * 180 / Math.PI - 90}) translate(${descendant.y},0)`)
+        g.selectAll<SVGPathElement, d3.HierarchyPointLink<PageGraphNode>>('path').attr('d', radial)
+      })
     },
     redraw (): void {
-      const container = this.$refs.svgContainer as HTMLDivElement | undefined
+      const container = this.$refs.svgContainer as HTMLElement | undefined
       if (!container) {
         return
       }
+      this.diagram = null
       container.replaceChildren()
       if (this.pages.length > 0) {
         switch (this.graphMode) {
@@ -551,9 +722,20 @@ export default defineComponent({
     }
   },
   mounted () {
+    this.resizeObserver = markRaw(new ResizeObserver(() => this.scheduleGeometry()))
+    document.fonts?.addEventListener('loadingdone', this.scheduleGeometry)
+    document.fonts?.ready.then(() => this.scheduleGeometry())
+    window.addEventListener('resize', this.scheduleGeometry)
     this.loadPages()
   },
   beforeUnmount () {
+    this.disposed = true
+    cancelAnimationFrame(this.geometryFrame)
+    this.resizeObserver?.disconnect()
+    document.fonts?.removeEventListener('loadingdone', this.scheduleGeometry)
+    window.removeEventListener('resize', this.scheduleGeometry)
+    if (this.diagram) d3.select(this.diagram.svg).interrupt().on('.zoom', null)
+    this.diagram = null
     this.pageLoadRequestId++
     this.pageLoadController?.abort()
     this.pageLoadController = null
@@ -563,16 +745,57 @@ export default defineComponent({
 
 <style scoped lang="scss">
 .admin-pages-visualize-svg {
-  display: flex;
-  min-height: min(65dvh, 48rem);
-  text-align: center;
+  height: min(65dvh, 48rem);
+  min-height: 18rem;
   overflow: hidden;
+  text-align: start;
+  overscroll-behavior: contain;
 
   :deep(> svg) {
-    height: 100%;
-    min-height: inherit;
-    width: 100%;
+    display: block;
+    max-width: none;
+    flex-shrink: 0;
+    touch-action: pan-x pan-y pinch-zoom;
+  }
+  :deep(text:focus-visible) {
+    outline: 2px solid rgb(var(--v-theme-primary));
+    outline-offset: 3px;
   }
 }
-.pages-atlas { max-width:1600px; padding-bottom:4rem !important; }.atlas-intro { display:flex; align-items:center; justify-content:space-between; gap:3rem; padding:2rem .5rem; }.atlas-kicker { font-size:.7rem; text-transform:uppercase; letter-spacing:.13em; }h2 { font:500 clamp(1.7rem,2.5vw,2.5rem)/1.15 var(--wiki-font-display); margin:.7rem 0 1rem; }.atlas-intro p { line-height:1.7; max-width:45rem; color:rgb(var(--v-theme-on-surface-variant)); }.atlas-intro dl { display:flex; flex-shrink:0; gap:2rem; }.atlas-intro dt { font-size:.75rem; }.atlas-intro dd { font:500 2.2rem var(--wiki-font-display); margin:.4rem 0 0; }.atlas-controls { display:flex; flex-wrap:wrap; align-items:center; gap:1rem; padding:1rem 0; }.atlas-controls .v-select { flex:1 1 12rem; max-width:20rem; }.atlas-diagram,.atlas-directory { border:1px solid rgba(var(--v-border-color),.18); border-radius:12px; background:rgb(var(--v-theme-surface)); padding:1.5rem; }.atlas-diagram>p,.atlas-footnote { font-size:.8rem; line-height:1.7; color:rgb(var(--v-theme-on-surface-variant)); }.atlas-directory>p { padding:1rem 0; font-size:.8rem; }.atlas-directory article { display:grid; grid-template-columns:1fr 1fr; gap:2rem; border-top:1px solid rgba(var(--v-border-color),.18); padding:1.4rem 0; }.atlas-directory article>div { min-width:0; }.atlas-directory code { display:block; font-size:.8rem; overflow-wrap:anywhere; margin-top:.4rem; }.atlas-directory a { color:rgb(var(--v-theme-on-surface)); text-decoration:underline; overflow-wrap:anywhere; }.atlas-directory ul { padding-left:1.1rem; margin-top:.6rem; font-size:.8rem; line-height:1.8; }.atlas-directory small { display:block; margin-top:.5rem; }.atlas-footnote { margin:1.5rem 0; }.atlas-directory a:focus-visible { outline:2px solid rgb(var(--v-theme-primary)); outline-offset:3px; }@media(max-width:900px) { .atlas-intro { align-items:start; flex-direction:column; gap:1.5rem; } }@media(max-width:600px) { .atlas-directory article { grid-template-columns:1fr; gap:1rem; }.atlas-controls .v-select { max-width:none; }.atlas-diagram,.atlas-directory { padding:1rem; } }
+.atlas-canvas { padding-bottom: .75rem; }
+.atlas-canvas .atlas-zoom-controls { margin-inline-end: .75rem; }
+.pages-atlas { max-width: 1600px; padding-bottom: 4rem !important; }
+.atlas-counts { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; margin: 0; font-size: .8rem; }
+.atlas-counts > div { display: flex; gap: .5rem; align-items: baseline; }
+.atlas-counts dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+.atlas-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; padding: 1rem 0; }
+.atlas-controls .v-select { flex: 1 1 12rem; max-width: 20rem; }
+.atlas-diagram, .atlas-directory { border: 1px solid var(--wiki-material-border); border-radius: 12px; background: var(--wiki-surface-gradient); padding: 1rem; }
+.atlas-diagram > p, .atlas-footnote { font-size: .8rem; line-height: 1.7; color: rgb(var(--v-theme-on-surface-variant)); }
+.atlas-diagram > p { margin-bottom: .75rem; }
+.atlas-zoom-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; width: fit-content; max-width: 100%; min-inline-size: 0; padding: 0; margin-block-end: 0; margin-inline-start: auto; margin-top: .75rem; border: 1px solid var(--wiki-material-border); border-radius: 12px; background: var(--wiki-surface-gradient); box-shadow: var(--wiki-specular-border), var(--wiki-shadow-md); }
+.atlas-directory > p { padding: 1rem 0; font-size: .8rem; }
+.atlas-directory article { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; border-top: 1px solid rgba(var(--v-border-color), .18); padding: 1.4rem 0; }
+.atlas-directory article > div { min-width: 0; }
+.atlas-directory code { display: block; font-size: .8rem; overflow-wrap: anywhere; margin-top: .4rem; }
+.atlas-directory a { color: rgb(var(--v-theme-on-surface)); text-decoration: underline; overflow-wrap: anywhere; }
+.atlas-directory ul { padding-inline-start: 1.1rem; margin-top: .6rem; font-size: .8rem; line-height: 1.8; }
+.atlas-directory small { display: block; margin-top: .5rem; }
+.atlas-footnote { margin: 1.5rem 0; }
+.atlas-directory a:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 3px; }
+@media (forced-colors: active) {
+  .admin-pages-visualize-svg :deep(text:not([aria-hidden="true"])) { fill: CanvasText !important; }
+  .admin-pages-visualize-svg :deep(text[aria-hidden="true"]) { stroke: Canvas !important; }
+  .admin-pages-visualize-svg :deep(path[stroke]) { stroke: Highlight !important; stroke-width: 2.5; }
+  .admin-pages-visualize-svg :deep(text[font-weight="bold"]) { fill: LinkText !important; }
+  .admin-pages-visualize-svg :deep(path) { stroke: CanvasText !important; stroke-opacity: 1; }
+  .admin-pages-visualize-svg :deep(circle) { fill: LinkText !important; }
+  .admin-pages-visualize-svg :deep(text:focus-visible) { outline-color: Highlight; }
+  .atlas-zoom-controls { border-color: ButtonText; background: Canvas; box-shadow: none; }
+}
+@media (max-width: 600px) {
+  .atlas-directory article { grid-template-columns: 1fr; gap: 1rem; }
+  .atlas-controls .v-select { max-width: none; }
+  .atlas-controls .v-btn-toggle { max-width: 100%; height: auto; flex-wrap: wrap; }
+}
 </style>

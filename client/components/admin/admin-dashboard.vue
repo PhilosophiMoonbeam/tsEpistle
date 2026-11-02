@@ -6,8 +6,6 @@
       icon='mdi-view-dashboard-variant-outline'
       :eyebrow='siteTitle'
     )
-      template(#actions)
-        v-btn(href='/' variant='flat' color='primary' prepend-icon='mdi-home-outline') {{ $t(`admin:dashboard.openWiki`) }}
 
     .dashboard-inventory(v-if='dashboardStats.length' :aria-label='$t(`admin:dashboard.inventory`)' :aria-busy='summaryLoading')
       router-link.admin-stat(v-for='stat in dashboardStats' :key='stat.key' :to='stat.to' :aria-label='stat.ariaLabel')
@@ -540,6 +538,9 @@ export default {
     z-index: 1;
     margin-top: 0.4rem;
     font-size: 0.75rem;
+    line-height: 1.5;
+    white-space: normal;
+    overflow-wrap: anywhere;
     color: var(--admin-muted);
   }
 }
@@ -733,6 +734,8 @@ export default {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .admin-stat {
+    height: auto;
+    min-height: 112px;
     padding: 1rem;
   }
   .dashboard-connections__grid {

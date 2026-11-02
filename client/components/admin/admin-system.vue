@@ -1,38 +1,46 @@
 <template>
   <v-container fluid class="system-workspace">
-    <admin-hero :title="$t('admin:system.system')" :description="$t('admin:system.understandWhatRunningFind')" icon="mdi-monitor-dashboard">
+    <admin-hero :title="tr('system')" :description="tr('operationalSummary')" icon="mdi-monitor-dashboard">
+      <template v-if="snapshot" #status>
+        <div class="system-observed" aria-live="polite">
+          <span>
+            <i aria-hidden="true" :class="{ 'is-stale': Boolean(error) }" />
+            {{ loading ? tr('collectingFreshObservation') : error ? tr('previousObservation') : tr('observedSystemState') }}
+          </span>
+          <time :datetime="snapshot.observedAt">{{ dateTime(snapshot.observedAt) }}</time>
+          <span>{{ snapshot.product.name }} {{ snapshot.product.version }}</span>
+          <a :href="snapshot.product.sourceUrl" target="_blank" rel="noopener noreferrer" class="system-mono">
+            {{ snapshot.product.revision.slice(0, 12) }}
+            <v-icon size="14" icon="mdi-arrow-top-right" />
+          </a>
+          <span :title="tr('sinceProcessStarted')">{{ tr('processUptime') }}: {{ duration(snapshot.runtime.uptimeSeconds) }}</span>
+        </div>
+      </template>
       <template #actions>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="loading" :aria-busy="loading" @click="load">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:system.reloadSystemInformation') }}</v-tooltip></v-btn>
+        <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="loading" :aria-busy="loading" @click="load">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ tr('reloadSystemInformation') }}</v-tooltip></v-btn>
         <v-btn color="primary" prepend-icon="mdi-file-document-outline" :disabled="!snapshot" @click="selectSection('diagnostics')">
-          {{ $t('admin:system.supportReport') }}
+          {{ tr('supportReport') }}
         </v-btn>
       </template>
     </admin-hero>
     <async-state
       v-if="loading && !snapshot"
       state="loading"
-      :title="$t('admin:system.observingSystem')"
-      :message="$t('admin:system.readingRunningProcessDatabase')"
+      :title="tr('observingSystem')"
+      :message="tr('readingRunningProcessDatabase')"
     />
     <async-state
       v-else-if="error && !snapshot"
       state="error"
-      :title="$t('admin:system.systemObservationsUnavailable')"
+      :title="tr('systemObservationsUnavailable')"
       :message="error"
-      :retry-label="$t('admin:system.tryAgain')"
+      :retry-label="tr('tryAgain')"
       @retry="load"
     />
-    <v-alert v-else-if="error" type="warning" variant="tonal" class="mb-5">{{ $t('admin:system.previousObservationStillShown', { error, interpolation: { escapeValue: false } }) }}</v-alert>
+    <v-alert v-else-if="error" type="warning" variant="tonal" class="mb-5">{{ tr('previousObservationStillShown', { error, interpolation: { escapeValue: false } }) }}</v-alert>
     <v-alert v-if="notice" type="success" variant="tonal" class="mb-5" role="status">{{ notice }}</v-alert>
     <template v-if="snapshot">
-      <div class="system-observed" aria-live="polite">
-        <span>
-          <i :class="{ 'is-stale': Boolean(error) }" />
-          {{ loading ? $t('admin:system.collectingFreshObservation') : error ? $t('admin:system.previousObservation') : $t('admin:system.observedSystemState') }}
-        </span>
-        <time :datetime="snapshot.observedAt">{{ dateTime(snapshot.observedAt) }}</time>
-      </div>
-      <nav class="system-tabs" :aria-label="$t('admin:system.systemSections')">
+      <nav class="system-tabs" :aria-label="tr('systemSections')">
         <button
           v-for="tab in sections"
           :key="tab.key"
@@ -47,30 +55,10 @@
         <section class="system-main">
           <template v-if="section === 'overview'">
             <div class="system-heading">
-              <span class="system-kicker">{{ $t('admin:system.n01RunningWorkspace') }}</span>
-              <h2>
-                {{ $t('admin:system.clearView') }}
-                <br />
-                {{ $t('admin:system.wiki') }}
-              </h2>
-              <p>{{ $t('admin:system.localProcessViewCurrent') }}</p>
+              <h2>{{ tr('overview') }}</h2>
+              <p>{{ tr('localProcessViewCurrent') }}</p>
             </div>
-            <div class="system-release">
-              <div>
-                <span class="system-kicker">{{ snapshot.product.name }}</span>
-                <h3>{{ snapshot.product.version }}</h3>
-                <a :href="snapshot.product.sourceUrl" target="_blank" rel="noopener noreferrer" class="system-mono">
-                  {{ snapshot.product.revision.slice(0, 12) }}
-                  <v-icon size="14" icon="mdi-arrow-top-right" />
-                </a>
-              </div>
-              <div>
-                <span>{{ $t('admin:system.processUptime') }}</span>
-                <strong>{{ duration(snapshot.runtime.uptimeSeconds) }}</strong>
-                <small>{{ $t('admin:system.sinceProcessStarted') }}</small>
-              </div>
-            </div>
-            <h3 class="system-section-title">{{ $t('admin:system.operationalSignals') }}</h3>
+            <h3 class="system-section-title">{{ tr('operationalSignals') }}</h3>
             <div class="system-signals">
               <article v-for="signal in signals" :key="signal.title">
                 <v-icon
@@ -81,75 +69,74 @@
                   <h4>{{ signal.title }}</h4>
                   <p>{{ signal.detail }}</p>
                 </div>
-                <v-btn v-if="signal.section" size="small" variant="text" @click="selectSection(signal.section)">{{ $t('admin:system.inspect') }}</v-btn>
+                <v-btn v-if="signal.section" size="small" variant="text" @click="selectSection(signal.section)">{{ tr('inspect') }}</v-btn>
               </article>
             </div>
-            <div class="system-callout">
+            <div class="system-callout wiki-surface-well">
               <v-icon icon="mdi-information-outline" />
               <p>
-                {{ $t('admin:system.theseObservationsDescribeApplication') }}
+                {{ tr('theseObservationsDescribeApplication') }}
               </p>
             </div>
           </template>
           <template v-else-if="section === 'runtime'">
             <div class="system-heading">
-              <span class="system-kicker">{{ $t('admin:system.n02ProcessDeployment') }}</span>
-              <h2>{{ $t('admin:system.knowBoundaries') }}</h2>
-              <p>{{ $t('admin:system.separateProcessYouObserving') }}</p>
+              <h2>{{ tr('runtime') }}</h2>
+              <p>{{ tr('separateProcessYouObserving') }}</p>
             </div>
             <div class="system-metrics">
               <div>
-                <span>{{ $t('admin:system.processResidentMemory') }}</span>
+                <span>{{ tr('processResidentMemory') }}</span>
                 <strong>{{ bytes(snapshot.runtime.processRssBytes) }}</strong>
-                <small>{{ $t('admin:system.rssObservationTime') }}</small>
+                <small>{{ tr('rssObservationTime') }}</small>
               </div>
               <div>
-                <span>{{ $t('admin:system.javascriptHeapUse') }}</span>
+                <span>{{ tr('javascriptHeapUse') }}</span>
                 <strong>{{ bytes(snapshot.runtime.heapUsedBytes) }}</strong>
-                <small>{{ $t('admin:system.heapAllocated', { heapTotalBytes: bytes(snapshot.runtime.heapTotalBytes), interpolation: { escapeValue: false } }) }}</small>
+                <small>{{ tr('heapAllocated', { heapTotalBytes: bytes(snapshot.runtime.heapTotalBytes), interpolation: { escapeValue: false } }) }}</small>
               </div>
             </div>
-            <h3 class="system-section-title">{{ $t('admin:system.executionEnvironment') }}</h3>
+            <h3 class="system-section-title">{{ tr('executionEnvironment') }}</h3>
             <dl class="system-facts">
               <template v-for="fact in runtimeFacts" :key="fact.label">
                 <dt>{{ fact.label }}</dt>
                 <dd :class="{ 'system-mono': fact.mono }">{{ fact.value }}</dd>
               </template>
             </dl>
-            <div class="system-callout">
+            <div class="system-callout wiki-surface-well">
               <v-icon icon="mdi-memory" />
               <p>
-                {{ $t('admin:system.osVisibleMemoryLogical') }}
+                {{ tr('osVisibleMemoryLogical') }}
               </p>
             </div>
-            <h3 class="system-section-title">{{ $t('admin:system.applicationListeners') }}</h3>
+            <h3 class="system-section-title">{{ tr('applicationListeners') }}</h3>
             <dl class="system-facts">
-              <dt>{{ $t('admin:system.http') }}</dt>
+              <dt>{{ tr('http') }}</dt>
               <dd>{{ listener(snapshot.runtime.httpPort) }}</dd>
-              <dt>{{ $t('admin:system.https') }}</dt>
+              <dt>{{ tr('https') }}</dt>
               <dd>{{ listener(snapshot.runtime.httpsPort) }}</dd>
-              <dt>{{ $t('admin:system.configuredPublicOrigin') }}</dt>
-              <dd class="system-mono">{{ snapshot.runtime.publicOrigin || $t('admin:system.noValidHttpS') }}</dd>
+              <dt>{{ tr('configuredPublicOrigin') }}</dt>
+              <dd class="system-mono">{{ snapshot.runtime.publicOrigin || tr('noValidHttpS') }}</dd>
             </dl>
             <p class="system-note">
-              {{ $t('admin:system.externalProxyCanTerminate') }}
+              {{ tr('externalProxyCanTerminate') }}
             </p>
-            <v-btn to="/ssl" variant="outlined" append-icon="mdi-arrow-right">{{ $t('admin:system.httpsCertificates') }}</v-btn>
+            <v-btn to="/ssl" variant="outlined" append-icon="mdi-arrow-right">{{ tr('httpsCertificates') }}</v-btn>
             <section class="system-metrics-reference" aria-labelledby="system-metrics-title">
               <div class="system-section-head">
-                <h3 id="system-metrics-title">{{ $t('admin:system.prometheusMetrics') }}</h3>
+                <h3 id="system-metrics-title">{{ tr('prometheusMetrics') }}</h3>
                 <span class="system-state" :class="{ 'system-warning': metricsEnabled !== true }" role="status">{{ metricsStatusLabel }}</span>
               </div>
               <p class="system-note">
-                {{ $t('admin:system.metricsEnablementComesProcess') }}
+                {{ tr('metricsEnablementComesProcess') }}
               </p>
               <p v-if="metricsStateError" class="system-warning" role="status">{{ metricsStateError }}</p>
               <dl class="system-facts">
-                <dt>{{ $t('admin:system.currentOriginUrl') }}</dt>
+                <dt>{{ tr('currentOriginUrl') }}</dt>
                 <dd><code>{{ metricsUrl }}</code></dd>
               </dl>
               <div class="system-actions">
-                <v-btn variant="outlined" prepend-icon="mdi-content-copy" @click="copyMetricsUrl">{{ $t('admin:system.copyEndpointUrl') }}</v-btn>
+                <v-btn variant="outlined" prepend-icon="mdi-content-copy" @click="copyMetricsUrl">{{ tr('copyEndpointUrl') }}</v-btn>
                 <v-btn
                   variant="outlined"
                   prepend-icon="mdi-text-box-search-outline"
@@ -157,41 +144,41 @@
                   :aria-busy="metricsPreviewLoading"
                   @click="previewMetrics"
                 >
-                  {{ metricsPreview !== null ? $t('admin:system.refreshTextPreview') : $t('admin:system.previewScrapeText') }}
+                  {{ metricsPreview !== null ? tr('refreshTextPreview') : tr('previewScrapeText') }}
                 </v-btn>
-                <v-btn v-if="metricsPreview !== null || metricsPreviewError" variant="text" @click="clearMetricsPreview">{{ $t('admin:system.hidePreview') }}</v-btn>
+                <v-btn v-if="metricsPreview !== null || metricsPreviewError" variant="text" @click="clearMetricsPreview">{{ tr('hidePreview') }}</v-btn>
               </div>
               <p v-if="metricsCopyError" class="system-warning" role="alert">{{ metricsCopyError }}</p>
               <p v-if="metricsPreviewError" class="system-warning" role="alert">{{ metricsPreviewError }}</p>
-              <p v-if="metricsPreviewLoading" role="status">{{ $t('admin:system.requestingSameOriginPlain') }}</p>
+              <p v-if="metricsPreviewLoading" role="status">{{ tr('requestingSameOriginPlain') }}</p>
               <div v-if="metricsPreview !== null">
-                <h4>{{ $t('admin:system.scrapeOutputPlainText') }}</h4>
+                <h4>{{ tr('scrapeOutputPlainText') }}</h4>
                 <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded source/report viewport needs a tab stop for keyboard scrolling. -->
-                <pre class="system-report" tabindex="0" :aria-label="$t('admin:system.prometheusMetricsPreviewPlain')">{{ metricsPreview }}</pre>
+                <pre class="system-report wiki-surface-well" tabindex="0" :aria-label="tr('prometheusMetricsPreviewPlain')">{{ metricsPreview }}</pre>
               </div>
             </section>
-            <h3 class="system-section-title">{{ $t('admin:system.connectedProcesses') }}</h3>
-            <div v-if="snapshot.database.connectedProcesses.status === 'unavailable'" class="system-empty">
+            <h3 class="system-section-title">{{ tr('connectedProcesses') }}</h3>
+            <div v-if="snapshot.database.connectedProcesses.status === 'unavailable'" class="system-empty wiki-surface-well">
               <v-icon icon="mdi-database-alert-outline" size="32" />
-              <h4>{{ $t('admin:system.connectedProcessStatsUnavailable') }}</h4>
-              <p>{{ $t('admin:system.postgresqlActivityVisibilityRestricted') }}</p>
+              <h4>{{ tr('connectedProcessStatsUnavailable') }}</h4>
+              <p>{{ tr('postgresqlActivityVisibilityRestricted') }}</p>
             </div>
-            <div v-else-if="!snapshot.database.connectedProcesses.processes.length" class="system-empty">
+            <div v-else-if="!snapshot.database.connectedProcesses.processes.length" class="system-empty wiki-surface-well">
               <v-icon icon="mdi-database-off-outline" size="32" />
-              <h4>{{ $t('admin:system.noTaggedOpenConnections') }}</h4>
-              <p>{{ $t('admin:system.noOpenPostgresqlConnections') }}</p>
+              <h4>{{ tr('noTaggedOpenConnections') }}</h4>
+              <p>{{ tr('noOpenPostgresqlConnections') }}</p>
             </div>
             <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded overflow region needs a tab stop for keyboard scrolling. -->
-            <section v-else class="system-table-wrap" :aria-label="$t('admin:system.connectedProcessObservations')" tabindex="0" ><table>
-              <caption class="sr-only">{{ $t('admin:system.currentlyOpenPostgresqlConnections') }}</caption>
+            <section v-else class="system-table-wrap wiki-surface-well" :aria-label="tr('connectedProcessObservations')" tabindex="0" ><table>
+              <caption class="sr-only">{{ tr('currentlyOpenPostgresqlConnections') }}</caption>
               <thead>
                 <tr>
-                  <th scope="col">{{ $t('admin:system.opaqueIdentity') }}</th>
-                  <th scope="col">{{ $t('admin:system.pool') }}</th>
-                  <th scope="col">{{ $t('admin:system.listener') }}</th>
-                  <th scope="col">{{ $t('admin:system.worker') }}</th>
-                  <th scope="col">{{ $t('admin:system.unclassified') }}</th>
-                  <th scope="col">{{ $t('admin:system.earliestOpenBackend') }}</th>
+                  <th scope="col">{{ tr('opaqueIdentity') }}</th>
+                  <th scope="col">{{ tr('pool') }}</th>
+                  <th scope="col">{{ tr('listener') }}</th>
+                  <th scope="col">{{ tr('worker') }}</th>
+                  <th scope="col">{{ tr('unclassified') }}</th>
+                  <th scope="col">{{ tr('earliestOpenBackend') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -206,54 +193,53 @@
               </tbody>
             </table></section>
             <p class="system-note">
-              {{ $t('admin:system.pointTimeConnectedProcess') }}
+              {{ tr('pointTimeConnectedProcess') }}
             </p>
           </template>
           <template v-else-if="section === 'background'">
             <div class="system-heading">
-              <span class="system-kicker">{{ $t('admin:system.n03WorkBehindScenes') }}</span>
-              <h2>{{ $t('admin:system.seeWhatMoving') }}</h2>
-              <p>{{ $t('admin:system.scheduledInvocationsBelongProcess') }}</p>
+              <h2>{{ tr('backgroundWork') }}</h2>
+              <p>{{ tr('scheduledInvocationsBelongProcess') }}</p>
             </div>
-            <h3 class="system-section-title">{{ $t('admin:system.processScheduler') }}</h3>
-            <div v-if="!snapshot.scheduler.jobs.length" class="system-empty">
+            <h3 class="system-section-title">{{ tr('processScheduler') }}</h3>
+            <div v-if="!snapshot.scheduler.jobs.length" class="system-empty wiki-surface-well">
               <v-icon icon="mdi-calendar-blank-outline" size="32" />
-              <h4>{{ $t('admin:system.noSchedulerObservations') }}</h4>
+              <h4>{{ tr('noSchedulerObservations') }}</h4>
               <p>
                 {{
                   snapshot.scheduler.started
-                    ? $t('admin:system.noActiveRecentlyCompleted')
-                    : $t('admin:system.schedulerHasNotStarted')
+                    ? tr('noActiveRecentlyCompleted')
+                    : tr('schedulerHasNotStarted')
                 }}
               </p>
             </div>
             <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded overflow region needs a tab stop for keyboard scrolling. -->
-            <section v-else class="system-table-wrap" :aria-label="$t('admin:system.scheduledTaskObservations')" tabindex="0" ><table>
+            <section v-else class="system-table-wrap wiki-surface-well" :aria-label="tr('scheduledTaskObservations')" tabindex="0" ><table>
               <caption class="sr-only">
-                {{ $t('admin:system.activeTasksTasksSkipped') }}
+                {{ tr('activeTasksTasksSkipped') }}
               </caption>
               <thead>
                 <tr>
-                  <th scope="col">{{ $t('admin:system.task') }}</th>
-                  <th scope="col">{{ $t('admin:system.now') }}</th>
-                  <th scope="col">{{ $t('admin:system.lastResult') }}</th>
-                  <th scope="col">{{ $t('admin:system.nextLastRun') }}</th>
+                  <th scope="col">{{ tr('task') }}</th>
+                  <th scope="col">{{ tr('now') }}</th>
+                  <th scope="col">{{ tr('lastResult') }}</th>
+                  <th scope="col">{{ tr('nextLastRun') }}</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="job in snapshot.scheduler.jobs" :key="job.id">
                   <th scope="row">
                     <span>{{ job.name }}</span>
-                    <small>{{ job.worker ? $t('admin:system.childProcess') : $t('admin:system.process') }} · {{ job.repeat ? $t('admin:system.repeating') : $t('admin:system.once') }}</small>
+                    <small>{{ job.worker ? tr('childProcess') : tr('process') }} · {{ job.repeat ? tr('repeating') : tr('once') }}</small>
                   </th>
                   <td>
                     <span class="system-state">{{ job.state }}</span>
                   </td>
                   <td>
-                    <span :class="{ 'system-warning': job.lastOutcome === 'failed' }">{{ job.lastOutcome || $t('admin:system.notObserved') }}</span>
+                    <span :class="{ 'system-warning': job.lastOutcome === 'failed' }">{{ job.lastOutcome || tr('notObserved') }}</span>
                     <small>
-                      {{ $t('admin:system.runsFailures', { runs: job.runs, failures: job.failures, interpolation: { escapeValue: false } }) }}
-                      <span v-if="job.lastDurationMs !== null">{{ $t('admin:system.msLastRun', { lastDurationMs: job.lastDurationMs, interpolation: { escapeValue: false } }) }}</span>
+                      {{ tr('runsFailures', { runs: job.runs, failures: job.failures, interpolation: { escapeValue: false } }) }}
+                      <span v-if="job.lastDurationMs !== null">{{ tr('msLastRun', { lastDurationMs: job.lastDurationMs, interpolation: { escapeValue: false } }) }}</span>
                     </small>
                   </td>
                   <td>
@@ -261,12 +247,12 @@
                     <small>
                       {{
                         job.nextRunAt
-                          ? $t('admin:system.nextInvocation')
+                          ? tr('nextInvocation')
                           : job.lastStartedAt
-                            ? $t('admin:system.lastStarted')
+                            ? tr('lastStarted')
                             : job.state === 'skipped'
-                              ? $t('admin:system.skippedOfflineMode')
-                              : $t('admin:system.noInvocationRecorded')
+                              ? tr('skippedOfflineMode')
+                              : tr('noInvocationRecorded')
                       }}
                     </small>
                   </td>
@@ -274,9 +260,9 @@
               </tbody>
             </table></section>
             <p class="system-note">
-              {{ $t('admin:system.processObservationsResetRestart') }}
+              {{ tr('processObservationsResetRestart') }}
             </p>
-            <h3 class="system-section-title">{{ $t('admin:system.durableQueue') }}</h3>
+            <h3 class="system-section-title">{{ tr('durableQueue') }}</h3>
             <div class="system-queue-counts">
               <div v-for="(value, state) in snapshot.queue.counts" :key="state">
                 <strong>{{ number(value) }}</strong>
@@ -284,17 +270,17 @@
               </div>
             </div>
             <p class="system-note">
-              {{ $t('admin:system.pendingJobsDueTerminal', { due: number(snapshot.queue.due), interpolation: { escapeValue: false } }) }}
+              {{ tr('pendingJobsDueTerminal', { due: number(snapshot.queue.due), interpolation: { escapeValue: false } }) }}
             </p>
             <div class="system-section-head">
               <h3>
-                {{ $t('admin:system.needsAttention') }}
+                {{ tr('needsAttention') }}
                 <span>{{ number(snapshot.queue.totalAttention) }}</span>
               </h3>
               <v-text-field
                 v-if="snapshot.queue.attention.length"
                 v-model="jobQuery"
-                :label="$t('admin:system.findAttentionRecord')"
+                :label="tr('findAttentionRecord')"
                 prepend-inner-icon="mdi-magnify"
                 variant="outlined"
                 density="compact"
@@ -303,19 +289,19 @@
               />
             </div>
             <p class="system-note">
-              {{ $t('admin:system.failedJobsExpiredRunning', { attentionCount: snapshot.queue.attention.length, totalAttention: number(snapshot.queue.totalAttention), interpolation: { escapeValue: false } }) }}
+              {{ tr('failedJobsExpiredRunning', { attentionCount: snapshot.queue.attention.length, totalAttention: number(snapshot.queue.totalAttention), interpolation: { escapeValue: false } }) }}
             </p>
-            <div v-if="!attentionRows.length" class="system-empty">
+            <div v-if="!attentionRows.length" class="system-empty wiki-surface-well">
               <v-icon :icon="jobQuery ? 'mdi-filter-outline' : 'mdi-check-circle-outline'" size="32" />
-              <h4>{{ jobQuery ? $t('admin:system.noMatchingAttentionRecords') : $t('admin:system.noRetainedJobsNeed') }}</h4>
+              <h4>{{ jobQuery ? tr('noMatchingAttentionRecords') : tr('noRetainedJobsNeed') }}</h4>
               <p>
                 {{
                   jobQuery
-                    ? $t('admin:system.searchAppliesLatestRecords')
-                    : $t('admin:system.noFailedJobsExpired')
+                    ? tr('searchAppliesLatestRecords')
+                    : tr('noFailedJobsExpired')
                 }}
               </p>
-              <v-btn v-if="jobQuery" variant="text" @click="jobQuery = ''">{{ $t('admin:system.clearSearch') }}</v-btn>
+              <v-btn v-if="jobQuery" variant="text" @click="jobQuery = ''">{{ tr('clearSearch') }}</v-btn>
             </div>
             <div v-else class="system-attention">
               <article v-for="job in attentionRows" :key="job.id">
@@ -326,35 +312,34 @@
                   </h4>
                   <span class="system-state">{{ reasonLabel(job.reason) }}</span>
                 </div>
-                <p>{{ $t('admin:system.attemptsUpdated', { attempts: job.attempts, maxAttempts: job.maxAttempts, state: job.state, updatedAt: dateTime(job.updatedAt), interpolation: { escapeValue: false } }) }}</p>
+                <p>{{ tr('attemptsUpdated', { attempts: job.attempts, maxAttempts: job.maxAttempts, state: job.state, updatedAt: dateTime(job.updatedAt), interpolation: { escapeValue: false } }) }}</p>
                 <code>{{ job.id }}</code>
                 <p class="system-note">{{ reasonHelp(job.reason) }}</p>
                 <v-btn v-if="systemJobDestination(job.type)" :to="systemJobDestination(job.type)!.path" variant="text" append-icon="mdi-arrow-right">
-                  {{ $t('admin:system.open', { type: systemJobDestination(job.type)!.title, interpolation: { escapeValue: false } }) }}
+                  {{ tr('open', { type: systemJobDestination(job.type)!.title, interpolation: { escapeValue: false } }) }}
                 </v-btn>
               </article>
             </div>
           </template>
           <template v-else>
             <div class="system-heading">
-              <span class="system-kicker">{{ $t('admin:system.n04EvidenceYouCan') }}</span>
-              <h2>{{ $t('admin:system.usefulSupportReport') }}</h2>
-              <p>{{ $t('admin:system.inspectPointTimeReport') }}</p>
+              <h2>{{ tr('diagnostics') }}</h2>
+              <p>{{ tr('inspectPointTimeReport') }}</p>
             </div>
             <div class="system-section-head">
-              <h3>{{ $t('admin:system.databaseSchema') }}</h3>
+              <h3>{{ tr('databaseSchema') }}</h3>
               <span>{{ snapshot.database.version }}</span>
             </div>
             <p class="system-note">
-              {{ $t('admin:system.versionQueryCompletedMs', { latencyMs: snapshot.database.latencyMs, interpolation: { escapeValue: false } }) }}
+              {{ tr('versionQueryCompletedMs', { latencyMs: snapshot.database.latencyMs, interpolation: { escapeValue: false } }) }}
             </p>
             <div class="system-migration-summary">
-              <span>{{ $t('admin:system.applied', { appliedCount: snapshot.database.migrations.applied.length, interpolation: { escapeValue: false } }) }}</span>
-              <span>{{ $t('admin:system.pending', { pendingCount: snapshot.database.migrations.pending.length, interpolation: { escapeValue: false } }) }}</span>
-              <span>{{ $t('admin:system.absentBuild', { unknownCount: snapshot.database.migrations.unknown.length, interpolation: { escapeValue: false } }) }}</span>
+              <span>{{ tr('applied', { appliedCount: snapshot.database.migrations.applied.length, interpolation: { escapeValue: false } }) }}</span>
+              <span>{{ tr('pending', { pendingCount: snapshot.database.migrations.pending.length, interpolation: { escapeValue: false } }) }}</span>
+              <span>{{ tr('absentBuild', { unknownCount: snapshot.database.migrations.unknown.length, interpolation: { escapeValue: false } }) }}</span>
             </div>
             <details class="system-details">
-              <summary>{{ $t('admin:system.inspectMigrationInventory') }}</summary>
+              <summary>{{ tr('inspectMigrationInventory') }}</summary>
               <div v-for="group in migrationGroups" :key="group.title">
                 <h4>{{ group.title }}</h4>
                 <ul v-if="group.items.length">
@@ -362,76 +347,76 @@
                     <code>{{ name }}</code>
                   </li>
                 </ul>
-                <p v-else>{{ $t('admin:system.none') }}</p>
+                <p v-else>{{ tr('none') }}</p>
               </div>
             </details>
             <div class="system-report-controls">
-              <h3>{{ $t('admin:system.reportContents') }}</h3>
+              <h3>{{ tr('reportContents') }}</h3>
               <p>
-                {{ $t('admin:system.includesBuildIdentityProcess') }}
+                {{ tr('includesBuildIdentityProcess') }}
               </p>
               <v-checkbox
                 :model-value="includeDeployment"
                 @update:model-value="includeDeployment = $event === true"
-                :label="$t('admin:system.includeDeploymentIdentifiers')"
-                :hint="$t('admin:system.addsInstanceIdHostname')"
+                :label="tr('includeDeploymentIdentifiers')"
+                :hint="tr('addsInstanceIdHostname')"
                 persistent-hint
                 density="compact"
               />
               <div class="system-actions">
-                <v-btn color="primary" prepend-icon="mdi-download" @click="downloadReport">{{ $t('admin:system.downloadJson') }}</v-btn>
-                <v-btn variant="outlined" prepend-icon="mdi-content-copy" @click="copyReport">{{ $t('admin:system.copyReport') }}</v-btn>
+                <v-btn color="primary" prepend-icon="mdi-download" @click="downloadReport">{{ tr('downloadJson') }}</v-btn>
+                <v-btn variant="outlined" prepend-icon="mdi-content-copy" @click="copyReport">{{ tr('copyReport') }}</v-btn>
               </div>
               <p v-if="copyError" class="system-warning" role="alert">{{ copyError }}</p>
             </div>
             <details class="system-details" :open="includeDeployment">
-              <summary>{{ $t('admin:system.inspectExactReport') }}</summary>
+              <summary>{{ tr('inspectExactReport') }}</summary>
               <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded source/report viewport needs a tab stop for keyboard scrolling. -->
-              <pre class="system-report" tabindex="0" :aria-label="$t('admin:system.exactSupportReport')">{{ reportText }}</pre>
+              <pre class="system-report wiki-surface-well" tabindex="0" :aria-label="tr('exactSupportReport')">{{ reportText }}</pre>
             </details>
             <p class="system-note">
-              {{ $t('admin:system.reportUsesObservationTimestamp') }}
+              {{ tr('reportUsesObservationTimestamp') }}
             </p>
           </template>
         </section>
         <aside class="system-aside">
-          <span class="system-kicker">{{ $t('admin:system.observation') }}</span>
+          <span class="system-kicker">{{ tr('observation') }}</span>
           <dl>
-            <dt>{{ $t('admin:system.database') }}</dt>
-            <dd>{{ $t('admin:system.responded') }}</dd>
-            <dt>{{ $t('admin:system.processScheduler') }}</dt>
-            <dd>{{ snapshot.scheduler.started ? $t('admin:system.started') : $t('admin:system.notStarted') }}</dd>
-            <dt>{{ $t('admin:system.offlineMode') }}</dt>
-            <dd>{{ snapshot.runtime.offline ? $t('admin:system.enabled') : $t('admin:system.disabled') }}</dd>
-            <dt>{{ $t('admin:system.pendingWork') }}</dt>
+            <dt>{{ tr('database') }}</dt>
+            <dd>{{ tr('responded') }}</dd>
+            <dt>{{ tr('processScheduler') }}</dt>
+            <dd>{{ snapshot.scheduler.started ? tr('started') : tr('notStarted') }}</dd>
+            <dt>{{ tr('offlineMode') }}</dt>
+            <dd>{{ snapshot.runtime.offline ? tr('enabled') : tr('disabled') }}</dd>
+            <dt>{{ tr('pendingWork') }}</dt>
             <dd>{{ number(snapshot.queue.counts.pending) }}</dd>
-            <dt>{{ $t('admin:system.attentionRecords') }}</dt>
+            <dt>{{ tr('attentionRecords') }}</dt>
             <dd>{{ number(snapshot.queue.totalAttention) }}</dd>
-            <dt>{{ $t('admin:system.connectedProcesses') }}</dt>
-            <dd>{{ snapshot.database.connectedProcesses.status === 'observed' ? number(snapshot.database.connectedProcesses.processes.length) : $t('admin:system.unavailable') }}</dd>
+            <dt>{{ tr('connectedProcesses') }}</dt>
+            <dd>{{ snapshot.database.connectedProcesses.status === 'observed' ? number(snapshot.database.connectedProcesses.processes.length) : tr('unavailable') }}</dd>
           </dl>
           <div>
-            <h3>{{ $t('admin:system.connectedProcessView') }}</h3>
-            <p>{{ $t('admin:system.measurementsStayFixedUntil') }}</p>
+            <h3>{{ tr('connectedProcessView') }}</h3>
+            <p>{{ tr('measurementsStayFixedUntil') }}</p>
           </div>
           <div>
-            <h3>{{ $t('admin:system.deploymentOwnership') }}</h3>
+            <h3>{{ tr('deploymentOwnership') }}</h3>
             <p>
-              {{ $t('admin:system.buildIndependentForkUpdates', { revision: snapshot.product.revision.slice(0, 8), upstreamBase: snapshot.product.upstreamBase, interpolation: { escapeValue: false } }) }}
+              {{ tr('buildIndependentForkUpdates', { revision: snapshot.product.revision.slice(0, 8), upstreamBase: snapshot.product.upstreamBase, interpolation: { escapeValue: false } }) }}
             </p>
           </div>
           <div>
-            <h3>{{ $t('admin:system.relatedOperations') }}</h3>
+            <h3>{{ tr('relatedOperations') }}</h3>
             <router-link to="/storage">
-              {{ $t('admin:system.storageRecovery') }}
+              {{ tr('storageRecovery') }}
               <v-icon size="16" icon="mdi-arrow-right" />
             </router-link>
             <router-link to="/logging">
-              {{ $t('admin:system.logging') }}
+              {{ tr('logging') }}
               <v-icon size="16" icon="mdi-arrow-right" />
             </router-link>
             <router-link to="/utilities">
-              {{ $t('admin:system.maintenanceUtilities') }}
+              {{ tr('maintenanceUtilities') }}
               <v-icon size="16" icon="mdi-arrow-right" />
             </router-link>
           </div>
@@ -450,12 +435,12 @@ import { fetchSystemMetricsPreview, fetchSystemMetricsState } from '../../helper
 import { systemJobDestination, systemSupportReport, type SystemWorkspace } from '../../../shared/system-workspace.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
-const t = useTranslate()
+const tr = useTranslate('admin:system')
 const sections = [
-  { key: 'overview', title: t('admin:system.overview') },
-  { key: 'runtime', title: t('admin:system.runtime') },
-  { key: 'background', title: t('admin:system.backgroundWork') },
-  { key: 'diagnostics', title: t('admin:system.diagnostics') }
+  { key: 'overview', title: tr('overview') },
+  { key: 'runtime', title: tr('runtime') },
+  { key: 'background', title: tr('backgroundWork') },
+  { key: 'diagnostics', title: tr('diagnostics') }
 ] as const
 type Section = (typeof sections)[number]['key']
 const route = useRoute(),
@@ -479,7 +464,7 @@ const section = computed<Section>(() => sections.find((tab) => tab.key === route
 const selectSection = (key: Section) => router.replace({ query: { ...route.query, section: key === 'overview' ? undefined : key } })
 const metricsUrl = computed(() => new URL('/metrics', window.location.origin).href)
 const metricsStatusLabel = computed(() =>
-  metricsEnabled.value === null ? t('admin:system.statusUnavailable') : metricsEnabled.value ? t('admin:system.enabled') : t('admin:system.disabled')
+  metricsEnabled.value === null ? tr('statusUnavailable') : metricsEnabled.value ? tr('enabled') : tr('disabled')
 )
 const dateTime = (value: string) => new Date(value).toLocaleString()
 const number = (value: number) => value.toLocaleString()
@@ -494,48 +479,48 @@ const duration = (seconds: number) => {
     minutes = Math.floor(seconds / 60) % 60
   return days ? `${days}d ${hours}h` : hours ? `${hours}h ${minutes}m` : `${minutes}m ${Math.floor(seconds) % 60}s`
 }
-const listener = (value: number | null) => (value === null ? t('admin:system.noTcpListenerObserved') : t('admin:system.listeningPort', { value, interpolation: { escapeValue: false } }))
+const listener = (value: number | null) => (value === null ? tr('noTcpListenerObserved') : tr('listeningPort', { value, interpolation: { escapeValue: false } }))
 const attentionRows = computed(
   () =>
     snapshot.value?.queue.attention.filter((job) =>
       `${job.id} ${job.type} ${job.state} ${reasonLabel(job.reason)}`.toLowerCase().includes(jobQuery.value.trim().toLowerCase())
     ) ?? []
 )
-const reasonLabel = (reason: string) => ({ failed: t('admin:system.failed'), 'expired-lease': t('admin:system.expiredLease'), unsupported: t('admin:system.unsupportedVersion') })[reason] || reason
+const reasonLabel = (reason: string) => ({ failed: tr('failed'), 'expired-lease': tr('expiredLease'), unsupported: tr('unsupportedVersion') })[reason] || reason
 const reasonHelp = (reason: string) =>
   reason === 'failed'
-    ? t('admin:system.reviewOwningWorkflowBefore')
+    ? tr('reviewOwningWorkflowBefore')
     : reason === 'expired-lease'
-      ? t('admin:system.leaseDeadlineHasPassed')
-      : t('admin:system.processHasNoHandler')
+      ? tr('leaseDeadlineHasPassed')
+      : tr('processHasNoHandler')
 const signals = computed(() => {
   const w = snapshot.value
   if (!w) return []
   return [
     {
-      title: t('admin:system.postgresqlResponded'),
-      detail: t('admin:system.freshVersionQueryCompleted', { latencyMs: w.database.latencyMs, interpolation: { escapeValue: false } }),
+      title: tr('postgresqlResponded'),
+      detail: tr('freshVersionQueryCompleted', { latencyMs: w.database.latencyMs, interpolation: { escapeValue: false } }),
       attention: false,
       section: 'diagnostics' as Section
     },
     {
       title:
         w.database.migrations.pending.length || w.database.migrations.unknown.length
-          ? t('admin:system.migrationInventoryNeedsReview')
-          : t('admin:system.migrationInventoryMatches'),
-      detail: t('admin:system.appliedPendingAbsentBuild', { appliedCount: w.database.migrations.applied.length, pendingCount: w.database.migrations.pending.length, unknownCount: w.database.migrations.unknown.length, interpolation: { escapeValue: false } }),
+          ? tr('migrationInventoryNeedsReview')
+          : tr('migrationInventoryMatches'),
+      detail: tr('appliedPendingAbsentBuild', { appliedCount: w.database.migrations.applied.length, pendingCount: w.database.migrations.pending.length, unknownCount: w.database.migrations.unknown.length, interpolation: { escapeValue: false } }),
       attention: Boolean(w.database.migrations.pending.length || w.database.migrations.unknown.length),
       section: 'diagnostics' as Section
     },
     {
-      title: w.scheduler.started ? t('admin:system.processSchedulerStarted') : t('admin:system.processSchedulerNotStarted'),
-      detail: t('admin:system.runningNowTasksFailed', { jobs: w.scheduler.jobs.filter((j) => j.state === 'running').length, jobs2: w.scheduler.jobs.filter((j) => j.lastOutcome === 'failed').length, interpolation: { escapeValue: false } }),
+      title: w.scheduler.started ? tr('processSchedulerStarted') : tr('processSchedulerNotStarted'),
+      detail: tr('runningNowTasksFailed', { jobs: w.scheduler.jobs.filter((j) => j.state === 'running').length, jobs2: w.scheduler.jobs.filter((j) => j.lastOutcome === 'failed').length, interpolation: { escapeValue: false } }),
       attention: !w.scheduler.started || w.scheduler.jobs.some((j) => j.lastOutcome === 'failed'),
       section: 'background' as Section
     },
     {
-      title: w.queue.totalAttention ? t('admin:system.durableWorkNeedsAttention') : t('admin:system.noDurableAttentionRecords'),
-      detail: t('admin:system.failedExpiredLeasesUnsupported', { failed: w.queue.counts.failed, expiredLeases: w.queue.expiredLeases, unsupported: w.queue.unsupported, interpolation: { escapeValue: false } }),
+      title: w.queue.totalAttention ? tr('durableWorkNeedsAttention') : tr('noDurableAttentionRecords'),
+      detail: tr('failedExpiredLeasesUnsupported', { failed: w.queue.counts.failed, expiredLeases: w.queue.expiredLeases, unsupported: w.queue.unsupported, interpolation: { escapeValue: false } }),
       attention: w.queue.totalAttention > 0,
       section: 'background' as Section
     }
@@ -545,26 +530,26 @@ const runtimeFacts = computed(() => {
   const r = snapshot.value?.runtime
   if (!r) return []
   return [
-    { label: t('admin:system.runtime'), value: t('admin:system.bun', { bunVersion: r.bunVersion, interpolation: { escapeValue: false } }) },
-    { label: t('admin:system.platform'), value: `${r.platform} · ${r.architecture}${r.container ? ` ${t('admin:system.dockerMarkerPresent')}` : ''}` },
-    { label: t('admin:system.kernel'), value: r.kernel, mono: true },
-    { label: t('admin:system.logicalCpusVisibleOs'), value: String(r.logicalCpuCount) },
-    { label: t('admin:system.availableParallelism'), value: r.availableParallelism === null ? t('admin:system.unavailable') : String(r.availableParallelism) },
-    { label: t('admin:system.memoryVisibleOs'), value: bytes(r.systemMemoryBytes) },
-    { label: t('admin:system.instanceId'), value: r.instanceId, mono: true },
-    { label: t('admin:system.hostname'), value: r.hostname, mono: true },
-    { label: t('admin:system.workingDirectory2'), value: r.workingDirectory, mono: true },
-    { label: t('admin:system.configurationSource'), value: r.configFile, mono: true },
-    { label: t('admin:system.databaseHost'), value: snapshot.value!.database.host, mono: true }
+    { label: tr('runtime'), value: tr('bun', { bunVersion: r.bunVersion, interpolation: { escapeValue: false } }) },
+    { label: tr('platform'), value: `${r.platform} · ${r.architecture}${r.container ? ` ${tr('dockerMarkerPresent')}` : ''}` },
+    { label: tr('kernel'), value: r.kernel, mono: true },
+    { label: tr('logicalCpusVisibleOs'), value: String(r.logicalCpuCount) },
+    { label: tr('availableParallelism'), value: r.availableParallelism === null ? tr('unavailable') : String(r.availableParallelism) },
+    { label: tr('memoryVisibleOs'), value: bytes(r.systemMemoryBytes) },
+    { label: tr('instanceId'), value: r.instanceId, mono: true },
+    { label: tr('hostname'), value: r.hostname, mono: true },
+    { label: tr('workingDirectory2'), value: r.workingDirectory, mono: true },
+    { label: tr('configurationSource'), value: r.configFile, mono: true },
+    { label: tr('databaseHost'), value: snapshot.value!.database.host, mono: true }
   ]
 })
 const migrationGroups = computed(() => {
   const m = snapshot.value?.database.migrations
   return m
     ? [
-        { title: t('admin:system.pendingBuild'), items: m.pending },
-        { title: t('admin:system.appliedButAbsentBuild'), items: m.unknown },
-        { title: t('admin:system.appliedMigrations'), items: m.applied }
+        { title: tr('pendingBuild'), items: m.pending },
+        { title: tr('appliedButAbsentBuild'), items: m.unknown },
+        { title: tr('appliedMigrations'), items: m.applied }
       ]
     : []
 })
@@ -593,10 +578,10 @@ async function load() {
       const metrics = await fetchSystemMetricsState(window.fetch.bind(window), current.signal)
       if (!current.signal.aborted) metricsEnabled.value = metrics.enabled
     } catch (e) {
-      if (!current.signal.aborted) metricsStateError.value = e instanceof Error ? e.message : t('admin:system.metricsStatusUnavailable')
+      if (!current.signal.aborted) metricsStateError.value = e instanceof Error ? e.message : tr('metricsStatusUnavailable')
     }
   } catch (e) {
-    if (!current.signal.aborted) error.value = e instanceof Error ? e.message : t('admin:system.systemObservationsCouldNot')
+    if (!current.signal.aborted) error.value = e instanceof Error ? e.message : tr('systemObservationsCouldNot')
   } finally {
     if (controller === current) {
       loading.value = false
@@ -608,9 +593,9 @@ async function copyMetricsUrl() {
   metricsCopyError.value = ''
   try {
     await navigator.clipboard.writeText(metricsUrl.value)
-    notice.value = t('admin:system.metricsEndpointUrlCopied')
+    notice.value = tr('metricsEndpointUrlCopied')
   } catch {
-    metricsCopyError.value = t('admin:system.clipboardAccessUnavailableSelect')
+    metricsCopyError.value = tr('clipboardAccessUnavailableSelect')
   }
 }
 async function previewMetrics() {
@@ -626,7 +611,7 @@ async function previewMetrics() {
     if (!current.signal.aborted) metricsPreview.value = output
   } catch (e) {
     if (!current.signal.aborted)
-      metricsPreviewError.value = e instanceof Error ? e.message : t('admin:system.metricsPreviewCouldNot')
+      metricsPreviewError.value = e instanceof Error ? e.message : tr('metricsPreviewCouldNot')
   } finally {
     if (metricsPreviewController === current) {
       metricsPreviewLoading.value = false
@@ -648,15 +633,15 @@ function downloadReport() {
   link.download = `tsepistle-system-${snapshot.value!.observedAt.replace(/[:.]/g, '-')}.json`
   link.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
-  notice.value = t('admin:system.supportReportDownloaded')
+  notice.value = tr('supportReportDownloaded')
 }
 async function copyReport() {
   copyError.value = ''
   try {
     await navigator.clipboard.writeText(reportText.value)
-    notice.value = t('admin:system.supportReportCopied')
+    notice.value = tr('supportReportCopied')
   } catch {
-    copyError.value = t('admin:system.clipboardAccessUnavailableDownload')
+    copyError.value = tr('clipboardAccessUnavailableDownload')
   }
 }
 onMounted(load)
@@ -668,20 +653,36 @@ onBeforeUnmount(() => {
 
 <style lang="scss">
 .system-workspace {
-  --system-line: rgba(var(--v-theme-on-surface), 0.16);
+  --system-line: var(--wiki-surface-border);
+  overflow-wrap: anywhere;
+  .system-main,
+  .system-aside,
+  .system-report-controls {
+    padding: 1rem;
+    border: 1px solid var(--wiki-material-border);
+    border-radius: var(--wiki-panel-radius);
+    background: var(--wiki-surface-gradient);
+    box-shadow: var(--wiki-specular-border);
+  }
   .system-observed {
     display: flex;
-    justify-content: space-between;
-    gap: 1rem;
+    align-items: center;
+    gap: .2rem .8rem;
     flex-wrap: wrap;
-    font-size: 0.78rem;
-    margin: 1.5rem 0 1.7rem;
+    min-width: 0;
+    font-size: .75rem;
+    line-height: 1.5;
+    color: var(--wiki-text-muted);
+    a {
+      color: var(--wiki-accent-ink);
+    }
     span {
       display: flex;
       align-items: center;
       gap: 0.55rem;
     }
     i {
+      flex: 0 0 7px;
       width: 7px;
       height: 7px;
       border-radius: 50%;
@@ -693,10 +694,10 @@ onBeforeUnmount(() => {
   }
   .system-tabs {
     display: flex;
-    gap: 1.6rem;
+    gap: .25rem 1rem;
+    flex-wrap: wrap;
     border-bottom: 1px solid var(--system-line);
-    margin-bottom: 2.75rem;
-    overflow-x: auto;
+    margin-block: .35rem .75rem;
     button {
       appearance: none;
       border: 0;
@@ -704,8 +705,10 @@ onBeforeUnmount(() => {
       color: inherit;
       font: inherit;
       font-size: 0.87rem;
-      padding: 0.8rem 0 1rem;
-      white-space: nowrap;
+      min-height: 44px;
+      padding: .6rem .25rem;
+      text-align: start;
+      overflow-wrap: anywhere;
       border-bottom: 2px solid transparent;
       cursor: pointer;
       &[aria-current] {
@@ -719,8 +722,9 @@ onBeforeUnmount(() => {
   }
   .system-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 246px;
-    gap: 3rem;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 246px);
+    align-items: start;
+    gap: 1rem;
   }
   .system-main {
     min-width: 0;
@@ -734,60 +738,30 @@ onBeforeUnmount(() => {
     line-height: 1.6;
   }
   .system-heading {
-    margin-bottom: 2.2rem;
+    margin-bottom: 1rem;
     h2 {
-      font-family: var(--wiki-font-display);
-      font-size: clamp(2rem, 3.3vw, 3.4rem);
-      line-height: 1.12;
-      letter-spacing: -0.025em;
-      font-weight: 500;
-      margin: 0.7rem 0 1.4rem;
+      font-size: 1.125rem;
+      line-height: 1.4;
+      font-weight: 650;
+      margin: 0 0 .35rem;
     }
     p {
-      font-size: 1rem;
-      line-height: 1.8;
-      max-width: 65ch;
+      font-size: .875rem;
+      line-height: 1.6;
+      margin: 0;
+      max-width: 75ch;
       color: var(--wiki-text-muted);
-    }
-  }
-  .system-release {
-    display: grid;
-    grid-template-columns: 1.4fr 1fr;
-    gap: 2rem;
-    padding: 1.8rem 0;
-    border-top: 1px solid var(--system-line);
-    border-bottom: 1px solid var(--system-line);
-    h3 {
-      font-family: var(--wiki-font-display);
-      font-size: 2rem;
-      font-weight: 500;
-      margin: 0.4rem 0;
-    }
-    a {
-      font-size: 0.85rem;
-      color: var(--wiki-accent-ink);
-    }
-    strong {
-      display: block;
-      font-family: var(--wiki-font-display);
-      font-weight: 500;
-      font-size: 2.5rem;
-      margin: 0.15rem 0;
-    }
-    span:not(.system-kicker),
-    small {
-      font-size: 0.8rem;
     }
   }
   .system-section-title {
     font-size: 1rem;
-    margin: 2rem 0 1rem;
+    margin: 1.25rem 0 .65rem;
   }
   .system-signals article {
     display: flex;
     gap: 1rem;
     align-items: flex-start;
-    padding: 1.3rem 0;
+    padding: .8rem 0;
     border-bottom: 1px solid var(--system-line);
     > div {
       flex: 1;
@@ -814,10 +788,8 @@ onBeforeUnmount(() => {
     display: flex;
     gap: 1rem;
     align-items: flex-start;
-    padding: 1.25rem;
-    margin: 1.5rem 0;
-    background: rgba(var(--v-theme-on-surface), 0.035);
-    border: 1px solid var(--system-line);
+    padding: .85rem;
+    margin: 1rem 0;
     border-radius: 8px;
     p {
       font-size: 0.83rem;
@@ -827,9 +799,9 @@ onBeforeUnmount(() => {
   }
   .system-metrics {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2rem;
-    padding: 1.6rem 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    padding: .8rem 0;
     border-block: 1px solid var(--system-line);
     span,
     small {
@@ -838,10 +810,9 @@ onBeforeUnmount(() => {
     }
     strong {
       display: block;
-      font-family: var(--wiki-font-display);
-      font-size: clamp(1.8rem, 3vw, 2.5rem);
-      font-weight: 500;
-      margin: 0.3rem 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin: .2rem 0;
     }
   }
   .system-facts {
@@ -857,7 +828,7 @@ onBeforeUnmount(() => {
     }
     dt {
       color: var(--wiki-text-muted);
-      padding-right: 1rem;
+      padding-inline-end: 1rem;
     }
     dd {
       overflow-wrap: anywhere;
@@ -866,7 +837,7 @@ onBeforeUnmount(() => {
   .system-mono,
   code,
   .system-report {
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-family: var(--wiki-font-mono);
   }
   .system-note {
     font-size: 0.78rem;
@@ -876,7 +847,7 @@ onBeforeUnmount(() => {
   }
   .system-table-wrap {
     overflow-x: auto;
-    border: 1px solid var(--system-line);
+    max-width: 100%;
     border-radius: 8px;
     &:focus-visible {
       outline: 2px solid var(--wiki-accent-ink);
@@ -891,15 +862,15 @@ onBeforeUnmount(() => {
     }
     th,
     td {
-      text-align: left;
+      text-align: start;
       vertical-align: top;
-      padding: 1rem;
+      padding: .75rem;
       border-bottom: 1px solid var(--system-line);
     }
     thead th {
       font-size: 0.7rem;
       letter-spacing: 0.04em;
-      background: rgba(var(--v-theme-on-surface), 0.04);
+      background: var(--wiki-surface-sunken);
     }
     tbody th {
       font-weight: 500;
@@ -928,15 +899,14 @@ onBeforeUnmount(() => {
   }
   .system-queue-counts {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 1rem;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: .75rem;
     border-block: 1px solid var(--system-line);
-    padding: 1.4rem 0;
+    padding: .85rem 0;
     strong {
       display: block;
-      font-family: var(--wiki-font-display);
-      font-weight: 500;
-      font-size: 2.2rem;
+      font-weight: 600;
+      font-size: 1.5rem;
     }
     span {
       font-size: 0.73rem;
@@ -949,11 +919,11 @@ onBeforeUnmount(() => {
     justify-content: space-between;
     align-items: center;
     flex-wrap: wrap;
-    margin: 1.8rem 0 1rem;
+    margin: 1.25rem 0 .65rem;
     h3 {
       font-size: 1rem;
       span {
-        margin-left: 0.5rem;
+        margin-inline-start: .5rem;
         color: var(--wiki-text-muted);
       }
     }
@@ -968,7 +938,7 @@ onBeforeUnmount(() => {
   }
   .system-job-search {
     flex: 0 1 280px;
-    min-width: 210px;
+    min-width: min(210px, 100%);
   }
   .system-attention article {
     padding: 1.3rem 0;
@@ -989,9 +959,8 @@ onBeforeUnmount(() => {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 0.8rem;
-    border: 1px dashed var(--system-line);
-    padding: 1.5rem;
+    gap: .65rem;
+    padding: 1rem;
     border-radius: 8px;
     h4 {
       font-size: 1rem;
@@ -1034,11 +1003,11 @@ onBeforeUnmount(() => {
       overflow-wrap: anywhere;
     }
     ul {
-      padding-left: 1.2rem;
+      padding-inline-start: 1.2rem;
     }
   }
   .system-report-controls {
-    margin: 2rem 0;
+    margin: 1rem 0;
     h3 {
       font-size: 1rem;
     }
@@ -1048,7 +1017,7 @@ onBeforeUnmount(() => {
       margin: 0.8rem 0;
     }
     .v-input {
-      margin: 1.3rem 0;
+      margin: .75rem 0;
     }
   }
   .system-actions {
@@ -1063,7 +1032,6 @@ onBeforeUnmount(() => {
     overflow: auto;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    background: rgba(var(--v-theme-on-surface), 0.035);
     padding: 1rem;
     border-radius: 6px;
     margin-top: 1rem;
@@ -1076,23 +1044,23 @@ onBeforeUnmount(() => {
     min-width: 0;
     dl {
       display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 1.15rem;
-      font-size: 0.76rem;
+      grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+      gap: .7rem;
+      font-size: .8125rem;
       border-block: 1px solid var(--system-line);
-      padding: 1.8rem 0;
-      margin: 1.4rem 0;
+      padding: 1rem 0;
+      margin: .75rem 0;
     }
     dt {
       color: var(--wiki-text-muted);
     }
     dd {
       margin: 0;
-      text-align: right;
+      text-align: end;
       font-weight: 600;
     }
     > div {
-      padding: 1.5rem 0;
+      padding: 1rem 0;
       border-bottom: 1px solid var(--system-line);
     }
     h3 {
@@ -1135,18 +1103,11 @@ onBeforeUnmount(() => {
   }
   @media (max-width: 600px) {
     .system-layout {
-      gap: 2rem;
-    }
-    .system-tabs {
-      gap: 1.3rem;
-      margin-bottom: 2rem;
-    }
-    .system-release {
-      grid-template-columns: 1fr;
-      gap: 1.4rem;
+      gap: 1rem;
     }
     .system-metrics {
-      gap: 1rem;
+      grid-template-columns: 1fr;
+      gap: .75rem;
     }
     .system-facts {
       grid-template-columns: 1fr;
@@ -1159,7 +1120,7 @@ onBeforeUnmount(() => {
       }
     }
     .system-queue-counts {
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .system-aside {
       grid-template-columns: 1fr;
@@ -1169,7 +1130,7 @@ onBeforeUnmount(() => {
       gap: 0.7rem;
       flex-wrap: wrap;
       .v-btn {
-        margin-left: 2.2rem;
+        margin-inline-start: 2.2rem;
       }
     }
     .system-section-head .system-job-search {
@@ -1178,8 +1139,24 @@ onBeforeUnmount(() => {
     .system-observed {
       font-size: 0.73rem;
     }
-    .system-heading h2 br {
-      display: none;
+  }
+  @media (forced-colors: active) {
+    --system-line: CanvasText;
+    .system-observed i {
+      forced-color-adjust: none;
+      background: CanvasText;
+      &.is-stale {
+        background: Highlight;
+      }
+    }
+    .system-tabs button[aria-current] {
+      border-color: Highlight;
+    }
+    .system-tabs button:focus-visible,
+    .system-table-wrap:focus-visible,
+    .system-report:focus-visible,
+    .system-details summary:focus-visible {
+      outline-color: Highlight;
     }
   }
 }

@@ -1,9 +1,9 @@
 <template>
-  <v-container fluid class="navigation-workspace">
+  <v-container fluid class="navigation-workspace" :class="{ 'has-admin-draft-bar': dirty }" :style="{ '--admin-draft-bar-height': `${draftBarHeight}px` }">
     <admin-hero
       icon="mdi-compass-outline"
-      :title="$t('admin:navigation.title')"
-      :description="$t('admin:navigation.giveEveryReaderClear')"
+      :title="nt('title')"
+      :description="nt('giveEveryReaderClear')"
       ><template #actions
         ><v-btn
           variant="text"
@@ -11,25 +11,25 @@
           :loading="loading"
           :disabled="busy || initializing"
           @click="reload"
-          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:navigation.reloadSavedNavigation') }}</v-tooltip></v-btn
+          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ nt('reloadSavedNavigation') }}</v-tooltip></v-btn
         ><v-btn v-if="dirty" variant="text" :disabled="locked" @click="reset"
-          >{{ $t('admin:navigation.resetDraft') }}</v-btn
+          >{{ nt('resetDraft') }}</v-btn
         ><v-btn
-          color="primary"
-          variant="flat"
+          :data-commitment="dirty && !locked ? 'active' : undefined"
+          variant="tonal"
           :disabled="locked || !dirty"
           @click="review"
-          >{{ $t('admin:navigation.reviewChanges') }}</v-btn
+          >{{ nt('reviewChanges') }}</v-btn
         ></template
       ></admin-hero
     >
     <p v-if="!saved && loading" class="navigation-empty" role="status">
-      {{ $t('admin:navigation.loadingNavigationLocalesAudiences') }}
+      {{ nt('loadingNavigationLocalesAudiences') }}
     </p>
     <v-alert v-if="loadError" type="error" variant="tonal"
       >{{ loadError
       }}<v-btn variant="text" :disabled="busy" @click="reload"
-        >{{ $t('admin:navigation.reloadSavedSettings') }}</v-btn
+        >{{ nt('reloadSavedSettings') }}</v-btn
       ></v-alert
     >
     <v-alert
@@ -43,15 +43,15 @@
       <div class="navigation-status">
         <span
           ><i :class="{ 'is-draft': dirty }" />{{
-            dirty ? $t('admin:navigation.unsavedNavigationDraft') : $t('admin:navigation.showingSavedNavigation')
+            dirty ? nt('unsavedNavigationDraft') : nt('showingSavedNavigation')
           }}</span
         ><span>{{
           saved.runtime.state === "applied"
-            ? $t('admin:navigation.runtimeConfigurationCurrent')
-            : $t('admin:navigation.runtimeActivationNeedsAttention2')
+            ? nt('runtimeConfigurationCurrent')
+            : nt('runtimeActivationNeedsAttention2')
         }}</span>
       </div>
-      <nav class="navigation-tabs" :aria-label="$t('admin:navigation.navigationSections')">
+      <nav ref="sectionNav" class="navigation-tabs" :aria-label="nt('navigationSections')">
         <button
           v-for="tab in sections"
           :key="tab.key"
@@ -67,18 +67,12 @@
         <section class="navigation-editor">
           <template v-if="section === 'structure'">
             <div class="navigation-heading">
-              <span class="navigation-kicker"
-                >{{ $t('admin:navigation.n01UsefulWayfindingSystem') }}</span
-              >
-              <h2>{{ $t('admin:navigation.arrangeEssentials') }}</h2>
-              <p>
-                {{ $t('admin:navigation.buildPurposefulMenuEach') }}
-              </p>
+              <h2>{{ nt('menuStructure') }}</h2>
             </div>
             <v-alert v-if="!customMode" type="info" variant="tonal" class="mb-5"
-              >{{ $t('admin:navigation.customMenusRemainEditable', { mode: draft.mode === "NONE"
-                  ? $t('admin:navigation.sidebarHidden')
-                  : $t('admin:navigation.sidebarCurrentlyShowsPage'), interpolation: { escapeValue: false } }) }}</v-alert
+              >{{ nt('customMenusRemainEditable', { mode: draft.mode === "NONE"
+                  ? nt('sidebarHidden')
+                  : nt('sidebarCurrentlyShowsPage'), interpolation: { escapeValue: false } }) }}</v-alert
             >
             <div class="navigation-toolbar">
               <v-select
@@ -86,7 +80,7 @@
                 :items="localeOptions"
                 item-title="title"
                 item-value="code"
-                :label="$t('admin:navigation.menuLocale')"
+                :label="nt('menuLocale')"
                 variant="outlined"
                 density="compact"
                 hide-details
@@ -96,7 +90,7 @@
                 prepend-icon="mdi-content-copy"
                 :disabled="locked || !copyOptions.length"
                 @click="openCopy"
-                >{{ $t('admin:navigation.copyLocale') }}</v-btn
+                >{{ nt('copyLocale') }}</v-btn
               ><v-btn
                 data-testid="navigation-move-repair-open"
                 variant="text"
@@ -113,22 +107,22 @@
                     block: 'start',
                   })
                 "
-                >{{ $t('admin:navigation.previewMenu') }}</v-btn
+                >{{ nt('previewMenu') }}</v-btn
               >
             </div>
             <p v-if="!currentLocaleEnabled" class="navigation-note mb-5">
-              {{ $t('admin:navigation.localeRetainedEditingBut') }}
-              <router-link to="/locale">{{ $t('admin:navigation.locale') }}</router-link>.
+              {{ nt('localeRetainedEditingBut') }}
+              <router-link to="/locale">{{ nt('locale') }}</router-link>.
             </p>
-            <div class="navigation-builder">
-              <section class="navigation-structure" :aria-label="$t('admin:navigation.menuStructure')">
+            <div ref="builder" class="navigation-builder" :class="{ 'has-selection': !!selected }">
+              <section class="navigation-structure" :aria-label="nt('menuStructure')">
                 <div class="navigation-section-title">
-                  <h3>{{ $t('admin:navigation.menuOrder') }}</h3>
+                  <h3>{{ nt('menuOrder') }}</h3>
                   <span>{{ currentItems.length }} / {{ maxItems }}</span>
                 </div>
                 <div class="navigation-home">
-                  <v-icon icon="mdi-home-outline" size="18" /><span>{{ $t('admin:navigation.navType.home') }}</span
-                  ><small>{{ $t('admin:navigation.built') }}</small>
+                  <v-icon icon="mdi-home-outline" size="18" /><span>{{ nt('navType.home') }}</span
+                  ><small>{{ nt('built') }}</small>
                 </div>
                 <navigation-outline
                   :items="currentItems"
@@ -139,59 +133,64 @@
                 />
                 <div v-if="!currentItems.length" class="navigation-empty">
                   <v-icon icon="mdi-sign-direction" size="28" />
-                  <h3>{{ $t('admin:navigation.startingPoint') }}</h3>
+                  <h3>{{ nt('startingPoint') }}</h3>
                   <p>
-                    {{ $t('admin:navigation.addPageLinkThen') }}
+                    {{ nt('addPageLinkThen') }}
                   </p>
                 </div>
+                <p v-if="currentItems.length && !selected" class="navigation-note">
+                  {{ nt('selectLinkHeadingDivider') }}
+                </p>
                 <div class="navigation-add">
                   <v-btn
+                    class="navigation-add-link"
                     variant="tonal"
                     prepend-icon="mdi-plus"
                     :disabled="locked || currentItems.length >= maxItems"
                     @click="addItem('link')"
-                    >{{ $t('admin:navigation.addLink') }}</v-btn
+                    >{{ nt('addLink') }}</v-btn
                   ><v-menu
                     ><template #activator="{ props }"
                       ><v-btn
                         v-bind="props"
                         variant="text"
                         icon="mdi-dots-horizontal"
-                        :aria-label="$t('admin:navigation.addHeadingDivider')"
+                        :aria-label="nt('addHeadingDivider')"
                         :disabled="
                           locked || currentItems.length >= maxItems
                         " /></template
                     ><v-list
                       ><v-list-item
-                        :title="$t('admin:navigation.addHeading')"
+                        :title="nt('addHeading')"
                         prepend-icon="mdi-format-title"
                         @click="addItem('header')" /><v-list-item
-                        :title="$t('admin:navigation.addDivider')"
+                        :title="nt('addDivider')"
                         prepend-icon="mdi-minus"
                         @click="addItem('divider')" /></v-list
                   ></v-menu>
                 </div>
                 <p class="navigation-note">
-                  {{ $t('admin:navigation.dragHandleFocusPress') }}
+                  {{ nt('dragHandleFocusPress') }}
                 </p>
               </section>
               <section
+                v-if="selected"
                 class="navigation-item-editor"
-                :aria-label="$t('admin:navigation.selectedMenuItem')"
+                :aria-label="nt('selectedMenuItem')"
               >
                 <template v-if="selected"
                   ><div class="navigation-section-title">
                     <h3>
                       {{
                         selected.kind === "link"
-                          ? $t('admin:navigation.linkDetails')
+                          ? nt('linkDetails')
                           : selected.kind === "header"
-                            ? $t('admin:navigation.sectionHeading')
-                            : $t('admin:navigation.divider')
+                            ? nt('sectionHeading')
+                            : nt('divider')
                       }}
                     </h3>
                     <span
-                      >{{ $t('admin:navigation.of', { value: selectedIndex + 1, currentItemsCount: currentItems.length, interpolation: { escapeValue: false } }) }}</span
+                      >{{ nt('of', { value: selectedIndex + 1, currentItemsCount: currentItems.length, interpolation: { escapeValue: false } }) }}</span
                     >
                   </div>
                   <div class="navigation-item-position">
@@ -201,7 +200,7 @@
                       prepend-icon="mdi-arrow-up"
                       :disabled="locked || selectedIndex === 0"
                       @click="moveItem(-1)"
-                      >{{ $t('admin:navigation.moveUp') }}</v-btn
+                      >{{ nt('moveUp') }}</v-btn
                     ><v-btn
                       size="small"
                       variant="text"
@@ -210,13 +209,13 @@
                         locked || selectedIndex === currentItems.length - 1
                       "
                       @click="moveItem(1)"
-                      >{{ $t('admin:navigation.moveDown') }}</v-btn
+                      >{{ nt('moveDown') }}</v-btn
                     >
                   </div>
                   <v-text-field
                     v-if="selected.kind !== 'divider'"
                     v-model="selected.label"
-                    :label="$t('admin:navigation.menuLabel')"
+                    :label="nt('menuLabel')"
                     maxlength="255"
                     counter="255"
                     variant="outlined"
@@ -225,10 +224,10 @@
                   <template v-if="selected.kind === 'link'"
                     ><v-text-field
                       v-model="selected.icon"
-                      :label="$t('admin:navigation.icon')"
+                      :label="nt('icon')"
                       variant="outlined"
                       :disabled="locked"
-                      :hint="$t('admin:navigation.mdiIconNameFont')"
+                      :hint="nt('mdiIconNameFont')"
                       persistent-hint
                       ><template #append-inner
                         ><v-icon
@@ -237,7 +236,7 @@
                     ><v-select
                       v-model="selected.targetType"
                       :items="targetOptions"
-                      :label="$t('admin:navigation.destinationType')"
+                      :label="nt('destinationType')"
                       variant="outlined"
                       :disabled="locked"
                       class="mt-5"
@@ -245,20 +244,20 @@
                       v-model="selected.target"
                       :label="
                         selected.targetType === 'page'
-                          ? $t('admin:navigation.pagePath')
-                          : $t('admin:navigation.externalAddress')
+                          ? nt('pagePath')
+                          : nt('externalAddress')
                       "
                       variant="outlined"
                       :disabled="locked"
                       :error-messages="
                         selected.target && !destination
-                          ? [$t('admin:navigation.enterValidDestinationLink')]
+                          ? [nt('enterValidDestinationLink')]
                           : []
                       "
                       :hint="
                         selected.targetType === 'page'
-                          ? $t('admin:navigation.workspacePathSuchEn')
-                          : $t('admin:navigation.httpSMailtoTel')
+                          ? nt('workspacePathSuchEn')
+                          : nt('httpSMailtoTel')
                       "
                       persistent-hint
                     /><v-btn
@@ -268,30 +267,30 @@
                       prepend-icon="mdi-file-search-outline"
                       :disabled="locked"
                       @click="selectPageOpen = true"
-                      >{{ $t('admin:navigation.choosePage') }}</v-btn
+                      >{{ nt('choosePage') }}</v-btn
                     >
                     <p v-if="destination" class="navigation-destination">
-                      <span>{{ $t('admin:navigation.destination') }}</span><code>{{ destination }}</code>
+                      <span>{{ nt('destination') }}</span><code>{{ destination }}</code>
                     </p></template
                   >
                   <p
                     v-else-if="selected.kind === 'divider'"
                     class="navigation-note"
                   >
-                    {{ $t('admin:navigation.separateRelatedGroupsLinks') }}
+                    {{ nt('separateRelatedGroupsLinks') }}
                   </p>
                   <div class="navigation-setting-group">
-                    <h3>{{ $t('admin:navigation.audience') }}</h3>
+                    <h3>{{ nt('audience') }}</h3>
                     <v-radio-group
                       :model-value="selected.visibilityMode"
                       @update:model-value="$event !== null && (selected.visibilityMode = $event)"
                       :disabled="locked"
                       hide-details
-                      :label="$t('admin:navigation.whoSeesItem')"
+                      :label="nt('whoSeesItem')"
                       ><v-radio
-                        :label="$t('admin:navigation.everyoneWhoCanOpen')"
+                        :label="nt('everyoneWhoCanOpen')"
                         value="all" /><v-radio
-                        :label="$t('admin:navigation.membersSelectedGroups')"
+                        :label="nt('membersSelectedGroups')"
                         value="restricted" /></v-radio-group
                     ><v-select
                       v-if="selected.visibilityMode === 'restricted'"
@@ -299,7 +298,7 @@
                       :items="saved.groups"
                       item-title="name"
                       item-value="id"
-                      :label="$t('admin:navigation.audienceGroups')"
+                      :label="nt('audienceGroups')"
                       variant="outlined"
                       multiple
                       chips
@@ -314,10 +313,10 @@
                       "
                       class="navigation-note mt-3"
                     >
-                      {{ $t('admin:navigation.noGroupSelectedItem') }}
+                      {{ nt('noGroupSelectedItem') }}
                     </p>
                     <p class="navigation-note mt-4">
-                      {{ $t('admin:navigation.menuVisibilityDoesNot') }}
+                      {{ nt('menuVisibilityDoesNot') }}
                     </p>
                   </div>
                   <div class="navigation-item-actions">
@@ -326,38 +325,26 @@
                       prepend-icon="mdi-content-copy"
                       :disabled="locked || currentItems.length >= maxItems"
                       @click="duplicateItem"
-                      >{{ $t('admin:navigation.duplicateItem') }}</v-btn
+                      >{{ nt('duplicateItem') }}</v-btn
                     ><v-btn
                       variant="text"
                       prepend-icon="mdi-delete-outline"
                       :disabled="locked"
                       @click="removeItem"
-                      >{{ $t('admin:navigation.removeItem') }}</v-btn
+                      >{{ nt('removeItem') }}</v-btn
                     >
                   </div>
                 </template>
-                <div v-else class="navigation-empty">
-                  <v-icon icon="mdi-cursor-default-click-outline" size="28" />
-                  <h3>{{ $t('admin:navigation.chooseItem') }}</h3>
-                  <p>
-                    {{ $t('admin:navigation.selectLinkHeadingDivider') }}
-                  </p>
-                </div>
               </section>
             </div>
           </template>
           <template v-else-if="section === 'display'">
             <div class="navigation-heading">
-              <span class="navigation-kicker"
-                >{{ $t('admin:navigation.n02PathsIntoWorkspace') }}</span
-              >
-              <h2>{{ $t('admin:navigation.chooseHowReadersExplore') }}</h2>
-              <p>
-                {{ $t('admin:navigation.balanceCuratedMenuPage') }}
-              </p>
+              <h2>{{ nt('displayLocales') }}</h2>
+              <p>{{ nt('balanceCuratedMenuPage') }}</p>
             </div>
             <fieldset class="navigation-mode-grid" :disabled="locked">
-              <legend class="navigation-sr-only">{{ $t('admin:navigation.sidebarDisplayMode') }}</legend>
+              <legend class="navigation-sr-only">{{ nt('sidebarDisplayMode') }}</legend>
               <label
                 v-for="option in modeOptions"
                 :key="option.value"
@@ -374,27 +361,27 @@
               >
             </fieldset>
             <div class="navigation-setting-group">
-              <h3>{{ $t('admin:navigation.whereBrowseBegins') }}</h3>
+              <h3>{{ nt('whereBrowseBegins') }}</h3>
               <v-switch
                 :model-value="draft.expandParent"
                 @update:model-value="$event !== null && (draft.expandParent = $event)"
                 inset
                 :disabled="locked"
-                :label="$t('admin:navigation.openCurrentPagesParent')"
+                :label="nt('openCurrentPagesParent')"
                 color="primary"
                 hide-details
               />
               <p class="navigation-note mt-3">
-                {{ $t('admin:navigation.whenOffBrowseStarts') }}
+                {{ nt('whenOffBrowseStarts') }}
               </p>
             </div>
             <div class="navigation-setting-group">
               <div class="navigation-section-title">
-                <h3>{{ $t('admin:navigation.localeCoverage') }}</h3>
-                <router-link to="/locale">{{ $t('admin:navigation.manageLanguages') }}</router-link>
+                <h3>{{ nt('localeCoverage') }}</h3>
+                <router-link to="/locale">{{ nt('manageLanguages') }}</router-link>
               </div>
               <p class="navigation-note mb-5">
-                {{ $t('admin:navigation.eachLanguageHasOwn') }}
+                {{ nt('eachLanguageHasOwn') }}
               </p>
               <div
                 v-for="locale in localeOptions"
@@ -407,26 +394,26 @@
                     >{{ locale.code }} ·
                     {{
                       locale.enabled
-                        ? $t('admin:navigation.enabledReaders')
-                        : $t('admin:navigation.notEnabledReaders')
+                        ? nt('enabledReaders')
+                        : nt('notEnabledReaders')
                     }}</small
                   >
                 </div>
                 <span
-                  >{{ $t('admin:navigation.items', { tree: draft.tree.find((tree) => tree.locale === locale.code)
+                  >{{ nt('items', { tree: draft.tree.find((tree) => tree.locale === locale.code)
                       ?.items.length || 0, interpolation: { escapeValue: false } }) }}</span
                 ><v-btn
                   size="small"
                   variant="text"
                   :disabled="locked"
                   @click="editLocale(locale.code)"
-                  >{{ $t('admin:navigation.editMenu') }}</v-btn
+                  >{{ nt('editMenu') }}</v-btn
                 ><v-btn
                   v-if="draft.tree.some((tree) => tree.locale === locale.code)"
                   icon="mdi-delete-outline"
                   size="small"
                   variant="text"
-                  :aria-label="$t('admin:navigation.removeMenu2', { name: locale.name, interpolation: { escapeValue: false } })"
+                  :aria-label="nt('removeMenu2', { name: locale.name, interpolation: { escapeValue: false } })"
                   :disabled="locked"
                   @click="removeLocale(locale.code)"
                 />
@@ -435,14 +422,11 @@
           </template>
           <template v-else
             ><div class="navigation-heading">
-              <span class="navigation-kicker">{{ $t('admin:navigation.n03PublicationRecord') }}</span>
-              <h2>{{ $t('admin:navigation.consideredPathForward') }}</h2>
-              <p>
-                {{ $t('admin:navigation.latest50NavigationPublications') }}
-              </p>
+              <h2>{{ nt('activity') }}</h2>
+              <p>{{ nt('latest50NavigationPublications') }}</p>
             </div>
             <p v-if="!saved.history.length" class="navigation-empty">
-              {{ $t('admin:navigation.noNavigationChangesHave') }}
+              {{ nt('noNavigationChangesHave') }}
             </p>
             <article
               v-for="event in saved.history"
@@ -454,21 +438,21 @@
               <p>{{ event.fields.map(fieldLabel).join(" · ") }}</p>
               <small>{{
                 event.actorId === null
-                  ? $t('admin:navigation.apiAdministrator')
-                  : $t('admin:navigation.administrator', { actorId: event.actorId, interpolation: { escapeValue: false } })
+                  ? nt('apiAdministrator')
+                  : nt('administrator', { actorId: event.actorId, interpolation: { escapeValue: false } })
               }}</small>
             </article></template
           >
         </section>
         <aside ref="previewPanel" class="navigation-preview-panel">
           <div class="navigation-preview-heading">
-            <span class="navigation-kicker">{{ $t('admin:navigation.audiencePreview') }}</span
+            <span class="navigation-kicker">{{ nt('audiencePreview') }}</span
             ><strong>{{ currentLocale }} / {{ modeName(draft.mode) }}</strong>
           </div>
           <v-select
             v-model="previewAudience"
             :items="audienceOptions"
-            :label="$t('admin:navigation.preview')"
+            :label="nt('preview')"
             variant="outlined"
             density="compact"
             hide-details
@@ -478,7 +462,7 @@
             :items="saved.groups"
             item-title="name"
             item-value="id"
-            :label="$t('admin:navigation.previewGroups')"
+            :label="nt('previewGroups')"
             variant="outlined"
             multiple
             chips
@@ -492,18 +476,18 @@
             :locale="currentLocale"
           />
           <p v-if="customMode" class="navigation-note">
-            {{ $t('admin:navigation.customLinksVisibleAudience', { visibleItems: visibleItems.filter((item) => item.kind === "link").length, currentItems: currentItems.filter((item) => item.kind === "link").length, interpolation: { escapeValue: false } }) }}
+            {{ nt('customLinksVisibleAudience', { visibleItems: visibleItems.filter((item) => item.kind === "link").length, currentItems: currentItems.filter((item) => item.kind === "link").length, interpolation: { escapeValue: false } }) }}
           </p>
           <p v-else class="navigation-note">
-            {{ $t('admin:navigation.customLinksRetainedBut') }}
+            {{ nt('customLinksRetainedBut') }}
           </p>
           <p class="navigation-note mt-3">
-            {{ $t('admin:navigation.previewsMenuVisibilityNot') }}
+            {{ nt('previewsMenuVisibilityNot') }}
           </p>
           <div class="navigation-setting-group">
-            <h3>{{ $t('admin:navigation.publication') }}</h3>
+            <h3>{{ nt('publication') }}</h3>
             <p class="navigation-note">
-              {{ $t('admin:navigation.readersReceiveSavedMenu') }}
+              {{ nt('readersReceiveSavedMenu') }}
             </p>
             <v-btn
               v-if="saved.runtime.state !== 'applied'"
@@ -512,21 +496,21 @@
               :loading="initializing"
               :disabled="locked || dirty"
               @click="initialize"
-              >{{ $t('admin:navigation.retryRuntimeActivation') }}</v-btn
+              >{{ nt('retryRuntimeActivation') }}</v-btn
             >
           </div>
         </aside>
       </div>
-      <div v-if="dirty" class="navigation-savebar">
+      <div v-if="dirty" ref="draftBar" class="navigation-savebar">
         <span
-          >{{ $t('admin:navigation.navigationDraftImpact', { count: changedFields.length }) }}</span
-        ><v-btn variant="text" :disabled="locked" @click="reset">{{ $t('admin:navigation.reset') }}</v-btn
+          >{{ nt('navigationDraftImpact', { count: changedFields.length }) }}</span
+        ><v-btn variant="text" :disabled="locked" @click="reset">{{ nt('reset') }}</v-btn
         ><v-btn
-          color="primary"
-          variant="flat"
+          :data-commitment="dirty && !locked ? 'active' : undefined"
+          variant="tonal"
           :disabled="locked"
           @click="review"
-          >{{ $t('admin:navigation.reviewChanges') }}</v-btn
+          >{{ nt('reviewChanges') }}</v-btn
         >
       </div>
     </template>
@@ -593,8 +577,8 @@
           <v-spacer />
           <v-btn v-if="repairStale" :disabled="busy" @click="reloadMoveRepair">Reload and review again</v-btn>
           <v-btn
-            color="primary"
-            variant="flat"
+            :data-commitment="!busy && !repairLoading && !repairStale && moveReview && repairSelected.length && repairReason.trim().length >= 3 ? 'active' : undefined"
+            variant="tonal"
             :loading="busy"
             :disabled="busy || repairLoading || repairStale || !moveReview || !repairSelected.length || repairReason.trim().length < 3"
             data-testid="navigation-move-repair-save"
@@ -604,32 +588,32 @@
       </v-card>
     </v-dialog>
     <v-dialog v-model="copyOpen" max-width="580"
-      ><v-card :title="$t('admin:navigation.copyLocaleMenu')"
+      ><v-card :title="nt('copyLocaleMenu')"
         ><v-card-text
           ><p class="mb-5">
-            {{ $t('admin:navigation.copyIntoLabelsDestinations', { currentLocale, interpolation: { escapeValue: false } }) }}
+            {{ nt('copyIntoLabelsDestinations', { currentLocale, interpolation: { escapeValue: false } }) }}
           </p>
           <v-select
             v-model="copySource"
             :items="copyOptions"
             item-title="title"
             item-value="code"
-            :label="$t('admin:navigation.sourceLocale2')"
+            :label="nt('sourceLocale2')"
             variant="outlined"
-          /><v-radio-group :model-value="copyMode" @update:model-value="$event !== null && (copyMode = $event)" :label="$t('admin:navigation.howCopy')"
-            ><v-radio :label="$t('admin:navigation.appendMenu')" value="append" /><v-radio
-              :label="$t('admin:navigation.replaceMenu')"
+          /><v-radio-group :model-value="copyMode" @update:model-value="$event !== null && (copyMode = $event)" :label="nt('howCopy')"
+            ><v-radio :label="nt('appendMenu')" value="append" /><v-radio
+              :label="nt('replaceMenu')"
               value="replace"
           /></v-radio-group>
           <p>
-            {{ $t('admin:navigation.sourceItemsCurrentItems', { copyCount, currentItemsCount: currentItems.length, interpolation: { escapeValue: false } }) }}
+            {{ nt('sourceItemsCurrentItems', { copyCount, currentItemsCount: currentItems.length, interpolation: { escapeValue: false } }) }}
           </p>
           <v-alert
             v-if="copyMode === 'replace'"
             type="info"
             variant="tonal"
             class="mt-4"
-            >{{ $t('admin:navigation.currentDraftMenuWill', { currentLocale, interpolation: { escapeValue: false } }) }}</v-alert
+            >{{ nt('currentDraftMenuWill', { currentLocale, interpolation: { escapeValue: false } }) }}</v-alert
           ></v-card-text
         ><v-card-actions
           ><v-btn @click="copyOpen = false">{{ $t('common:actions.cancel') }}</v-btn><v-spacer /><v-btn
@@ -637,16 +621,16 @@
             color="primary"
             :disabled="locked || !copyCount || copyTotal > maxItems"
             @click="copyLocale"
-            >{{ $t('admin:navigation.copyItems', { copyCount, interpolation: { escapeValue: false } }) }}</v-btn
+            >{{ nt('copyItems', { copyCount, interpolation: { escapeValue: false } }) }}</v-btn
           ></v-card-actions
         ></v-card
       ></v-dialog
     >
     <v-dialog v-model="reviewing" :persistent="busy" max-width="950"
-      ><v-card v-if="saved && reviewed" :title="$t('admin:navigation.publishNavigationChanges')"
+      ><v-card v-if="saved && reviewed" :title="nt('publishNavigationChanges')"
         ><v-card-text
           ><p class="mb-5">
-            {{ $t('admin:navigation.reviewCompleteAffectedStructures') }}
+            {{ nt('reviewCompleteAffectedStructures') }}
           </p>
           <details
             v-for="field in reviewFields"
@@ -657,12 +641,12 @@
             <summary>{{ fieldLabel(field) }}</summary>
             <div>
               <section>
-                <strong>{{ $t('admin:navigation.saved') }}</strong>
+                <strong>{{ nt('saved') }}</strong>
                 <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded source/report viewport needs a tab stop for keyboard scrolling. -->
                 <pre  tabindex="0" >{{ reviewValue(saved.policy, field) }}</pre>
               </section>
               <section>
-                <strong>{{ $t('admin:navigation.publishing') }}</strong>
+                <strong>{{ nt('publishing') }}</strong>
                 <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded source/report viewport needs a tab stop for keyboard scrolling. -->
                 <pre  tabindex="0" >{{ reviewValue(reviewed, field) }}</pre>
               </section>
@@ -670,13 +654,13 @@
           </details>
           <v-textarea
             v-model="reason"
-            :label="$t('admin:navigation.reasonChange')"
+            :label="nt('reasonChange')"
             variant="outlined"
             rows="2"
             maxlength="1000"
             :disabled="busy || stale"
             class="mt-5"
-            :hint="$t('admin:navigation.n31000Characters')"
+            :hint="nt('n31000Characters')"
             persistent-hint
           /><v-alert
             v-if="saveError"
@@ -687,19 +671,19 @@
           ></v-card-text
         ><v-card-actions
           ><v-btn :disabled="busy" @click="reviewing = false"
-            >{{ $t('admin:navigation.backDraft') }}</v-btn
+            >{{ nt('backDraft') }}</v-btn
           ><v-spacer /><v-btn
             v-if="stale"
             :disabled="busy"
             @click="reloadReview"
-            >{{ $t('admin:navigation.reloadSavedSettings') }}</v-btn
+            >{{ nt('reloadSavedSettings') }}</v-btn
           ><v-btn
-            color="primary"
-            variant="flat"
+            :data-commitment="dirty && !locked && reason.trim().length >= 3 ? 'active' : undefined"
+            variant="tonal"
             :loading="busy"
             :disabled="locked || reason.trim().length < 3"
             @click="confirm"
-            >{{ $t('admin:navigation.publishNavigation') }}</v-btn
+            >{{ nt('publishNavigation') }}</v-btn
           ></v-card-actions
         ></v-card
       ></v-dialog
@@ -710,6 +694,7 @@
 import { confirmDiscard, requestConfirmation } from "../common/confirm-dialog.ts";
 import {
   computed,
+  nextTick,
   ref,
   watch,
   onMounted,
@@ -745,14 +730,28 @@ import { navigationRepairItemKey, type NavigationMoveReview } from "../../../sha
 import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
+const nt = useTranslate('admin:navigation')
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const errorMessage = (error: unknown) =>
   error instanceof Error
     ? error.message
-    : t('admin:navigation.navigationAdministrationUnavailable');
+    : nt('navigationAdministrationUnavailable');
 const route = useRoute(),
   router = useRouter(),
-  previewPanel = useTemplateRef<HTMLElement>("previewPanel");
+  previewPanel = useTemplateRef<HTMLElement>("previewPanel"),
+  builder = useTemplateRef<HTMLElement>("builder"),
+  draftBar = useTemplateRef<HTMLElement>("draftBar"),
+  sectionNav = useTemplateRef<HTMLElement>("sectionNav");
+const draftBarHeight = ref(80);
+let draftBarObserver: ResizeObserver | undefined;
+watch(draftBar, (element) => {
+  draftBarObserver?.disconnect();
+  if (!element) return;
+  const measure = () => { draftBarHeight.value = element.getBoundingClientRect().height; };
+  measure();
+  draftBarObserver = new ResizeObserver(measure);
+  draftBarObserver.observe(element);
+}, { flush: "post" });
 const saved = ref<NavigationWorkspace | null>(null),
   draft = ref<NavigationPolicy | null>(null),
   reviewed = ref<NavigationPolicy | null>(null);
@@ -781,44 +780,44 @@ const repairOpen = ref(false), repairPickerOpen = ref(false), repairLoading = re
   repairMenuLocale = ref(""), repairPageId = ref(0);
 let repairOwner = 0, repairController: AbortController | undefined;
 const sections = [
-  { key: "structure", title: t('admin:navigation.menuStructure') },
-  { key: "display", title: t('admin:navigation.displayLocales') },
-  { key: "activity", title: t('admin:navigation.activity') },
+  { key: "structure", title: nt('menuStructure') },
+  { key: "display", title: nt('displayLocales') },
+  { key: "activity", title: nt('activity') },
 ];
 const modeOptions = [
   {
     value: "MIXED",
-    title: t('admin:navigation.menuDirectory'),
+    title: nt('menuDirectory'),
     icon: "mdi-view-split-vertical",
-    description: t('admin:navigation.curatedLinksBrowseAlongside'),
+    description: nt('curatedLinksBrowseAlongside'),
   },
   {
     value: "STATIC",
-    title: t('admin:navigation.customMenu'),
+    title: nt('customMenu'),
     icon: "mdi-format-list-bulleted",
-    description: t('admin:navigation.focusedSetHandPicked'),
+    description: nt('focusedSetHandPicked'),
   },
   {
     value: "TREE",
-    title: t('admin:navigation.pageDirectory'),
+    title: nt('pageDirectory'),
     icon: "mdi-file-tree-outline",
-    description: t('admin:navigation.exploreHierarchyAccessiblePages'),
+    description: nt('exploreHierarchyAccessiblePages'),
   },
   {
     value: "NONE",
-    title: t('admin:navigation.hiddenSidebar'),
+    title: nt('hiddenSidebar'),
     icon: "mdi-dock-left",
-    description: t('admin:navigation.leaveMoreRoomPage'),
+    description: nt('leaveMoreRoomPage'),
   },
 ];
 const targetOptions = [
-  { title: t('admin:navigation.wikiPage'), value: "page" },
-  { title: t('admin:navigation.externalLink'), value: "external" },
-  { title: t('admin:navigation.externalLinkNewTab'), value: "externalblank" },
+  { title: nt('wikiPage'), value: "page" },
+  { title: nt('externalLink'), value: "external" },
+  { title: nt('externalLinkNewTab'), value: "externalblank" },
 ];
 const audienceOptions = [
-  { title: t('admin:navigation.visitorGuestAccount'), value: "visitor" },
-  { title: t('admin:navigation.selectedGroups'), value: "groups" },
+  { title: nt('visitorGuestAccount'), value: "visitor" },
+  { title: nt('selectedGroups'), value: "groups" },
 ];
 const section = computed(
   () =>
@@ -923,8 +922,25 @@ const visibleItems = computed(() =>
 );
 let sequence = 0,
   disposed = false;
-watch(currentLocale, () => {
-  selectedId.value = currentItems.value[0]?.id || "";
+const localeSelections = new Map<string, string>();
+async function focusOutline() {
+  await nextTick();
+  if (disposed) return;
+  const target = builder.value?.querySelector<HTMLElement>(
+    '.navigation-outline-select[aria-pressed="true"]:not(:disabled), .navigation-add-link:not(:disabled)',
+  ) || sectionNav.value?.querySelector<HTMLElement>('button[aria-current]:not(:disabled)');
+  target?.focus();
+}
+watch(currentLocale, (locale, previousLocale) => {
+  localeSelections.set(previousLocale, selectedId.value);
+  const previousSelection = localeSelections.get(locale);
+  selectedId.value = currentItems.value.find(item => item.id === previousSelection)?.id || "";
+});
+watch([currentLocale, selected], async () => {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement) || !builder.value?.contains(active)) return;
+  await nextTick();
+  if (!active.isConnected) void focusOutline();
 });
 async function load() {
   closeMoveRepair();
@@ -943,9 +959,7 @@ async function load() {
     )
       currentLocale.value = result.defaultLocale;
     selectedId.value =
-      currentItems.value.find((item) => item.id === selectedId.value)?.id ||
-      currentItems.value[0]?.id ||
-      "";
+      currentItems.value.find((item) => item.id === selectedId.value)?.id || "";
   } catch (error) {
     if (!disposed && seq === sequence) {
       loadError.value = errorMessage(error);
@@ -959,7 +973,7 @@ async function reload() {
   if (busy.value || initializing.value) return;
   if (
     dirty.value &&
-    !(await confirmDiscard(t('admin:navigation.discardUnsavedNavigationChanges')))
+    !(await confirmDiscard(nt('discardUnsavedNavigationChanges')))
   )
     return;
   if (busy.value || initializing.value) return;
@@ -968,7 +982,8 @@ async function reload() {
 function reset() {
   if (!locked.value && saved.value) {
     draft.value = copy(saved.value.policy);
-    selectedId.value = currentItems.value[0]?.id || "";
+    selectedId.value = currentItems.value.find(item => item.id === selectedId.value)?.id || "";
+    void focusOutline();
     notice.value = "";
   }
 }
@@ -992,7 +1007,7 @@ function addItem(kind: NavigationItem["kind"]) {
     id: crypto.randomUUID(),
     kind,
     label:
-      kind === "link" ? t('admin:navigation.newLink') : kind === "header" ? t('admin:navigation.newSection') : "",
+      kind === "link" ? nt('newLink') : kind === "header" ? nt('newSection') : "",
     icon: kind === "link" ? "mdi-link-variant" : "",
     targetType: "page",
     target: "",
@@ -1015,8 +1030,8 @@ async function removeItem() {
   if (locked.value || !selected.value) return;
   const targetId = selectedId.value;
   const confirmed = await requestConfirmation({
-    title: t('admin:navigation.removeDraft', { label: selected.value.label || t('admin:navigation.divider2'), interpolation: { escapeValue: false } }),
-    confirmLabel: t('admin:navigation.remove'),
+    title: nt('removeDraft', { label: selected.value.label || nt('divider2'), interpolation: { escapeValue: false } }),
+    confirmLabel: nt('remove'),
     tone: "destructive",
   });
   if (!confirmed || locked.value || selectedId.value !== targetId) return;
@@ -1025,6 +1040,7 @@ async function removeItem() {
   selectedId.value =
     currentItems.value[Math.min(index, currentItems.value.length - 1)]?.id ||
     "";
+  void focusOutline();
 }
 function moveItem(direction: number) {
   if (locked.value || !selected.value) return;
@@ -1141,9 +1157,9 @@ function editLocale(code: string) {
 async function removeLocale(code: string) {
   if (locked.value || !draft.value) return;
   const confirmed = await requestConfirmation({
-    title: t('admin:navigation.removeCustomMenuDraft', { code, interpolation: { escapeValue: false } }),
-    message: t('admin:navigation.languageItselfRemainsInstalled'),
-    confirmLabel: t('admin:navigation.removeMenu'),
+    title: nt('removeCustomMenuDraft', { code, interpolation: { escapeValue: false } }),
+    message: nt('languageItselfRemainsInstalled'),
+    confirmLabel: nt('removeMenu'),
     tone: "destructive",
   });
   if (!confirmed || locked.value || !draft.value) return;
@@ -1227,8 +1243,8 @@ async function confirm() {
     reason.value = "";
     attention.value = result.activation !== "applied";
     notice.value = attention.value
-      ? t('admin:navigation.navigationSavedRuntimeActivation')
-      : t('admin:navigation.navigationPublishedReadersSee');
+      ? nt('navigationSavedRuntimeActivation')
+      : nt('navigationPublishedReadersSee');
     busy.value = false;
     stale.value = true;
     await load();
@@ -1241,11 +1257,11 @@ async function confirm() {
       saveError.value =
         errorMessage(error) +
         (!status
-          ? ` ${t('admin:navigation.outcomeUnconfirmedReloadBefore')}`
+          ? ` ${nt('outcomeUnconfirmedReloadBefore')}`
           : "");
       if (stale.value) {
         notice.value =
-          t('admin:navigation.reloadSavedSettingsBefore');
+          nt('reloadSavedSettingsBefore');
         attention.value = true;
       }
     }
@@ -1256,7 +1272,7 @@ async function confirm() {
 async function reloadReview() {
   if (
     busy.value ||
-    !(await confirmDiscard(t('admin:navigation.discardReviewLoadSaved'))) ||
+    !(await confirmDiscard(nt('discardReviewLoadSaved'))) ||
     busy.value
   )
     return;
@@ -1270,8 +1286,8 @@ async function initialize() {
     const result = await retryNavigationRuntime(saved.value.fingerprint);
     notice.value =
       result.activation === "applied"
-        ? t('admin:navigation.runtimeNavigationConfigurationApplied')
-        : t('admin:navigation.runtimeActivationNeedsAttention');
+        ? nt('runtimeNavigationConfigurationApplied')
+        : nt('runtimeActivationNeedsAttention');
     attention.value = result.activation !== "applied";
     await load();
   } catch (error) {
@@ -1285,21 +1301,21 @@ const modeName = (value: string) =>
   modeOptions.find((mode) => mode.value === value)?.title || value;
 const fieldLabel = (field: string) =>
   field === "mode"
-    ? t('admin:navigation.sidebarDisplay')
+    ? nt('sidebarDisplay')
     : field === "expandParent"
-      ? t('admin:navigation.browseStartingPoint')
-      : t('admin:navigation.menu', { field: field.replace("locale:", ""), interpolation: { escapeValue: false } });
+      ? nt('browseStartingPoint')
+      : nt('menu', { field: field.replace("locale:", ""), interpolation: { escapeValue: false } });
 const reviewValue = (policy: NavigationPolicy, field: string) =>
   field === "mode"
     ? modeName(policy.mode)
     : field === "expandParent"
       ? policy.expandParent
-        ? t('admin:navigation.currentPagesParent')
-        : t('admin:navigation.siteRoot')
+        ? nt('currentPagesParent')
+        : nt('siteRoot')
       : JSON.stringify(
           policy.tree.find(
             (tree) => tree.locale === field.replace("locale:", ""),
-          )?.items ?? t('admin:navigation.noCustomMenu'),
+          )?.items ?? nt('noCustomMenu'),
           null,
           2,
         );
@@ -1316,7 +1332,7 @@ const canLeave = async () =>
   !busy.value &&
   !initializing.value &&
   ((!dirty.value && !(reviewing.value && reason.value) && !(repairOpen.value && (repairReason.value || repairSelected.value.length))) ||
-    (await confirmDiscard(t('admin:navigation.discardUnsavedNavigationChanges'))));
+    (await confirmDiscard(nt('discardUnsavedNavigationChanges'))));
 function beforeUnload(event: BeforeUnloadEvent) {
   if (
     busy.value ||
@@ -1340,6 +1356,7 @@ onBeforeUnmount(() => {
   sequence++;
   repairOwner++;
   repairController?.abort();
+  draftBarObserver?.disconnect();
   window.removeEventListener("beforeunload", beforeUnload);
 });
 </script>

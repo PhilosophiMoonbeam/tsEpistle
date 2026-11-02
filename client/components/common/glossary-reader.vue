@@ -17,7 +17,7 @@
     @leave-pointer="leavePointer"
     @dismiss="closeHover"
     @leave-focus="leaveCardFocus"
-    @pin-request="requestPin"
+    @pin-request="handlePinRequest"
   />
 </template>
 
@@ -67,7 +67,7 @@ const currentPinState = computed<GlossaryMemoryPinState>(() => ({
   unavailableReason: props.pinState?.key === hoverKey.value ? props.pinState.unavailableReason : undefined,
   message: props.pinState?.key === hoverKey.value ? props.pinState.message : undefined
 }))
-const hoverContext = computed(() => ({ key: hoverKey.value, definition: definition.value, pinState: currentPinState.value, requestPin, close: closeHover }))
+const hoverContext = computed(() => ({ key: hoverKey.value, definition: definition.value, pinState: currentPinState.value, requestPin: handlePinRequest, close: closeHover }))
 const context = computed<GlossarySearchContext>(() => ({
   key: `${identity.value}:${props.pageKey}:${selectedLocale.value}`,
   opened: opened.value,
@@ -301,7 +301,7 @@ const pinSelection = computed<GlossaryPinRequest | null>(() => {
   })
 })
 watch(pinSelection, selection => emit('pin-selection', selection, hoverController?.signal), { flush: 'sync' })
-function requestPin (): void {
+function handlePinRequest (): void {
   const payload = pinSelection.value, anchor = hoverAnchor.value, signal = hoverController?.signal, state = currentPinState.value, scope = hoverScope
   if (!payload || !anchor || !signal || signal.aborted || !scope || !props.requestPin || !state.available || state.pending || unavailable() || hoverLoading.value || hoverError.value) return
   if (scope.owner !== identity.value || scope.page !== props.pageKey || scope.locale !== props.locale || scope.href !== window.location.href || !anchor.isConnected) { closeHover(); return }

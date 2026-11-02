@@ -31,17 +31,22 @@ const bundledActions = await Bun.build({
   external: ['vue'],
   format: 'cjs',
   target: 'bun',
-  plugins: [{
-    name: 'agent-history-session-actions-test-sfc',
-    setup(build) {
-      build.onResolve({ filter: /^virtual:agent-history-session-actions\.vue$/ }, args => ({
-        namespace: 'agent-history-session-actions-sfc', path: args.path
-      }))
-      build.onLoad({ filter: /.*/, namespace: 'agent-history-session-actions-sfc' }, () => ({
-        contents: compiledActions.content, loader: 'ts', resolveDir: join(process.cwd(), 'client/components/agents')
-      }))
+  plugins: [
+    {
+      name: 'agent-history-session-actions-test-sfc',
+      setup(build) {
+        build.onResolve({ filter: /^virtual:agent-history-session-actions\.vue$/ }, args => ({
+          namespace: 'agent-history-session-actions-sfc',
+          path: args.path
+        }))
+        build.onLoad({ filter: /.*/, namespace: 'agent-history-session-actions-sfc' }, () => ({
+          contents: compiledActions.content,
+          loader: 'ts',
+          resolveDir: join(process.cwd(), 'client/components/agents')
+        }))
+      }
     }
-  }]
+  ]
 })
 if (!bundledActions.success || bundledActions.outputs.length !== 1) {
   throw new Error(`Could not bundle ${actionsPath}: ${bundledActions.logs.map(log => log.message).join(', ')}`)
@@ -57,10 +62,16 @@ const createCompiledModule = new Function(`return ${bundledCode.slice(wrapperSta
   dirname: string
 ) => void
 const compiledModule: { exports: { default?: Component } } = { exports: {} }
-createCompiledModule(compiledModule.exports, specifier => {
-  if (specifier === 'vue') return VueRuntime
-  throw new Error(`Unexpected session-actions import: ${specifier}`)
-}, compiledModule, actionsPath, join(process.cwd(), 'client/components/agents'))
+createCompiledModule(
+  compiledModule.exports,
+  specifier => {
+    if (specifier === 'vue') return VueRuntime
+    throw new Error(`Unexpected session-actions import: ${specifier}`)
+  },
+  compiledModule,
+  actionsPath,
+  join(process.cwd(), 'client/components/agents')
+)
 const SessionActions = compiledModule.exports.default
 if (!SessionActions) throw new Error('Compiled session actions did not export a component')
 const panelPath = join(process.cwd(), 'client/components/agents/agent-history-panel.vue')
@@ -100,8 +111,9 @@ const settle = async (): Promise<void> => {
   }
 }
 const menuItem = (menu: Element, title: string): HTMLElement => {
-  const item = Array.from(menu.querySelectorAll<HTMLElement>('.v-list-item'))
-    .find(candidate => candidate.querySelector('.v-list-item-title')?.textContent?.trim() === title)
+  const item = Array.from(menu.querySelectorAll<HTMLElement>('.v-list-item')).find(
+    candidate => candidate.querySelector('.v-list-item-title')?.textContent?.trim() === title
+  )
   if (!item) throw new Error(`The mounted actions menu did not expose ${title}`)
   return item
 }
@@ -178,8 +190,7 @@ describe('Agent history folder actions', () => {
     const other = makeFolder('10000000-0000-4000-8000-000000000002', 'Launch notes')
     const session = makeSession({ folderId: current.id, retention: 'saved' })
     const actions = await mountMoveMenu(session, [current, other])
-    expect(Array.from(actions.menu.querySelectorAll('.v-list-item-title')).map(item => item.textContent?.trim()))
-      .not.toContain(current.name)
+    expect(Array.from(actions.menu.querySelectorAll('.v-list-item-title')).map(item => item.textContent?.trim())).not.toContain(current.name)
     menuItem(actions.menu, other.name).click()
     await settle()
     expect(actions.move).toHaveBeenCalledTimes(1)

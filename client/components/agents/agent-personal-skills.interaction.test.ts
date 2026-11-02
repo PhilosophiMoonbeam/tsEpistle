@@ -10,6 +10,7 @@ import { createModalFocusScope } from '../common/modal-focus-scope'
 import { helpers } from '../../helpers/index.ts'
 import { useTranslate } from '../../helpers/use-translate.ts'
 import type { AgentMemoryEntry, AgentMemoryView, PersonalAgentSkill } from '../../helpers/agents-api.ts'
+import { AGENT_MEMORY_CHARACTER_LIMITS } from '../../../shared/agents/contracts.ts'
 import type { App, Ref, RenderFunction } from 'vue'
 
 // Vue/Vuetify capture browser capabilities at module evaluation; the shared test DOM must exist first.
@@ -74,7 +75,7 @@ const compileInventory = (filename: string): InventoryDefinition => {
   const bindings = Object.keys(metadata.bindings).filter(
     name => metadata.bindings?.[name] !== 'props' && metadata.bindings?.[name] !== 'props-aliased' && !metadata.imports?.[name]
   )
-  const dependencies = [...Object.keys(metadata.imports ?? {}), 'defineProps', 'defineModel', 'defineEmits']
+  const dependencies = [...Object.keys(metadata.imports ?? {}), 'defineProps', 'defineModel', 'defineEmits', 'defineExpose']
   const evaluate = new Function(`{ ${dependencies.join(', ')} }`, `${executable}\nreturn { ${bindings.join(', ')} }`) as (
     dependencies: Record<string, unknown>
   ) => Record<string, unknown>
@@ -91,6 +92,13 @@ const compileInventory = (filename: string): InventoryDefinition => {
 const personalInventory = compileInventory('agent-personal-skills.vue')
 const organizationInventory = compileInventory('skill-admin.vue')
 const memoryInventory = compileInventory('agent-memory-manager.vue')
+// Panel-header controls are outside the draft/conflict and destructive-review contracts.
+const AgentPanelHeader = Vue.defineComponent({
+  setup:
+    (_props, { slots }) =>
+    () =>
+      Vue.h('header', slots.default?.())
+})
 const mountedApps: MountedInventory[] = []
 const settle = async (): Promise<void> => {
   for (let pass = 0; pass < 5; pass += 1) {
@@ -120,6 +128,7 @@ const mountInventory = (
   })
   const component = Vue.defineComponent({
     props: ['csrfToken', 'ownerId', 'embedded', 'networkBlocked', 'connectionRetrying', 'headingId', 'descriptionId'],
+    components: { AgentPanelHeader },
     setup(componentProps) {
       return {
         ...componentProps,
@@ -133,6 +142,9 @@ const mountInventory = (
           defineProps: () => componentProps,
           defineModel: () => model,
           defineEmits: () => () => undefined,
+          defineExpose: () => undefined,
+          AgentPanelHeader,
+          AGENT_MEMORY_CHARACTER_LIMITS,
           ...dependencies
         })
       }
@@ -407,13 +419,24 @@ describe('Rendered memory recovery boundaries', () => {
     user: { entries, characters: entries.reduce((sum, memory) => sum + memory.content.length, 0), limit: 1375 },
     agent: { entries: [], characters: 0, limit: 2200 }
   })
-  const dependencies = (read: () => AgentMemoryView) => ({
-    getAgentMemories: vi.fn(async () => read()),
-    createAgentMemory: vi.fn(),
-    updateAgentMemory: vi.fn(),
-    removeAgentMemory: vi.fn(),
-    clearAgentMemories: vi.fn(async () => undefined)
-  })
+  const dependencies = (read: () => AgentMemoryView) => {
+    const context = { ownerId: 1, sessionId: 'current-session', generation: 1, ownerGeneration: 0, selectionVersion: 1 }
+    const agents = Vue.reactive({
+      memorySavedGeneration: 0,
+      captureMemoryMutationContext: () => context,
+      isMemoryMutationContextCurrent: (captured: unknown) => captured === context,
+      consumeManualMemoryReceipt: vi.fn(),
+      invalidateSavedMemory: vi.fn()
+    })
+    return {
+      useAgentsStore: () => agents,
+      getAgentMemories: vi.fn(async () => read()),
+      createAgentMemory: vi.fn(),
+      updateAgentMemory: vi.fn(),
+      removeAgentMemory: vi.fn(),
+      clearAgentMemories: vi.fn(async () => 2)
+    }
+  }
 
   it.each([false, true])('preserves a conflicting draft and visible resolution choices on keyboard Escape (removed=%s)', async removed => {
     let memories = view()

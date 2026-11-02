@@ -1,13 +1,15 @@
 import fs from 'node:fs'
 import { setImmediate as yieldEventLoop } from 'node:timers/promises'
 import { parse } from '@vue/compiler-sfc'
-import { defineComponent } from 'vue'
+import { createApp, defineComponent } from 'vue'
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import * as recovery from '../../../shared/deleted-page-recovery.ts'
 import { waitForPageRender } from '../../helpers/pages-api.ts'
 import { pageHref } from '../../helpers/admin-pages.ts'
 import { translateEnglish } from '../../test/english-translate.mts'
 import { renderTemplate } from '../../test/render-template.mts'
+import { document } from '../../test/browser-dom.mts'
+import { useTranslate } from '../../helpers/use-translate.ts'
 
 const filename = 'client/components/admin/admin-pages-recycle-bin.vue'
 const { descriptor } = parse(fs.readFileSync(filename, 'utf8'), { filename })
@@ -15,10 +17,27 @@ const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(
   descriptor.script.content.replace(/^import[\s\S]*?from\s+['"][^'"]+['"];?$/gm, '').replace('export default', 'return')
 )
 const options = new Function(
-  'translate', 'defineComponent', 'pageHref', 'waitForPageRender',
-  'DELETED_PAGE_RECOVERY_PAGE_SIZE', 'DeletedPageRecoveryInspectSchema', 'DeletedPageRecoveryListSchema', 'DeletedPageRecoveryResultSchema', executable
-)(translateEnglish, defineComponent, pageHref, waitForPageRender,
-  recovery.DELETED_PAGE_RECOVERY_PAGE_SIZE, recovery.DeletedPageRecoveryInspectSchema, recovery.DeletedPageRecoveryListSchema, recovery.DeletedPageRecoveryResultSchema)
+  'translate',
+  'defineComponent',
+  'pageHref',
+  'waitForPageRender',
+  'useTranslate',
+  'DELETED_PAGE_RECOVERY_PAGE_SIZE',
+  'DeletedPageRecoveryInspectSchema',
+  'DeletedPageRecoveryListSchema',
+  'DeletedPageRecoveryResultSchema',
+  executable
+)(
+  translateEnglish,
+  defineComponent,
+  pageHref,
+  waitForPageRender,
+  useTranslate,
+  recovery.DELETED_PAGE_RECOVERY_PAGE_SIZE,
+  recovery.DeletedPageRecoveryInspectSchema,
+  recovery.DeletedPageRecoveryListSchema,
+  recovery.DeletedPageRecoveryResultSchema
+)
 const target = { id: 153, sourceRevision: '5', locale: 'en', path: 'restored/visual', visibility: 'private' }
 const receipt = { pageId: target.id, sourceRevision: target.sourceRevision, localeCode: target.locale, path: target.path, quarantined: false }
 const deleted = { pageId: 153, deletionVersionId: 700, visibility: 'private', restoreMode: 'preserve', ownerResolutionRequired: false }
@@ -28,7 +47,11 @@ const originalWindow = globalThis.window
 const instances = []
 const harness = fetch => {
   globalThis.window = { fetch }
-  const instance = { ...options.data(), $t: translateEnglish, inspected: deleted, restorePath: target.path, restoreLocale: target.locale }
+  const app = createApp({ setup: options.setup, render: () => null })
+  app.config.globalProperties.$t = translateEnglish
+  const mounted = app.mount(document.createElement('div'))
+  const instance = { ...options.data(), rt: mounted.rt, $t: translateEnglish, inspected: deleted, restorePath: target.path, restoreLocale: target.locale }
+  app.unmount()
   for (const [name, method] of Object.entries(options.methods)) instance[name] = method.bind(instance)
   for (const [name, getter] of Object.entries(options.computed)) Object.defineProperty(instance, name, { get: getter.bind(instance) })
   instances.push(instance)
@@ -41,30 +64,40 @@ afterEach(() => {
 })
 
 describe('deleted page recovery render readiness', () => {
-  it('keeps the committed private draft unavailable to View until its exact restored revision is ready', async () => {
-    let resolvePreview
-    const preview = new Promise(resolve => { resolvePreview = resolve })
-    const fetch = vi.fn(async url => {
-      if (url.endsWith('/restore')) return json(receipt, 201)
-      if (url.includes('/deleted?')) return list()
-      if (url === '/_api/pages/preview?id=153') return preview
-      throw new Error(`Unexpected recovery request: ${url}`)
-    })
-    const instance = harness(fetch)
-    const restoring = instance.restoreSelected()
-    await yieldEventLoop()
-    expect(instance.restoredPage).toEqual(target)
-    expect(instance.renderLoading).toBe(true)
-    expect(instance.renderReady).toBe(false)
-    expect(await viewLinks(instance)).toHaveLength(0)
+  it.each(['preserve', 'quarantine'])(
+    'keeps the committed private draft unavailable to View until its exact restored revision is ready (%s)',
+    async restoreMode => {
+      let resolvePreview
+      const preview = new Promise(resolve => {
+        resolvePreview = resolve
+      })
+      const fetch = vi.fn(async url => {
+        if (url.endsWith('/restore')) return json({ ...receipt, quarantined: restoreMode === 'quarantine' }, 201)
+        if (url.includes('/deleted?')) return list()
+        if (url === '/_api/pages/preview?id=153') return preview
+        throw new Error(`Unexpected recovery request: ${url}`)
+      })
+      const instance = harness(fetch)
+      instance.inspected = { ...deleted, restoreMode, visibility: restoreMode === 'quarantine' ? 'public' : 'private' }
+      const restoring = instance.restoreSelected()
+      await yieldEventLoop()
+      expect(instance.restoredPage).toEqual(target)
+      expect(instance.renderLoading).toBe(true)
+      expect(instance.renderReady).toBe(false)
+      expect(await viewLinks(instance)).toHaveLength(0)
 
-    resolvePreview(json(target))
-    await restoring
-    expect(instance.renderReady).toBe(true)
-    expect(instance.renderLoading).toBe(false)
-    expect(await viewLinks(instance)).toHaveLength(1)
-    expect(fetch.mock.calls.filter(([, init]) => init.method === 'POST')).toHaveLength(1)
-  })
+      resolvePreview(json(target))
+      await restoring
+      expect(instance.renderReady).toBe(true)
+      expect(instance.renderLoading).toBe(false)
+      expect(await viewLinks(instance)).toHaveLength(1)
+      expect(fetch.mock.calls.filter(([, init]) => init.method === 'POST')).toHaveLength(1)
+      const [, request] = fetch.mock.calls.find(([, init]) => init.method === 'POST')
+      expect(JSON.parse(request.body)).toEqual({ destination: { path: target.path, localeCode: target.locale } })
+      const rendered = await renderTemplate(filename, instance)
+      expect(rendered.document.querySelector('a[href="/en/restored/visual"]')).toBeNull()
+    }
+  )
 
   it('retains the committed restore on a mismatched preview and retries only its exact readiness', async () => {
     let previewCount = 0
@@ -94,9 +127,8 @@ describe('deleted page recovery render readiness', () => {
     const fetch = vi.fn(async url => {
       if (url.endsWith('/restore')) return json(receipt, 201)
       if (url.includes('/deleted?')) return list()
-      if (url === '/_api/pages/preview?id=153') return ++previews === 1
-        ? json({ error: 'Current source render pending', code: 'PAGE_RENDER_PENDING' }, 503)
-        : json(target)
+      if (url === '/_api/pages/preview?id=153')
+        return ++previews === 1 ? json({ error: 'Current source render pending', code: 'PAGE_RENDER_PENDING' }, 503) : json(target)
       throw new Error(`Unexpected recovery request: ${url}`)
     })
     const instance = harness(fetch)
@@ -114,7 +146,9 @@ describe('deleted page recovery render readiness', () => {
       if (url.includes('/deleted?')) return list()
       if (url === '/_api/pages/preview?id=153') {
         previewSignal = init.signal
-        return new Promise(resolve => { resolvePreview = resolve })
+        return new Promise(resolve => {
+          resolvePreview = resolve
+        })
       }
       throw new Error(`Unexpected recovery request: ${url}`)
     })

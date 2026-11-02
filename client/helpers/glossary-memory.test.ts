@@ -11,14 +11,23 @@ beforeAll(async () => {
     configurable: true,
     writable: true,
     value: {
-      company: '', contentLicense: '', footerOverride: '', banner: {},
-      darkMode: false, tocPosition: 'auto', title: 'Test', logoUrl: '',
+      company: '',
+      contentLicense: '',
+      footerOverride: '',
+      banner: {},
+      darkMode: false,
+      tocPosition: 'auto',
+      title: 'Test',
+      logoUrl: '',
       product: { name: 'Test', version: '1.0.0' },
-      agentsEnabled: true, agentCsrfToken: 'test-glossary-csrf'
+      agentsEnabled: true,
+      agentCsrfToken: 'test-glossary-csrf'
     }
   })
   Object.defineProperty(globalThis, 'siteConfig', {
-    configurable: true, writable: true, value: Reflect.get(window, 'siteConfig')
+    configurable: true,
+    writable: true,
+    value: Reflect.get(window, 'siteConfig')
   })
   const helpers = await import('./glossary-memory.ts')
   glossaryMemoryContent = helpers.glossaryMemoryContent
@@ -48,7 +57,11 @@ const request = (definitionHtml: string): GlossaryPinRequest => ({
 
 describe('deliberate Glossary memory content', () => {
   it('preserves visible definition text without hidden content, link destinations or unrelated URL state', () => {
-    const result = glossaryMemoryContent(request('<p>Visible <strong>definition</strong> <a href="https://reference.test/private-reference?token=fixture-only">label</a><span hidden>hidden-draft</span><span aria-hidden="true">hidden-a11y</span></p>'))
+    const result = glossaryMemoryContent(
+      request(
+        '<p>Visible <strong>definition</strong> <a href="https://reference.test/private-reference?token=fixture-only">label</a><span hidden>hidden-draft</span><span aria-hidden="true">hidden-a11y</span></p>'
+      )
+    )
     expect(result.error).toBeUndefined()
     const content = result.content!
     expect(content).toContain('Visible definition label')
@@ -56,6 +69,30 @@ describe('deliberate Glossary memory content', () => {
     expect(content).toContain('?glossary=RAG')
     for (const excluded of ['hidden-draft', 'hidden-a11y', 'Untrusted precomputed', 'private-reference', 'fixture-only', '#state', 'glossary=Old']) {
       expect(content).not.toContain(excluded)
+    }
+  })
+
+  it('rejects non-layout C0 and DEL in each visible field without broadening the Unicode policy', () => {
+    const valid = request('<p>Visible definition</p>')
+    for (const [first, last] of [
+      [0x00, 0x08],
+      [0x0b, 0x0c],
+      [0x0e, 0x1f],
+      [0x7f, 0x7f]
+    ] as const) {
+      for (let code = first; code <= last; code++) {
+        for (const field of ['term', 'locale', 'expansion'] as const) {
+          expect(glossaryMemoryContent({ ...valid, [field]: `before${String.fromCharCode(code)}after` })).toEqual({ error: 'unsafe' })
+        }
+      }
+    }
+    const admitted = ['\t', '\n', '\r', '\u200b', '\u202a', '\u202e', '\u2066', '\u2069', '\ufeff', 'العربية🧭']
+    for (let code = 0x80; code <= 0x9f; code++) admitted.push(String.fromCharCode(code))
+    for (const character of admitted) {
+      const expansion = `before${character}after`
+      const result = glossaryMemoryContent({ ...valid, expansion })
+      expect(result.error).toBeUndefined()
+      expect(result.content).toContain(`Expansion: ${expansion}\n`)
     }
   })
 
@@ -84,7 +121,8 @@ describe('Glossary recall connection lifetime', () => {
     Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => online })
     const mode = vi.spyOn(pwa, 'currentPwaMode').mockReturnValue('retirement')
     const fetch = vi.spyOn(window, 'fetch')
-    const pinia = createPinia(), store = useWikiStore(pinia)
+    const pinia = createPinia(),
+      store = useWikiStore(pinia)
     Object.assign(store.user, { id: 7, authenticated: true, authVersion: 1, iat: 1, permissions: ['use:agents'] })
     Object.assign(store, { authRefreshPending: false, authRefreshSettled: true, authRefreshOutcome: 'authenticated', offlineIdentityReady: true })
     const selection = { ...request('<p>Visible definition</p>'), ownerKey: glossaryIdentity(store) }
@@ -94,7 +132,10 @@ describe('Glossary recall connection lifetime', () => {
     document.body.append(host)
     const app = Vue.createApp({
       setup() {
-        memory = useGlossaryMemory(() => selection.pageKey, () => selection.locale)
+        memory = useGlossaryMemory(
+          () => selection.pageKey,
+          () => selection.locale
+        )
         return () => null
       }
     })

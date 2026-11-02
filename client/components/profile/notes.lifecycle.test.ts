@@ -38,10 +38,23 @@ const settle = async () => {
 const empty = { items: [] as LiveNoteSummary[], hasMore: false, nextCursor: null }
 const AdminHero = Vue.defineComponent({
   props: ['title', 'headingId'],
-  setup: (props, { slots }) => () => Vue.h('header', [Vue.h('h1', { id: props.headingId }, props.title), slots.actions?.()])
+  setup:
+    (props, { slots }) =>
+    () =>
+      Vue.h('header', [Vue.h('h1', { id: props.headingId }, props.title), slots.actions?.()])
 })
 const VBtn = Vue.defineComponent({
-  setup: (_props, { attrs, slots }) => () => Vue.h('button', attrs, slots.default?.())
+  setup:
+    (_props, { attrs, slots }) =>
+    () =>
+      Vue.h('button', attrs, slots.default?.())
+})
+// Empty-state presentation is unrelated to creation and owner lifecycle.
+const AsyncState = Vue.defineComponent({
+  setup:
+    (_props, { slots }) =>
+    () =>
+      Vue.h('div', slots.actions?.())
 })
 function mount(api: Partial<LiveNotesApi>) {
   const store = Vue.reactive({
@@ -52,11 +65,12 @@ function mount(api: Partial<LiveNotesApi>) {
   })
   const errors: unknown[] = []
   const component = Vue.defineComponent({
-    components: { AdminHero, VBtn },
+    components: { AdminHero, AsyncState, VBtn },
     setup: () =>
       evaluate({
         ...Vue,
         AdminHero,
+        AsyncState,
         wikiStore: store,
         createLiveNotesApi: () => api,
         LiveNotesApiError,

@@ -1,9 +1,23 @@
 import DOMPurify from 'dompurify'
-import { WikiSourceSchema, WikiSourcePreviewSchema, wikiSourceHref, wikiSourcePreviewLink, wikiSourcePreviewSanitizerPolicy, type WikiSource, type WikiSourcePreview, type WikiSourceSelector } from '../../shared/wiki-source.ts'
+import {
+  WikiSourceSchema,
+  WikiSourcePreviewSchema,
+  wikiSourceHref,
+  wikiSourcePreviewLink,
+  wikiSourcePreviewSanitizerPolicy,
+  type WikiSource,
+  type WikiSourcePreview,
+  type WikiSourceSelector
+} from '../../shared/wiki-source.ts'
 import { createSearchHighlighter } from './search-highlight.ts'
 
 export class WikiSourceLoadError extends Error {
-  constructor(readonly status: number, message: string) { super(message) }
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message)
+  }
 }
 
 export const fetchWikiSourcePreview = async (selector: WikiSourceSelector, query: string, signal?: AbortSignal): Promise<WikiSourcePreview> => {
@@ -11,7 +25,15 @@ export const fetchWikiSourcePreview = async (selector: WikiSourceSelector, query
   for (const [key, value] of Object.entries(selector)) params.set(key, String(value))
   if (query.trim()) params.set('query', query.slice(0, 256))
   const response = await window.fetch(`/_api/pages/preview?${params}`, { credentials: 'same-origin', cache: 'no-store', signal })
-  if (!response.ok) throw new WikiSourceLoadError(response.status, response.status === 403 ? 'Open this page to unlock it before previewing.' : response.status === 404 ? 'This source is no longer available to you.' : 'The source could not be loaded. Try again.')
+  if (!response.ok)
+    throw new WikiSourceLoadError(
+      response.status,
+      response.status === 403
+        ? 'Open this page to unlock it before previewing.'
+        : response.status === 404
+          ? 'This source is no longer available to you.'
+          : 'The source could not be loaded. Try again.'
+    )
   return WikiSourcePreviewSchema.parse(await response.json())
 }
 
@@ -24,7 +46,9 @@ const previewTextBlocks = 'p, li, dt, dd, th, td, caption, pre, h1, h2, h3, h4, 
 export const renderWikiSourcePreview = (source: WikiSourcePreview, query: string, idPrefix: string, tableLabel: string): { html: string; matched: boolean } => {
   // Sanitize before any authored content enters even an inert browser DOM.
   const fragment = DOMPurify.sanitize(source.structuredExcerpt.html, { ...wikiSourcePreviewSanitizerPolicy, RETURN_DOM_FRAGMENT: true })
-  fragment.querySelectorAll('[hidden], [aria-hidden="true"]').forEach(node => node.remove())
+  fragment.querySelectorAll('[hidden], [aria-hidden="true"]').forEach(node => {
+    node.remove()
+  })
   const ids = new Map<string, string>()
   for (const header of fragment.querySelectorAll('th[id]')) {
     const original = header.id
@@ -45,7 +69,11 @@ export const renderWikiSourcePreview = (source: WikiSourcePreview, query: string
         element.setAttribute('rel', 'noopener noreferrer')
       } else element.removeAttribute('href')
     } else element.removeAttribute('href')
-    const headers = (element.getAttribute('headers') ?? '').split(/\s+/u).map(id => ids.get(id)).filter(Boolean).join(' ')
+    const headers = (element.getAttribute('headers') ?? '')
+      .split(/\s+/u)
+      .map(id => ids.get(id))
+      .filter(Boolean)
+      .join(' ')
     if (headers) element.setAttribute('headers', headers)
     else element.removeAttribute('headers')
   }

@@ -44,6 +44,7 @@ v-container.admin-utilities(fluid)
               :label='$t(`admin:utilities.utility`)'
               variant='outlined'
               hide-details
+              :menu-props='{ contentClass: `admin-utilities-options` }'
               :disabled='busy || Boolean(pendingRequest)'
               @update:model-value='selectSection'
             )
@@ -564,7 +565,28 @@ export default defineComponent({
 
 .admin-utilities-nav {
   position: sticky;
-  top: 1rem;
+  top: var(--admin-sticky-offset, var(--v-layout-top, var(--wiki-chrome-height)));
+}
+
+.admin-utilities-nav .v-list-item__content {
+  min-inline-size: 0;
+}
+
+.admin-utilities-nav .v-list-item-title,
+.admin-utilities-nav .v-list-item-subtitle,
+.admin-utilities-nav .v-select__selection-text,
+.admin-utilities-options .v-list-item-title {
+  display: block;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  -webkit-line-clamp: unset;
+  line-height: 1.5;
+}
+
+.admin-utilities-nav .v-select__selection {
+  max-inline-size: 100%;
 }
 
 .admin-utilities-result {

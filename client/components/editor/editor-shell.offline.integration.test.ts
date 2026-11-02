@@ -29,6 +29,13 @@ import type {
 import { isPageRenderPending, type PageWriteInput, updatePage, waitForPageRender } from '../../helpers/pages-api.ts'
 import { EditorAdapterController, type EditorAdapterSafety as AdapterSafety } from './common/editor-adapter.ts'
 import type { BrowserFetch as Fetch } from '../../helpers/json-transport.ts'
+import {
+  capturePageWorkingSetScope,
+  establishPageWorkingSet,
+  invalidatePageWorkingSet,
+  recordPageEdit,
+  usePageWorkingSet
+} from '../../helpers/page-working-set.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 const ORIGIN = 'https://wiki.example.test'
@@ -227,6 +234,8 @@ const evaluateShellBehavior = (
     'OfflineEditorDraftCoordinator',
     'pwaState',
     'PageChangeReasonSchema',
+    'capturePageWorkingSetScope',
+    'recordPageEdit',
     `${executableShellBehavior}\nreturn shellBehavior`
   ) as (...args: unknown[]) => ShellBehavior
   return evaluate(
@@ -255,7 +264,9 @@ const evaluateShellBehavior = (
     markRaw,
     coordinatorClass,
     { connectionState: 'online' },
-    PageChangeReasonSchema
+    PageChangeReasonSchema,
+    capturePageWorkingSetScope,
+    recordPageEdit
   )
 }
 
@@ -665,6 +676,7 @@ afterEach(() => {
   for (const stop of lifecycleWatchers.splice(0)) stop()
   for (const coordinator of lifecycleCoordinators.splice(0)) coordinator.destroy()
   invalidateOfflineSession()
+  invalidatePageWorkingSet()
   if (previousWindow === undefined) Reflect.deleteProperty(globalThis, 'window')
   else (globalThis as Record<string, unknown>).window = previousWindow
   Reflect.deleteProperty(globalThis, 'location')
@@ -689,17 +701,24 @@ describe('composed editor offline submission boundary', () => {
     }
     const testWindow = createTestWindow(fetchImpl)
     installWindow(testWindow)
+    establishPageWorkingSet({ origin: ORIGIN, installation: SITE_ID, accountId: ACCOUNT_ID, authVersion: 1 })
     const store = reactive(createStore())
     const shell = createReactiveShellContext(store, testWindow, storage, { debounceMs: 60_000 })
     let pendingUpdates = 1
     const adapter = new EditorAdapterController({
       readText: () => store.editor.content,
-      writeText: text => { store.editor.content = text },
-      clearText: () => { store.editor.content = '' },
+      writeText: text => {
+        store.editor.content = text
+      },
+      clearText: () => {
+        store.editor.content = ''
+      },
       collaborationBacklog: () => pendingUpdates
     })
     shell.editorAdapter = markRaw(adapter)
-    adapter.onState(safety => { shell.editorAdapterSafety = safety })
+    adapter.onState(safety => {
+      shell.editorAdapterSafety = safety
+    })
     adapter.initialize()
     shell.collaborationActive = true
     shell.collaborationGeneration = 1
@@ -708,7 +727,9 @@ describe('composed editor offline submission boundary', () => {
     const expectUnloadProtection = (protectedUnload: boolean): void => {
       let prevented = false
       const event = {
-        preventDefault() { prevented = true },
+        preventDefault() {
+          prevented = true
+        },
         returnValue: false
       }
       shell.handleBeforeUnload(event as unknown as BeforeUnloadEvent)
@@ -728,6 +749,7 @@ describe('composed editor offline submission boundary', () => {
       expect(store.page.sourceRevision).toBe('2')
       expect(shell.saveFeedback).toBe('saved')
       expect(shell.isDirty).toBe(false)
+      expect(usePageWorkingSet().recentIds).toEqual([12])
       expect(shell.isSaving).toBe(false)
       expect(shell.changeReason).toBe('')
       expect(storage.records.size).toBe(0)
@@ -776,6 +798,7 @@ describe('composed editor offline submission boundary', () => {
     const storage = new ComposedDraftStorage()
     const testWindow = createTestWindow(keyFetchImpl)
     installWindow(testWindow)
+    establishPageWorkingSet({ origin: ORIGIN, installation: SITE_ID, accountId: ACCOUNT_ID, authVersion: 1 })
     const store = reactive(createStore())
     const shell = createReactiveShellContext(store, testWindow, storage, { debounceMs: 60_000 })
     shell.setupOfflineDraftCoordinator()
@@ -808,6 +831,7 @@ describe('composed editor offline submission boundary', () => {
     expect(shell.editorAdapter.capture().editVersion).toBe(textVersion)
     expect(shell.offlineSaveNotice).toBe(translateEnglish('editor:offline.serverUnavailableSaved'))
     expect(shell.offlineDraftStatus).toBe('needs-review')
+    expect(usePageWorkingSet().recentIds).toEqual([])
     const handle = await requestDraftKey(keyFetchImpl, {
       expectedAccountId: ACCOUNT_ID,
       expectedSessionGeneration: SESSION_GENERATION

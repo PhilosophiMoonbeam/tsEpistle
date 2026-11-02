@@ -62,20 +62,29 @@
   // The edge that identifies a control, such as a text field outline. It must
   // reach 3:1 against the control and page surfaces (WCAG 1.4.11).
   --wiki-control-edge: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 44%, transparent);
+  --wiki-canvas-bg: rgb(var(--v-theme-background));
+  --wiki-canvas-warm-opacity: 3.5%;
+  --wiki-canvas-cool-opacity: 2.2%;
+  --wiki-canvas-wash: radial-gradient(circle at 8% 0%, color-mix(in srgb, rgb(var(--v-theme-primary)) var(--wiki-canvas-warm-opacity), transparent), transparent 27rem),
+    radial-gradient(circle at 94% 100%, color-mix(in srgb, rgb(var(--v-theme-secondary)) var(--wiki-canvas-cool-opacity), transparent), transparent 24rem);
   --wiki-surface-raised: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-surface-bright)) 6%);
-  --wiki-surface-sunken: color-mix(in srgb, rgb(var(--v-theme-background)) 72%, rgb(var(--v-theme-surface)) 28%);
+  --wiki-surface-sunken: rgb(var(--v-theme-surface-sunken, var(--v-theme-background)));
   --wiki-surface-soft: var(--wiki-surface-sunken);
-  // Tier A is persistent chrome, not a general-purpose card treatment.
-  --wiki-chrome-surface: color-mix(in oklch, rgb(var(--v-theme-surface)) 84%, transparent);
-  --wiki-chrome-filter: blur(16px) saturate(140%);
-  --wiki-hud-surface: color-mix(in oklch, rgb(var(--v-theme-surface)) 90%, transparent);
-  --wiki-hud-filter: blur(20px) saturate(150%);
-  --wiki-hud-border: 1px solid color-mix(in oklch, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
-  // The Focus reading dock is the named 92% exception to the general 90% HUD.
-  // It shares the HUD filter/border and --wiki-shadow-md, not a local palette.
-  --wiki-reading-dock-surface: color-mix(in oklch, rgb(var(--v-theme-surface)) 92%, transparent);
-  --wiki-agent-contextual-surface: color-mix(in oklch, rgb(var(--v-theme-surface)) 86%, transparent);
-  --wiki-agent-contextual-filter: blur(24px) saturate(125%);
+  --wiki-material-top: rgb(var(--v-theme-material-top, var(--v-theme-surface)));
+  --wiki-material-bottom: rgb(var(--v-theme-material-bottom, var(--v-theme-background)));
+  --wiki-material-border: color-mix(in oklch, var(--wiki-surface-border) 78%, var(--wiki-accent-warm) 22%);
+  --wiki-well-border: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 7%, transparent);
+  --wiki-field-rest-edge: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 24%, transparent);
+  // Named glass roles accept background shorthand, never background-color.
+  --wiki-chrome-surface: linear-gradient(180deg, color-mix(in srgb, var(--wiki-material-top) 88%, transparent), color-mix(in srgb, rgb(var(--v-theme-glass-bottom, var(--v-theme-background))) 82%, transparent));
+  --wiki-chrome-filter: blur(20px) saturate(145%);
+  --wiki-hud-surface: var(--wiki-chrome-surface);
+  --wiki-hud-filter: var(--wiki-chrome-filter);
+  --wiki-hud-border: 1px solid var(--wiki-material-border);
+  --wiki-reading-dock-surface: var(--wiki-chrome-surface);
+  --wiki-agent-contextual-surface: var(--wiki-chrome-surface);
+  --wiki-agent-contextual-filter: var(--wiki-chrome-filter);
+  --wiki-glass-specular: inset 0 1px 0 rgba(255, 255, 255, .65);
   --wiki-accent-warm: rgb(var(--v-theme-primary));
   --wiki-accent-ink: var(--wiki-primary-ink);
   --wiki-accent-spectral: rgb(var(--v-theme-secondary));
@@ -90,21 +99,20 @@
   --wiki-warning-ink: rgb(var(--v-theme-warning-ink, var(--v-theme-warning)));
   --wiki-error-ink: rgb(var(--v-theme-error-ink, var(--v-theme-error)));
   --wiki-ambient-accent: color-mix(in oklch, var(--wiki-accent-warm) 62%, var(--wiki-accent-spectral) 38%);
-  // The exact material recipe is 145deg; the assessment's 135deg diagram is conceptual.
+  // Two endpoint 155deg recipe, sampled in client/helpers/theme.ts.
   --wiki-surface-gradient: linear-gradient(
-    145deg,
-    color-mix(in oklch, var(--wiki-surface-raised) 96%, var(--wiki-accent-warm) 4%) 0%,
-    var(--wiki-surface-raised) 62%,
-    color-mix(in oklch, var(--wiki-surface-raised) 97%, var(--wiki-accent-spectral) 3%) 100%
+    155deg,
+    color-mix(in oklch, var(--wiki-material-top) 96%, var(--wiki-accent-warm) 4%) 0%,
+    color-mix(in oklch, var(--wiki-material-bottom) 97%, var(--wiki-accent-spectral) 3%) 100%
   );
-  // Consumers compose this inset highlight with their elevation/focus shadows.
+  // Compose exactly once with a consumer's native elevation.
   --wiki-specular-border: inset 0 1px 0 0 rgba(255, 255, 255, .65);
   --wiki-shadow-color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 15%, transparent);
   --wiki-shadow-xs: 0 1px 2px var(--wiki-shadow-color);
   --wiki-shadow-sm: 0 .375rem 1rem color-mix(in srgb, var(--wiki-shadow-color) 60%, transparent);
   --wiki-shadow-md: 0 .875rem 2.5rem color-mix(in srgb, var(--wiki-shadow-color) 72%, transparent);
   --wiki-shadow-lg: 0 1.75rem 5rem color-mix(in srgb, var(--wiki-shadow-color) 86%, transparent);
-  --wiki-shadow-inset: inset 0 1px 0 color-mix(in srgb, rgb(var(--v-theme-surface-bright)) 62%, transparent);
+  --wiki-shadow-inset: inset 0 1px 2px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent);
   --wiki-motion-fast: 120ms;
   --wiki-motion-normal: 180ms;
   --wiki-motion-slow: 320ms;
@@ -116,6 +124,9 @@
   --wiki-purpose-primary-ink: rgb(var(--v-theme-purpose-primary-ink, var(--v-theme-on-surface)));
   --wiki-purpose-primary-fill: rgb(var(--v-theme-purpose-primary-fill, var(--v-theme-surface)));
   --wiki-purpose-primary-edge: rgb(var(--v-theme-purpose-primary-edge, var(--v-theme-primary)));
+  --wiki-commitment-start: rgb(var(--v-theme-primary));
+  --wiki-commitment-end: rgb(var(--v-theme-commitment-end, var(--v-theme-primary)));
+  --wiki-commitment-ink: rgb(var(--v-theme-commitment-ink, var(--v-theme-on-primary)));
   --wiki-purpose-secondary-ink: rgb(var(--v-theme-purpose-secondary-ink, var(--v-theme-on-surface)));
   --wiki-purpose-secondary-fill: rgb(var(--v-theme-purpose-secondary-fill, var(--v-theme-surface)));
   --wiki-purpose-secondary-edge: rgb(var(--v-theme-purpose-secondary-edge, var(--v-theme-secondary)));
@@ -181,17 +192,22 @@
 }
 
 .v-theme--dark {
+  --wiki-canvas-warm-opacity: 2%;
+  --wiki-canvas-cool-opacity: 1.5%;
+  --wiki-field-rest-edge: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 28%, transparent);
+  --wiki-material-border: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 9%, transparent);
+  --wiki-well-border: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 6%, transparent);
   --wiki-surface-gradient: linear-gradient(
-    145deg,
-    color-mix(in oklch, var(--wiki-surface-raised) 94%, var(--wiki-accent-warm) 6%) 0%,
-    var(--wiki-surface-raised) 58%,
-    color-mix(in oklch, var(--wiki-surface-raised) 95%, var(--wiki-accent-spectral) 5%) 100%
+    155deg,
+    color-mix(in oklch, var(--wiki-material-top) 95%, var(--wiki-accent-warm) 5%) 0%,
+    color-mix(in oklch, var(--wiki-material-bottom) 96%, var(--wiki-accent-spectral) 4%) 100%
   );
-  --wiki-specular-border: inset 0 1px 0 0 rgba(255, 255, 255, .07);
-  --wiki-agent-contextual-surface: color-mix(in oklch, rgb(var(--v-theme-surface)) 84%, transparent);
-  --wiki-agent-contextual-filter: blur(26px) saturate(130%);
+  --wiki-specular-border: inset 0 1px 0 0 rgba(255, 248, 235, .06);
+  --wiki-chrome-surface: linear-gradient(180deg, color-mix(in srgb, var(--wiki-material-top) 86%, transparent), color-mix(in srgb, rgb(var(--v-theme-glass-bottom, var(--v-theme-background))) 82%, transparent));
+  --wiki-chrome-filter: blur(22px) saturate(150%);
+  --wiki-glass-specular: inset 0 1px 0 rgba(255, 248, 235, .10);
   --wiki-shadow-color: color-mix(in srgb, rgb(var(--v-theme-background)) 72%, transparent);
-  --wiki-shadow-inset: inset 0 1px 0 color-mix(in srgb, rgb(var(--v-theme-on-surface)) 9%, transparent);
+  --wiki-shadow-inset: inset 0 1px 2px rgba(0, 0, 0, .55);
 }
 
 // Keep the active (including saved custom) palette when diffusion is unavailable.
@@ -201,6 +217,10 @@
   :root,
   .v-theme--light,
   .v-theme--dark {
+    --wiki-canvas-wash: none;
+    --wiki-surface-gradient: var(--wiki-surface-raised);
+    --wiki-specular-border: inset 0 0 0 transparent;
+    --wiki-glass-specular: inset 0 0 0 transparent;
     --wiki-chrome-surface: rgb(var(--v-theme-surface));
     --wiki-chrome-filter: none;
     --wiki-hud-surface: rgb(var(--v-theme-surface));
@@ -215,6 +235,10 @@
   :root,
   .v-theme--light,
   .v-theme--dark {
+    --wiki-canvas-wash: none;
+    --wiki-surface-gradient: var(--wiki-surface-raised);
+    --wiki-specular-border: inset 0 0 0 transparent;
+    --wiki-glass-specular: inset 0 0 0 transparent;
     --wiki-chrome-surface: rgb(var(--v-theme-surface));
     --wiki-chrome-filter: none;
     --wiki-hud-surface: rgb(var(--v-theme-surface));
@@ -231,6 +255,22 @@
   :root,
   .v-theme--light,
   .v-theme--dark {
+    --wiki-canvas-bg: Canvas;
+    --wiki-canvas-wash: none;
+    --wiki-surface-raised: Canvas;
+    --wiki-surface-sunken: Canvas;
+    --wiki-surface-gradient: Canvas;
+    --wiki-material-border: CanvasText;
+    --wiki-well-border: CanvasText;
+    --wiki-specular-border: inset 0 0 0 transparent;
+    --wiki-glass-specular: inset 0 0 0 transparent;
+    --wiki-shadow-inset: inset 0 0 0 transparent;
+    --wiki-material-top: Canvas;
+    --wiki-material-bottom: Canvas;
+    --wiki-shadow-xs: 0 0 0 transparent;
+    --wiki-shadow-sm: 0 0 0 transparent;
+    --wiki-shadow-md: 0 0 0 transparent;
+    --wiki-shadow-lg: 0 0 0 transparent;
     --wiki-chrome-surface: Canvas;
     --wiki-chrome-filter: none;
     --wiki-hud-surface: Canvas;
@@ -253,7 +293,7 @@ html {
   box-sizing: border-box;
   height: 100%;
   overflow-y: auto;
-  background: rgb(var(--v-theme-background));
+  background: var(--wiki-canvas-bg, rgb(var(--v-theme-background)));
   scroll-padding-block-start: var(--wiki-space-12);
 }
 
@@ -401,7 +441,7 @@ body {
    selected:hover rule below adds the hover glow on top. Without this
    exclusion the hover rule (higher specificity) would repaint a
    component-styled selected control back to its neutral face. */
-.wiki-purpose-control:hover:not(:disabled):not([aria-disabled='true']):not(.v-btn--disabled):not([aria-pressed='true']):not([aria-selected='true']):not([aria-current='true']):not([data-state='active']):not([data-state='selected']):not(.is-active):not(.is-selected):not(.v-btn--active) {
+.wiki-purpose-control:hover:not(:disabled):not([aria-disabled='true']):not(.v-btn--disabled):not(.v-btn--loading):not([aria-pressed='true']):not([aria-selected='true']):not([aria-current='true']):not([data-state='active']):not([data-state='selected']):not(.is-active):not(.is-selected):not(.v-btn--active) {
     border-color: var(--wiki-purpose-control-edge);
     background-color: var(--wiki-purpose-control-fill);
     color: var(--wiki-purpose-control-ink);
@@ -417,14 +457,14 @@ body {
     .is-active,
     .is-selected,
     .v-btn--active
-  ):hover {
+  ):hover:not(:disabled):not([aria-disabled='true']):not(.v-btn--disabled):not(.v-btn--loading) {
     box-shadow:
       inset 0 0 0 .0625rem var(--wiki-purpose-control-edge),
       0 0 0 .1875rem color-mix(in srgb, var(--wiki-purpose-control-edge) 18%, transparent);
   }
 }
 
-.wiki-purpose-control:active:not(:disabled):not([aria-disabled='true']):not(.v-btn--disabled) {
+.wiki-purpose-control:active:not(:disabled):not([aria-disabled='true']):not(.v-btn--disabled):not(.v-btn--loading) {
   transform: translateY(1px);
 }
 

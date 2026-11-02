@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { browserWindow, document } from '../../test/browser-dom.mts'
 import { afterEach, vi } from '../../../server/test/bun-test.mts'
-import { compileTemplate } from '@vue/compiler-sfc'
+import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import { fetchPageLinks } from '../../helpers/pages-api.ts'
 import _ from 'lodash'
 import * as d3 from 'd3'
@@ -19,18 +19,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const componentPath = path.join(__dirname, 'admin-pages-visualize.vue')
 const source = fs.readFileSync(componentPath, 'utf8')
 const script = source.match(/<script(?:\s+lang=["']ts["'])?>([\s\S]*?)<\/script>/)[1]
-const loadPagesStart = script.indexOf('async loadPages (): Promise<void> {')
-const loadPagesEnd = script.indexOf('    goToPage', loadPagesStart)
-const loadPagesBody = script.slice(loadPagesStart, loadPagesEnd)
-const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
-const executeLoadPages = new AsyncFunction(
-  'fetchPageLinks',
-  'wikiStore',
-  'markRaw',
-  'getErrorMessage',
-  'window',
-  loadPagesBody.slice(loadPagesBody.indexOf('{') + 1, loadPagesBody.lastIndexOf('}'))
-)
 
 const template = compileTemplate({
   source: source.match(/<template>([\s\S]*?)<\/template>\s*<script/)[1],
@@ -40,8 +28,24 @@ const template = compileTemplate({
 })
 if (template.errors.length) throw template.errors[0]
 const render = new Function('Vue', template.code)(Vue)
+const heroPath = path.join(process.cwd(), 'client/components/common/admin-hero.vue')
+const { descriptor: heroDescriptor } = parse(fs.readFileSync(heroPath, 'utf8'), { filename: heroPath })
+const heroScript = compileScript(heroDescriptor, { id: 'atlas-hero', genDefaultAs: '__sfc__' })
+const heroTemplate = compileTemplate({
+  source: heroDescriptor.template.content,
+  filename: heroPath,
+  id: 'atlas-hero',
+  preprocessLang: heroDescriptor.template.lang,
+  preprocessOptions: { doctype: 'html' },
+  compilerOptions: { bindingMetadata: heroScript.bindings, expressionPlugins: ['typescript'] }
+})
+if (heroTemplate.errors.length) throw heroTemplate.errors[0]
+const heroCode = new Bun.Transpiler({ loader: 'ts' }).transformSync(
+  `${heroScript.content}\n${heroTemplate.code}\n__sfc__.render = render\nexport default __sfc__`
+)
+const { default: AdminHero } = await import('data:text/javascript;base64,' + Buffer.from(heroCode).toString('base64'))
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, '').replace('export default', 'return'))
-const createOptions = wikiStore =>
+const createOptions = (wikiStore, loadLinks = fetchPageLinks, window = browserWindow) =>
   new Function(
     'defineComponent',
     'markRaw',
@@ -62,14 +66,14 @@ const createOptions = wikiStore =>
     d3,
     { render: () => null },
     error => error.message,
-    fetchPageLinks,
+    loadLinks,
     wikiStore,
     [
       { code: 'en', name: 'English' },
       { code: 'fr', name: 'French' }
     ],
     { lang: 'en' },
-    browserWindow
+    window
   )
 const mounted = []
 afterEach(() => {
@@ -96,7 +100,7 @@ const mountAtlas = () => {
   const app = Vue.createApp({ ...options, render })
   app.config.globalProperties.$t = translateEnglish
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
-  app.component('admin-hero', { render: () => null })
+  app.component('admin-hero', AdminHero)
   app.component('router-link', { render: () => null })
   const vm = app.mount(host)
   mounted.push({ app, host })
@@ -140,9 +144,8 @@ describe('admin pages visualize REST facade', () => {
       stopLoading() {},
       showError() {}
     }
-    const markRaw = pages => pages
-    const getErrorMessage = err => err.message
     const browserWindow = { fetch() {} }
+    const executeLoadPages = createOptions(wikiStore, fetchPageLinks, browserWindow).methods.loadPages
     const state = {
       currentLocale: 'A',
       pageLoadRequestId: 0,
@@ -155,11 +158,11 @@ describe('admin pages visualize REST facade', () => {
     const staleLocaleBPages = [{ id: 2, path: 'b', title: 'Locale B', links: [] }]
     const latestLocaleAPages = [{ id: 3, path: 'a-new', title: 'New Locale A', links: [] }]
 
-    const staleLocaleARequest = executeLoadPages.call(state, fetchPageLinks, wikiStore, markRaw, getErrorMessage, browserWindow)
+    const staleLocaleARequest = executeLoadPages.call(state)
     state.currentLocale = 'B'
-    const staleLocaleBRequest = executeLoadPages.call(state, fetchPageLinks, wikiStore, markRaw, getErrorMessage, browserWindow)
+    const staleLocaleBRequest = executeLoadPages.call(state)
     state.currentLocale = 'A'
-    const latestLocaleARequest = executeLoadPages.call(state, fetchPageLinks, wikiStore, markRaw, getErrorMessage, browserWindow)
+    const latestLocaleARequest = executeLoadPages.call(state)
 
     expect(pendingRequests.map(request => request.locale)).toEqual(['A', 'B', 'A'])
     pendingRequests[2].resolve(latestLocaleAPages)
@@ -171,6 +174,8 @@ describe('admin pages visualize REST facade', () => {
     pendingRequests[1].resolve(staleLocaleBPages)
     await staleLocaleBRequest
     expect(state.pages).toBe(latestLocaleAPages)
+    expect(state.loading).toBe(false)
+    expect(state.errorMessage).toBe('')
   })
 
   it.each(['rradial', 'htree', 'hradial'])('activates generated page labels but not folders or unrelated keys in %s', graphMode => {
@@ -183,9 +188,6 @@ describe('admin pages visualize REST facade', () => {
     })
     const container = document.createElement('div')
     document.body.append(container)
-    const prototype = browserWindow.SVGElement.prototype
-    const geometry = Object.getOwnPropertyDescriptor(prototype, 'getBBox')
-    Object.defineProperty(prototype, 'getBBox', { configurable: true, value: () => ({ x: 0, y: 0, width: 800, height: 800 }) })
     const state = {
       ...options.data.call({ $t: translateEnglish }),
       $t: translateEnglish,
@@ -224,10 +226,87 @@ describe('admin pages visualize REST facade', () => {
       expect(pushed).toHaveLength(3)
       expect(opened).toHaveLength(2)
     } finally {
-      if (geometry) Object.defineProperty(prototype, 'getBBox', geometry)
-      else delete prototype.getBBox
+      options.beforeUnmount.call(state)
       open.mockRestore()
       container.remove()
+    }
+  })
+
+  it.each(['htree', 'hradial', 'rradial'])('fits and resets the existing %s diagram after zoom, deferring fit while hidden or zero-sized', async graphMode => {
+    // JSDOM supplies no SVG measurements. Supply only a native API result;
+    // production D3 and Fit/Reset perform every size and transform operation.
+    // Actual label spacing/getBBox correctness belongs to the native flow.
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(() => 1)
+    vi.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(() => {})
+    const prototype = browserWindow.SVGElement.prototype
+    const geometry = Object.getOwnPropertyDescriptor(prototype, 'getBBox')
+    Object.defineProperty(prototype, 'getBBox', { configurable: true, value: () => ({ x: -120, y: -80, width: 1000, height: 600 }) })
+    vi.spyOn(browserWindow, 'fetch').mockImplementation(async () => ({
+      ok: true,
+      headers: { get: () => 'application/json' },
+      json: async () => [{ id: 7, path: 'en/docs/alpha', title: 'Alpha', links: [] }]
+    }))
+    try {
+      const { vm, host } = mountAtlas()
+      await settle()
+      vm.graphMode = graphMode
+      await Vue.nextTick()
+      const container = host.querySelector('.admin-pages-visualize-svg')
+      let width = 640
+      Object.defineProperties(container, {
+        clientWidth: { configurable: true, get: () => width },
+        clientHeight: { configurable: true, get: () => 360 }
+      })
+      const svg = container.querySelector('svg')
+      const label = container.querySelector('text[role="link"]')
+      const control = key => [...host.querySelectorAll('button')].find(button => button.textContent.trim() === translateEnglish(key))
+      const zoomIn = () => host.querySelector(`button[aria-label="${translateEnglish('admin:pagesVisualize.zoomIn')}"]`).click()
+      control('admin:pagesVisualize.fitDiagram').click()
+      const fitted = d3.zoomTransform(svg)
+      const bounds = svg.querySelector('g').getBBox()
+      for (const [x, y] of [
+        [bounds.x, bounds.y],
+        [bounds.x + bounds.width, bounds.y + bounds.height]
+      ]) {
+        const [screenX, screenY] = fitted.apply([x, y])
+        expect(screenX).toBeGreaterThanOrEqual(32 - 1e-7)
+        expect(screenX).toBeLessThanOrEqual(width - 32 + 1e-7)
+        expect(screenY).toBeGreaterThanOrEqual(32 - 1e-7)
+        expect(screenY).toBeLessThanOrEqual(360 - 32 + 1e-7)
+      }
+      expect(Number(svg.getAttribute('width'))).toBeGreaterThanOrEqual(width)
+      expect(Number(svg.getAttribute('height'))).toBeGreaterThanOrEqual(360)
+      zoomIn()
+      const zoomed = d3.zoomTransform(svg)
+      expect(zoomed.k).toBeGreaterThan(fitted.k)
+
+      vm.directory = true
+      await Vue.nextTick()
+      vm.fitDiagram()
+      expect(d3.zoomTransform(svg)).toBe(zoomed)
+      vm.directory = false
+      width = 0
+      await Vue.nextTick()
+      control('admin:pagesVisualize.resetView').click()
+      expect(d3.zoomTransform(svg)).toBe(zoomed)
+      width = 640
+      control('admin:pagesVisualize.resetView').click()
+      expect(d3.zoomTransform(svg)).toEqual(fitted)
+      expect(container.querySelector('svg')).toBe(svg)
+      expect(container.querySelector('text[role="link"]')).toBe(label)
+      zoomIn()
+      host.querySelector(`button[aria-label="${translateEnglish('admin:pagesVisualize.zoomOut')}"]`).click()
+      expect(d3.zoomTransform(svg).k).toBeCloseTo(fitted.k)
+      zoomIn()
+      control('admin:pagesVisualize.fitDiagram').click()
+      expect(d3.zoomTransform(svg)).toEqual(fitted)
+    } finally {
+      for (const { app, host } of mounted.splice(0)) {
+        app.unmount()
+        host.remove()
+      }
+      if (geometry) Object.defineProperty(prototype, 'getBBox', geometry)
+      else delete prototype.getBBox
     }
   })
 })

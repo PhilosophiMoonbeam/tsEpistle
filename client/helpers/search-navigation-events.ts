@@ -1,4 +1,5 @@
 import { createEventBus } from './simple-event-bus'
+import { shallowRef } from 'vue'
 
 export const SEARCH_ENTER_EVENT = 'searchEnter'
 export const SEARCH_MOVE_EVENT = 'searchMove'
@@ -14,6 +15,29 @@ type SearchEnterHandler = (value: boolean) => void
 type SearchMoveHandler = (dir: string) => void
 type SearchExitHandler = (restoreFocus: boolean) => void
 type SearchFocusHandler = () => void
+
+export type SearchQuickCreateBridge = {
+  canCreate: () => boolean
+  open: () => boolean
+}
+
+const searchQuickCreate = shallowRef<SearchQuickCreateBridge | null>(null)
+
+export function registerSearchQuickCreate(bridge: SearchQuickCreateBridge): () => void {
+  searchQuickCreate.value = bridge
+  return () => {
+    if (searchQuickCreate.value === bridge) searchQuickCreate.value = null
+  }
+}
+
+export function canSearchQuickCreate(): boolean {
+  return searchQuickCreate.value?.canCreate() === true
+}
+
+export function requestSearchQuickCreate(): boolean {
+  const bridge = searchQuickCreate.value
+  return bridge?.canCreate() === true && bridge.open()
+}
 
 export function emitSearchEnter(): void {
   searchEnterBus.emit(SEARCH_ENTER_EVENT, true)

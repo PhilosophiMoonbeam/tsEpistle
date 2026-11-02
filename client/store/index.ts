@@ -1,5 +1,6 @@
 import { createPinia, defineStore } from 'pinia'
 import { sameOriginJsonFetch } from '../helpers/json-transport.ts'
+import { establishPageWorkingSet, invalidatePageWorkingSet, suspendPageWorkingSet } from '../helpers/page-working-set.ts'
 import {
   invalidateOfflineSession,
   lockOfflineReading,
@@ -254,6 +255,7 @@ const advanceOfflineIdentityEpoch = (): void => {
   const nextEpoch = offlineIdentityEpoch + 1
   if (!Number.isSafeInteger(nextEpoch)) throw new Error('Offline identity epoch overflowed.')
   offlineIdentityEpoch = nextEpoch
+  invalidatePageWorkingSet()
   syncOfflineIdentityEpoch?.(nextEpoch)
 }
 
@@ -502,6 +504,7 @@ export const useWikiStore = defineStore('wiki', {
         pendingLogoutAtStart.present && (pendingLogoutAtStart.accountId === undefined || pendingLogoutAtStart.accountId === previousAccountIdAtStart)
       if (pendingLogoutBlocksWarmIdentity) lockOfflineReading()
       const warmIdentityAtStart = previousAccountIdAtStart !== undefined && this.offlineIdentityReady && !pendingLogoutBlocksWarmIdentity
+      suspendPageWorkingSet()
       this.authRefreshPending = true
       this.authRefreshSettled = false
       this.authRefreshOutcome = null
@@ -514,6 +517,18 @@ export const useWikiStore = defineStore('wiki', {
         this.authRefreshPending = false
         this.authRefreshSettled = true
         this.authRefreshOutcome = outcome
+        if (outcome !== 'unavailable') {
+          const origin = currentOfflineOrigin()
+          const installation = currentOfflineSiteId(origin)
+          if (origin && installation) {
+            establishPageWorkingSet({
+              origin,
+              installation,
+              accountId: outcome === 'authenticated' ? this.user.id : 0,
+              authVersion: outcome === 'authenticated' ? this.user.authVersion : 0
+            })
+          }
+        }
         dispatchAuthOutcome(outcome, accountChanged)
         return true
       }

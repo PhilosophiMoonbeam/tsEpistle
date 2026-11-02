@@ -12,16 +12,21 @@ const script = panelSource.match(/<script lang=['"]ts['"]>\s*([\s\S]*?)\s*<\/scr
 type PanelMethod = (...args: unknown[]) => unknown
 type PanelDefinition = { methods: Record<string, PanelMethod> }
 type ExtensionParser = (text: string) => { value: Record<string, unknown> | null; error: string | null }
+type DraftHandle = {
+  readonly hasPendingChanges: boolean
+  readonly canCommit: boolean
+  validateDraft: () => { valid: false } | { valid: true; commit: () => void }
+}
 
-const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(
-  script
+// Erase exported TypeScript declarations before adding the function-only return.
+const executableScript =
+  new Bun.Transpiler({ loader: 'ts' })
+    .transformSync(script)
     .replace(/^import .*$/gm, '')
     .replace('export function parseExtensionJson', 'function parseExtensionJson')
     .replace('export default defineComponent', 'const panel = defineComponent') + '\nreturn { panel, parseExtensionJson }'
-)
 const loadPanel = () =>
   new Function('defineComponent', executableScript)((options: unknown) => options) as { panel: PanelDefinition; parseExtensionJson: ExtensionParser }
-const loadParser = () => loadPanel().parseExtensionJson
 
 // Vuetify snapshots browser globals during evaluation; import after the shared DOM harness.
 const Vue = await import('vue')
@@ -54,7 +59,8 @@ const ownerMember = (name: string, group?: string) => {
   let properties = ownerOptions.properties
   if (group) {
     const property = properties.find(property => !ts.isSpreadAssignment(property) && property.name?.getText(ownerAst) === group)
-    if (!property || !ts.isPropertyAssignment(property) || !ts.isObjectLiteralExpression(property.initializer)) throw new Error(`Missing owner option: ${group}`)
+    if (!property || !ts.isPropertyAssignment(property) || !ts.isObjectLiteralExpression(property.initializer))
+      throw new Error(`Missing owner option: ${group}`)
     properties = property.initializer.properties
   }
   const member = properties.find(property => !ts.isSpreadAssignment(property) && property.name?.getText(ownerAst) === name)
@@ -77,29 +83,34 @@ interface PanelStore {
     }
   }
 }
-const panelStore = (metadata: Record<string, unknown> | null = { type: 'Reference', status: 'stable' }): PanelStore => Vue.reactive({
-  page: {
-    id: 12,
-    sourceRevision: 'revision-panel',
-    okfLoading: false,
-    okfError: '',
-    okf: {
-      authority: { state: metadata ? 'valid' : 'missing', metadata, trust: null },
-      projection: { state: 'pending', value: null }
+const panelStore = (metadata: Record<string, unknown> | null = { type: 'Reference', status: 'stable' }): PanelStore =>
+  Vue.reactive({
+    page: {
+      id: 12,
+      sourceRevision: 'revision-panel',
+      okfLoading: false,
+      okfError: '',
+      okf: {
+        authority: { state: metadata ? 'valid' : 'missing', metadata, trust: null },
+        projection: { state: 'pending', value: null }
+      }
     }
-  }
-})
+  })
 
+const draftHandles = new WeakMap<HTMLElement, DraftHandle>()
 const mountPanel = (store: PanelStore, retry?: { isAvailable: () => boolean; run: () => Promise<void> }) => {
-  const options = new Function('defineComponent', 'wikiStore', executableScript)(Vue.defineComponent, store).panel
+  const options = new Function('defineComponent', 'getCurrentInstance', 'wikiStore', executableScript)(Vue.defineComponent, Vue.getCurrentInstance, store).panel
   const host = document.createElement('div')
   document.body.append(host)
   const app = Vue.createApp({ ...options, render })
   app.config.globalProperties.$t = translateEnglish
   if (retry) app.provide('okfLoadRetry', retry)
   app.use(createVuetify({ components, directives }))
-  app.mount(host)
-  unmounts.push(() => { app.unmount(); host.remove() })
+  draftHandles.set(host, app.mount(host) as unknown as DraftHandle)
+  unmounts.push(() => {
+    app.unmount()
+    host.remove()
+  })
   return host
 }
 
@@ -116,8 +127,7 @@ const edit = async (input: HTMLInputElement | HTMLTextAreaElement, value: string
   await Vue.nextTick()
 }
 const button = (root: ParentNode, name: string): HTMLButtonElement => {
-  const target = Array.from(root.querySelectorAll('button')).find(element =>
-    (element.getAttribute('aria-label') ?? element.textContent?.trim()) === name)
+  const target = Array.from(root.querySelectorAll('button')).find(element => (element.getAttribute('aria-label') ?? element.textContent?.trim()) === name)
   if (!target) throw new Error(`Missing button: ${name}`)
   return target
 }
@@ -186,8 +196,12 @@ describe('Knowledge / OKF editor panel', () => {
 
   it('edits and removes only the selected source without mutating the baseline', async () => {
     const store = panelStore({
-      type: 'Reference', status: 'stable',
-      sources: [{ resource: 'urn:first', id: 'one' }, { resource: 'urn:second', id: 'two' }]
+      type: 'Reference',
+      status: 'stable',
+      sources: [
+        { resource: 'urn:first', id: 'one' },
+        { resource: 'urn:second', id: 'two' }
+      ]
     })
     const original = store.page.okf.authority.metadata
     const projection = store.page.okf.projection
@@ -196,46 +210,95 @@ describe('Knowledge / OKF editor panel', () => {
     const second = root.querySelector('[role="group"][aria-label="Source 2"]')
     if (!second) throw new Error('Second source is missing')
     await edit(field(second, 'Source resource'), 'urn:changed')
-    expect(store.page.okf.authority.metadata?.sources).toEqual([{ resource: 'urn:first', id: 'one' }, { resource: 'urn:changed', id: 'two' }])
+    expect(store.page.okf.authority.metadata?.sources).toEqual([
+      { resource: 'urn:first', id: 'one' },
+      { resource: 'urn:changed', id: 'two' }
+    ])
     button(root, 'Remove source 1').click()
     await Vue.nextTick()
     expect(store.page.okf.authority.metadata?.sources).toEqual([{ resource: 'urn:changed', id: 'two' }])
-    expect(original?.sources).toEqual([{ resource: 'urn:first', id: 'one' }, { resource: 'urn:second', id: 'two' }])
+    expect(original?.sources).toEqual([
+      { resource: 'urn:first', id: 'one' },
+      { resource: 'urn:second', id: 'two' }
+    ])
     expect(store.page.okf.projection).toBe(projection)
     expect(store.page.okf.authority.trust).toBe(trust)
   })
 
-  it('validates extension JSON and rejects core or unsafe keys without overwriting metadata', async () => {
-    const parseExtensionJson = loadParser()
-    expect(parseExtensionJson('{"custom":{"enabled":true}}')).toEqual({ value: { custom: { enabled: true } }, error: null })
-    expect(parseExtensionJson('{')).toMatchObject({ value: null })
-    expect(parseExtensionJson('[]').value).toBeNull()
-    expect(parseExtensionJson('{"status":"stable"}').value).toBeNull()
-    expect(parseExtensionJson('{"__proto__":{}}').value).toBeNull()
+  it('validates pending extensions without committing and announces only genuine field errors', async () => {
     const store = panelStore({ type: 'Reference', status: 'stable', resource: 'urn:core', oldExtension: true })
     const original = store.page.okf.authority.metadata
     const projection = store.page.okf.projection
+    const trust = store.page.okf.authority.trust
     const root = mountPanel(store)
-    const editableMetadata = field(root, 'Extensions').closest('.v-card')
-    if (!editableMetadata) throw new Error('Editable metadata region is missing')
+    const handle = draftHandles.get(root)!
+    const input = field(root, 'Extensions')
+    const editableMetadata = input.closest('.v-card')!
     const projectionAlert = Array.from(root.querySelectorAll('[role="alert"]')).find(alert => !editableMetadata.contains(alert))
     expect(projectionAlert).toBeDefined()
     const projectionMessage = projectionAlert!.textContent
-    await edit(field(root, 'Extensions'), '{"__proto__":{}}')
-    button(root, 'Apply extensions').click()
-    await Vue.nextTick()
-    const extensionError = translateEnglish(parseExtensionJson('{"__proto__":{}}').error!)
-    expect(Array.from(editableMetadata.querySelectorAll('[role="alert"]'), alert => alert.textContent)).toEqual(expect.arrayContaining([expect.stringContaining(extensionError)]))
+    for (const control of [field(root, 'Resource'), field(root, 'Stale after'), input]) {
+      const helpIds = control.getAttribute('aria-describedby')?.split(/\s+/) ?? []
+      expect(helpIds.length).toBeGreaterThan(0)
+      const help = helpIds.map(id => document.getElementById(id)).filter(element => element?.textContent?.trim())
+      expect(help.length).toBeGreaterThan(0)
+      for (const element of help) expect(element!.closest('[role="alert"], [aria-live]')).toBeNull()
+    }
+    expect(Array.from(editableMetadata.querySelectorAll('[role="alert"]')).filter(alert => alert.textContent?.trim())).toEqual([])
+
+    // Core-key overrides and dangerous keys nested through arrays are both rejected.
+    for (const text of [
+      '{',
+      '[]',
+      'null',
+      '"text"',
+      '{"status":"deprecated"}',
+      '{"x-wiki":{}}',
+      '{"__proto__":{}}',
+      '{"custom":{"constructor":{}}}',
+      '{"custom":[{"nested":{"prototype":{}}}]}'
+    ]) {
+      await edit(input, text)
+      expect(handle.canCommit).toBe(false)
+      expect(handle.validateDraft()).toEqual({ valid: false })
+      await Vue.nextTick()
+      const error = editableMetadata.querySelector('#editor-okf-extension-error[role="alert"]')
+      expect(error?.textContent?.trim()).toBeTruthy()
+      expect(input.getAttribute('aria-invalid')).toBe('true')
+      expect(input.getAttribute('aria-describedby')?.split(/\s+/)).toContain(error?.id)
+      expect(store.page.okf.authority.metadata).toBe(original)
+    }
+    await edit(input, '{"custom":{"status":"extension-local","enabled":true}}')
+    expect(handle.canCommit).toBe(true)
+    expect(handle.hasPendingChanges).toBe(true)
+    const validated = handle.validateDraft()
+    expect(validated.valid).toBe(true)
     expect(store.page.okf.authority.metadata).toBe(original)
-    await edit(field(root, 'Extensions'), '{"custom":{"enabled":true}}')
-    button(root, 'Apply extensions').click()
+    if (!validated.valid) throw new Error('Valid extension draft was rejected')
+    validated.commit()
     await Vue.nextTick()
-    expect(Array.from(editableMetadata.querySelectorAll('[role="alert"]'), alert => alert.textContent)).not.toEqual(expect.arrayContaining([expect.stringContaining(extensionError)]))
+    expect(Array.from(editableMetadata.querySelectorAll('[role="alert"]')).filter(alert => alert.textContent?.trim())).toEqual([])
+    expect(input.getAttribute('aria-invalid')).toBe('false')
     expect(root.contains(projectionAlert!)).toBe(true)
     expect(projectionAlert!.textContent).toBe(projectionMessage)
-    expect(store.page.okf.authority.metadata).toEqual({ type: 'Reference', status: 'stable', resource: 'urn:core', custom: { enabled: true } })
+    expect(store.page.okf.authority.metadata).toEqual({
+      type: 'Reference',
+      status: 'stable',
+      resource: 'urn:core',
+      custom: { status: 'extension-local', enabled: true }
+    })
     expect(original).toEqual({ type: 'Reference', status: 'stable', resource: 'urn:core', oldExtension: true })
+    expect(handle.hasPendingChanges).toBe(false)
     expect(store.page.okf.projection).toBe(projection)
+    expect(store.page.okf.authority.trust).toBe(trust)
+    await edit(input, '{}')
+    const cleared = handle.validateDraft()
+    if (!cleared.valid) throw new Error('Empty extension object was rejected')
+    cleared.commit()
+    await Vue.nextTick()
+    expect(store.page.okf.authority.metadata).toEqual({ type: 'Reference', status: 'stable', resource: 'urn:core' })
+    expect(store.page.okf.projection).toBe(projection)
+    expect(store.page.okf.authority.trust).toBe(trust)
   })
 
   it('resets missing or invalid authority locally without replacing derived data', async () => {
@@ -333,7 +396,9 @@ describe('Knowledge / OKF editor panel', () => {
       mode: 'update',
       hydratePage: () => {
         calls++
-        return new Promise<void>(resolve => { finish = resolve })
+        return new Promise<void>(resolve => {
+          finish = resolve
+        })
       }
     })
     let finish: (() => void) | undefined
@@ -379,17 +444,28 @@ describe('Knowledge / OKF editor panel', () => {
   it('shows authority, projection, completeness and trust-staleness distinctions', async () => {
     const store = panelStore()
     const root = mountPanel(store)
-    const valueAfter = (label: string) => Array.from(root.querySelectorAll('.text-label-small')).find(element => element.textContent?.trim() === label)?.nextElementSibling?.textContent?.trim()
+    const valueAfter = (label: string) =>
+      Array.from(root.querySelectorAll('.text-label-small'))
+        .find(element => element.textContent?.trim() === label)
+        ?.nextElementSibling?.textContent?.trim()
     expect(valueAfter('State')).toBe('valid')
     expect(valueAfter('Projection')).toBe('pending')
     expect(valueAfter('Completeness')).toBe('—')
     expect(valueAfter('Stale')).toBe('—')
     store.page.okf.authority.state = 'invalid'
     store.page.okf.authority.trust = { stale: true }
-    store.page.okf.projection = { state: 'current', value: {
-      state: 'incomplete', tags: [], missingFields: ['summary'], entities: [], relationships: [], openQuestions: [],
-      provenance: { deterministicVersion: 'version' }
-    } }
+    store.page.okf.projection = {
+      state: 'current',
+      value: {
+        state: 'incomplete',
+        tags: [],
+        missingFields: ['summary'],
+        entities: [],
+        relationships: [],
+        openQuestions: [],
+        provenance: { deterministicVersion: 'version' }
+      }
+    }
     await Vue.nextTick()
     expect(valueAfter('State')).toBe('invalid')
     expect(valueAfter('Projection')).toBe('current')
@@ -404,9 +480,23 @@ describe('Knowledge / OKF editor panel', () => {
 
   it('shows supplied provenance and distinguishes absent evidence and utility', async () => {
     const store = panelStore()
-    const values = ['deterministic-v7', 'summary-field', 'source-agent', 'evidence-quote', 'profile-v9', 'model-example', 'input-hash', 'output-hash', 'generated-time']
+    const values = [
+      'deterministic-v7',
+      'summary-field',
+      'source-agent',
+      'evidence-quote',
+      'profile-v9',
+      'model-example',
+      'input-hash',
+      'output-hash',
+      'generated-time'
+    ]
     store.page.okf.projection.value = {
-      tags: [], missingFields: [], entities: [], relationships: [], openQuestions: [],
+      tags: [],
+      missingFields: [],
+      entities: [],
+      relationships: [],
+      openQuestions: [],
       provenance: {
         deterministicVersion: values[0],
         fields: [{ field: values[1], source: values[2], evidence: values[3] }],
@@ -416,7 +506,11 @@ describe('Knowledge / OKF editor panel', () => {
     const root = mountPanel(store)
     for (const value of values) expect(root.textContent).toContain(value)
     store.page.okf.projection.value = {
-      tags: [], missingFields: [], entities: [], relationships: [], openQuestions: [],
+      tags: [],
+      missingFields: [],
+      entities: [],
+      relationships: [],
+      openQuestions: [],
       provenance: { deterministicVersion: values[0], fields: [], utility: null }
     }
     await Vue.nextTick()

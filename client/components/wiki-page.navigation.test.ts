@@ -5,6 +5,15 @@ import { document } from '../test/browser-dom.mts'
 import { describe, expect, test, vi } from '../../server/test/bun-test.mts'
 import { parseWikiNavigationDocument, type WikiPagePayload } from '../helpers/wiki-navigation'
 import { focusDiscussionThread } from '../helpers/discussion-annotation-events'
+import type * as WikiStoreModule from '../store/index.ts'
+import {
+  capturePageWorkingSetScope,
+  establishPageWorkingSet,
+  invalidatePageWorkingSet,
+  recordPageVisit,
+  suspendPageWorkingSet,
+  usePageWorkingSet
+} from '../helpers/page-working-set'
 
 // Vue must capture the singleton document installed by browser-dom.
 const Vue = await import('vue')
@@ -17,6 +26,7 @@ type NavigationOptions = {
 type NavigationVm = {
   currentUrl: string
   navigationSequence: number
+  navigationAuthorizationGeneration: number
   activePageView: 'article' | 'talk' | 'links'
   navigationAbortController: AbortController | null
   navigationPending: boolean
@@ -80,6 +90,10 @@ const payload = (): WikiPagePayload => ({
     authorId: 7,
     editor: 'markdown',
     isPublished: true,
+    effectiveIsPublished: true,
+    publicSharingEligible: true,
+    publishStartDate: null,
+    publishEndDate: null,
     visibility: 'public',
     toc: 'W10=',
     sidebar: 'W10=',
@@ -116,13 +130,18 @@ const loadComponent = (
     offlineIdentityEpoch: 1,
     page: { id: 42, effectivePermissions: { comments: { read: true, write: true } } }
   },
-  nextTick = () => Promise.resolve()
+  nextTick = () => Promise.resolve(),
+  workingSet = {
+    capturePageWorkingSetScope: (): number | null => null,
+    recordPageVisit: (_pageId: number, _scope: number | null): unknown => undefined
+  }
 ) => {
   const fetch = vi.fn(async () => fetchResponse)
   const evaluate = new Function(
     'defineComponent',
     'markRaw',
     'nextTick',
+    'watch',
     'Comments',
     'Page',
     'WikiPageLinks',
@@ -137,6 +156,8 @@ const loadComponent = (
     'fetch',
     'focusDiscussionThread',
     'requestAnimationFrame',
+    'capturePageWorkingSetScope',
+    'recordPageVisit',
     `${executableScript}\nreturn wikiPageComponent`
   ) as (...dependencies: unknown[]) => WikiPageComponentOptions
 
@@ -144,6 +165,7 @@ const loadComponent = (
     (options: WikiPageComponentOptions) => options,
     Vue.markRaw,
     nextTick,
+    Vue.watch,
     {},
     {},
     {},
@@ -156,13 +178,18 @@ const loadComponent = (
     parseWikiNavigationDocument,
     // Retain the live authority object: spreading it snapshots scalar identity
     // epochs while nested user and ACL mutations still appear to work.
-    Object.assign(authority, { site }),
+    Object.assign(authority, {
+      site,
+      ...(!('authRefreshOutcome' in authority) ? { authRefreshPending: false, authRefreshSettled: true, authRefreshOutcome: 'authenticated' } : {})
+    }),
     fetch,
     focusDiscussionThread,
     (callback: FrameRequestCallback) => {
       callback(0)
       return 1
-    }
+    },
+    workingSet.capturePageWorkingSetScope,
+    workingSet.recordPageVisit
   )
   return { component, fetch }
 }
@@ -188,6 +215,7 @@ const response = (options: { url: string; headers?: HeadersInit; body?: string }
 const navigationVm = (component = loadComponent(new Response()).component): NavigationVm => ({
   currentUrl: window.location.href,
   navigationSequence: 0,
+  navigationAuthorizationGeneration: 0,
   navigationAbortController: null,
   navigationPending: false,
   activePageView: 'article',
@@ -215,6 +243,225 @@ const navigate = async (fetchResponse: Response): Promise<NavigationVm> => {
   await component.methods.navigate.call(vm, new URL('/en/requested', window.location.href), { popState: true })
   return vm
 }
+
+describe('wiki page initial working-set visit', () => {
+  for (const boundary of [
+    'current',
+    'vault-retirement',
+    'page',
+    'disposed',
+    'navigation',
+    'account-after-verification',
+    'auth-version-after-verification',
+    'epoch-after-verification',
+    'epoch-during-verification',
+    'unavailable'
+  ]) {
+    test(`uses the production cold-start store for the ${boundary} initial visit boundary`, async () => {
+      const whoami = Promise.withResolvers<Response>()
+      const storage = {
+        getReadingVault: vi.fn(async () =>
+          boundary === 'vault-retirement'
+            ? {
+                context: { canonicalOrigin: window.location.origin, siteId: 'reader-test', accountId: 8, authVersion: 1 }
+              }
+            : null
+        ),
+        currentSessionGeneration: vi.fn(async () => 1),
+        bumpSessionGeneration: vi.fn(async () => 2),
+        close: vi.fn()
+      }
+      vi.mockModule('../helpers/offline-storage.ts', import.meta.url, () => ({
+        openOfflineStorage: vi.fn(async () => storage)
+      }))
+      const originalConfig = window.siteConfig
+      const originalFetch = window.fetch
+      Reflect.set(window, 'siteConfig', {
+        ...originalConfig,
+        offlineDraftSiteId: 'reader-test',
+        product: { name: 'Test Wiki', version: '1.0.0' }
+      })
+      Reflect.set(
+        window,
+        'fetch',
+        vi.fn(() => whoami.promise)
+      )
+      // Reload the store and its working-set singleton together so every case
+      // starts at the actual module-owned cold identity and auth lifetime.
+      const { wikiStore: store, invalidateOfflineIdentity } = await vi.importFresh<typeof WikiStoreModule>('../store/index.ts', import.meta.url)
+      const workingSet = await import('../helpers/page-working-set.ts')
+      workingSet.invalidatePageWorkingSet()
+      workingSet.establishPageWorkingSet({ origin: window.location.origin, installation: 'reader-test', accountId: 7, authVersion: 3 })
+      const retiredScope = workingSet.capturePageWorkingSetScope()
+      // client-app starts this real action before mounting the reader. Do not
+      // prepopulate the account or manually publish its working-set scope.
+      const refresh = store.refreshAuth()
+      expect(store.user).toMatchObject({ id: 0, authVersion: 0, authenticated: false })
+      expect(store.offlineIdentityEpoch).toBe(0)
+      expect(store.authRefreshPending).toBe(true)
+      expect(store.authRefreshSettled).toBe(false)
+      expect(store.authRefreshOutcome).toBeNull()
+      const delayedResponse = Promise.withResolvers<Response>()
+      const { component, fetch } = loadComponent(new Response(), undefined, store, undefined, workingSet)
+      fetch.mockImplementation(() => delayedResponse.promise)
+      const host = document.createElement('div')
+      document.body.append(host)
+      const app = Vue.createApp({ ...component, render: () => Vue.h('div') }, { payload: 'initial-payload' })
+      let disposed = false
+      let navigation: Promise<void> | undefined
+      let stop = () => {}
+      try {
+        const vm = app.mount(host) as unknown as NavigationVm
+        expect(workingSet.usePageWorkingSet().recentIds).toEqual([])
+        expect(workingSet.usePageWorkingSet().recentPages).toEqual([])
+        if (boundary === 'page') vm.currentPage = { ...payload(), props: { ...payload().props, pageId: 43 } }
+        if (boundary === 'disposed') {
+          app.unmount()
+          disposed = true
+        }
+        if (boundary === 'epoch-during-verification') await invalidateOfflineIdentity()
+        stop = Vue.watch(
+          () => store.authRefreshOutcome,
+          outcome => {
+            if (outcome !== 'authenticated') return
+            if (boundary === 'account-after-verification') store.user.id = 8
+            if (boundary === 'auth-version-after-verification') store.user.authVersion++
+            if (boundary === 'epoch-after-verification') store.offlineIdentityEpoch++
+            if (boundary === 'navigation') {
+              navigation = component.methods.navigate.call(vm, new URL('/en/replacement', window.location.origin), { popState: true })
+            }
+          },
+          { flush: 'sync' }
+        )
+        whoami.resolve(
+          boundary === 'unavailable'
+            ? new Response('', { status: 503 })
+            : new Response(JSON.stringify({ authenticated: true, user: { id: 7, authVersion: 3 } }), {
+                headers: { 'content-type': 'application/json' }
+              })
+        )
+        const outcome = await refresh
+        await Vue.nextTick()
+        expect(workingSet.recordPageVisit(99, retiredScope)).toBe(false)
+        if (boundary === 'current' || boundary === 'vault-retirement') {
+          expect(outcome).toBe('authenticated')
+          expect(store.user).toMatchObject({ id: 7, authVersion: 3, authenticated: true })
+          expect(workingSet.usePageWorkingSet().recentIds).toEqual([42])
+          const persisted = JSON.parse(window.sessionStorage.getItem('tsepistle:page-working-set:v1')!)
+          expect(JSON.parse(persisted.scope)).toEqual([window.location.origin, 'reader-test', 7, 3])
+          expect(persisted.recentIds).toEqual([42])
+          expect(workingSet.usePageWorkingSet().recentPages).toEqual([])
+          if (boundary === 'vault-retirement') {
+            expect(store.offlineIdentityEpoch).toBeGreaterThan(0)
+            expect(storage.bumpSessionGeneration).toHaveBeenCalledWith(undefined, { expectedSessionGeneration: 1 })
+          }
+        } else {
+          expect(workingSet.usePageWorkingSet().recentIds).toEqual([])
+          expect(workingSet.usePageWorkingSet().recentPages).toEqual([])
+          const persisted = window.sessionStorage.getItem('tsepistle:page-working-set:v1')
+          if (persisted !== null) expect(JSON.parse(persisted).recentIds).toEqual([])
+        }
+      } finally {
+        stop()
+        whoami.resolve(new Response('', { status: 503 }))
+        await refresh
+        if (!disposed) app.unmount()
+        delayedResponse.resolve(response({ url: new URL('/en/replacement', window.location.origin).href }).value)
+        await navigation
+        host.remove()
+        workingSet.invalidatePageWorkingSet()
+        Reflect.set(window, 'fetch', originalFetch)
+        Reflect.set(window, 'siteConfig', originalConfig)
+        store.$dispose()
+      }
+    })
+  }
+
+  for (const boundary of ['current', 'page', 'disposed', 'account', 'auth-version', 'epoch', 'unavailable', 'navigation']) {
+    test(`records a pending-verification direct mount only for its still-current ${boundary} boundary`, async () => {
+      const verification = Promise.withResolvers<string>()
+      const authority = Vue.reactive({
+        user: { id: 7, authVersion: 3 },
+        offlineIdentityEpoch: 1,
+        authRefreshPending: true,
+        authRefreshSettled: false,
+        authRefreshOutcome: null as string | null,
+        waitForAuthRefresh: vi.fn(() => verification.promise),
+        page: { id: 42, effectivePermissions: { comments: { read: true, write: true } } }
+      })
+      invalidatePageWorkingSet()
+      establishPageWorkingSet({ origin: window.location.origin, installation: 'reader-test', accountId: 7, authVersion: 3 })
+      const retiredScope = capturePageWorkingSetScope()
+      suspendPageWorkingSet()
+      const capture = vi.fn(capturePageWorkingSetScope)
+      const record = vi.fn(recordPageVisit)
+      const delayedResponse = Promise.withResolvers<Response>()
+      const { component, fetch } = loadComponent(new Response(), undefined, authority, undefined, {
+        capturePageWorkingSetScope: capture,
+        recordPageVisit: record
+      })
+      fetch.mockImplementation(() => delayedResponse.promise)
+      // Mount the real watcher/lifecycle while verification is still pending.
+      const host = document.createElement('div')
+      document.body.append(host)
+      const app = Vue.createApp({ ...component, render: () => Vue.h('div') }, { payload: 'initial-payload' })
+      let disposed = false
+      let navigation: Promise<void> | undefined
+      try {
+        const vm = app.mount(host) as unknown as NavigationVm
+        expect(authority.waitForAuthRefresh).toHaveBeenCalledTimes(1)
+        expect(capture).not.toHaveBeenCalled()
+        expect(record).not.toHaveBeenCalled()
+        if (boundary === 'page') vm.currentPage = { ...payload(), props: { ...payload().props, pageId: 43 } }
+        if (boundary === 'disposed') {
+          app.unmount()
+          disposed = true
+        }
+        if (boundary === 'account') authority.user.id = 8
+        if (boundary === 'auth-version') authority.user.authVersion++
+        if (boundary === 'epoch') authority.offlineIdentityEpoch++
+        if (boundary !== 'unavailable') {
+          establishPageWorkingSet({
+            origin: window.location.origin,
+            installation: 'reader-test',
+            accountId: authority.user.id,
+            authVersion: authority.user.authVersion
+          })
+        }
+        const verifiedScope = capturePageWorkingSetScope()
+        expect(recordPageVisit(99, retiredScope)).toBe(false)
+        authority.authRefreshOutcome = boundary === 'unavailable' ? 'unavailable' : 'authenticated'
+        authority.authRefreshSettled = true
+        authority.authRefreshPending = false
+        if (boundary === 'navigation') {
+          navigation = component.methods.navigate.call(vm, new URL('/en/replacement', window.location.origin), { popState: true })
+        }
+        verification.resolve(authority.authRefreshOutcome)
+        await verification.promise
+        await Vue.nextTick()
+        if (boundary === 'current') {
+          expect(capture).toHaveBeenCalledTimes(1)
+          expect(record).toHaveBeenCalledWith(42, verifiedScope)
+          expect(usePageWorkingSet().recentIds).toEqual([42])
+          expect(usePageWorkingSet().recentPages).toEqual([])
+        } else {
+          if (boundary !== 'unavailable') expect(record).not.toHaveBeenCalled()
+          // Unknown verification can pass a null scope to the helper, but must
+          // never retain selectors or expose metadata under unverified authority.
+          expect(usePageWorkingSet().recentPages).toEqual([])
+          expect(usePageWorkingSet().recentIds).toEqual([])
+        }
+      } finally {
+        verification.resolve('unavailable')
+        if (!disposed) app.unmount()
+        delayedResponse.resolve(response({ url: new URL('/en/replacement', window.location.origin).href }).value)
+        await navigation
+        host.remove()
+        invalidatePageWorkingSet()
+      }
+    })
+  }
+})
 
 describe('wiki page feature visibility', () => {
   test('passes independent runtime theme settings to the page reader', () => {
@@ -327,6 +574,96 @@ describe('contextual feedback discussion handoff', () => {
 })
 
 describe('wiki page navigation response boundary', () => {
+  for (const stage of ['response', 'body']) {
+    for (const boundary of ['account', 'auth-version', 'epoch', 'pending', 'unavailable', 'unsettled', 'refresh-cycle', 'current', 'anonymous']) {
+      test(`${boundary === 'current' || boundary === 'anonymous' ? 'publishes for current verified authority' : 'never publishes'} a deferred ${stage} after the verified ${boundary} boundary changes`, async () => {
+        const destination = new URL('/en/private-old-identity', window.location.origin)
+        const { value, readBody } = response({ url: destination.href })
+        const delayedResponse = Promise.withResolvers<Response>()
+        const delayedBody = Promise.withResolvers<string>()
+        const authority = Vue.reactive({
+          user: { id: 7, authVersion: 3 },
+          offlineIdentityEpoch: 1,
+          authRefreshPending: false,
+          authRefreshSettled: true,
+          authRefreshOutcome: 'authenticated',
+          page: { id: 42, effectivePermissions: { comments: { read: true, write: true } } }
+        })
+        const { component, fetch } = loadComponent(value, undefined, authority)
+        if (boundary === 'anonymous') {
+          authority.authRefreshOutcome = 'anonymous'
+          authority.user.id = 0
+        }
+        if (stage === 'response') fetch.mockImplementationOnce(() => delayedResponse.promise)
+        else readBody.mockImplementationOnce(() => delayedBody.promise)
+        const host = document.createElement('div')
+        document.body.append(host)
+        const app = Vue.createApp(
+          {
+            ...component,
+            mounted() {},
+            render: () => Vue.h('div')
+          },
+          { payload: 'initial-payload' }
+        )
+        const vm = app.mount(host) as unknown as NavigationVm
+        vm.saveCurrentHistoryScroll = vi.fn()
+        vm.updateDocumentMetadata = vi.fn()
+        vm.restoreScroll = vi.fn()
+        vm.hardNavigate = vi.fn()
+        const originalPage = vm.currentPage
+        const originalUrl = vm.currentUrl
+        const originalHistory = window.location.href
+        const push = vi.spyOn(window.history, 'pushState')
+        try {
+          const pending = component.methods.navigate.call(vm, destination)
+          await Promise.resolve()
+          if (boundary === 'account') authority.user.id = 8
+          if (boundary === 'auth-version') authority.user.authVersion++
+          if (boundary === 'epoch') authority.offlineIdentityEpoch++
+          if (boundary === 'pending') authority.authRefreshPending = true
+          if (boundary === 'unavailable') authority.authRefreshOutcome = 'unavailable'
+          if (boundary === 'unsettled') authority.authRefreshSettled = false
+          if (boundary === 'refresh-cycle') {
+            authority.authRefreshPending = true
+            authority.authRefreshPending = false
+          }
+          const allowed = boundary === 'current' || boundary === 'anonymous'
+          if (!allowed) {
+            expect(vm.navigationPending).toBe(false)
+            expect(vm.navigationAbortController).toBeNull()
+          }
+          delayedResponse.resolve(value)
+          delayedBody.resolve(pageDocument())
+          await pending
+          if (allowed) {
+            expect(vm.navigationKey).toBe(1)
+            expect(vm.contentHtml).toContain('data-forged-content')
+            expect(vm.commentsHtml).toContain('data-forged-comments')
+            expect(vm.currentUrl).toBe(destination.href)
+            expect(push).toHaveBeenCalledTimes(1)
+            expect(vm.updateDocumentMetadata).toHaveBeenCalledTimes(1)
+          } else {
+            expect(vm.currentPage).toBe(originalPage)
+            expect(vm.contentHtml).toBe('')
+            expect(vm.commentsHtml).toBe('')
+            expect(vm.currentUrl).toBe(originalUrl)
+            expect(vm.navigationKey).toBe(0)
+            expect(push).not.toHaveBeenCalled()
+            expect(vm.updateDocumentMetadata).not.toHaveBeenCalled()
+            expect(vm.hardNavigate).not.toHaveBeenCalled()
+            expect(vm.restoreScroll).not.toHaveBeenCalled()
+          }
+        } finally {
+          push.mockRestore()
+          app.unmount()
+          host.remove()
+          window.history.replaceState(null, '', originalHistory)
+        }
+      })
+    }
+  }
+
   test('keeps navigation pending until the page body is ready and clears it on completion', async () => {
     const destination = new URL('/en/pending-page', window.location.origin)
     const { value, readBody } = response({ url: destination.href })

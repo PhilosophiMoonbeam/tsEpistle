@@ -1,40 +1,42 @@
 <template>
   <v-container fluid class="analytics-workspace">
-    <admin-hero icon="mdi-chart-areaspline" :title="$t('admin:analytics.title')" :description="$t('admin:analytics.understandReadersDeliberateAbout')">
+    <admin-hero icon="mdi-chart-areaspline" :title="tr('title')" :description="tr('operationalSubtitle')">
       <template #actions>
-        <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="busy || loading" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:analytics.reloadSavedAnalyticsSettings') }}</v-tooltip></v-btn>
-        <v-btn v-if="dirty" variant="text" :disabled="locked" @click="reset">{{ $t('admin:analytics.resetDraft') }}</v-btn>
-        <v-btn color="primary" :disabled="locked || !dirty" @click="review">{{ $t('admin:analytics.reviewChanges') }}</v-btn>
+        <v-btn variant="text" prepend-icon="mdi-refresh" :disabled="busy || loading" @click="reload">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ tr('reloadSavedAnalyticsSettings') }}</v-tooltip></v-btn>
+        <v-btn v-if="dirty" variant="text" :disabled="locked" @click="reset">{{ tr('resetDraft') }}</v-btn>
+        <v-btn color="primary" variant="tonal" :data-commitment="dirty && !locked ? 'active' : undefined" :disabled="locked || !dirty" @click="review">{{ tr('reviewChanges') }}</v-btn>
+      </template>
+      <template v-if="saved && policy" #status>
+        <div class="analytics-status">
+          <span>
+            <i :class="{ 'is-draft': dirty }" aria-hidden="true" />
+            {{ dirty ? tr('unsavedAnalyticsDraft') : tr('showingSavedSettings') }}
+          </span>
+          <span>{{ tr('observed', { observedAt: dateTime(saved.observedAt), interpolation: { escapeValue: false } }) }}</span>
+        </div>
       </template>
     </admin-hero>
     <async-state
       v-if="loading && !saved"
       state="loading"
-      :title="$t('admin:analytics.loadingAnalytics')"
-      :message="$t('admin:analytics.readingCollectionPolicyIntegrations')"
+      :title="tr('loadingAnalytics')"
+      :message="tr('readingCollectionPolicyIntegrations')"
     />
     <async-state
       v-else-if="error && !saved"
       state="error"
-      :title="$t('admin:analytics.analyticsCouldNotLoaded2')"
+      :title="tr('analyticsCouldNotLoaded2')"
       :message="error"
-      :retry-label="$t('admin:analytics.tryAgain')"
+      :retry-label="tr('tryAgain')"
       @retry="load"
     />
     <v-alert v-else-if="error" type="error" variant="tonal" class="mb-5">{{ error }}</v-alert>
     <v-alert v-if="stale" type="warning" variant="tonal" class="mb-5">
-      {{ $t('admin:analytics.savedStateChangedAction') }}
+      {{ tr('savedStateChangedAction') }}
     </v-alert>
     <v-alert v-if="notice" type="success" variant="tonal" class="mb-5">{{ notice }}</v-alert>
     <template v-if="saved && policy">
-      <div class="analytics-status">
-        <span>
-          <i :class="{ 'is-draft': dirty }" />
-          {{ dirty ? $t('admin:analytics.unsavedAnalyticsDraft') : $t('admin:analytics.showingSavedSettings') }}
-        </span>
-        <span>{{ $t('admin:analytics.observed', { observedAt: dateTime(saved.observedAt), interpolation: { escapeValue: false } }) }}</span>
-      </div>
-      <nav class="analytics-tabs" :aria-label="$t('admin:analytics.analyticsSections')">
+      <nav class="analytics-tabs" :aria-label="tr('analyticsSections')">
         <button
           v-for="tab in sections"
           :key="tab.key"
@@ -48,30 +50,27 @@
       </nav>
       <div class="analytics-layout">
         <section class="analytics-main">
+          <h2 class="sr-only">{{ sections.find((tab) => tab.key === section)?.title }}</h2>
           <template v-if="section === 'overview'">
-            <div class="analytics-heading">
-              <span class="analytics-kicker">{{ $t('admin:analytics.n01ReadingPulse') }}</span>
-              <h2>{{ $t('admin:analytics.knowledgeUse') }}</h2>
-              <p>{{ $t('admin:analytics.localEvidenceCompletedReader') }}</p>
-            </div>
-            <div class="analytics-metrics">
+            <p class="analytics-section-help">{{ tr('localEvidenceCompletedReader') }}</p>
+            <div class="analytics-metrics wiki-surface-well">
               <div>
-                <span>{{ $t('admin:analytics.recordedReaderResponses') }}</span>
+                <span>{{ tr('recordedReaderResponses') }}</span>
                 <strong><animated-number :value="saved.insights.totalResponses" :duration="700" :format-value="number" /></strong>
-                <small>{{ $t('admin:analytics.utc', { from: saved.insights.from, through: saved.insights.through, interpolation: { escapeValue: false } }) }}</small>
+                <small>{{ tr('utc', { from: saved.insights.from, through: saved.insights.through, interpolation: { escapeValue: false } }) }}</small>
               </div>
               <div>
-                <span>{{ $t('admin:analytics.sharedPagesReached') }}</span>
+                <span>{{ tr('sharedPagesReached') }}</span>
                 <strong><animated-number :value="saved.insights.pages" :duration="700" :format-value="number" /></strong>
-                <small>{{ $t('admin:analytics.currentPublishedUnprotectedPages') }}</small>
+                <small>{{ tr('currentPublishedUnprotectedPages') }}</small>
               </div>
             </div>
             <div class="analytics-section-head">
-              <h3>{{ $t('admin:analytics.dailyResponseHistory') }}</h3>
+              <h3>{{ tr('dailyResponseHistory') }}</h3>
               <v-select
                 :model-value="reportDays"
                 :items="reportWindows"
-                :label="$t('admin:analytics.reportingWindow')"
+                :label="tr('reportingWindow')"
                 variant="outlined"
                 density="compact"
                 hide-details
@@ -79,31 +78,31 @@
                 :disabled="locked"
                 @update:model-value="selectWindow"
               />
-              <v-btn variant="text" prepend-icon="mdi-download" :disabled="!saved.insights.daily.length" @click="exportCounts">{{ $t('admin:analytics.exportCounts') }}</v-btn>
+              <v-btn variant="text" prepend-icon="mdi-download" :disabled="!saved.insights.daily.length" @click="exportCounts">{{ tr('exportCounts') }}</v-btn>
             </div>
-            <div v-if="!saved.insights.totalResponses" class="analytics-empty">
+            <div v-if="!saved.insights.totalResponses" class="analytics-empty wiki-surface-well">
               <v-icon size="36" icon="mdi-chart-timeline-variant" />
-              <h3>{{ $t('admin:analytics.noReaderResponsesRecorded') }}</h3>
+              <h3>{{ tr('noReaderResponsesRecorded') }}</h3>
               <p>
                 {{
                   saved.policy.localEnabled
-                    ? $t('admin:analytics.eligibleResponsesWillAppear')
-                    : $t('admin:analytics.localCountsPausedEnable')
+                    ? tr('eligibleResponsesWillAppear')
+                    : tr('localCountsPausedEnable')
                 }}
               </p>
-              <v-btn variant="outlined" @click="selectSection('collection')">{{ $t('admin:analytics.reviewCollectionPolicy') }}</v-btn>
+              <v-btn variant="outlined" @click="selectSection('collection')">{{ tr('reviewCollectionPolicy') }}</v-btn>
             </div>
-            <figure v-else class="analytics-chart">
+            <figure v-else class="analytics-chart wiki-surface-well">
               <svg
                 class="analytics-chart-svg"
                 viewBox="0 0 720 180"
                 role="img"
-                :aria-label="$t('admin:analytics.dailyRecordedReaderResponses')"
+                :aria-label="tr('dailyRecordedReaderResponses')"
                 preserveAspectRatio="none"
                 @pointermove="handleChartPointer"
                 @pointerleave="clearChartPointer"
               >
-                <title>{{ $t('admin:analytics.dailyRecordedReaderResponses') }}</title>
+                <title>{{ tr('dailyRecordedReaderResponses') }}</title>
                 <defs>
                   <linearGradient :id="barGradId" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stop-color="rgb(var(--v-theme-primary))" stop-opacity="1" />
@@ -129,7 +128,7 @@
                   :fill="`url(#${barGradId})`"
                   :filter="`url(#${barGlowId})`"
                 >
-                  <title>{{ $t('admin:analytics.responses', { day: bar.day, responses: number(bar.responses), interpolation: { escapeValue: false } }) }}</title>
+                  <title>{{ tr('responses', { day: bar.day, responses: number(bar.responses), interpolation: { escapeValue: false } }) }}</title>
                 </rect>
                 <line
                   v-if="activeBar"
@@ -149,7 +148,7 @@
               </svg>
               <div v-if="activeBar" class="analytics-chart-readout">
                 <span class="analytics-chart-readout__day">{{ activeBar.day }}</span>
-                <span class="analytics-chart-readout__count"><strong>{{ number(activeBar.responses) }}</strong> {{ $t('admin:analytics.responses2') }}</span>
+                <span class="analytics-chart-readout__count"><strong>{{ number(activeBar.responses) }}</strong> {{ tr('responses2') }}</span>
               </div>
               <figcaption>
                 <span>{{ saved.insights.from }}</span>
@@ -157,14 +156,14 @@
               </figcaption>
             </figure>
             <details v-if="saved.insights.daily.length" class="analytics-detail-table">
-              <summary>{{ $t('admin:analytics.viewExactDailyCounts') }}</summary>
+              <summary>{{ tr('viewExactDailyCounts') }}</summary>
               <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded overflow region needs a tab stop for keyboard scrolling. -->
-              <section class="analytics-table-scroll" tabindex="0" :aria-label="$t('admin:analytics.dailyResponseCounts')"><table>
-                <caption class="sr-only">{{ $t('admin:analytics.recordedResponsesUtcDay') }}</caption>
+              <section class="analytics-table-scroll wiki-surface-well" tabindex="0" :aria-label="tr('dailyResponseCounts')"><table>
+                <caption class="sr-only">{{ tr('recordedResponsesUtcDay') }}</caption>
                 <thead>
                   <tr>
-                    <th scope="col">{{ $t('admin:analytics.day') }}</th>
-                    <th scope="col">{{ $t('admin:analytics.responses3') }}</th>
+                    <th scope="col">{{ tr('day') }}</th>
+                    <th scope="col">{{ tr('responses3') }}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -177,11 +176,11 @@
             </details>
             <div class="analytics-section-head">
               <div>
-                <h3>{{ $t('admin:analytics.mostReadSharedPages') }}</h3>
-                <p>{{ $t('admin:analytics.up15PagesRetained') }}</p>
+                <h3>{{ tr('mostReadSharedPages') }}</h3>
+                <p>{{ tr('up15PagesRetained') }}</p>
               </div>
             </div>
-            <div v-if="saved.insights.topPages.length" class="analytics-ranked">
+            <div v-if="saved.insights.topPages.length" class="analytics-ranked wiki-surface-well">
               <a v-for="(page, index) in saved.insights.topPages" :key="page.id" :href="`/i/${page.id}`">
                 <span class="analytics-rank">{{ String(index + 1).padStart(2, '0') }}</span>
                 <span>
@@ -192,49 +191,45 @@
                 <v-icon icon="mdi-arrow-top-right" size="18" />
               </a>
             </div>
-            <p v-else class="analytics-muted">{{ $t('admin:analytics.pageRankingsAppearWhen') }}</p>
+            <p v-else class="analytics-muted">{{ tr('pageRankingsAppearWhen') }}</p>
             <p class="analytics-footnote">
-              {{ $t('admin:analytics.countsCanIncludeAutomated') }}
+              {{ tr('countsCanIncludeAutomated') }}
             </p>
           </template>
           <template v-else-if="section === 'collection'">
-            <div class="analytics-heading">
-              <span class="analytics-kicker">{{ $t('admin:analytics.n02IntentionalMeasurement') }}</span>
-              <h2>{{ $t('admin:analytics.chooseWhatCounts') }}</h2>
-              <p>{{ $t('admin:analytics.onePolicyGovernsLocal') }}</p>
+            <p class="analytics-section-help">{{ tr('onePolicyGovernsLocal') }}</p>
+            <div class="analytics-setting">
+              <div>
+                <h3>{{ tr('localReaderCounts') }}</h3>
+                <p>
+                  {{ tr('storeDailyCountPer') }}
+                </p>
+              </div>
+              <v-switch :model-value="policy.localEnabled" @update:model-value="$event !== null && (policy.localEnabled = $event)" :label="tr('recordLocalReaderCounts')" color="primary" hide-details :disabled="locked" />
             </div>
             <div class="analytics-setting">
               <div>
-                <h3>{{ $t('admin:analytics.localReaderCounts') }}</h3>
+                <h3>{{ tr('externalIntegrations') }}</h3>
                 <p>
-                  {{ $t('admin:analytics.storeDailyCountPer') }}
+                  {{ tr('allowEnabledProvidersEmbed') }}
                 </p>
               </div>
-              <v-switch :model-value="policy.localEnabled" @update:model-value="$event !== null && (policy.localEnabled = $event)" :label="$t('admin:analytics.recordLocalReaderCounts')" color="primary" hide-details :disabled="locked" />
-            </div>
-            <div class="analytics-setting">
-              <div>
-                <h3>{{ $t('admin:analytics.externalIntegrations') }}</h3>
-                <p>
-                  {{ $t('admin:analytics.allowEnabledProvidersEmbed') }}
-                </p>
-              </div>
-              <v-switch :model-value="policy.externalEnabled" @update:model-value="$event !== null && (policy.externalEnabled = $event)" :label="$t('admin:analytics.allowExternalIntegrations')" color="primary" hide-details :disabled="locked" />
+              <v-switch :model-value="policy.externalEnabled" @update:model-value="$event !== null && (policy.externalEnabled = $event)" :label="tr('allowExternalIntegrations')" color="primary" hide-details :disabled="locked" />
             </div>
             <v-alert v-if="saved.offline" type="info" variant="tonal" class="mb-5">
-              {{ $t('admin:analytics.offlineModeSuspendsExternal') }}
+              {{ tr('offlineModeSuspendsExternal') }}
             </v-alert>
             <div class="analytics-setting">
               <div>
-                <h3>{{ $t('admin:analytics.readerAudience') }}</h3>
+                <h3>{{ tr('readerAudience') }}</h3>
                 <p>
-                  {{ $t('admin:analytics.appliesOnlyPublishedShared') }}
+                  {{ tr('appliesOnlyPublishedShared') }}
                 </p>
               </div>
               <v-select
                 v-model="policy.audience"
                 :items="audiences"
-                :label="$t('admin:analytics.measureResponses')"
+                :label="tr('measureResponses')"
                 variant="outlined"
                 hide-details
                 :disabled="locked"
@@ -242,13 +237,13 @@
             </div>
             <div class="analytics-setting">
               <div>
-                <h3>{{ $t('admin:analytics.keepAdministrationOut') }}</h3>
-                <p>{{ $t('admin:analytics.excludeReaderRequestsMade') }}</p>
+                <h3>{{ tr('keepAdministrationOut') }}</h3>
+                <p>{{ tr('excludeReaderRequestsMade') }}</p>
               </div>
               <v-switch
                 :model-value="policy.excludeAdministrators"
                 @update:model-value="$event !== null && (policy.excludeAdministrators = $event)"
-                :label="$t('admin:analytics.excludeSystemAdministrators')"
+                :label="tr('excludeSystemAdministrators')"
                 color="primary"
                 hide-details
                 :disabled="locked"
@@ -256,21 +251,21 @@
             </div>
             <div class="analytics-setting">
               <div>
-                <h3>{{ $t('admin:analytics.respectRequestPrivacySignals') }}</h3>
-                <p>{{ $t('admin:analytics.skipBothLocalExternal') }}</p>
+                <h3>{{ tr('respectRequestPrivacySignals') }}</h3>
+                <p>{{ tr('skipBothLocalExternal') }}</p>
               </div>
-              <v-switch :model-value="policy.respectPrivacySignals" @update:model-value="$event !== null && (policy.respectPrivacySignals = $event)" :label="$t('admin:analytics.honorDntGpcHeaders')" color="primary" hide-details :disabled="locked" />
+              <v-switch :model-value="policy.respectPrivacySignals" @update:model-value="$event !== null && (policy.respectPrivacySignals = $event)" :label="tr('honorDntGpcHeaders')" color="primary" hide-details :disabled="locked" />
             </div>
             <div class="analytics-setting analytics-setting-wide">
               <div>
-                <h3>{{ $t('admin:analytics.excludedPathsSections') }}</h3>
+                <h3>{{ tr('excludedPathsSections') }}</h3>
                 <p>
-                  {{ $t('admin:analytics.oneLiteralPagePath') }}
+                  {{ tr('oneLiteralPagePath') }}
                 </p>
               </div>
               <v-textarea
                 v-model="excludedText"
-                :label="$t('admin:analytics.excludedPagePaths')"
+                :label="tr('excludedPagePaths')"
                 variant="outlined"
                 rows="3"
                 auto-grow
@@ -280,19 +275,19 @@
             </div>
             <div class="analytics-setting">
               <div>
-                <h3>{{ $t('admin:analytics.localRetention') }}</h3>
+                <h3>{{ tr('localRetention') }}</h3>
                 <p>
-                  {{ $t('admin:analytics.reportUsesInclusiveUtc') }}
+                  {{ tr('reportUsesInclusiveUtc') }}
                 </p>
               </div>
               <v-select
                 v-model="policy.retentionDays"
                 :items="[
-                  { title: $t('admin:analytics.n30Days'), value: 30 },
-                  { title: $t('admin:analytics.n90Days'), value: 90 },
-                  { title: $t('admin:analytics.n365Days'), value: 365 }
+                  { title: tr('n30Days'), value: 30 },
+                  { title: tr('n90Days'), value: 90 },
+                  { title: tr('n365Days'), value: 365 }
                 ]"
-                :label="$t('admin:analytics.retainLocalCounts')"
+                :label="tr('retainLocalCounts')"
                 variant="outlined"
                 hide-details
                 :disabled="locked"
@@ -300,52 +295,48 @@
             </div>
             <div class="analytics-section-head">
               <div>
-                <h3>{{ $t('admin:analytics.collectionPreview') }}</h3>
-                <p>{{ $t('admin:analytics.simulationDraftNotLive') }}</p>
+                <h3>{{ tr('collectionPreview') }}</h3>
+                <p>{{ tr('simulationDraftNotLive') }}</p>
               </div>
             </div>
-            <div class="analytics-simulator">
-              <v-text-field v-model="simulation.path" :label="$t('admin:analytics.examplePagePath')" variant="outlined" hide-details />
+            <div class="analytics-simulator wiki-surface-well">
+              <v-text-field v-model="simulation.path" :label="tr('examplePagePath')" variant="outlined" hide-details />
               <v-select
                 v-model="simulation.reader"
                 :items="[
-                  { title: $t('admin:analytics.anonymousReader'), value: 'anonymous' },
-                  { title: $t('admin:analytics.signedReader'), value: 'signed-in' },
-                  { title: $t('admin:analytics.systemAdministrator'), value: 'administrator' }
+                  { title: tr('anonymousReader'), value: 'anonymous' },
+                  { title: tr('signedReader'), value: 'signed-in' },
+                  { title: tr('systemAdministrator'), value: 'administrator' }
                 ]"
-                :label="$t('admin:analytics.exampleReader')"
+                :label="tr('exampleReader')"
                 variant="outlined"
                 hide-details
               />
-              <v-checkbox :model-value="simulation.privacySignal" @update:model-value="$event !== null && (simulation.privacySignal = $event)" :label="$t('admin:analytics.requestSendsDntGpc')" hide-details />
+              <v-checkbox :model-value="simulation.privacySignal" @update:model-value="$event !== null && (simulation.privacySignal = $event)" :label="tr('requestSendsDntGpc')" hide-details />
               <div role="status" class="analytics-simulation-result">
                 <strong>
                   {{ $t(simulationResult.local ? 'admin:analytics.simulationLocalEligible' : 'admin:analytics.simulationLocalExcluded') }}
                   · {{ $t(simulationResult.external ? 'admin:analytics.simulationExternalEligible' : 'admin:analytics.simulationExternalExcluded') }}
                 </strong>
-                <p>{{ simulationReason }} {{ $t('admin:analytics.simulationProvidersRequired') }}</p>
+                <p>{{ simulationReason }} {{ tr('simulationProvidersRequired') }}</p>
               </div>
             </div>
             <div class="analytics-erasure">
               <div>
-                <h3>{{ $t('admin:analytics.eraseLocalHistory') }}</h3>
-                <p>{{ $t('admin:analytics.removeAllStoredLocal') }}</p>
+                <h3>{{ tr('eraseLocalHistory') }}</h3>
+                <p>{{ tr('removeAllStoredLocal') }}</p>
               </div>
-              <v-btn variant="outlined" color="error" :disabled="locked || dirty" @click="openErase">{{ $t('admin:analytics.reviewErasure') }}</v-btn>
+              <v-btn variant="outlined" color="error" :disabled="locked || dirty" @click="openErase">{{ tr('reviewErasure') }}</v-btn>
             </div>
           </template>
           <template v-else-if="section === 'providers'">
-            <div class="analytics-heading">
-              <span class="analytics-kicker">{{ $t('admin:analytics.n03DeliberateConnections') }}</span>
-              <h2>{{ $t('admin:analytics.giveEveryIntegrationPurpose') }}</h2>
-              <p>{{ $t('admin:analytics.configureProvidersIndependentlyExternal') }}</p>
-            </div>
+            <p class="analytics-section-help">{{ tr('configureProvidersIndependentlyExternal') }}</p>
             <div class="analytics-provider-filter">
-              <v-text-field v-model="search" :label="$t('admin:analytics.findProvider')" prepend-inner-icon="mdi-magnify" variant="outlined" hide-details clearable />
-              <v-select v-model="category" :items="categories" :label="$t('admin:analytics.providerCategory')" variant="outlined" hide-details />
+              <v-text-field v-model="search" :label="tr('findProvider')" prepend-inner-icon="mdi-magnify" variant="outlined" hide-details clearable />
+              <v-select v-model="category" :items="categories" :label="tr('providerCategory')" variant="outlined" hide-details />
             </div>
             <div class="analytics-provider-layout">
-              <nav :aria-label="$t('admin:analytics.analyticsProviders')" class="analytics-provider-list">
+              <nav :aria-label="tr('analyticsProviders')" class="analytics-provider-list">
                 <button
                   v-for="row in filteredProviders"
                   :key="row.key"
@@ -361,7 +352,7 @@
                   </span>
                   <v-icon icon="mdi-chevron-right" size="18" />
                 </button>
-                <p v-if="!filteredProviders.length" class="analytics-muted">{{ $t('admin:analytics.noProvidersMatchTry') }}</p>
+                <p v-if="!filteredProviders.length" class="analytics-muted">{{ tr('noProvidersMatchTry') }}</p>
               </nav>
               <article v-if="provider && providerDraft" class="analytics-provider-detail">
                 <span class="analytics-kicker">{{ categoryLabel(provider.category) }}</span>
@@ -370,7 +361,7 @@
                 <v-switch
                   :model-value="providerDraft.isEnabled"
                   @update:model-value="$event !== null && (providerDraft.isEnabled = $event)"
-                  :label="$t('admin:analytics.enable', { title: provider.title, interpolation: { escapeValue: false } })"
+                  :label="tr('enable', { title: provider.title, interpolation: { escapeValue: false } })"
                   color="primary"
                   hide-details
                   :disabled="locked || (!provider.isAvailable && !providerDraft.isEnabled)"
@@ -379,7 +370,7 @@
                   <span v-for="capability in provider.capabilities" :key="capability">{{ capability }}</span>
                 </div>
                 <v-alert v-if="!provider.isAvailable" type="warning" variant="tonal">
-                  {{ $t('admin:analytics.integrationUnavailableSavedEnablement') }}
+                  {{ tr('integrationUnavailableSavedEnablement') }}
                 </v-alert>
                 <p class="analytics-compatibility">{{ provider.compatibility }}</p>
                 <div class="analytics-provider-fields">
@@ -397,7 +388,7 @@
                     <v-text-field
                       v-else
                       v-model="providerDraft.config[field.key]"
-                      :label="field.optional ? $t('admin:analytics.optionalFieldLabel', { field: field.title }) : field.title"
+                      :label="field.optional ? tr('optionalFieldLabel', { field: field.title }) : field.title"
                       :hint="field.hint"
                       persistent-hint
                       variant="outlined"
@@ -407,23 +398,23 @@
                   </template>
                 </div>
                 <div v-if="providerProblems.length" class="analytics-provider-problems" role="status">
-                  <strong>{{ providerDraft.isEnabled ? $t('admin:analytics.resolveBeforePublication') : $t('admin:analytics.neededBeforeEnabling') }}</strong>
+                  <strong>{{ providerDraft.isEnabled ? tr('resolveBeforePublication') : tr('neededBeforeEnabling') }}</strong>
                   <ul>
                     <li v-for="issue in providerProblems" :key="issue">{{ issue }}</li>
                   </ul>
                 </div>
                 <div class="analytics-hosts">
-                  <h4>{{ $t('admin:analytics.declaredScriptConfiguredHosts') }}</h4>
+                  <h4>{{ tr('declaredScriptConfiguredHosts') }}</h4>
                   <ul v-if="providerHosts.length">
                     <li v-for="host in providerHosts" :key="host">
                       <code>{{ host }}</code>
                     </li>
                   </ul>
-                  <p v-else>{{ $t('admin:analytics.completeServerFieldsSee') }}</p>
-                  <small>{{ $t('admin:analytics.sdksTagContainersMay') }}</small>
+                  <p v-else>{{ tr('completeServerFieldsSee') }}</p>
+                  <small>{{ tr('sdksTagContainersMay') }}</small>
                 </div>
                 <p class="analytics-footnote">
-                  {{ $t('admin:analytics.trackingIdentifiersEnteredHere') }}
+                  {{ tr('trackingIdentifiersEnteredHere') }}
                 </p>
                 <v-btn
                   v-if="provider.website"
@@ -432,39 +423,35 @@
                   rel="noopener noreferrer"
                   variant="text"
                   append-icon="mdi-open-in-new"
-                  :aria-label="$t('admin:analytics.websiteOpensNewTab', { title: provider.title, interpolation: { escapeValue: false } })"
+                  :aria-label="tr('websiteOpensNewTab', { title: provider.title, interpolation: { escapeValue: false } })"
                 >
-                  {{ $t('admin:analytics.providerWebsite') }}
+                  {{ tr('providerWebsite') }}
                 </v-btn>
               </article>
-              <div v-else class="analytics-empty">
-                <h3>{{ $t('admin:analytics.selectIntegration') }}</h3>
-                <p>{{ $t('admin:analytics.chooseProviderInspectConfiguration') }}</p>
+              <div v-else class="analytics-empty wiki-surface-well">
+                <h3>{{ tr('selectIntegration') }}</h3>
+                <p>{{ tr('chooseProviderInspectConfiguration') }}</p>
               </div>
             </div>
           </template>
           <template v-else>
-            <div class="analytics-heading">
-              <span class="analytics-kicker">{{ $t('admin:analytics.n04AccountableRecord') }}</span>
-              <h2>{{ $t('admin:analytics.decisionsContext') }}</h2>
-              <p>{{ $t('admin:analytics.latest50CollectionChanges') }}</p>
+            <p class="analytics-section-help">{{ tr('latest50CollectionChanges') }}</p>
+            <div v-if="!saved.history.length" class="analytics-empty wiki-surface-well">
+              <h3>{{ tr('noAdministrativeActivityYet') }}</h3>
+              <p>{{ tr('publishingSettingsErasingLocal') }}</p>
             </div>
-            <div v-if="!saved.history.length" class="analytics-empty">
-              <h3>{{ $t('admin:analytics.noAdministrativeActivityYet') }}</h3>
-              <p>{{ $t('admin:analytics.publishingSettingsErasingLocal') }}</p>
-            </div>
-            <ol v-else class="analytics-history">
+            <ol v-else class="analytics-history wiki-surface-well">
               <li v-for="event in saved.history" :key="event.id">
                 <span class="analytics-event-icon"><v-icon :icon="event.kind === 'erase' ? 'mdi-delete-outline' : 'mdi-check'" /></span>
                 <div>
                   <div class="analytics-section-head">
-                    <h3>{{ event.kind === 'erase' ? $t('admin:analytics.localHistoryErased') : $t('admin:analytics.analyticsPublished') }}</h3>
+                    <h3>{{ event.kind === 'erase' ? tr('localHistoryErased') : tr('analyticsPublished') }}</h3>
                     <time :datetime="event.createdAt">{{ dateTime(event.createdAt) }}</time>
                   </div>
                   <p>{{ event.reason }}</p>
                   <small>
-                    {{ event.actorId === null ? $t('admin:analytics.apiPrincipal') : $t('admin:analytics.account', { actorId: event.actorId, interpolation: { escapeValue: false } }) }}
-                    <template v-if="event.kind === 'erase'">{{ $t('admin:analytics.dailyRecordsRemoved', { number: number(event.erasedRows || 0), interpolation: { escapeValue: false } }) }}</template>
+                    {{ event.actorId === null ? tr('apiPrincipal') : tr('account', { actorId: event.actorId, interpolation: { escapeValue: false } }) }}
+                    <template v-if="event.kind === 'erase'">{{ tr('dailyRecordsRemoved', { number: number(event.erasedRows || 0), interpolation: { escapeValue: false } }) }}</template>
                   </small>
                   <div class="analytics-event-fields">
                     <span v-for="field in event.fields" :key="field">{{ fieldLabel(field) }}</span>
@@ -476,49 +463,49 @@
           </template>
         </section>
         <aside class="analytics-aside">
-          <span class="analytics-kicker">{{ $t('admin:analytics.collectionGlance') }}</span>
-          <div class="analytics-policy-card">
+          <span class="analytics-kicker">{{ tr('collectionGlance') }}</span>
+          <div class="analytics-policy-card wiki-surface-well">
             <div>
-              <span>{{ $t('admin:analytics.localCounts') }}</span>
-              <strong>{{ policy.localEnabled ? $t('admin:analytics.enabled') : $t('admin:analytics.paused') }}</strong>
+              <span>{{ tr('localCounts') }}</span>
+              <strong>{{ policy.localEnabled ? tr('enabled') : tr('paused') }}</strong>
             </div>
             <div>
-              <span>{{ $t('admin:analytics.externalScripts') }}</span>
-              <strong>{{ saved.offline ? $t('admin:analytics.offline') : policy.externalEnabled ? $t('admin:analytics.allowed') : $t('admin:analytics.paused') }}</strong>
+              <span>{{ tr('externalScripts') }}</span>
+              <strong>{{ saved.offline ? tr('offline') : policy.externalEnabled ? tr('allowed') : tr('paused') }}</strong>
             </div>
             <div>
-              <span>{{ $t('admin:analytics.enabledProviders') }}</span>
+              <span>{{ tr('enabledProviders') }}</span>
               <strong>{{ enabledCount }}</strong>
             </div>
             <div>
-              <span>{{ $t('admin:analytics.audience') }}</span>
+              <span>{{ tr('audience') }}</span>
               <strong>{{ audiences.find((row) => row.value === policy!.audience)?.title }}</strong>
             </div>
             <div>
-              <span>{{ $t('admin:analytics.retainedHistory') }}</span>
-              <strong>{{ $t('admin:analytics.days2', { retentionDays: policy.retentionDays, interpolation: { escapeValue: false } }) }}</strong>
+              <span>{{ tr('retainedHistory') }}</span>
+              <strong>{{ tr('days2', { retentionDays: policy.retentionDays, interpolation: { escapeValue: false } }) }}</strong>
             </div>
           </div>
-          <p v-if="dirty" class="analytics-footnote">{{ $t('admin:analytics.summaryReflectsDraftOverview') }}</p>
+          <p v-if="dirty" class="analytics-footnote">{{ tr('summaryReflectsDraftOverview') }}</p>
           <div class="analytics-aside-note">
-            <h3>{{ $t('admin:analytics.measureContext') }}</h3>
+            <h3>{{ tr('measureContext') }}</h3>
             <p>
-              {{ $t('admin:analytics.localCountersDescribeRecorded') }}
+              {{ tr('localCountersDescribeRecorded') }}
             </p>
           </div>
           <div class="analytics-aside-note">
-            <h3>{{ $t('admin:analytics.publication') }}</h3>
-            <p>{{ $t('admin:analytics.settingsApplyNextReader') }}</p>
+            <h3>{{ tr('publication') }}</h3>
+            <p>{{ tr('settingsApplyNextReader') }}</p>
           </div>
         </aside>
       </div>
     </template>
     <v-dialog v-model="reviewOpen" max-width="760" :persistent="busy" aria-labelledby="analytics-review-title">
       <v-card v-if="reviewDraft" class="analytics-dialog">
-        <v-card-title id="analytics-review-title">{{ $t('admin:analytics.reviewAnalyticsPublication') }}</v-card-title>
+        <v-card-title id="analytics-review-title">{{ tr('reviewAnalyticsPublication') }}</v-card-title>
         <v-card-text>
-          <p>{{ $t('admin:analytics.publishCollectionPolicyProvider') }}</p>
-          <dl class="analytics-review-list">
+          <p>{{ tr('publishCollectionPolicyProvider') }}</p>
+          <dl class="analytics-review-list wiki-surface-well">
             <template v-for="change in reviewChanges" :key="change.key">
               <dt>{{ change.label }}</dt>
               <dd>
@@ -527,43 +514,43 @@
               </dd>
             </template>
           </dl>
-          <div v-for="row in reviewProviders" :key="row.key" class="analytics-review-provider">
+          <div v-for="row in reviewProviders" :key="row.key" class="analytics-review-provider wiki-surface-well">
             <h3>{{ providerTitle(row.key) }}</h3>
-            <p>{{ row.isEnabled ? $t('admin:analytics.enabled') : $t('admin:analytics.disabled') }}</p>
+            <p>{{ row.isEnabled ? tr('enabled') : tr('disabled') }}</p>
             <dl>
               <template v-for="field in changedProviderFields(row)" :key="field.key">
                 <dt>{{ field.title }}</dt>
                 <dd>
-                  <del>{{ field.before || $t('admin:analytics.empty') }}</del>
-                  <strong>{{ field.after || $t('admin:analytics.empty') }}</strong>
+                  <del>{{ field.before || tr('empty') }}</del>
+                  <strong>{{ field.after || tr('empty') }}</strong>
                 </dd>
               </template>
             </dl>
           </div>
           <v-alert v-if="reviewDraft.policy.retentionDays < (saved?.policy.retentionDays || 0)" type="warning" variant="tonal" class="my-4">
-            {{ $t('admin:analytics.olderCountersWillLeave') }}
+            {{ tr('olderCountersWillLeave') }}
           </v-alert>
-          <v-textarea v-model="reason" :label="$t('admin:analytics.reasonChange')" variant="outlined" rows="2" counter="1000" maxlength="1000" :disabled="busy" />
+          <v-textarea v-model="reason" :label="tr('reasonChange')" variant="outlined" rows="2" counter="1000" maxlength="1000" :disabled="busy" />
           <p v-if="reviewError" class="analytics-error" role="alert">{{ reviewError }}</p>
         </v-card-text>
         <v-card-actions>
-          <v-btn :disabled="busy" @click="reviewOpen = false">{{ $t('admin:analytics.backDraft') }}</v-btn>
+          <v-btn :disabled="busy" @click="reviewOpen = false">{{ tr('backDraft') }}</v-btn>
           <v-spacer />
-          <v-btn color="primary" variant="flat" :disabled="reason.trim().length < 3 || busy || stale" :loading="busy" @click="publish">
-            {{ $t('admin:analytics.publishAnalytics') }}
+          <v-btn color="primary" variant="tonal" :data-commitment="dirty && reason.trim().length >= 3 && !busy && !stale ? 'active' : undefined" :disabled="reason.trim().length < 3 || busy || stale" :loading="busy" @click="publish">
+            {{ tr('publishAnalytics') }}
           </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
     <v-dialog v-model="eraseOpen" max-width="640" :persistent="busy" aria-labelledby="analytics-erase-title">
       <v-card class="analytics-dialog">
-        <v-card-title id="analytics-erase-title">{{ $t('admin:analytics.eraseLocalResponseHistory') }}</v-card-title>
+        <v-card-title id="analytics-erase-title">{{ tr('eraseLocalResponseHistory') }}</v-card-title>
         <v-card-text>
           <p>
-            {{ $t('admin:analytics.permanentlyRemovesAllLocal') }}
+            {{ tr('permanentlyRemovesAllLocal') }}
           </p>
-          <v-text-field v-model="eraseConfirmation" :label="$t('admin:analytics.typeEraseLocalCounts')" variant="outlined" :disabled="busy" />
-          <v-textarea v-model="reason" :label="$t('admin:analytics.reasonErasingLocalCounts')" variant="outlined" rows="2" maxlength="1000" :disabled="busy" />
+          <v-text-field v-model="eraseConfirmation" :label="tr('typeEraseLocalCounts')" variant="outlined" :disabled="busy" />
+          <v-textarea v-model="reason" :label="tr('reasonErasingLocalCounts')" variant="outlined" rows="2" maxlength="1000" :disabled="busy" />
           <p v-if="reviewError" class="analytics-error" role="alert">{{ reviewError }}</p>
         </v-card-text>
         <v-card-actions>
@@ -576,7 +563,7 @@
             :disabled="eraseConfirmation !== 'ERASE LOCAL COUNTS' || reason.trim().length < 3 || busy || stale"
             @click="erase"
           >
-            {{ $t('admin:analytics.eraseLocalCounts') }}
+            {{ tr('eraseLocalCounts') }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -603,6 +590,7 @@ import './analytics-workspace.scss'
 import { useTranslate } from '../../helpers/use-translate.ts'
 
 const t = useTranslate()
+const tr = useTranslate('admin:analytics')
 
 const barGradId = useId()
 const barGlowId = useId()
@@ -616,10 +604,10 @@ interface BarDatum {
 }
 const activeDay = ref<string | null>(null)
 const sections = [
-    { key: 'overview', title: t('admin:analytics.overview') },
-    { key: 'collection', title: t('admin:analytics.collection') },
-    { key: 'providers', title: t('admin:analytics.providers') },
-    { key: 'activity', title: t('admin:analytics.activity') }
+    { key: 'overview', title: tr('overview') },
+    { key: 'collection', title: tr('collection') },
+    { key: 'providers', title: tr('providers') },
+    { key: 'activity', title: tr('activity') }
   ],
   route = useRoute(),
   router = useRouter()
@@ -633,8 +621,8 @@ const saved = shallowRef<AnalyticsWorkspace | null>(null),
   stale = ref(false)
 const reportDays = ref(0)
 const reportWindows = computed(() => [
-  { title: t('admin:analytics.retainedWindow'), value: 0 },
-  ...[7, 30, 90, 365].filter((days) => days <= (saved.value?.policy.retentionDays || 90)).map((days) => ({ title: t('admin:analytics.lastDays', { days, interpolation: { escapeValue: false } }), value: days }))
+  { title: tr('retainedWindow'), value: 0 },
+  ...[7, 30, 90, 365].filter((days) => days <= (saved.value?.policy.retentionDays || 90)).map((days) => ({ title: tr('lastDays', { days, interpolation: { escapeValue: false } }), value: days }))
 ])
 const search = ref(''),
   category = ref('all'),
@@ -663,16 +651,16 @@ const dirty = computed(() =>
 const locked = computed(() => loading.value || busy.value || stale.value || !saved.value),
   enabledCount = computed(() => providers.value.filter((row) => row.isEnabled).length)
 const audiences = [
-  { title: t('admin:analytics.everyone'), value: 'everyone' },
-  { title: t('admin:analytics.anonymousReaders'), value: 'anonymous' },
-  { title: t('admin:analytics.signedReaders'), value: 'signed-in' }
+  { title: tr('everyone'), value: 'everyone' },
+  { title: tr('anonymousReaders'), value: 'anonymous' },
+  { title: tr('signedReaders'), value: 'signed-in' }
 ]
 const categories = [
-  { title: t('admin:analytics.allPurposes'), value: 'all' },
-  { title: t('admin:analytics.trafficMeasurement'), value: 'traffic' },
-  { title: t('admin:analytics.sessionReplay'), value: 'replay' },
-  { title: t('admin:analytics.browserPerformance'), value: 'performance' },
-  { title: t('admin:analytics.tagContainers'), value: 'tags' }
+  { title: tr('allPurposes'), value: 'all' },
+  { title: tr('trafficMeasurement'), value: 'traffic' },
+  { title: tr('sessionReplay'), value: 'replay' },
+  { title: tr('browserPerformance'), value: 'performance' },
+  { title: tr('tagContainers'), value: 'tags' }
 ]
 const categoryLabel = (key: string) => categories.find((row) => row.value === key)?.title || key
 const categoryIcon = (key: string) =>
@@ -694,12 +682,12 @@ const providerStatus = (key: string) => {
   const row = providers.value.find((row) => row.key === key),
     meta = saved.value?.providers.find((row) => row.key === key)
   return !meta?.isAvailable
-    ? t('admin:analytics.unavailable')
+    ? tr('unavailable')
     : row?.isEnabled
       ? analyticsProviderIssues(row).length
-        ? t('admin:analytics.needsConfiguration')
-        : t('admin:analytics.enabledReadyEmbed')
-      : t('admin:analytics.disabled')
+        ? tr('needsConfiguration')
+        : tr('enabledReadyEmbed')
+      : tr('disabled')
 }
 const providerTitle = (key: string) => saved.value?.providers.find((row) => row.key === key)?.title || key
 const excludedText = computed({
@@ -751,23 +739,23 @@ const numberFormat = new Intl.NumberFormat(),
   dateTime = (value: string) => new Date(value).toLocaleString()
 const fieldLabel = (key: string) =>
   ({
-    localEnabled: t('admin:analytics.localReaderCounts'),
-    externalEnabled: t('admin:analytics.externalIntegrations'),
-    audience: t('admin:analytics.readerAudience'),
-    excludeAdministrators: t('admin:analytics.excludeAdministrators'),
-    respectPrivacySignals: t('admin:analytics.honorPrivacySignals'),
-    excludedPaths: t('admin:analytics.excludedPaths'),
-    retentionDays: t('admin:analytics.localRetention')
+    localEnabled: tr('localReaderCounts'),
+    externalEnabled: tr('externalIntegrations'),
+    audience: tr('readerAudience'),
+    excludeAdministrators: tr('excludeAdministrators'),
+    respectPrivacySignals: tr('honorPrivacySignals'),
+    excludedPaths: tr('excludedPaths'),
+    retentionDays: tr('localRetention')
   })[key] || key
 const display = (key: string, value: unknown) =>
   key === 'retentionDays'
-    ? t('admin:analytics.days', { value, interpolation: { escapeValue: false } })
+    ? tr('days', { value, interpolation: { escapeValue: false } })
     : typeof value === 'boolean'
       ? value
-        ? t('admin:analytics.yes')
-        : t('admin:analytics.no')
+        ? tr('yes')
+        : tr('no')
       : Array.isArray(value)
-        ? value.join(', ') || t('admin:analytics.none')
+        ? value.join(', ') || tr('none')
         : String(value)
 const reviewChanges = computed(() =>
   saved.value && reviewDraft.value
@@ -793,8 +781,8 @@ const changedProviderFields = (row: AnalyticsProviderDraft) => {
       .map((field) => ({
         key: field.key,
         title: field.title,
-        before: field.kind === 'boolean' ? (original.config[field.key] === 'true' ? t('admin:analytics.on') : t('admin:analytics.off')) : original.config[field.key],
-        after: field.kind === 'boolean' ? (row.config[field.key] === 'true' ? t('admin:analytics.on') : t('admin:analytics.off')) : row.config[field.key]
+        before: field.kind === 'boolean' ? (original.config[field.key] === 'true' ? tr('on') : tr('off')) : original.config[field.key],
+        after: field.kind === 'boolean' ? (row.config[field.key] === 'true' ? tr('on') : tr('off')) : row.config[field.key]
       })) || []
   )
 }
@@ -861,7 +849,7 @@ async function load() {
         ? selected.value
         : value.providers[0]?.key || ''
   } catch (err) {
-    if (id === sequence && !disposed) error.value = err instanceof Error ? err.message : t('admin:analytics.analyticsCouldNotLoaded')
+    if (id === sequence && !disposed) error.value = err instanceof Error ? err.message : tr('analyticsCouldNotLoaded')
   } finally {
     if (id === sequence && !disposed) loading.value = false
   }
@@ -877,23 +865,23 @@ async function selectWindow(days: number) {
     if (disposed || id !== sequence) return
     if (value.fingerprint !== current.fingerprint) {
       stale.value = true
-      error.value = t('admin:analytics.analyticsSettingsChangedReload')
+      error.value = tr('analyticsSettingsChangedReload')
       return
     }
     clearChartPointer()
     saved.value = { ...current, insights: value.insights, observedAt: value.observedAt }
     reportDays.value = days
   } catch (err) {
-    if (!disposed && id === sequence) error.value = err instanceof Error ? err.message : t('admin:analytics.reportingWindowCouldNot')
+    if (!disposed && id === sequence) error.value = err instanceof Error ? err.message : tr('reportingWindowCouldNot')
   } finally {
     if (!disposed && id === sequence) loading.value = false
   }
 }
-const discardTitle = t('admin:analytics.discardDraft'),
-  discardMessage = t('admin:analytics.thereUnpublishedAnalyticsChanges')
+const discardTitle = tr('discardDraft'),
+  discardMessage = tr('thereUnpublishedAnalyticsChanges')
 async function guarded(action: () => void) {
   if (!dirty.value) return action()
-  if (!(await confirmDiscard(discardTitle, discardMessage, t('admin:analytics.discardDraft2')))) return
+  if (!(await confirmDiscard(discardTitle, discardMessage, tr('discardDraft2')))) return
   reset()
   action()
 }
@@ -916,14 +904,14 @@ function review() {
   const validation = AnalyticsPolicySchema.safeParse(policy.value)
   const invalid = providers.value.find((row) => row.isEnabled && analyticsProviderIssues(row).length)
   if (!validation.success) {
-    error.value = validation.error.issues[0]?.message || t('admin:analytics.checkCollectionPolicy')
+    error.value = validation.error.issues[0]?.message || tr('checkCollectionPolicy')
     selectSection('collection')
     return
   }
   if (invalid) {
     selected.value = invalid.key
     selectSection('providers')
-    error.value = t('admin:analytics.needsValidConfigurationBefore', { key: providerTitle(invalid.key), interpolation: { escapeValue: false } })
+    error.value = tr('needsValidConfigurationBefore', { key: providerTitle(invalid.key), interpolation: { escapeValue: false } })
     return
   }
   error.value = ''
@@ -951,10 +939,10 @@ async function completeWrite(action: () => Promise<unknown>, message: string, af
     } catch {
       stale.value = true
       notice.value = message
-      error.value = t('admin:analytics.actionWasConfirmedBut')
+      error.value = tr('actionWasConfirmedBut')
     }
   } catch (err) {
-    reviewError.value = err instanceof Error ? err.message : t('admin:analytics.outcomeUnconfirmed')
+    reviewError.value = err instanceof Error ? err.message : tr('outcomeUnconfirmed')
     const status = err && typeof err === 'object' ? Reflect.get(err, 'status') : undefined
     if (status === 409 || !status || status >= 500) stale.value = true
   } finally {
@@ -966,7 +954,7 @@ function publish() {
   if (!snapshot || reason.value.trim().length < 3) return
   void completeWrite(
     () => saveAnalyticsWorkspace(snapshot.policy, snapshot.providers, snapshot.fingerprint, reason.value.trim()),
-    t('admin:analytics.analyticsPublishedPolicyApplies'),
+    tr('analyticsPublishedPolicyApplies'),
     () => {
       if (saved.value) {
         saved.value = {
@@ -991,7 +979,7 @@ function erase() {
   clearChartPointer()
   void completeWrite(
     () => eraseAnalyticsInsights(eraseFingerprint.value, reason.value.trim(), eraseConfirmation.value),
-    t('admin:analytics.localResponseHistoryErased'),
+    tr('localResponseHistoryErased'),
     () => {}
   )
 }
@@ -1021,7 +1009,7 @@ function beforeUnload(event: BeforeUnloadEvent) {
 onBeforeRouteLeave(async () => {
   if (busy.value) return false
   if (!dirty.value) return true
-  return !busy.value && (await confirmDiscard(discardTitle, discardMessage, t('admin:analytics.discardDraft2')))
+  return !busy.value && (await confirmDiscard(discardTitle, discardMessage, tr('discardDraft2')))
 })
 onMounted(() => {
   void load()

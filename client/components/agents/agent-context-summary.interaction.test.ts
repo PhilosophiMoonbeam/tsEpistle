@@ -1,9 +1,10 @@
 import path from 'node:path'
+import { setImmediate as yieldEventLoop } from 'node:timers/promises'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
 import { AgentMemoryContextProjectionSchema, type AgentMemoryContextProjection } from '../../../shared/agents/contracts.ts'
 import { AgentSourceContextProjectionSchema, type AgentSourceContextProjection } from '../../../shared/agents/knowledge-context.ts'
-import { document, resetBody } from '../../test/browser-dom.mts'
+import { browserWindow, document, resetBody } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
 
 resetBody()
@@ -51,12 +52,31 @@ interface MountedSummary {
 }
 
 const mountedApps: Array<() => void> = []
+const platformCleanups: Array<() => void> = []
+const installClipboard = (writeText: (text: string) => Promise<void>, legacyCopy = false): void => {
+  const navigator = browserWindow.navigator
+  const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+  const execCommand = Object.getOwnPropertyDescriptor(document, 'execCommand')
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  Object.defineProperty(document, 'execCommand', { configurable: true, value: () => legacyCopy })
+  platformCleanups.push(() => {
+    if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard)
+    else Reflect.deleteProperty(navigator, 'clipboard')
+    if (execCommand) Object.defineProperty(document, 'execCommand', execCommand)
+    else Reflect.deleteProperty(document, 'execCommand')
+  })
+}
 const mountSummary = async (initial: Partial<SummaryProps> = {}): Promise<MountedSummary> => {
   const host = document.createElement('div')
   document.body.append(host)
   const props = Vue.shallowReactive<SummaryProps>({
-    sources: null, memory: null, loading: false, networkBlocked: false,
-    sourcesDisabled: false, memoryDisabled: false, ...initial
+    sources: null,
+    memory: null,
+    loading: false,
+    networkBlocked: false,
+    sourcesDisabled: false,
+    memoryDisabled: false,
+    ...initial
   })
   const app = Vue.createApp({
     setup: () => () => Vue.h(AgentContextSummary, props)
@@ -80,6 +100,7 @@ const mountSummary = async (initial: Partial<SummaryProps> = {}): Promise<Mounte
 
 afterEach(() => {
   for (const unmount of mountedApps.splice(0)) unmount()
+  for (const cleanup of platformCleanups.splice(0).reverse()) cleanup()
 })
 
 const required = <T extends Element = HTMLElement>(parent: ParentNode, selector: string): T => {
@@ -116,28 +137,38 @@ const expectHintCounts = (host: HTMLElement, selected: number, accessible: numbe
 }
 
 const attachments = Array.from({ length: 8 }, (_, index) => ({
-  id: index + 1, locale: 'en', path: `handbook/attachment-${index + 1}`,
-  title: `Committed attachment ${index + 1}`, visibility: 'public' as const, sourceRevision: '3'
+  id: index + 1,
+  locale: 'en',
+  path: `handbook/attachment-${index + 1}`,
+  title: `Committed attachment ${index + 1}`,
+  visibility: 'public' as const,
+  sourceRevision: '3'
 }))
 const attachmentIdentities = attachments.map(({ id, locale, path }) => ({ id, locale, path }))
 const pendingIdentities = Array.from({ length: 8 }, (_, index) => ({
-  id: index + 101, locale: 'en', path: `pending-selection-${index + 101}`
+  id: index + 101,
+  locale: 'en',
+  path: `pending-selection-${index + 101}`
 }))
-const committedProjection = (count: number): AgentSourceContextProjection => AgentSourceContextProjectionSchema.parse({
-  identity: { kind: 'draft', ownerId: 7, draftId: 'summary-draft', sessionId: 'frozen-session' },
-  generation: 4, scope: { kind: 'all' },
-  attachedSources: attachments.slice(0, count).map(source => ({ source, access: 'accessible' })),
-  pendingSources: pendingIdentities,
-  currentPage: { included: false, origin: 'navigation', hint: null, access: 'unknown' },
-  accessibleIdentities: attachmentIdentities.slice(0, count)
-})
+const committedProjection = (count: number): AgentSourceContextProjection =>
+  AgentSourceContextProjectionSchema.parse({
+    identity: { kind: 'draft', ownerId: 7, draftId: 'summary-draft', sessionId: 'frozen-session' },
+    generation: 4,
+    scope: { kind: 'all' },
+    attachedSources: attachments.slice(0, count).map(source => ({ source, access: 'accessible' })),
+    pendingSources: pendingIdentities,
+    currentPage: { included: false, origin: 'navigation', hint: null, access: 'unknown' },
+    accessibleIdentities: attachmentIdentities.slice(0, count)
+  })
 const knownMemory = (): AgentMemoryContextProjection => {
   const user = { state: 'available', target: 'user', characters: 77, limit: 1375, snapshotId: 'a'.repeat(64) }
   const agent = { state: 'available', target: 'agent', characters: 31, limit: 2200, snapshotId: 'c'.repeat(64) }
   return AgentMemoryContextProjectionSchema.parse({
-    ownerId: 7, sessionId: 'frozen-session',
+    ownerId: 7,
+    sessionId: 'frozen-session',
     frozen: { snapshotId: 'frozen-session', user, agent },
-    latestSaved: { user, agent }, nextSession: { user: 'unchanged', agent: 'unchanged' }
+    latestSaved: { user, agent },
+    nextSession: { user: 'unchanged', agent: 'unchanged' }
   })
 }
 const changedSavedMemory = (): AgentMemoryContextProjection => {
@@ -153,6 +184,104 @@ const changedSavedMemory = (): AgentMemoryContextProjection => {
 }
 
 describe('agent context summary DOM boundary', () => {
+  it('offers native bounded-detail scroll actions only for overflow, with boundary states and native disclosure', async () => {
+    const previousObserver = globalThis.ResizeObserver
+    const observers: DetailsObserver[] = []
+    class DetailsObserver implements ResizeObserver {
+      readonly targets = new Set<Element>()
+      constructor(readonly notify: ResizeObserverCallback) {
+        observers.push(this)
+      }
+      observe(target: Element): void {
+        this.targets.add(target)
+      }
+      unobserve(target: Element): void {
+        this.targets.delete(target)
+      }
+      disconnect(): void {
+        this.targets.clear()
+      }
+    }
+    globalThis.ResizeObserver = DetailsObserver
+    platformCleanups.push(() => {
+      globalThis.ResizeObserver = previousObserver
+    })
+    const mounted = await mountSummary({ sources: committedProjection(8), memory: knownMemory() })
+    const details = required<HTMLDetailsElement>(mounted.host, 'details')
+    const summary = required<HTMLElement>(details, 'summary')
+    const body = document.getElementById(summary.getAttribute('aria-controls') ?? '')
+    if (!body) throw new Error('Context details scroll target is missing')
+    let contentHeight = 1200
+    Object.defineProperties(body, {
+      clientHeight: { configurable: true, value: 200 },
+      scrollHeight: { configurable: true, get: () => contentHeight }
+    })
+    const observer = observers.find(candidate => candidate.targets.has(body))
+    if (!observer) throw new Error('Context details resize observation is missing')
+    const controls = (): Element | null => details.querySelector('.agent-context-summary__scroll-controls')
+    expect(controls()).toBeNull()
+    expect(summary.getAttribute('aria-describedby')).toBeNull()
+    for (const key of ['Enter', ' ', 'ArrowDown', 'PageDown', 'Home', 'End', 'Tab', 'Escape']) {
+      const event = new browserWindow.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      summary.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(false)
+    }
+    expect(summary.getAttribute('role')).toBeNull()
+    await openDetails(mounted.host)
+    observer.notify([], observer)
+    await Vue.nextTick()
+    const previous = required<HTMLButtonElement>(details, `button[aria-label="${translateEnglish('common:agentContextUi.scrollPrevious')}"]`)
+    const next = required<HTMLButtonElement>(details, `button[aria-label="${translateEnglish('common:agentContextUi.scrollNext')}"]`)
+    const help = document.getElementById(summary.getAttribute('aria-describedby') ?? '')
+    expect(help?.textContent).toBe(translateEnglish('common:agentContextUi.detailsScrollHelp'))
+    expect(body.contains(previous)).toBe(false)
+    expect(body.contains(next)).toBe(false)
+    expect(previous.getAttribute('aria-controls')).toBe(body.id)
+    expect(next.getAttribute('aria-controls')).toBe(body.id)
+    expect(previous.disabled).toBe(true)
+    expect(next.disabled).toBe(false)
+    // JSDOM does not synthesize native button activation from Enter/Space.
+    next.focus()
+    for (const top of [160, 320, 480, 640, 800, 960, 1000]) {
+      next.click()
+      await Vue.nextTick()
+      expect(body.scrollTop).toBe(top)
+      expect(details.open).toBe(true)
+    }
+    expect(next.disabled).toBe(true)
+    expect(previous.disabled).toBe(false)
+    expect(document.activeElement).toBe(previous)
+    for (const top of [840, 680, 520, 360, 200, 40, 0]) {
+      previous.click()
+      await Vue.nextTick()
+      expect(body.scrollTop).toBe(top)
+    }
+    expect(previous.disabled).toBe(true)
+    expect(next.disabled).toBe(false)
+    expect(document.activeElement).toBe(next)
+    body.scrollTop = 500
+    body.dispatchEvent(new browserWindow.Event('scroll'))
+    await Vue.nextTick()
+    expect(previous.disabled).toBe(false)
+    expect(next.disabled).toBe(false)
+    contentHeight = 200
+    observer.notify([], observer)
+    await Vue.nextTick()
+    expect(controls()).toBeNull()
+    expect(summary.getAttribute('aria-describedby')).toBeNull()
+    expect(document.activeElement).toBe(summary)
+    contentHeight = 1200
+    observer.notify([], observer)
+    await Vue.nextTick()
+    expect(controls()).not.toBeNull()
+    summary.click()
+    details.dispatchEvent(new browserWindow.Event('toggle'))
+    await Vue.nextTick()
+    expect(details.open).toBe(false)
+    expect(controls()).toBeNull()
+    expect(summary.getAttribute('aria-describedby')).toBeNull()
+  })
+
   it('fills 0 through 8 attachment slots from committed rows, never the eight pending selections', async () => {
     const mounted = await mountSummary({ sources: committedProjection(0) })
     await openDetails(mounted.host)
@@ -226,11 +355,21 @@ describe('agent context summary DOM boundary', () => {
     const agent = memoryButton(mounted.host, 'agent')
     expect(activeMemoryDescription(agent).textContent).toContain('31/2200')
     expect(agent.getAttribute('aria-label')).toContain(translateEnglish('common:agentContextUi.next.unchanged'))
+    expect(Array.from(memoryDescription(user).querySelectorAll('meter'), meter => [meter.value, meter.max])).toEqual([
+      [77, 1375],
+      [204, 1375]
+    ])
+    expect(Array.from(memoryDescription(agent).querySelectorAll('meter'), meter => [meter.value, meter.max])).toEqual([
+      [31, 2200],
+      [31, 2200]
+    ])
+    for (const meter of mounted.host.querySelectorAll('meter')) expect(meter.getAttribute('aria-label')?.trim()).toBeTruthy()
   })
 
   it('distinguishes unknown and failed reads from loaded empty memory, and retains explicitly stale counts without a fresh comparison', async () => {
     const unknown = AgentMemoryContextProjectionSchema.parse({
-      ownerId: 7, sessionId: 'loading-session',
+      ownerId: 7,
+      sessionId: 'loading-session',
       frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
       latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } },
       nextSession: { user: 'unknown', agent: 'unknown' }
@@ -240,6 +379,7 @@ describe('agent context summary DOM boundary', () => {
     const user = memoryButton(mounted.host, 'user')
     expect(activeMemoryDescription(user).textContent).toContain(translateEnglish('common:agentContextUi.state.unknown'))
     expect(user.getAttribute('aria-label')).not.toContain('/1375')
+    expect(mounted.host.querySelectorAll('meter')).toHaveLength(0)
 
     await mounted.update({
       memory: AgentMemoryContextProjectionSchema.parse({
@@ -250,11 +390,13 @@ describe('agent context summary DOM boundary', () => {
     })
     expect(activeMemoryDescription(user).textContent).toContain(translateEnglish('common:agentContextUi.state.error'))
     expect(user.getAttribute('aria-label')).not.toContain('/1375')
+    expect(memoryDescription(user).querySelector('meter')).toBeNull()
 
     const emptyUser = { state: 'available', target: 'user', characters: 0, limit: 1375, snapshotId: 'e'.repeat(64) }
     await mounted.update({
       memory: AgentMemoryContextProjectionSchema.parse({
-        ...unknown, sessionId: 'empty-session',
+        ...unknown,
+        sessionId: 'empty-session',
         frozen: { ...unknown.frozen, snapshotId: 'empty-session', user: emptyUser },
         latestSaved: { ...unknown.latestSaved, user: emptyUser },
         nextSession: { ...unknown.nextSession, user: 'unchanged' }
@@ -262,6 +404,10 @@ describe('agent context summary DOM boundary', () => {
     })
     expect(activeMemoryDescription(user).textContent).toContain(translateEnglish('common:agentContextUi.emptyCount', { count: 0, limit: 1375 }))
     expect(user.getAttribute('aria-label')).toContain('0/1375')
+    expect(Array.from(memoryDescription(user).querySelectorAll('meter'), meter => [meter.value, meter.max])).toEqual([
+      [0, 1375],
+      [0, 1375]
+    ])
 
     const savedChange = changedSavedMemory()
     await mounted.update({
@@ -278,6 +424,9 @@ describe('agent context summary DOM boundary', () => {
     expect(user.getAttribute('aria-label')).toContain('77/1375')
     expect(user.getAttribute('aria-label')).toContain(translateEnglish('common:agentContextUi.next.unknown'))
     expect(user.getAttribute('aria-label')).not.toContain(translateEnglish('common:agentContextUi.next.changed'))
+    const staleMeter = required<HTMLMeterElement>(memoryDescription(user), 'meter')
+    expect([staleMeter.value, staleMeter.max]).toEqual([77, 1375])
+    expect(staleMeter.getAttribute('aria-label')?.toLowerCase()).toContain(translateEnglish('common:agentContextUi.state.stale').toLowerCase())
   })
 
   it('clears prior-session source and memory metadata when a rebind supplies null projections instead of inventing empty counts', async () => {
@@ -294,18 +443,24 @@ describe('agent context summary DOM boundary', () => {
       memory
     })
     await openDetails(mounted.host)
-    const metadataOutput = (): string => [
-      mounted.host.textContent,
-      ...Array.from(mounted.host.querySelectorAll('[aria-label], [title]')).flatMap(element => [element.getAttribute('aria-label'), element.getAttribute('title')])
-    ].join('\n')
-    const oldMetadata = [privateTitle, privatePath, memory.sessionId, 'a'.repeat(64), 'c'.repeat(64), '77/1375', '204/1375', '31/2200']
+    const metadataOutput = (): string =>
+      [
+        mounted.host.textContent,
+        ...Array.from(mounted.host.querySelectorAll('[aria-label], [title]')).flatMap(element => [
+          element.getAttribute('aria-label'),
+          element.getAttribute('title')
+        ])
+      ].join('\n')
+    const oldMetadata = [privateTitle, privatePath, '77/1375', '204/1375', '31/2200']
     for (const marker of oldMetadata) expect(metadataOutput()).toContain(marker)
+    for (const identifier of [memory.sessionId, 'a'.repeat(64), 'c'.repeat(64)]) expect(metadataOutput()).not.toContain(identifier)
 
     await mounted.update({ sources: null, memory: null, loading: true })
     for (const marker of oldMetadata) expect(metadataOutput()).not.toContain(marker)
     expect(sourceButton(mounted.host).getAttribute('aria-label')).toContain(translateEnglish('common:agentContextUi.state.loading'))
     expect(required(sourceButton(mounted.host), 'strong').textContent).toBe('—/8')
     expect(sourceButton(mounted.host).querySelector('circle[pathLength]')).toBeNull()
+    expect(mounted.host.querySelectorAll('meter')).toHaveLength(0)
     for (const target of ['user', 'agent'] as const) {
       expect(memoryButton(mounted.host, target).getAttribute('aria-label')).toContain(translateEnglish('common:agentContextUi.state.loading'))
     }
@@ -323,4 +478,62 @@ describe('agent context summary DOM boundary', () => {
     for (const marker of oldMetadata) expect(metadataOutput()).not.toContain(marker)
   })
 
+  it('copies hidden snapshot identifiers with truthful success and failure feedback', async () => {
+    const copied: string[] = []
+    let denied = false
+    installClipboard(async text => {
+      if (denied) throw new Error('Clipboard denied')
+      copied.push(text)
+    })
+    const mounted = await mountSummary({ memory: knownMemory() })
+    await openDetails(mounted.host)
+    const copyButton = (key: string, options = {}): HTMLButtonElement => {
+      const button = Array.from(mounted.host.querySelectorAll<HTMLButtonElement>('button')).find(
+        candidate => candidate.textContent?.trim() === translateEnglish(key, options)
+      )
+      if (!button) throw new Error(`Missing identifier copy action: ${key}`)
+      return button
+    }
+    const status = required(mounted.host, '.agent-context-summary__copy-status')
+    expect(status.getAttribute('role')).toBe('status')
+    expect(status.getAttribute('aria-live')).toBe('polite')
+    expect(status.getAttribute('aria-atomic')).toBe('true')
+    copyButton('common:agentContextUi.copySessionId').click()
+    // Clipboard helper and component feedback each resume from their own promise.
+    await yieldEventLoop()
+    await Vue.nextTick()
+    expect(copied).toEqual(['frozen-session'])
+    expect(status.textContent).toBe(translateEnglish('common:agentContextUi.copySuccess'))
+    copyButton('common:agentContextUi.copyMemoryId', { name: translateEnglish('common:agentMemoryManager.you') }).click()
+    await yieldEventLoop()
+    await Vue.nextTick()
+    expect(copied).toEqual(['frozen-session', 'a'.repeat(64)])
+
+    denied = true
+    copyButton('common:agentContextUi.copySessionId').click()
+    await yieldEventLoop()
+    await Vue.nextTick()
+    expect(copied).toHaveLength(2)
+    expect(status.textContent).toBe(translateEnglish('common:agentContextUi.copyFailed'))
+    expect(mounted.host.querySelectorAll('textarea')).toHaveLength(0)
+  })
+
+  it('retires pending clipboard feedback when the selected memory belongs to another session', async () => {
+    const clipboard = Promise.withResolvers<void>()
+    installClipboard(() => clipboard.promise)
+    const mounted = await mountSummary({ memory: knownMemory() })
+    await openDetails(mounted.host)
+    const copy = Array.from(mounted.host.querySelectorAll<HTMLButtonElement>('button')).find(
+      button => button.textContent?.trim() === translateEnglish('common:agentContextUi.copySessionId')
+    )
+    if (!copy) throw new Error('Session copy action missing')
+    copy.click()
+    await mounted.update({ memory: null, loading: true })
+    clipboard.resolve()
+    await yieldEventLoop()
+    await Vue.nextTick()
+    expect(required(mounted.host, '.agent-context-summary__copy-status').textContent).toBe('')
+    expect(mounted.host.querySelectorAll('meter')).toHaveLength(0)
+    expect(mounted.host.textContent).not.toContain('frozen-session')
+  })
 })

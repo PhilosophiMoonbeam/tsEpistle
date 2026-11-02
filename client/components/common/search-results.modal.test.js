@@ -106,101 +106,94 @@ describe('clearable search recovery', () => {
     expect(state).toMatchObject({ search: 'pizza', searchScope: 'downloaded', searchRestrictLocale: false, searchRestrictPath: false, previewSelector: null })
   })
 
-  for (const destination of ['closed-drawer', 'open-drawer', 'unavailable-navigation']) {
-    test(`Browse preserves the search draft and uses the ${destination} escape`, async () => {
-      const source = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
-      const dom = new JSDOM(
-        `<!doctype html><html><body>
-        <header class="nav-header"><button aria-controls="page-navigation-drawer" aria-expanded="${destination === 'closed-drawer' ? 'false' : 'true'}">Navigation</button></header>
-        <div id="page-navigation-drawer"><nav class="nav-sidebar">
-          <button disabled>Unavailable action</button><a href="/en/hidden" aria-hidden="true">Hidden page</a><a href="/en/guide">Guide</a>
-        </nav></div><main><h1>Current article</h1></main>
-      </body></html>`,
-        { url: 'https://wiki.test/en/current', pretendToBeVisual: true }
-      )
-      try {
-        const document = dom.window.document
-        // jsdom has no layout: these fixtures model visibility only, not browser geometry.
-        for (const element of document.querySelectorAll('*')) element.getClientRects = () => [{ width: 100, height: 44 }]
-        const toggle = document.querySelector('.nav-header [aria-controls="page-navigation-drawer"]')
-        const guide = document.querySelector('a[href="/en/guide"]')
-        const article = document.querySelector('main')
-        if (destination === 'unavailable-navigation') {
-          toggle.disabled = true
-          guide.style.visibility = 'hidden'
-        }
-        let drawerOpens = 0
-        toggle.addEventListener('click', () => {
-          drawerOpens += 1
-        })
-        const methods = compileSearchMethods(source, ['closeSearch', 'browseCurrentView'], {
-          document,
-          window: dom.window,
-          useAgentsStore: () => ({
-            closeWorkspace: () => {
-              throw new Error('Browse must not start or close an Agent workspace')
-            }
-          })
-        })
-        const response = { results: [{ id: 19, title: 'Previous result' }], suggestions: ['try this phrase'] }
-        const state = {
-          search: 'unfamiliar task words',
-          searchScope: 'wiki',
-          searchRestrictLocale: true,
-          searchRestrictPath: true,
-          response,
-          responseKey: 'retained-query-key',
-          responseQuery: 'unfamiliar task words',
-          cursor: 0,
-          searchMode: 'search',
-          searchIsFocused: true,
-          isAgentOpen: false,
-          searchInputOpenedByTab: false,
-          searchRequestId: 4,
-          directPromptHandoffId: 2,
-          searchTimer: null,
-          searchAbortController: null,
-          moreAbortController: null,
-          agentResumeSessionId: null,
-          resolveInlineAgentWaiters: () => {},
-          finishSearchFocus: () => {},
-          $nextTick: () => Promise.resolve(),
-          closeSearch() {
-            methods.closeSearch.call(this)
-          }
-        }
-        await methods.browseCurrentView.call(state)
-        expect(state.searchIsFocused).toBe(false)
-        expect(state).toMatchObject({
-          search: 'unfamiliar task words',
-          searchScope: 'wiki',
-          searchRestrictLocale: true,
-          searchRestrictPath: true,
-          responseKey: 'retained-query-key',
-          responseQuery: 'unfamiliar task words',
-          cursor: 0
-        })
-        expect(state.response).toBe(response)
-        expect(dom.window.location.href).toBe('https://wiki.test/en/current')
-        if (destination === 'closed-drawer') expect(drawerOpens).toBe(1)
-        else {
-          expect(drawerOpens).toBe(0)
-          // A native main landmark is a useful fallback even when its heading is
-          // not focusable. The action must make that landmark programmatically
-          // focusable rather than leave focus on the dismissed search surface.
-          const expectedTarget = destination === 'open-drawer' ? guide : article
-          expect(document.activeElement === expectedTarget).toBe(true)
-          if (destination === 'unavailable-navigation') expect(article.getAttribute('tabindex')).toBe('-1')
-        }
-        // Reopening the same mounted search does not replace its recoverable draft.
-        state.searchIsFocused = true
-        expect(state.response.results[0].title).toBe('Previous result')
-        expect(state.search).toBe('unfamiliar task words')
-      } finally {
-        dom.window.close()
+  test.each(['Close search', 'backdrop'])('dismisses through %s without discarding recoverable query/results or filters', async dismissal => {
+    const source = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
+    const dom = new JSDOM(
+      '<!doctype html><body><button id="opener">Search</button><section id="search"><div class="search-results-search"><button id="close">Close search</button></div></section></body>',
+      {
+        url: 'https://wiki.test/en/current',
+        pretendToBeVisual: true
       }
-    })
-  }
+    )
+    const globals = Object.fromEntries(['document', 'window', 'Element', 'HTMLElement'].map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]))
+    for (const [name, value] of Object.entries({
+      document: dom.window.document,
+      window: dom.window,
+      Element: dom.window.Element,
+      HTMLElement: dom.window.HTMLElement
+    })) {
+      Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
+    }
+    const methods = compileSearchMethods(
+      source,
+      ['closeSearch', 'handleBackdropClick', 'finishSearchFocus', 'deactivateModalLayers', 'deactivateAgentModal', 'resolveInlineAgentWaiters'],
+      {
+        useAgentsStore: () => ({
+          closeWorkspace: () => {
+            throw new Error('Search dismissal must not close an Agent workspace')
+          }
+        })
+      }
+    )
+    const response = { results: [{ id: 19, title: 'Previous result' }], suggestions: ['try this phrase'] }
+    const opener = dom.window.document.querySelector('#opener')
+    const state = {
+      ...methods,
+      search: 'unfamiliar task words',
+      searchScope: 'wiki',
+      searchMode: 'search',
+      searchRestrictLocale: true,
+      searchRestrictPath: true,
+      response,
+      responseKey: 'retained-query-key',
+      responseQuery: 'unfamiliar task words',
+      cursor: 0,
+      searchIsFocused: true,
+      isAgentOpen: false,
+      searchInputOpenedByTab: false,
+      searchRequestId: 4,
+      directPromptHandoffId: 2,
+      searchTimer: null,
+      searchAbortController: null,
+      moreAbortController: null,
+      agentResumeSessionId: null,
+      inlineAgentWaiters: [],
+      modalFocusScope: null,
+      searchModalFocusScope: null,
+      searchRestoreTarget: opener,
+      searchRestoreTargetFallback: opener,
+      syncSearchInputA11y: () => [],
+      isSearchControl: () => false
+    }
+    try {
+      const root = dom.window.document.querySelector('#search')
+      const close = root.querySelector('#close')
+      close.addEventListener('click', () => state.closeSearch())
+      root.addEventListener('click', event => state.handleBackdropClick(event))
+      close.focus()
+      if (dismissal === 'Close search') close.click()
+      else root.click()
+      expect(state.searchIsFocused).toBe(false)
+      expect(state).toMatchObject({
+        search: 'unfamiliar task words',
+        searchScope: 'wiki',
+        searchMode: 'search',
+        searchRestrictLocale: true,
+        searchRestrictPath: true,
+        responseKey: 'retained-query-key',
+        responseQuery: 'unfamiliar task words',
+        cursor: 0
+      })
+      expect(state.response).toBe(response)
+      expect(dom.window.location.href).toBe('https://wiki.test/en/current')
+    } finally {
+      for (const [name, descriptor] of Object.entries(globals)) {
+        if (descriptor) Object.defineProperty(globalThis, name, descriptor)
+        else delete globalThis[name]
+      }
+      dom.window.close()
+    }
+  })
 })
 
 describe('Ask modal accessibility contract', () => {
@@ -341,7 +334,9 @@ describe('Ask modal accessibility contract', () => {
     })
     const scope = {
       containsFocus: () => false,
-      focusFirst: () => { fallbackFocus += 1 }
+      focusFirst: () => {
+        fallbackFocus += 1
+      }
     }
     const state = {
       ...methods,
@@ -349,7 +344,9 @@ describe('Ask modal accessibility contract', () => {
       inlineAgentWaiters: [],
       isAgentOpen: true,
       modalFocusScope: scope,
-      retireResumeAfterSelection: () => { retiredResume += 1 }
+      retireResumeAfterSelection: () => {
+        retiredResume += 1
+      }
     }
     state.setInlineAgent(null)
     expect(composerFocus).toBe(0)
@@ -357,7 +354,9 @@ describe('Ask modal accessibility contract', () => {
       preparePrompt: async () => {},
       sendPrompt: async () => false,
       focusConversation: async () => {},
-      focusComposer: async () => { composerFocus += 1 }
+      focusComposer: async () => {
+        composerFocus += 1
+      }
     }
     state.setInlineAgent(agent)
     await Promise.resolve()
@@ -380,7 +379,10 @@ describe('Ask modal accessibility contract', () => {
     mobile = false
     state.setInlineAgent({
       ...agent,
-      focusComposer: () => new Promise(resolve => { finishFocus = resolve })
+      focusComposer: () =>
+        new Promise(resolve => {
+          finishFocus = resolve
+        })
     })
     state.isAgentOpen = false
     state.modalFocusScope = null
@@ -400,7 +402,17 @@ describe('Ask modal accessibility contract', () => {
     }
     const methods = compileSearchMethods(
       search,
-      ['activateAgentModal', 'activateSearchModal', 'closeSearch', 'finishSearchFocus', 'deactivateModalLayers', 'deactivateAgentModal', 'handleSearchKeydown', 'captureSearchRestoreTarget', 'resolveInlineAgentWaiters'],
+      [
+        'activateAgentModal',
+        'activateSearchModal',
+        'closeSearch',
+        'finishSearchFocus',
+        'deactivateModalLayers',
+        'deactivateAgentModal',
+        'handleSearchKeydown',
+        'captureSearchRestoreTarget',
+        'resolveInlineAgentWaiters'
+      ],
       {
         activeOwnedOverlayRoots,
         createModalFocusScope,
@@ -417,6 +429,9 @@ describe('Ask modal accessibility contract', () => {
     const pageOpener = fixtureDocument.createElement('button')
     const headerSearch = fixtureDocument.createElement('input')
     const nextHeaderAction = fixtureDocument.createElement('button')
+    const mobileAgentOpener = fixtureDocument.createElement('button')
+    mobileAgentOpener.textContent = 'Agent'
+    mobileAgentOpener.dataset.modalFocusKey = 'header-mobile-agent'
     const root = fixtureDocument.createElement('section')
     const agentComposer = fixtureDocument.createElement('textarea')
     const nestedOverlay = fixtureDocument.createElement('div')
@@ -428,7 +443,7 @@ describe('Ask modal accessibility contract', () => {
     nestedOverlayControl.className = 'agent-owned-overlay'
     nestedOverlay.append(nestedOverlayControl)
     root.append(agentComposer, nestedOverlay)
-    fixtureDocument.body.append(pageOpener, headerSearch, nextHeaderAction, root)
+    fixtureDocument.body.append(pageOpener, headerSearch, nextHeaderAction, mobileAgentOpener, root)
     Object.defineProperty(fixtureWindow, 'matchMedia', {
       configurable: true,
       value: query => Object.assign(new fixtureWindow.EventTarget(), { matches: true, media: query })
@@ -480,7 +495,14 @@ describe('Ask modal accessibility contract', () => {
         retireResumeAfterSelection: () => undefined,
         findSearchTrigger: () => pageOpener
       }
-      for (const name of ['activateSearchModal', 'closeSearch', 'finishSearchFocus', 'deactivateModalLayers', 'deactivateAgentModal', 'resolveInlineAgentWaiters']) {
+      for (const name of [
+        'activateSearchModal',
+        'closeSearch',
+        'finishSearchFocus',
+        'deactivateModalLayers',
+        'deactivateAgentModal',
+        'resolveInlineAgentWaiters'
+      ]) {
         state[name] = (...args) => methods[name].call(state, ...args)
       }
       fixtureDocument.addEventListener('keydown', methods.handleSearchKeydown.bind(state), true)
@@ -498,7 +520,9 @@ describe('Ask modal accessibility contract', () => {
       expect(state.searchIsFocused).toBe(true)
       expect(agentStore.closeWorkspaceCalls).toBe(0)
       let cancelledWaiter = false
-      state.inlineAgentWaiters.push(agent => { cancelledWaiter = agent === null })
+      state.inlineAgentWaiters.push(agent => {
+        cancelledWaiter = agent === null
+      })
 
       nestedOverlay.classList.remove('v-overlay--active')
       const agentEscape = new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
@@ -563,6 +587,21 @@ describe('Ask modal accessibility contract', () => {
       headerSearch.dispatchEvent(new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
       expect(state.searchIsFocused).toBe(false)
       expect(fixtureDocument.activeElement).toBe(pageOpener)
+
+      // Header owns opening the phone workspace; Search owns restoring its
+      // persistent control, not an item in the now-dismissed overflow menu.
+      mobileAgentOpener.focus()
+      state.searchRestoreTarget = mobileAgentOpener
+      state.pendingAskRestoreTarget = mobileAgentOpener
+      state.searchIsFocused = true
+      state.searchMode = 'ask'
+      await methods.activateAgentModal.call(state)
+      agentComposer.focus()
+      agentComposer.dispatchEvent(new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      expect(state.searchIsFocused).toBe(false)
+      expect(state.isAgentOpen).toBe(false)
+      expect(fixtureDocument.activeElement).toBe(mobileAgentOpener)
+      expect(mobileAgentOpener.hasAttribute('inert')).toBe(false)
     } finally {
       state?.deactivateModalLayers(false)
       for (const [name, descriptor] of Object.entries(originalGlobals)) {
@@ -743,7 +782,6 @@ describe('Search panel layout and hand-off', () => {
     methods.togglePathScope.call(state)
     expect(state).toMatchObject({ searchRestrictLocale: true, searchRestrictPath: true })
   })
-
 
   test('preserves the selected result identity and suggestion position across continuation', () => {
     const watchers = compileSearchOptions(search, ['results'], 'watch')

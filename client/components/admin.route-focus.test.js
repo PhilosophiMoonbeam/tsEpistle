@@ -7,7 +7,7 @@ import { browserWindow, document, resetBody, setLocation } from '../test/browser
 import { focusRouteHeading } from './common/route-heading-focus.ts'
 
 import { translateEnglish } from '../test/english-translate.mts'
-;globalThis.useTranslate = () => translateEnglish
+globalThis.useTranslate = () => translateEnglish
 const filename = path.join(process.cwd(), 'client/components/admin.vue')
 const { descriptor, errors } = parse(fs.readFileSync(filename, 'utf8'), { filename })
 if (errors.length || !descriptor.template || !descriptor.script) throw new Error(`Cannot parse admin.vue: ${errors}`)
@@ -33,9 +33,24 @@ const script = new Bun.Transpiler({ loader: 'ts' }).transformSync(
   descriptor.script.content.replace(/^import [\s\S]*?from .*$/gm, '').replace('export default', 'return')
 )
 const evaluate = new Function(
-  'defineComponent', 'provide', 'ref', 'watch', 'useDisplay', 'wikiStore', 'adminSummaryKey', 'fetchSystemSummary',
-  'getErrorMessage', 'loadingStart', 'loadingStop', 'showNotification', 'buildAdminNavigation', 'filterAdminNavigation',
-  'ConfirmDialogHost', 'NavHeader', 'VueScroll', 'focusRouteHeading',
+  'defineComponent',
+  'provide',
+  'ref',
+  'watch',
+  'useDisplay',
+  'wikiStore',
+  'adminSummaryKey',
+  'fetchSystemSummary',
+  'getErrorMessage',
+  'loadingStart',
+  'loadingStop',
+  'showNotification',
+  'buildAdminNavigation',
+  'filterAdminNavigation',
+  'ConfirmDialogHost',
+  'NavHeader',
+  'VueScroll',
+  'focusRouteHeading',
   script
 )
 
@@ -51,10 +66,7 @@ const routePage = () =>
   Vue.defineComponent({
     props: ['heading'],
     setup(props) {
-      return () => Vue.h('section', [
-        Vue.h('h1', { key: props.heading }, props.heading),
-        Vue.h('input', { 'aria-label': `${props.heading} control` })
-      ])
+      return () => Vue.h('section', [Vue.h('h1', { key: props.heading }, props.heading), Vue.h('input', { 'aria-label': `${props.heading} control` })])
     }
   })
 const DashboardPage = routePage()
@@ -85,24 +97,52 @@ const mountAdmin = async ({ deferInitialNavigation = false } = {}) => {
     admin: { info: {} }
   }
   const options = evaluate(
-    Vue.defineComponent, Vue.provide, Vue.ref, Vue.watch, () => ({ mdAndUp: Vue.ref(true) }), wikiStore, Symbol('summary'),
-    async () => ({}), String, () => {}, () => {}, () => {},
-    () => [{ key: 'people', label: 'People', icon: 'mdi-account', items: [{ to: '/users', label: 'Members', icon: 'mdi-account' }] }],
+    Vue.defineComponent,
+    Vue.provide,
+    Vue.ref,
+    Vue.watch,
+    () => ({ mdAndUp: Vue.ref(true) }),
+    wikiStore,
+    Symbol('summary'),
+    async () => ({}),
+    String,
+    () => {},
+    () => {},
+    () => {},
+    () => [{ key: 'people', label: 'People', icon: 'mdi-account', items: [{ key: 'users', to: '/users', label: 'Members', icon: 'mdi-account' }] }],
     groups => groups,
-    passthrough(), passthrough(), passthrough(), focusRouteHeading
+    passthrough(),
+    passthrough(),
+    passthrough(),
+    focusRouteHeading
   )
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/dashboard', component: DashboardPage, props: { heading: 'Dashboard' } },
+      { path: '/dashboard/details', component: DashboardPage, props: { heading: 'Dashboard details' } },
+      { path: '/users-archive', component: MembersPage, props: { heading: 'Archived members' } },
       { path: '/users', component: MembersPage, props: { heading: 'Members' } },
       { path: '/users/:id', component: MemberPage, props: route => ({ heading: `Member ${route.params.id}` }) }
     ]
   })
   app = Vue.createApp({ ...options, render })
   for (const name of [
-    'v-app', 'nav-header', 'v-navigation-drawer', 'v-icon', 'v-spacer', 'v-text-field', 'vue-scroll', 'v-list-item',
-    'v-list-item-title', 'v-chip', 'v-expand-transition', 'nav-footer', 'notify', 'search-results'
+    'v-app',
+    'nav-header',
+    'v-navigation-drawer',
+    'v-icon',
+    'v-spacer',
+    'v-text-field',
+    'vue-scroll',
+    'v-list-item',
+    'v-list-item-title',
+    'v-chip',
+    'v-expand-transition',
+    'v-defaults-provider',
+    'nav-footer',
+    'notify',
+    'search-results'
   ]) {
     app.component(name, passthrough())
   }
@@ -114,7 +154,9 @@ const mountAdmin = async ({ deferInitialNavigation = false } = {}) => {
   app.config.errorHandler = error => componentErrors.push(error)
   let releaseInitialNavigation
   if (deferInitialNavigation) {
-    const initialGate = new Promise(resolve => { releaseInitialNavigation = resolve })
+    const initialGate = new Promise(resolve => {
+      releaseInitialNavigation = resolve
+    })
     router.beforeEach(() => initialGate)
   }
   app.use(router)
@@ -166,6 +208,33 @@ describe('admin shell route focus', () => {
     await settle()
     expect(crumbs()?.querySelector('a')?.getAttribute('href')).toBe('/dashboard')
     expect(crumbs()?.querySelector('[aria-current="page"]')?.textContent).toBe('Members')
+    expect(componentErrors).toEqual([])
+  })
+
+  it('marks a record route with its admin parent, without matching sibling prefixes or Dashboard descendants', async () => {
+    const { host, router, componentErrors } = await mountAdmin()
+    const dashboard = () => host.querySelector('.admin-nav__dashboard')
+    const members = () => host.querySelector('.admin-nav__item')
+    const crumbs = () => host.querySelector('nav[aria-label="admin:shell.breadcrumb"]')
+    expect(dashboard()?.getAttribute('aria-current')).toBe('page')
+    expect(members()?.hasAttribute('aria-current')).toBe(false)
+
+    await router.push('/users/42')
+    await settle()
+    expect(members()?.getAttribute('aria-current')).toBe('page')
+    expect(dashboard()?.hasAttribute('aria-current')).toBe(false)
+    expect(crumbs()?.querySelector('[aria-current="page"]')?.textContent).toBe('Members')
+    expect(host.querySelector('button[aria-controls="admin-section-people"]')?.getAttribute('aria-expanded')).toBe('true')
+
+    await router.push('/users-archive')
+    await settle()
+    expect(members()?.hasAttribute('aria-current')).toBe(false)
+    expect(dashboard()?.hasAttribute('aria-current')).toBe(false)
+
+    await router.push('/dashboard/details')
+    await settle()
+    expect(dashboard()?.hasAttribute('aria-current')).toBe(false)
+    expect(crumbs()).not.toBeNull()
     expect(componentErrors).toEqual([])
   })
 

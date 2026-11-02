@@ -68,6 +68,7 @@ export type SiteConfig = {
   logoSourceSha256: string | null
   product: ProductMetadata
   featurePageRatings: boolean
+  publicSocialSharing: boolean
   availableEditors: PageEditorKey[]
   recommendedEditor?: PageEditorKey | null
   agentsEnabled: boolean

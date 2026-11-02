@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from '../../../server
 import { browserWindow } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
 import { renderWikiSourcePreview, WikiSourceLoadError } from '../../helpers/wiki-source.ts'
-import { WikiSourceSchema, wikiSourceHref } from '../../../shared/wiki-source.ts'
+import { WikiSourceSchema, wikiSourceHref, wikiSourcePreviewLink } from '../../../shared/wiki-source.ts'
 import type { WikiSource, WikiSourcePreview, WikiSourceSelector } from '../../../shared/wiki-source.ts'
 import { createModalFocusScope } from './modal-focus-scope.ts'
 
@@ -142,6 +142,40 @@ afterEach(() => {
   document.body.replaceChildren()
   if (originalRects) Object.defineProperty(browserWindow.HTMLElement.prototype, 'getClientRects', originalRects)
   else Reflect.deleteProperty(browserWindow.HTMLElement.prototype, 'getClientRects')
+})
+
+describe('source preview link policy', () => {
+  const pageHref = '/_private/fr/guide/current'
+
+  it('rejects C0, space, DEL and backslash without rejecting other Unicode', () => {
+    for (const [first, last] of [
+      [0x00, 0x20],
+      [0x7f, 0x7f],
+      [0x5c, 0x5c]
+    ] as const) {
+      for (let code = first; code <= last; code++) {
+        expect(wikiSourcePreviewLink(`next${String.fromCharCode(code)}page`, pageHref)).toBeNull()
+      }
+    }
+    for (const code of [0x21, 0x7e, 0x80, 0x9f, 0xa0, 0x200b, 0x202a, 0x202e, 0x2066, 0x2069, 0xfeff]) {
+      expect(wikiSourcePreviewLink(`next${String.fromCharCode(code)}page`, pageHref)).not.toBeNull()
+    }
+    expect(wikiSourcePreviewLink('café/🧭', pageHref)).toBe('/_private/fr/guide/caf%C3%A9/%F0%9F%A7%AD')
+  })
+
+  it('retains canonical relative links and supported protocols within the exact URL bound without credentials', () => {
+    const maximum = `/${'a'.repeat(2047)}`
+    expect(wikiSourcePreviewLink(maximum, pageHref)).toBe(maximum)
+    expect(wikiSourcePreviewLink(`${maximum}a`, pageHref)).toBeNull()
+    expect(wikiSourcePreviewLink('', pageHref)).toBeNull()
+    expect(wikiSourcePreviewLink('next#part', pageHref)).toBe('/_private/fr/guide/next#part')
+    for (const href of ['https://docs.example/guide', 'http://docs.example/guide', 'mailto:reader@example.test', 'tel:+12025550123']) {
+      expect(wikiSourcePreviewLink(href, pageHref)).toBe(href)
+    }
+    for (const href of ['https://reader:secret@docs.example/guide', 'https://reader@docs.example/guide', 'javascript:alert(1)', 'data:text/plain,private']) {
+      expect(wikiSourcePreviewLink(href, pageHref)).toBeNull()
+    }
+  })
 })
 
 describe('source preview reader', () => {

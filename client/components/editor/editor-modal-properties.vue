@@ -57,9 +57,98 @@
               counter='255'
               v-model='description'
               maxlength='255'
-              persistent-hint
-              :hint='$t(`editor:props.shortDescriptionHint`)'
+              aria-describedby='editor-properties-description-help'
               )
+            .editor-properties-help#editor-properties-description-help {{ $t(`editor:props.shortDescriptionHint`) }}
+            .text-label-small.pb-5 {{$t('editor:props.categorization')}}
+            v-combobox(
+              ref='tagInput'
+              :label='$t(`editor:props.tags`)'
+              variant="outlined"
+              v-model='tags'
+              @update:search='newTagSearch = $event'
+              v-model:menu='tagMenuOpen'
+              :aria-describedby='tagSearchError ? `editor-properties-tags-help editor-properties-tags-persistence editor-properties-tags-error` : `editor-properties-tags-help editor-properties-tags-persistence`'
+              :items='tagItems'
+              :loading='tagSearchLoading'
+              :menu-props='{ maxHeight: 280 }'
+              :aria-busy='tagSearchLoading'
+              multiple
+              chips
+              closable-chips
+              hide-selected
+              no-filter
+              :hide-no-data='false'
+              :return-object='false'
+              @keydown.capture='handleTagSearchKeydown'
+              )
+              template(v-slot:item='{ props, item, internalItem }')
+                v-list-item(
+                  v-bind='props'
+                  role='option'
+                  :data-tag-value='internalItem.value'
+                )
+                  template(v-slot:prepend)
+                    v-icon(:icon='item === candidateTag ? `mdi-plus` : `mdi-tag-outline`', size='18')
+                  template(v-slot:title)
+                    span(v-if='item === candidateTag') {{ $t(`editor:editorModalProperties.addPage`, { item, interpolation: { escapeValue: false } }) }}
+                    span(v-else) {{ item }}
+                  template(v-slot:subtitle v-if='item === candidateTag')
+                    | {{ $t(`editor:editorModalProperties.newNamesCreatedWhen`) }}
+              template(v-slot:chip='{ props, item }')
+                v-chip(
+                  v-bind='props'
+                  closable
+                  size='small'
+                  :close-label='$t(`editor:editorModalProperties.removeTag`, { item, interpolation: { escapeValue: false } })'
+                ) {{ item }}
+              template(v-slot:no-data)
+                v-list-item(:title='$t(`editor:editorModalProperties.typeSearchSuggestionsEnter`)')
+              template(v-slot:menu-footer)
+                v-btn.editor-properties-tag-retry(
+                  v-if='tagSearchError'
+                  ref='tagRetryButton'
+                  type='button'
+                  size='small'
+                  variant='text'
+                  prepend-icon='mdi-refresh'
+                  :aria-label='$t(`editor:editorModalProperties.retryTagSuggestions`)'
+                  @click='retryTagSearch'
+                ) {{ $t(`editor:editorModalProperties.retry`) }}
+            .editor-properties-help#editor-properties-tags-help {{ $t(`editor:props.tagsHint`) }}
+            .editor-properties-tags-persistence-hint#editor-properties-tags-persistence
+              | {{ $t(`editor:editorModalProperties.chooseExistingSuggestionEnter`) }}
+            .editor-properties-tag-search-state(
+              v-if='tagSearchLoading'
+              role='status'
+              aria-live='polite'
+              aria-atomic='true'
+            ) {{ $t(`editor:editorModalProperties.findingMatchingTagSuggestions`) }}
+            v-alert.editor-properties-tag-search-error#editor-properties-tags-error(
+              v-else-if='tagSearchError'
+              type='error'
+              variant='tonal'
+              role='alert'
+              density='compact'
+            ) {{tagSearchError}}
+            .editor-properties-tag-search-state(
+              v-else-if='tagSearchAlreadySelected'
+              role='status'
+              aria-live='polite'
+              aria-atomic='true'
+            ) {{ $t(`editor:editorModalProperties.alreadySelected`) }}
+            .editor-properties-tag-search-state(
+              v-else-if='tagSearchNoResults'
+              role='status'
+              aria-live='polite'
+              aria-atomic='true'
+            ) {{ $t(`editor:editorModalProperties.noMatchingSuggestionsYou`) }}
+            .editor-properties-tag-status(
+              v-if='tagStatus'
+              role='status'
+              aria-live='polite'
+              aria-atomic='true'
+            ) {{tagStatus}}
             section.editor-properties-branding(aria-labelledby='editor-properties-branding-title')
               .editor-properties-branding-heading
                 .text-label-small#editor-properties-branding-title {{ $t(`editor:editorModalProperties.pageIdentity`) }}
@@ -108,29 +197,29 @@
                 :model-value='privatePage'
                 @update:model-value='privatePage = $event ?? privatePage'
                 color='primary'
-                :hint='$t(`editor:props.privatePageHint`)'
-                persistent-hint
+                aria-describedby='editor-properties-private-help'
                 inset
               )
+              .editor-properties-help#editor-properties-private-help {{ $t(`editor:props.privatePageHint`) }}
               v-switch(
                 :label='$t(`editor:props.publishToggle`)'
                 :model-value='isPublished'
                 @update:model-value='isPublished = $event ?? isPublished'
                 color='primary'
-                :hint='$t(`editor:props.publishToggleHint`)'
-                persistent-hint
+                aria-describedby='editor-properties-published-help'
                 inset
               )
+              .editor-properties-help#editor-properties-published-help {{ $t(`editor:props.publishToggleHint`) }}
             v-switch(
               ref='searchablePageSwitch'
               :label='$t(`editor:props.searchable`)'
               :model-value='isSearchable'
               @update:model-value='isSearchable = $event ?? isSearchable'
               color='primary'
-              :hint='$t(`editor:props.searchableHint`)'
-              persistent-hint
+              aria-describedby='editor-properties-searchable-help'
               inset
             )
+            .editor-properties-help#editor-properties-searchable-help {{ $t(`editor:props.searchableHint`) }}
             section.editor-properties-page-features(aria-labelledby='editor-properties-page-features-title')
               .text-label-small#editor-properties-page-features-title {{ $t(`editor:editorModalProperties.readerFeatures`) }}
               v-switch(
@@ -138,28 +227,28 @@
                 :model-value='draft.pageFeatures.linksVisible'
                 @update:model-value='draft.pageFeatures.linksVisible = $event ?? draft.pageFeatures.linksVisible'
                 color='primary'
-                :hint='$t(`editor:editorModalProperties.showPagesLinkSection`)'
-                persistent-hint
+                aria-describedby='editor-properties-links-help'
                 inset
               )
+              .editor-properties-help#editor-properties-links-help {{ $t(`editor:editorModalProperties.showPagesLinkSection`) }}
               v-switch(
                 :label='$t(`editor:editorModalProperties.allowRatings`)'
                 :model-value='draft.pageFeatures.ratingsAllowed'
                 @update:model-value='draft.pageFeatures.ratingsAllowed = $event ?? draft.pageFeatures.ratingsAllowed'
                 color='primary'
-                :hint='$t(`editor:editorModalProperties.allowReadersRatePage`)'
-                persistent-hint
+                aria-describedby='editor-properties-ratings-help'
                 inset
               )
+              .editor-properties-help#editor-properties-ratings-help {{ $t(`editor:editorModalProperties.allowReadersRatePage`) }}
               v-switch(
                 :label='$t(`editor:editorModalProperties.showLastEditor`)'
                 :model-value='draft.pageFeatures.lastEditorVisible'
                 @update:model-value='draft.pageFeatures.lastEditorVisible = $event ?? draft.pageFeatures.lastEditorVisible'
                 color='primary'
-                :hint='$t(`editor:editorModalProperties.showWhoLastEdited`)'
-                persistent-hint
+                aria-describedby='editor-properties-last-editor-help'
                 inset
               )
+              .editor-properties-help#editor-properties-last-editor-help {{ $t(`editor:editorModalProperties.showWhoLastEdited`) }}
           v-divider
           v-card-text.editor-properties-subsection.pt-5
             .text-label-small.pb-5 {{$t('editor:props.path')}}
@@ -185,101 +274,11 @@
                       :label='$t(`editor:props.path`)'
                       append-icon='mdi-folder-search'
                       v-model='path'
-                      :hint='$t(`editor:props.pathHint`)'
-                      persistent-hint
+                      aria-describedby='editor-properties-path-help'
                       @click:append='showPathSelector'
                       :rules='pathRules'
                     )
-          v-divider
-          v-card-text.editor-properties-subsection.pt-5
-            .text-label-small.pb-5 {{$t('editor:props.categorization')}}
-            v-combobox(
-              ref='tagInput'
-              :label='$t(`editor:props.tags`)'
-              variant="outlined"
-              v-model='tags'
-              @update:search='newTagSearch = $event'
-              v-model:menu='tagMenuOpen'
-              :hint='$t(`editor:props.tagsHint`)'
-              :items='tagItems'
-              :loading='tagSearchLoading'
-              :menu-props='{ maxHeight: 280 }'
-              :aria-busy='tagSearchLoading'
-              multiple
-              chips
-              closable-chips
-              hide-selected
-              no-filter
-              :hide-no-data='false'
-              :return-object='false'
-              @keydown.capture='handleTagSearchKeydown'
-              )
-              template(v-slot:item='{ props, item, internalItem }')
-                v-list-item(
-                  v-bind='props'
-                  role='option'
-                  :data-tag-value='internalItem.value'
-                )
-                  template(v-slot:prepend)
-                    v-icon(:icon='item === candidateTag ? `mdi-plus` : `mdi-tag-outline`', size='18')
-                  template(v-slot:title)
-                    span(v-if='item === candidateTag') {{ $t(`editor:editorModalProperties.addPage`, { item, interpolation: { escapeValue: false } }) }}
-                    span(v-else) {{ item }}
-                  template(v-slot:subtitle v-if='item === candidateTag')
-                    | {{ $t(`editor:editorModalProperties.newNamesCreatedWhen`) }}
-              template(v-slot:chip='{ props, item }')
-                v-chip(
-                  v-bind='props'
-                  closable
-                  size='small'
-                  :close-label='$t(`editor:editorModalProperties.removeTag`, { item, interpolation: { escapeValue: false } })'
-                ) {{ item }}
-              template(v-slot:no-data)
-                v-list-item(:title='$t(`editor:editorModalProperties.typeSearchSuggestionsEnter`)')
-              template(v-slot:menu-footer)
-                v-btn.editor-properties-tag-retry(
-                  v-if='tagSearchError'
-                  ref='tagRetryButton'
-                  type='button'
-                  size='small'
-                  variant='text'
-                  prepend-icon='mdi-refresh'
-                  :aria-label='$t(`editor:editorModalProperties.retryTagSuggestions`)'
-                  @click='retryTagSearch'
-                ) {{ $t(`editor:editorModalProperties.retry`) }}
-            .editor-properties-tags-persistence-hint
-              | {{ $t(`editor:editorModalProperties.chooseExistingSuggestionEnter`) }}
-            .editor-properties-tag-search-state(
-              v-if='tagSearchLoading'
-              role='status'
-              aria-live='polite'
-              aria-atomic='true'
-            ) {{ $t(`editor:editorModalProperties.findingMatchingTagSuggestions`) }}
-            v-alert.editor-properties-tag-search-error(
-              v-else-if='tagSearchError'
-              type='error'
-              variant='tonal'
-              role='alert'
-              density='compact'
-            ) {{tagSearchError}}
-            .editor-properties-tag-search-state(
-              v-else-if='tagSearchAlreadySelected'
-              role='status'
-              aria-live='polite'
-              aria-atomic='true'
-            ) {{ $t(`editor:editorModalProperties.alreadySelected`) }}
-            .editor-properties-tag-search-state(
-              v-else-if='tagSearchNoResults'
-              role='status'
-              aria-live='polite'
-              aria-atomic='true'
-            ) {{ $t(`editor:editorModalProperties.noMatchingSuggestionsYou`) }}
-            .editor-properties-tag-status(
-              v-if='tagStatus'
-              role='status'
-              aria-live='polite'
-              aria-atomic='true'
-            ) {{tagStatus}}
+                    .editor-properties-help#editor-properties-path-help {{ $t(`editor:props.pathHint`) }}
         v-tabs-window-item(:value='1', transition='fade-transition', reverse-transition='fade-transition')
           v-card-text
             .text-label-small {{$t('editor:props.publishState')}}
@@ -307,8 +306,7 @@
                         readonly
                         variant="outlined"
                         clearable
-                        :hint='$t(`editor:props.publishStartHint`)'
-                        persistent-hint
+                        aria-describedby='editor-properties-publish-start-help'
                         :disabled='!isPublished'
                         )
                     v-date-picker(
@@ -329,6 +327,7 @@
                           color='primary'
                           @click='applyPublishStartDate'
                           ) {{$t('common:actions.ok')}}
+                  .editor-properties-help#editor-properties-publish-start-help {{ $t(`editor:props.publishStartHint`) }}
                 v-col(cols='12', md='6')
                   v-dialog(
                     v-model='isPublishEndShown'
@@ -345,8 +344,7 @@
                         readonly
                         variant="outlined"
                         clearable
-                        :hint='$t(`editor:props.publishEndHint`)'
-                        persistent-hint
+                        aria-describedby='editor-properties-publish-end-help'
                         :disabled='!isPublished'
                         )
                     v-date-picker(
@@ -367,6 +365,7 @@
                           color='primary'
                           @click='applyPublishEndDate'
                           ) {{$t('common:actions.ok')}}
+                  .editor-properties-help#editor-properties-publish-end-help {{ $t(`editor:props.publishEndHint`) }}
 
         v-tabs-window-item.editor-properties-code-tab(:value='2', :transition='false', :reverse-transition='false')
           .editor-props-codeeditor-title
@@ -424,14 +423,14 @@
                 span {{translationError}}
                 v-spacer
                 v-btn(variant='text', size='small', @click='loadTranslations') {{ $t(`editor:editorModalProperties.retry`) }}
-        v-tabs-window-item(:value='5', transition='fade-transition', reverse-transition='fade-transition')
-          editor-okf-panel
+        v-tabs-window-item(:value='5', eager, :transition='false', :reverse-transition='false')
+          editor-okf-panel(ref='okfPanel', :key='editingSession')
       v-divider
       v-card-actions.editor-properties-actions
         .text-body-small.text-medium-emphasis.editor-properties-actions-hint {{ $t('editor:props.applyHint') }}
         v-spacer
         v-btn(variant='text', @click='cancel') {{ $t('common:actions.cancel') }}
-        v-btn(color='primary', variant='flat', prepend-icon='mdi-check', @click='close') {{ $t('common:actions.apply') }}
+        v-btn(color='primary', :variant='commitmentActive ? `flat` : `tonal`', :data-commitment='commitmentActive ? `active` : undefined', :loading='applying', :disabled='applying', prepend-icon='mdi-check', @click='close') {{ $t('common:actions.apply') }}
 
 
     v-dialog(
@@ -463,7 +462,7 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent, markRaw, type PropType } from 'vue'
+import { defineComponent, markRaw, ref, type PropType } from 'vue'
 import { useDate } from 'vuetify'
 import type { VCombobox } from 'vuetify/components/VCombobox'
 import * as _ from 'lodash-es'
@@ -488,7 +487,7 @@ import { createAsyncComponent } from '../common/async-component.ts'
 import { css } from '@codemirror/lang-css'
 import { javascript } from '@codemirror/lang-javascript'
 import { TextEditor, type TextEditorHandle } from './common/text-editor'
-import EditorOkfPanel from './editor-okf-panel.vue'
+import EditorOkfPanel, { type EditorOkfDraftHandle } from './editor-okf-panel.vue'
 import { describePageVisibility, type PageVisibilitySummary } from './common/page-visibility'
 
 /* global siteLangs, siteConfig */
@@ -573,7 +572,8 @@ export default defineComponent({
   },
   setup() {
     return {
-      dateAdapter: useDate()
+      dateAdapter: useDate(),
+      okfPanel: ref<EditorOkfDraftHandle>()
     }
   },
   data () {
@@ -607,6 +607,8 @@ export default defineComponent({
       pathRules: PATH_RULES.map(rule => (value: string) => { const message = rule(value); return typeof message === 'string' ? this.$t(message) : message }),
       draft: createPropertiesDraft(),
       okfSnapshot: null as OkfState | null,
+      editingSession: 0,
+      applying: false,
       returnFocus: null as HTMLElement | null,
       brandingPickerShown: false,
       brandingError: '',
@@ -614,6 +616,13 @@ export default defineComponent({
     }
   },
   computed: {
+    commitmentActive (): boolean {
+      const dirty = !_.isEqual(this.draft, createPropertiesDraft()) ||
+        (this.okfSnapshot !== null && !_.isEqual(wikiStore.page.okf, this.okfSnapshot)) ||
+        Boolean(this.okfPanel?.hasPendingChanges)
+      return dirty && !this.applying && this.pathRules.every(rule => rule(this.path) === true) &&
+        (this.okfPanel?.canCommit ?? true)
+    },
     isShown: {
       get() { return this.modelValue },
       set(val: boolean) { this.$emit('update:modelValue', val) }
@@ -912,6 +921,7 @@ export default defineComponent({
     beginEditing () {
       this.draft = createPropertiesDraft()
       this.okfSnapshot = _.cloneDeep(wikiStore.page.okf)
+      this.editingSession++
       this.brandingPickerShown = false
       this.brandingError = ''
       this.brandingReturnFocus = null
@@ -1061,19 +1071,42 @@ export default defineComponent({
       this.isPublishEndShown = false
     },
     async close() {
-      if (this.currentTab !== 0) {
-        this.currentTab = 0
-        await this.$nextTick()
+      if (this.applying) return
+      this.applying = true
+      const session = this.editingSession
+      try {
+        const knowledge = this.okfPanel?.validateDraft()
+        if (knowledge && !knowledge.valid) {
+          this.currentTab = 5
+          await this.$nextTick()
+          this.okfPanel?.focusInvalid()
+          return
+        }
+        if (this.currentTab !== 0) {
+          this.currentTab = 0
+          await this.$nextTick()
+        }
+        const form = this.$refs.propsForm as { validate?: () => Promise<{ valid: boolean }> } | undefined
+        const result = await form?.validate?.()
+        if (!result?.valid) {
+          await this.$nextTick()
+          focusInput(this.$refs.iptPath)
+          return
+        }
+        if (!this.modelValue || session !== this.editingSession) return
+        const pendingKnowledge = this.okfPanel?.validateDraft()
+        if (pendingKnowledge && !pendingKnowledge.valid) {
+          this.currentTab = 5
+          await this.$nextTick()
+          this.okfPanel?.focusInvalid()
+          return
+        }
+        pendingKnowledge?.commit()
+        this.commitDraft()
+        this.isShown = false
+      } finally {
+        this.applying = false
       }
-      const form = this.$refs.propsForm as { validate?: () => Promise<{ valid: boolean }> } | undefined
-      const result = await form?.validate?.()
-      if (!result?.valid) {
-        await this.$nextTick()
-        focusInput(this.$refs.iptPath)
-        return
-      }
-      this.commitDraft()
-      this.isShown = false
     },
     restorePrivatePageFocus () {
       if (!this.modelValue) return
@@ -1319,14 +1352,23 @@ export default defineComponent({
   }
 
   .editor-properties-subsection {
-    background: rgba(var(--v-theme-on-surface), .035);
+    background: var(--wiki-surface-sunken);
+    background-image: none;
   }
 
   .editor-properties-tabs-window {
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;
+    scroll-padding-block: 16px;
   }
+}
+
+.editor-properties-help {
+  color: var(--wiki-text-muted);
+  font-size: .75rem;
+  line-height: 1.5;
+  margin-block: -8px 16px;
 }
 
 .editor-properties-card .editor-properties-code-tab {

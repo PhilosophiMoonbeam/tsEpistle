@@ -1,4 +1,11 @@
 import { Editor, type ChainedCommands } from '@tiptap/core'
+import { closeHistory } from '@tiptap/pm/history'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { compileTemplate, parse } from '@vue/compiler-sfc'
+import * as cheerio from 'cheerio'
+import pug from 'pug'
+import * as ts from 'typescript'
 import { afterEach, describe, expect, it } from '../../../../server/test/bun-test.mts'
 import markdownRenderer from '../../../../server/modules/rendering/markdown-core/renderer.ts'
 import { createWikiMarkdownRenderer, sanitizeWikiMarkdownHtml } from '../markdown/preview.ts'
@@ -7,6 +14,7 @@ import { prepareTiptapHtml, prepareTiptapMarkdown } from './dialect.ts'
 import { installTiptapSlashMenu } from './slash-menu.ts'
 import { EditorAdapterController } from '../common/editor-adapter.ts'
 import {
+  ADMONITION_KINDS,
   VISUAL_MARKDOWN_GLYPHS,
   insertVisualMarkdownAdmonition,
   insertVisualMarkdownDefinitionList,
@@ -14,6 +22,127 @@ import {
   searchVisualMarkdownGlyphs
 } from './visual-markdown-authoring.ts'
 import { parseWikiLinkAt, resolveWikiLinkHref, type WikiLinkOptions } from '../../../../shared/wikilinks.ts'
+import '../../../test/browser-dom.mts'
+import { translateEnglish } from '../../../test/english-translate.mts'
+import { FORMATTING_TOOLS } from '../common/formatting-tools.ts'
+
+// Static Vuetify imports capture DOM globals before the shared harness installs them.
+const Vue = await import('vue')
+const { createVuetify } = await import('vuetify')
+const vuetifyComponents = await import('vuetify/components')
+const vuetifyDirectives = await import('vuetify/directives')
+const menuUnmounts: Array<() => void> = []
+
+// Execute the owner template and Options behavior without starting its unrelated
+// collaboration/network lifecycle. Insertion still uses a real Tiptap editor.
+const visualPath = join(process.cwd(), 'client/components/editor/tiptap/editor.vue')
+const visualSfc = parse(readFileSync(visualPath, 'utf8'), { filename: visualPath }).descriptor
+if (!visualSfc.script || !visualSfc.template) throw new Error('Visual editor SFC is incomplete')
+const visualScript = visualSfc.script.content
+const visualAst = ts.createSourceFile(visualPath, visualScript, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+const visualExport = visualAst.statements.find(ts.isExportAssignment)
+if (!visualExport || !ts.isCallExpression(visualExport.expression) || !ts.isObjectLiteralExpression(visualExport.expression.arguments[0])) {
+  throw new Error('Visual editor Options API definition is missing')
+}
+const visualOptions = visualExport.expression.arguments[0]
+const visualOption = (name: string): string => {
+  const property = visualOptions.properties.find(
+    candidate => (ts.isPropertyAssignment(candidate) || ts.isMethodDeclaration(candidate)) && ts.isIdentifier(candidate.name) && candidate.name.text === name
+  )
+  if (!property) throw new Error(`Visual editor ${name} option is missing`)
+  return property.getText(visualAst)
+}
+// Preserve Vue activator-slot ancestry instead of native HTML template fragments.
+const visualMarkup = cheerio.load(pug.render(visualSfc.template.content, { doctype: 'html' }), { xml: true })
+const formattingInsertMenu = visualMarkup('v-menu').filter((_index, element) => visualMarkup(element).attr('v-model') === 'insertMenuOpen')
+if (formattingInsertMenu.length !== 1) throw new Error('Formatting Insert menu is missing or ambiguous')
+const insertTemplate = compileTemplate({
+  source: `<v-app>${formattingInsertMenu.toString()}${visualMarkup('.editor-tiptap-glyph-menu').closest('v-menu').toString()}${visualMarkup('v-dialog[aria-labelledby="editor-tiptap-admonition-title"]').toString()}</v-app>`,
+  filename: visualPath,
+  id: 'visual-insert-consumer',
+  compilerOptions: { mode: 'function' }
+})
+if (insertTemplate.errors.length) throw insertTemplate.errors[0]
+const insertRender = new Function('Vue', insertTemplate.code)(Vue)
+const visualConstants = visualAst.statements
+  .filter(ts.isVariableStatement)
+  .map(statement => statement.getText(visualAst))
+  .join('\n')
+const visualBehaviorCode = new Bun.Transpiler({ loader: 'ts' }).transformSync(
+  `${visualConstants}\nreturn { ${['data', 'methods', 'computed', 'watch'].map(visualOption).join(',')} }`
+)
+const visualBehavior = new Function(
+  'markRaw',
+  'FORMATTING_TOOLS',
+  'ADMONITION_KINDS',
+  'VISUAL_MARKDOWN_GLYPHS',
+  'insertVisualMarkdownDefinitionList',
+  'insertVisualMarkdownGlyph',
+  'insertVisualMarkdownAdmonition',
+  'searchVisualMarkdownGlyphs',
+  visualBehaviorCode
+)(
+  Vue.markRaw,
+  FORMATTING_TOOLS,
+  ADMONITION_KINDS,
+  VISUAL_MARKDOWN_GLYPHS,
+  insertVisualMarkdownDefinitionList,
+  insertVisualMarkdownGlyph,
+  insertVisualMarkdownAdmonition,
+  searchVisualMarkdownGlyphs
+)
+
+const settleInsertMenu = async () => {
+  await Vue.nextTick()
+  for (let frame = 0; frame < 3; frame++) {
+    const nextFrame = Promise.withResolvers<void>()
+    requestAnimationFrame(() => nextFrame.resolve())
+    await nextFrame.promise
+  }
+  await Vue.nextTick()
+}
+
+const mountInsertMenu = () => {
+  const editor = createEditor('markdown', '')
+  const host = document.createElement('div')
+  document.body.append(host)
+  const app = Vue.createApp({
+    data() {
+      return { ...visualBehavior.data.call({ $t: translateEnglish }), editor: Vue.markRaw(editor), format: 'markdown' }
+    },
+    methods: visualBehavior.methods,
+    computed: visualBehavior.computed,
+    watch: visualBehavior.watch,
+    render: insertRender
+  })
+  app.config.globalProperties.$t = translateEnglish
+  app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+  app.mount(host)
+  menuUnmounts.push(() => {
+    app.unmount()
+    host.remove()
+  })
+  const insertTrigger = (): HTMLButtonElement => {
+    const trigger = Array.from(host.querySelectorAll<HTMLButtonElement>('button[aria-haspopup="menu"]')).find(
+      button => button.getAttribute('aria-label') === translateEnglish('editor:markup.insertTools')
+    )
+    if (!trigger) throw new Error('The formatting Insert opener is not mounted')
+    return trigger
+  }
+  return {
+    editor,
+    host,
+    insertTrigger,
+    async choose(labelKey: string) {
+      insertTrigger().click()
+      await settleInsertMenu()
+      const item = Array.from(document.querySelectorAll<HTMLElement>('.v-list-item')).find(item => item.textContent?.trim() === translateEnglish(labelKey))
+      if (!item) throw new Error(`Insert action ${labelKey} is not reachable`)
+      item.click()
+      await settleInsertMenu()
+    }
+  }
+}
 
 const editors: Editor[] = []
 let restoreRangeGeometry: (() => void) | undefined
@@ -133,6 +262,7 @@ async function renderServerMarkdown(input: string): Promise<string> {
 
 afterEach(() => {
   try {
+    for (const unmount of menuUnmounts.splice(0)) unmount()
     for (const editor of editors.splice(0)) editor.destroy()
     document.body.replaceChildren()
   } finally {
@@ -141,6 +271,70 @@ afterEach(() => {
 })
 
 describe('Tiptap visual formats', () => {
+  it('inserts a definition list from the formatting Insert menu without losing the document', async () => {
+    const mounted = mountInsertMenu()
+    mounted.editor.commands.insertContent('Keep this paragraph.')
+    mounted.editor.commands.setTextSelection(mounted.editor.state.doc.content.size)
+    await mounted.choose('editor:markup.definitionListShort')
+    expect(mounted.editor.getMarkdown()).toContain('Keep this paragraph.')
+    expect(mounted.editor.getMarkdown()).toContain('Term\n: Definition')
+  })
+
+  it('returns from the emoji picker to the surviving Insert trigger on cancel and after insertion', async () => {
+    const mounted = mountInsertMenu()
+    mounted.editor.commands.insertContent('Existing text ')
+    const original = mounted.editor.getMarkdown()
+    const trigger = mounted.insertTrigger()
+    await mounted.choose('editor:markup.glyphShort')
+    const search = document.querySelector<HTMLInputElement>('.editor-tiptap-glyph-search input')!
+    search.value = 'deploy'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+    await Vue.nextTick()
+    document.querySelector<HTMLButtonElement>('.editor-tiptap-glyph-menu .wiki-close-control')!.click()
+    await settleInsertMenu()
+    expect(mounted.editor.getMarkdown()).toBe(original)
+    expect(trigger.isConnected).toBe(true)
+    expect(mounted.insertTrigger() === trigger, 'Cancel retains the original formatting Insert opener').toBe(true)
+    expect(document.activeElement === trigger, 'Cancel returns focus to the formatting Insert opener').toBe(true)
+
+    await mounted.choose('editor:markup.glyphShort')
+    const reopened = document.querySelector<HTMLInputElement>('.editor-tiptap-glyph-search input')!
+    expect(reopened.value).toBe('')
+    reopened.value = 'deploy'
+    reopened.dispatchEvent(new Event('input', { bubbles: true }))
+    await Vue.nextTick()
+    document.querySelector<HTMLButtonElement>('.editor-tiptap-glyph-button[title="Rocket"]')!.click()
+    await settleInsertMenu()
+    expect(mounted.editor.getMarkdown()).toContain('Existing text 🚀')
+    expect(mounted.insertTrigger() === trigger, 'Insertion retains the original formatting Insert opener').toBe(true)
+    expect(document.activeElement === trigger, 'Insertion returns focus to the formatting Insert opener').toBe(true)
+  })
+
+  it('submits the real admonition dialog opened from Insert into the current document', async () => {
+    const mounted = mountInsertMenu()
+    await mounted.choose('editor:markup.admonitionShort')
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"][aria-labelledby="editor-tiptap-admonition-title"]')!
+    const titleLabel = Array.from(dialog.querySelectorAll<HTMLLabelElement>('label[for]')).find(
+      label => label.textContent?.trim() === translateEnglish('editor:editor.title')
+    )
+    const title = titleLabel?.control
+    if (!(title instanceof HTMLInputElement)) throw new Error('The real admonition Title label is not associated with its input')
+    title.value = 'Release window'
+    title.dispatchEvent(new Event('input', { bubbles: true }))
+    const body = dialog.querySelector<HTMLTextAreaElement>('textarea')!
+    body.value = 'Keep one replica online.'
+    body.dispatchEvent(new Event('input', { bubbles: true }))
+    await Vue.nextTick()
+    const insert = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button')).find(
+      button => button.textContent?.trim() === translateEnglish('common:actions.insert')
+    )!
+    expect(insert.disabled).toBe(false)
+    insert.click()
+    await settleInsertMenu()
+    expect(mounted.editor.getMarkdown()).toContain('> **NOTE: Release window**')
+    expect(mounted.editor.getMarkdown()).toContain('> Keep one replica online.')
+  })
+
   it('keeps persisted editor keys stable across the engine replacement', () => {
     expect(getVisualEditorDefinition('html').editorKey).toBe('ckeditor')
     expect(getVisualEditorDefinition('markdown').editorKey).toBe('visual-markdown')
@@ -737,16 +931,26 @@ graph TD
       installTiptapSlashMenu(
         editor,
         [
-          { id: 'heading', label: 'Heading', run: (chain: ChainedCommands) => chain.setHeading({ level: 2 }) },
-          { id: 'table', label: 'Table', run: (chain: ChainedCommands) => chain.insertTable({ rows: 2, cols: 2, withHeaderRow: true }) }
+          { id: 'heading', label: 'Heading', icon: 'mdi-format-header-2', hint: 'H2', run: (chain: ChainedCommands) => chain.setHeading({ level: 2 }) },
+          {
+            id: 'table',
+            label: 'Table',
+            icon: 'mdi-table',
+            hint: '|',
+            run: (chain: ChainedCommands) => chain.insertTable({ rows: 2, cols: 2, withHeaderRow: true })
+          }
         ],
         'Insert'
       )
       typeVisualText(editor, '/')
       typeVisualText(editor, 'heading')
+      editor.view.dispatch(closeHistory(editor.state.tr))
       expect(pressEnter(editor)).toBe(true)
       expect(editor.state.doc.firstChild?.type.name).toBe('heading')
       expect(editor.state.doc.firstChild?.attrs.level).toBe(2)
+      expect(editor.commands.undo()).toBe(true)
+      expect(editor.state.doc.firstChild?.type.name).toBe('paragraph')
+      expect(editor.getText()).toBe('/heading')
 
       editor.commands.setContent('')
       typeVisualText(editor, '/')
@@ -766,9 +970,81 @@ graph TD
     }
   })
 
+  it('keeps command labels and hints inert and preserves the focused choice across viewport events', () => {
+    const editor = createEditor('markdown', '')
+    const label = '<img src=x onerror=alert(1)> Heading'
+    const hint = '<svg onload=alert(1)>'
+    const dispose = installTiptapSlashMenu(
+      editor,
+      [
+        { id: 'heading', label, icon: 'mdi-format-header-2', hint, run: chain => chain.setHeading({ level: 2 }) },
+        { id: 'quote', label: 'Quote', icon: 'mdi-format-quote-close', hint: '>', run: chain => chain.setBlockquote() }
+      ],
+      'Insert'
+    )
+    typeVisualText(editor, '/')
+    const menu = document.getElementById(editor.view.dom.getAttribute('aria-controls')!)!
+    const first = menu.querySelector<HTMLButtonElement>('[role="menuitem"]')!
+    expect(first.getAttribute('aria-label')).toBe(label)
+    expect(first.textContent).toContain(label)
+    expect(first.textContent).toContain(hint)
+    expect(first.querySelector('img, svg, script')).toBeNull()
+    expect(first.querySelector('.mdi')?.getAttribute('aria-hidden')).toBe('true')
+    expect(first.querySelector('.editor-tiptap-slash-hint')?.getAttribute('aria-hidden')).toBe('true')
+    const quote = menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[1]!
+    quote.focus()
+    quote.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))
+    expect(document.activeElement).toBe(quote)
+    // No geometry assertions: resize and scroll may reposition, not retire a focused command.
+    window.dispatchEvent(new Event('resize'))
+    window.dispatchEvent(new Event('scroll'))
+    expect(document.activeElement).toBe(quote)
+    expect(menu.querySelectorAll('[role="menuitem"]')[1]).toBe(quote)
+    expect(editor.getText()).toBe('/')
+    quote.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    expect(editor.state.doc.firstChild?.type.name).toBe('blockquote')
+    expect(editor.state.doc.firstChild?.firstChild?.type.name).toBe('paragraph')
+    // getText() includes block separators for the nested and trailing paragraphs.
+    expect(editor.state.doc.textContent).toBe('')
+    dispose()
+    expect(menu.isConnected).toBe(false)
+    expect(editor.view.dom.hasAttribute('aria-controls')).toBe(false)
+    expect(editor.view.dom.hasAttribute('aria-activedescendant')).toBe(false)
+    window.dispatchEvent(new Event('resize'))
+    editor.commands.setContent('')
+    typeVisualText(editor, '/')
+    expect(editor.view.dom.hasAttribute('aria-controls')).toBe(false)
+    expect(editor.getText()).toBe('/')
+  })
+
+  it('keeps unmatched slash input editable and lets Tab leave without executing a command', () => {
+    const editor = createEditor('markdown', '')
+    installTiptapSlashMenu(
+      editor,
+      [{ id: 'heading', label: 'Heading', icon: 'mdi-format-header-2', hint: 'H2', run: chain => chain.setHeading({ level: 2 }) }],
+      'Insert',
+      'No commands'
+    )
+    typeVisualText(editor, '/')
+    typeVisualText(editor, 'absent')
+    const menu = document.getElementById(editor.view.dom.getAttribute('aria-controls')!)!
+    expect(menu.querySelector('[role="status"]')?.textContent).toBe('No commands')
+    expect(menu.querySelector('[role="menuitem"]')).toBeNull()
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+    editor.view.dom.dispatchEvent(tab)
+    expect(tab.defaultPrevented).toBe(false)
+    expect(menu.hidden).toBe(true)
+    expect(editor.getText()).toBe('/absent')
+    expect(editor.state.doc.firstChild?.type.name).toBe('paragraph')
+  })
+
   it('maps an active slash line past unrelated document edits and refuses replaced queries', () => {
     const editor = createEditor('markdown', '')
-    installTiptapSlashMenu(editor, [{ id: 'heading', label: 'Heading', run: chain => chain.setHeading({ level: 2 }) }], 'Insert')
+    installTiptapSlashMenu(
+      editor,
+      [{ id: 'heading', label: 'Heading', icon: 'mdi-format-header-2', hint: 'H2', run: chain => chain.setHeading({ level: 2 }) }],
+      'Insert'
+    )
     typeVisualText(editor, '/')
     const paragraph = editor.schema.nodes.paragraph!.create(null, editor.schema.text('Remote paragraph'))
     editor.view.dispatch(editor.state.tr.insert(0, paragraph))
@@ -796,7 +1072,11 @@ graph TD
 
   it('dismisses slash suggestions without consuming source during Escape, IME or read-only transitions', () => {
     const editor = createEditor('markdown', '')
-    installTiptapSlashMenu(editor, [{ id: 'heading', label: 'Heading', run: chain => chain.setHeading({ level: 2 }) }], 'Insert')
+    installTiptapSlashMenu(
+      editor,
+      [{ id: 'heading', label: 'Heading', icon: 'mdi-format-header-2', hint: 'H2', run: chain => chain.setHeading({ level: 2 }) }],
+      'Insert'
+    )
     typeVisualText(editor, '/')
     const menu = document.querySelector<HTMLElement>('.editor-tiptap-slash-menu')!
     editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
@@ -812,7 +1092,11 @@ graph TD
 
     // A fresh editor avoids depending on the browser's deferred composition-end timer.
     const readonly = createEditor('html', '')
-    installTiptapSlashMenu(readonly, [{ id: 'heading', label: 'Heading', run: chain => chain.setHeading({ level: 2 }) }], 'Insert')
+    installTiptapSlashMenu(
+      readonly,
+      [{ id: 'heading', label: 'Heading', icon: 'mdi-format-header-2', hint: 'H2', run: chain => chain.setHeading({ level: 2 }) }],
+      'Insert'
+    )
     typeVisualText(readonly, '/')
     const activeMenu = document.querySelector<HTMLElement>(`#${readonly.view.dom.getAttribute('aria-controls')}`)!
     const staleButton = activeMenu.querySelector<HTMLButtonElement>('button')
@@ -833,7 +1117,11 @@ graph TD
       { source: '<p>Replace</p>', position: { from: 1, to: 8 } }
     ]) {
       const editor = createEditor('html', fixture.source)
-      installTiptapSlashMenu(editor, [{ id: 'heading', label: 'Heading', run: chain => chain.setHeading({ level: 2 }) }], 'Insert')
+      installTiptapSlashMenu(
+        editor,
+        [{ id: 'heading', label: 'Heading', icon: 'mdi-format-header-2', hint: 'H2', run: chain => chain.setHeading({ level: 2 }) }],
+        'Insert'
+      )
       editor.commands.setTextSelection(fixture.position)
       typeVisualText(editor, '/')
       expect(editor.view.dom.hasAttribute('aria-controls')).toBe(false)

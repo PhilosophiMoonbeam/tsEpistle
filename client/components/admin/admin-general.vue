@@ -2,8 +2,8 @@
   <v-container fluid class="general-workspace">
     <admin-hero
       icon="mdi-tune-variant"
-      :title="$t('admin:general.title')"
-      :description="$t('admin:general.giveWorkspaceIdentityVoice')"
+      :title="gt('title')"
+      :description="gt('giveWorkspaceIdentityVoice')"
     >
       <template #actions>
         <v-btn
@@ -12,39 +12,40 @@
           :disabled="busy || initializing"
           :loading="loading"
           @click="reload"
-          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:general.reloadSavedWorkspaceSettings') }}</v-tooltip></v-btn
+          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ gt('reloadSavedWorkspaceSettings') }}</v-tooltip></v-btn
         >
         <v-btn v-if="dirty" variant="text" :disabled="locked" @click="reset"
-          >{{ $t('admin:general.resetDraft') }}</v-btn
+          >{{ gt('resetDraft') }}</v-btn
         >
         <v-btn
           color="primary"
-          variant="flat"
+          variant="tonal"
+          :data-commitment="dirty && !locked ? 'active' : undefined"
           prepend-icon="mdi-check"
           :disabled="locked || !dirty"
           @click="review"
-          >{{ $t('admin:general.reviewChanges') }}</v-btn
+          >{{ gt('reviewChanges') }}</v-btn
         >
       </template>
     </admin-hero>
     <async-state
       v-if="!saved && loading"
       state="loading"
-      :title="$t('admin:general.loadingWorkspaceSettings')"
+      :title="gt('loadingWorkspaceSettings')"
     />
     <async-state
       v-else-if="!saved && loadError"
       state="error"
-      :title="$t('admin:general.workspaceSettingsUnavailable')"
+      :title="gt('workspaceSettingsUnavailable')"
       :message="loadError"
-      :retry-label="$t('admin:general.tryAgain')"
+      :retry-label="gt('tryAgain')"
       @retry="load"
     />
     <template v-if="saved && draft">
       <v-alert v-if="loadError" type="error" variant="tonal" class="mt-5"
         >{{ loadError
         }}<v-btn variant="text" :disabled="busy" @click="reload"
-          >{{ $t('admin:general.reloadSavedSettings') }}</v-btn
+          >{{ gt('reloadSavedSettings') }}</v-btn
         ></v-alert
       >
       <v-alert
@@ -57,15 +58,15 @@
       <div class="general-status">
         <span
           ><i :class="dirty ? 'is-draft' : ''" />{{
-            dirty ? $t('admin:general.unsavedWorkspaceDraft') : $t('admin:general.showingSavedSettings')
+            dirty ? gt('unsavedWorkspaceDraft') : gt('showingSavedSettings')
           }}</span
         ><span>{{
           saved.runtime.state === "applied"
-            ? $t('admin:general.runtimeConfigurationCurrent')
-            : $t('admin:general.runtimeConfigurationNeedsAttention')
+            ? gt('runtimeConfigurationCurrent')
+            : gt('runtimeConfigurationNeedsAttention')
         }}</span>
       </div>
-      <nav class="general-tabs" :aria-label="$t('admin:general.generalSections')">
+      <nav class="general-tabs" :aria-label="gt('generalSections')">
         <button
           v-for="tab in sections"
           :key="tab.key"
@@ -81,47 +82,47 @@
         <section class="general-editor">
           <template v-if="section === 'identity'">
             <div class="general-heading">
-              <span class="general-kicker">{{ $t('admin:general.placeKnow') }}</span>
-              <h2>{{ $t('admin:general.workspaceIdentity') }}</h2>
+              <span class="general-kicker">{{ gt('placeKnow') }}</span>
+              <h2>{{ gt('workspaceIdentity') }}</h2>
               <p>
-                {{ $t('admin:general.nameAddressAttributionMake') }}
+                {{ gt('nameAddressAttributionMake') }}
               </p>
             </div>
             <div class="general-setting-group">
               <v-text-field
                 v-model="draft.title"
-                :label="$t('admin:general.fieldLabels.title')"
+                :label="gt('fieldLabels.title')"
                 variant="outlined"
                 maxlength="50"
                 counter="50"
                 :disabled="locked"
-                :hint="$t('admin:general.usedNavigationBrowserTitles')"
+                :hint="gt('usedNavigationBrowserTitles')"
                 persistent-hint
               />
               <v-text-field
                 v-model="draft.host"
-                :label="$t('admin:general.fieldLabels.host')"
+                :label="gt('fieldLabels.host')"
                 variant="outlined"
                 :disabled="locked"
-                :hint="$t('admin:general.httpSOriginUsed')"
+                :hint="gt('httpSOriginUsed')"
                 persistent-hint
               />
               <p class="general-note">
-                {{ $t('admin:general.changingAddressDoesNot') }}
+                {{ gt('changingAddressDoesNot') }}
               </p>
             </div>
             <div class="general-setting-group">
-              <h3>{{ $t('admin:general.workspaceLogo') }}</h3>
+              <h3>{{ gt('workspaceLogo') }}</h3>
               <general-logo-manager :disabled="locked || reviewing" />
             </div>
             <div class="general-setting-group">
-              <h3>{{ $t('admin:general.attributionFooter') }}</h3>
+              <h3>{{ gt('attributionFooter') }}</h3>
               <p>
-                {{ $t('admin:general.setOrganizationContentAttribution') }}
+                {{ gt('setOrganizationContentAttribution') }}
               </p>
               <v-text-field
                 v-model="draft.company"
-                :label="$t('admin:general.fieldLabels.company')"
+                :label="gt('fieldLabels.company')"
                 variant="outlined"
                 maxlength="255"
                 :disabled="locked"
@@ -129,33 +130,33 @@
               <v-select
                 v-model="draft.contentLicense"
                 :items="licenses"
-                :label="$t('admin:general.fieldLabels.contentLicense')"
+                :label="gt('fieldLabels.contentLicense')"
                 variant="outlined"
                 :disabled="locked"
               />
               <v-textarea
                 v-model="draft.footerOverride"
-                :label="$t('admin:general.customFooter')"
+                :label="gt('customFooter')"
                 variant="outlined"
                 rows="3"
                 auto-grow
                 maxlength="8000"
                 :disabled="locked"
-                :hint="$t('admin:general.markdownLeaveEmptyUse')"
+                :hint="gt('markdownLeaveEmptyUse')"
                 persistent-hint
               />
               <div v-if="draft.footerOverride" class="general-preview-fragment">
-                <span class="general-kicker">{{ $t('admin:general.footerPreview') }}</span>
+                <span class="general-kicker">{{ gt('footerPreview') }}</span>
                 <div class="general-markdown" v-html="footerPreview" />
               </div>
             </div>
           </template>
           <template v-else-if="section === 'announcement'">
             <div class="general-heading">
-              <span class="general-kicker">{{ $t('admin:general.sharedNoticeboard') }}</span>
-              <h2>{{ $t('admin:general.workspaceAnnouncement') }}</h2>
+              <span class="general-kicker">{{ gt('sharedNoticeboard') }}</span>
+              <h2>{{ gt('workspaceAnnouncement') }}</h2>
               <p>
-                {{ $t('admin:general.giveReadersTimelyContext') }}
+                {{ gt('giveReadersTimelyContext') }}
               </p>
             </div>
             <div class="general-announcement-state">
@@ -175,16 +176,16 @@
               <v-switch
                 :model-value="draft.banner.isEnabled"
                 @update:model-value="$event !== null && (draft.banner.isEnabled = $event)"
-                :label="$t('admin:general.publishAnnouncement')"
+                :label="gt('publishAnnouncement')"
                 color="primary"
                 inset
                 :disabled="locked"
-                :hint="$t('admin:general.announcementAppearsWikiPages')"
+                :hint="gt('announcementAppearsWikiPages')"
                 persistent-hint
               />
               <v-text-field
                 v-model="draft.banner.title"
-                :label="$t('admin:general.announcementTitle')"
+                :label="gt('announcementTitle')"
                 variant="outlined"
                 maxlength="160"
                 counter="160"
@@ -192,35 +193,35 @@
               />
               <v-textarea
                 v-model="draft.banner.content"
-                :label="$t('admin:general.announcementMessage')"
+                :label="gt('announcementMessage')"
                 variant="outlined"
                 rows="6"
                 auto-grow
                 maxlength="8000"
                 :disabled="locked"
-                :hint="$t('admin:general.markdownSupportedIncludeTitle')"
+                :hint="gt('markdownSupportedIncludeTitle')"
                 persistent-hint
               />
               <v-select
                 :model-value="draft.banner.tone || 'warning'"
                 :items="tones"
-                :label="$t('admin:general.noticeTone')"
+                :label="gt('noticeTone')"
                 variant="outlined"
                 :disabled="locked"
                 @update:model-value="draft.banner.tone = $event"
               />
             </div>
             <div class="general-setting-group">
-              <h3>{{ $t('admin:general.publicationWindow') }}</h3>
+              <h3>{{ gt('publicationWindow') }}</h3>
               <p>
-                {{ $t('admin:general.useUtcUnambiguousSchedule') }}
+                {{ gt('useUtcUnambiguousSchedule') }}
               </p>
               <div class="general-pair">
                 <v-text-field
                   :model-value="dateInput(draft.banner.startsAt)"
                   type="datetime-local"
                   step="60"
-                  :label="$t('admin:general.startsUtc')"
+                  :label="gt('startsUtc')"
                   variant="outlined"
                   clearable
                   :disabled="locked"
@@ -229,7 +230,7 @@
                   :model-value="dateInput(draft.banner.endsAt)"
                   type="datetime-local"
                   step="60"
-                  :label="$t('admin:general.endsUtc')"
+                  :label="gt('endsUtc')"
                   variant="outlined"
                   clearable
                   :disabled="locked"
@@ -237,37 +238,37 @@
                 />
               </div>
               <p class="general-note">
-                {{ $t('admin:general.scheduledNoticesAppearWhen') }}
+                {{ gt('scheduledNoticesAppearWhen') }}
               </p>
             </div>
             <div class="general-preview-fragment">
-              <span class="general-kicker">{{ $t('admin:general.readerPreviewUnsavedDraft') }}</span
+              <span class="general-kicker">{{ gt('readerPreviewUnsavedDraft') }}</span
               ><site-banner
                 v-if="draft.banner.title || draft.banner.content"
                 :banner="{ ...draft.banner, isEnabled: true }"
                 preview
               />
               <p v-else class="general-note">
-                {{ $t('admin:general.addTitleMessagePreview') }}
+                {{ gt('addTitleMessagePreview') }}
               </p>
             </div>
           </template>
           <template v-else-if="section === 'publishing'">
             <div class="general-heading">
-              <span class="general-kicker">{{ $t('admin:general.readerAuthorConventions') }}</span>
-              <h2>{{ $t('admin:general.publishingDefaults') }}</h2>
+              <span class="general-kicker">{{ gt('readerAuthorConventions') }}</span>
+              <h2>{{ gt('publishingDefaults') }}</h2>
               <p>
-                {{ $t('admin:general.helpPeopleDiscoverPages') }}
+                {{ gt('helpPeopleDiscoverPages') }}
               </p>
             </div>
             <div class="general-setting-group">
-              <h3>{{ $t('admin:general.searchPresentation') }}</h3>
+              <h3>{{ gt('searchPresentation') }}</h3>
               <p>
-                {{ $t('admin:general.metadataExternalSearchEngines') }}
+                {{ gt('metadataExternalSearchEngines') }}
               </p>
               <v-textarea
                 v-model="draft.description"
-                :label="$t('admin:general.fieldLabels.description')"
+                :label="gt('fieldLabels.description')"
                 variant="outlined"
                 rows="3"
                 maxlength="1000"
@@ -277,47 +278,47 @@
                 <v-select
                   :model-value="indexDirective"
                   :items="indexOptions"
-                  :label="$t('admin:general.indexPages')"
+                  :label="gt('indexPages')"
                   variant="outlined"
                   :disabled="locked"
                   @update:model-value="setRobots('index', $event)"
                 /><v-select
                   :model-value="followDirective"
                   :items="followOptions"
-                  :label="$t('admin:general.followPageLinks')"
+                  :label="gt('followPageLinks')"
                   variant="outlined"
                   :disabled="locked"
                   @update:model-value="setRobots('follow', $event)"
                 />
               </div>
               <div class="general-search-preview">
-                <span>{{ draft.host || $t('admin:general.workspaceAddress') }}</span
-                ><strong>{{ draft.title || $t('admin:general.fieldLabels.title') }}</strong>
+                <span>{{ draft.host || gt('workspaceAddress') }}</span
+                ><strong>{{ draft.title || gt('fieldLabels.title') }}</strong>
                 <p>
                   {{
                     draft.description ||
-                    $t('admin:general.workspaceDescriptionWillAppear')
+                    gt('workspaceDescriptionWillAppear')
                   }}
                 </p>
                 <small
-                  >{{ $t('admin:general.illustrativeSearchPreviewSearch') }}</small
+                  >{{ gt('illustrativeSearchPreviewSearch') }}</small
                 >
               </div>
             </div>
             <div class="general-setting-group">
-              <h3>{{ $t('admin:general.fieldLabels.pageExtensions') }}</h3>
+              <h3>{{ gt('fieldLabels.pageExtensions') }}</h3>
               <p>
-                {{ $t('admin:general.chooseWhichFileLike') }}
+                {{ gt('chooseWhichFileLike') }}
               </p>
               <v-combobox
                 v-model="draft.pageExtensions"
-                :label="$t('admin:general.recognizedPageExtensions')"
+                :label="gt('recognizedPageExtensions')"
                 variant="outlined"
                 multiple
                 chips
                 closable-chips
                 :disabled="locked"
-                :hint="$t('admin:general.typeExtensionPressEnter')"
+                :hint="gt('typeExtensionPressEnter')"
                 persistent-hint
               />
               <div class="general-url-examples">
@@ -331,7 +332,7 @@
                   >
                 </div>
                 <p v-if="!draft.pageExtensions.length">
-                  {{ $t('admin:general.noExtensionAliasesExtensionless') }}
+                  {{ gt('noExtensionAliasesExtensionless') }}
                 </p>
               </div>
             </div>
@@ -340,23 +341,36 @@
               <v-switch
                 :model-value="draft.featureGlossary"
                 @update:model-value="$event !== null && (draft.featureGlossary = $event)"
-                :label="$t('admin:general.enableGlossary', { defaultValue: 'Enable glossary' })"
+                :label="gt('enableGlossary', { defaultValue: 'Enable glossary' })"
                 color="primary"
                 inset
                 :disabled="locked"
-                :hint="$t('admin:general.glossaryAvailabilityHint', { defaultValue: 'Turning this off hides the glossary and refuses glossary changes without deleting terms. Turning it back on restores access under the existing permissions.' })"
+                :hint="gt('glossaryAvailabilityHint', { defaultValue: 'Turning this off hides the glossary and refuses glossary changes without deleting terms. Turning it back on restores access under the existing permissions.' })"
                 persistent-hint
               />
             </div>
             <div class="general-setting-group">
-              <h3>{{ $t('admin:general.pageEditingActions') }}</h3>
+              <h3>{{ labels.publicSocialSharing }}</h3>
+              <v-switch
+                :model-value="draft.publicSocialSharing"
+                @update:model-value="$event !== null && (draft.publicSocialSharing = $event)"
+                :label="gt('enablePublicSocialSharing')"
+                color="primary"
+                inset
+                :disabled="locked"
+                :hint="gt('publicSocialSharingHint')"
+                persistent-hint
+              />
+            </div>
+            <div class="general-setting-group">
+              <h3>{{ gt('pageEditingActions') }}</h3>
               <p>
-                {{ $t('admin:general.chooseHowAuthorsReach') }}
+                {{ gt('chooseHowAuthorsReach') }}
               </p>
               <v-switch
                 :model-value="draft.editFab"
                 @update:model-value="$event !== null && (draft.editFab = $event)"
-                :label="$t('admin:general.showFloatingEditButton')"
+                :label="gt('showArticleEditShortcut')"
                 color="primary"
                 inset
                 :disabled="locked"
@@ -364,7 +378,7 @@
               <v-switch
                 :model-value="draft.editMenuBar"
                 @update:model-value="$event !== null && (draft.editMenuBar = $event)"
-                :label="$t('admin:general.showPageActionBar')"
+                :label="gt('showPageActionsMenu')"
                 color="primary"
                 inset
                 :disabled="locked"
@@ -372,7 +386,7 @@
               <v-switch
                 :model-value="draft.editMenuBtn"
                 @update:model-value="$event !== null && (draft.editMenuBtn = $event)"
-                :label="$t('admin:general.includeEditAction')"
+                :label="gt('includeArticleEditShortcut')"
                 color="primary"
                 inset
                 :disabled="locked || !draft.editMenuBar"
@@ -380,7 +394,7 @@
               <v-switch
                 :model-value="draft.editMenuExternalBtn"
                 @update:model-value="$event !== null && (draft.editMenuExternalBtn = $event)"
-                :label="$t('admin:general.includeExternalSourceAction')"
+                :label="gt('includeExternalSourceAction')"
                 color="primary"
                 inset
                 :disabled="locked || !draft.editMenuBar"
@@ -388,30 +402,30 @@
               <template v-if="draft.editMenuExternalBtn"
                 ><v-text-field
                   v-model="draft.editMenuExternalName"
-                  :label="$t('admin:general.fieldLabels.editMenuExternalName')"
+                  :label="gt('fieldLabels.editMenuExternalName')"
                   variant="outlined"
                   :disabled="locked"
                   maxlength="80"
                 /><v-text-field
                   v-model="draft.editMenuExternalIcon"
-                  :label="$t('admin:general.fieldLabels.editMenuExternalIcon')"
+                  :label="gt('fieldLabels.editMenuExternalIcon')"
                   variant="outlined"
                   :disabled="locked"
-                  :hint="$t('admin:general.mdiIconNameExample')"
+                  :hint="gt('mdiIconNameExample')"
                   persistent-hint
                 /><v-text-field
                   v-model="draft.editMenuExternalUrl"
-                  :label="$t('admin:general.fieldLabels.editMenuExternalUrl')"
+                  :label="gt('fieldLabels.editMenuExternalUrl')"
                   variant="outlined"
                   :disabled="locked"
-                  :hint="$t('admin:general.useFilenamePageSource')"
+                  :hint="gt('useFilenamePageSource')"
                   persistent-hint
                 />
                 <div class="general-source-preview">
-                  <span class="general-kicker">{{ $t('admin:general.exampleEnHandbookMd') }}</span
+                  <span class="general-kicker">{{ gt('exampleEnHandbookMd') }}</span
                   ><code>{{
                     sourcePreview ||
-                    $t('admin:general.enterValidSourceUrl')
+                    gt('enterValidSourceUrl')
                   }}</code>
                 </div>
               </template>
@@ -419,53 +433,53 @@
           </template>
           <template v-else-if="section === 'accounts'">
             <div class="general-heading">
-              <span class="general-kicker">{{ $t('admin:general.consistentStartingPoint') }}</span>
-              <h2>{{ $t('admin:general.newAccountPresentation') }}</h2>
+              <span class="general-kicker">{{ gt('consistentStartingPoint') }}</span>
+              <h2>{{ gt('newAccountPresentation') }}</h2>
               <p>
-                {{ $t('admin:general.theseDefaultsAppliedOnce') }}
+                {{ gt('theseDefaultsAppliedOnce') }}
               </p>
             </div>
             <div class="general-setting-group">
               <v-text-field
                 v-model="draft.userDefaults.timezone"
-                :label="$t('admin:general.defaultTimeZone')"
+                :label="gt('defaultTimeZone')"
                 variant="outlined"
                 :disabled="locked"
-                :hint="$t('admin:general.ianaTimeZoneExample')"
+                :hint="gt('ianaTimeZoneExample')"
                 persistent-hint
               />
               <v-select
                 v-model="draft.userDefaults.dateFormat"
                 :items="dateFormats"
-                :label="$t('admin:general.defaultDateFormat')"
+                :label="gt('defaultDateFormat')"
                 variant="outlined"
                 :disabled="locked"
               />
               <v-select
                 v-model="draft.userDefaults.timeFormat"
                 :items="timeFormats"
-                :label="$t('admin:general.defaultTimeFormat')"
+                :label="gt('defaultTimeFormat')"
                 variant="outlined"
                 :disabled="locked"
               />
             </div>
             <p class="general-note">
-              {{ $t('admin:general.localeDefaultKeepsBrowsers') }}
+              {{ gt('localeDefaultKeepsBrowsers') }}
             </p>
           </template>
           <template v-else>
             <div class="general-heading">
-              <span class="general-kicker">{{ $t('admin:general.workspaceDecisions') }}</span>
-              <h2>{{ $t('admin:general.changeHistory') }}</h2>
+              <span class="general-kicker">{{ gt('workspaceDecisions') }}</span>
+              <h2>{{ gt('changeHistory') }}</h2>
               <p>
-                {{ $t('admin:general.latest50SavedGeneral') }}
+                {{ gt('latest50SavedGeneral') }}
               </p>
             </div>
             <async-state
               v-if="!saved.history.length"
               state="empty"
-              :title="$t('admin:general.noGeneralChangesRecorded')"
-              :message="$t('admin:general.reviewedSavesWillAppear')"
+              :title="gt('noGeneralChangesRecorded')"
+              :message="gt('reviewedSavesWillAppear')"
             />
             <ol v-else class="general-activity">
               <li v-for="event in saved.history" :key="event.id">
@@ -478,8 +492,8 @@
                 <p>
                   {{
                     event.actorId
-                      ? $t('admin:general.account', { actorId: event.actorId, interpolation: { escapeValue: false } })
-                      : $t('admin:general.apiAdministrator')
+                      ? gt('account', { actorId: event.actorId, interpolation: { escapeValue: false } })
+                      : gt('apiAdministrator')
                   }}
                 </p>
                 <ul>
@@ -493,49 +507,49 @@
         </section>
         <aside class="general-aside">
           <div class="general-identity-card">
-            <span class="general-kicker">{{ $t('admin:general.workspaceGlance') }}</span
+            <span class="general-kicker">{{ gt('workspaceGlance') }}</span
             ><img
               v-if="logoUrl && !logoImageFailed"
               :key="logoUrl"
               :src="logoUrl"
               :data-logo-source="logoUrl"
-              :alt="$t('admin:general.currentWorkspaceLogo')"
+              :alt="gt('currentWorkspaceLogo')"
               @error="handleLogoError"
               @load="handleLogoLoad"
             />
-            <h3>{{ draft.title || $t('admin:general.fieldLabels.title') }}</h3>
-            <p>{{ draft.company || $t('admin:general.sharedKnowledgeSpace') }}</p>
-            <code :tabindex="draft.host ? 0 : undefined" :dir="draft.host ? 'ltr' : undefined">{{ draft.host || $t('admin:general.publicAddressNotSet') }}</code
+            <h3>{{ draft.title || gt('fieldLabels.title') }}</h3>
+            <p>{{ draft.company || gt('sharedKnowledgeSpace') }}</p>
+            <code :dir="draft.host ? 'ltr' : undefined">{{ draft.host || gt('publicAddressNotSet') }}</code
             ><span class="general-preview-label">{{
               dirty
-                ? $t('admin:general.identityPreviewUnsavedDraft')
-                : $t('admin:general.savedWorkspaceIdentity')
+                ? gt('identityPreviewUnsavedDraft')
+                : gt('savedWorkspaceIdentity')
             }}</span>
           </div>
           <div class="general-panel">
-            <span class="general-kicker">{{ $t('admin:general.savedConfiguration') }}</span>
+            <span class="general-kicker">{{ gt('savedConfiguration') }}</span>
             <h3>
               {{
                 saved.runtime.state === "applied"
-                  ? $t('admin:general.configurationCurrent')
-                  : $t('admin:general.activationNeedsAttention')
+                  ? gt('configurationCurrent')
+                  : gt('activationNeedsAttention')
               }}
             </h3>
             <p>
-              {{ $t('admin:general.observedApplicationSettingsSaved', { state: saved.runtime.state === "applied" ? "match" : $t('admin:general.differ'), interpolation: { escapeValue: false } }) }}
+              {{ gt('observedApplicationSettingsSaved', { state: saved.runtime.state === "applied" ? "match" : gt('differ'), interpolation: { escapeValue: false } }) }}
             </p>
-            <p>{{ $t('admin:general.lastObserved', { observedAt: date(saved.runtime.observedAt), interpolation: { escapeValue: false } }) }}</p>
+            <p>{{ gt('lastObserved', { observedAt: date(saved.runtime.observedAt), interpolation: { escapeValue: false } }) }}</p>
             <v-btn
               v-if="saved.runtime.state !== 'applied'"
               variant="text"
               :disabled="locked || dirty"
               :loading="initializing"
               @click="initialize"
-              >{{ $t('admin:general.retryRuntimeActivation') }}</v-btn
+              >{{ gt('retryRuntimeActivation') }}</v-btn
             >
           </div>
           <div class="general-panel">
-            <span class="general-kicker">{{ $t('admin:general.relatedWorkspaces') }}</span
+            <span class="general-kicker">{{ gt('relatedWorkspaces') }}</span
             ><router-link v-for="link in related" :key="link.to" :to="link.to"
               >{{ link.label }}<v-icon icon="mdi-arrow-top-right" size="16"
             /></router-link>
@@ -551,10 +565,10 @@
     >
       <v-card v-if="reviewed && saved" class="general-review"
         ><div class="general-review-heading">
-          <span class="general-kicker">{{ $t('admin:general.reviewBeforePublishing') }}</span>
-          <h2 id="general-review-title">{{ $t('admin:general.reviewWorkspaceSettings') }}</h2>
+          <span class="general-kicker">{{ gt('reviewBeforePublishing') }}</span>
+          <h2 id="general-review-title">{{ gt('reviewWorkspaceSettings') }}</h2>
           <p>
-            {{ $t('admin:general.theseValuesFixedReview') }}
+            {{ gt('theseValuesFixedReview') }}
           </p>
         </div>
         <v-card-text
@@ -574,11 +588,11 @@
             type="warning"
             variant="tonal"
             class="mb-5"
-            >{{ $t('admin:general.generatedLinksIdentityProvider') }}</v-alert
+            >{{ gt('generatedLinksIdentityProvider') }}</v-alert
           >
           <v-textarea
             v-model="reason"
-            :label="$t('admin:general.administrativeReason')"
+            :label="gt('administrativeReason')"
             variant="outlined"
             rows="2"
             maxlength="1000"
@@ -591,19 +605,20 @@
               variant="text"
               :disabled="busy"
               @click="reloadReview"
-              >{{ $t('admin:general.reloadSavedSettings') }}</v-btn
+              >{{ gt('reloadSavedSettings') }}</v-btn
             ></v-alert
           > </v-card-text
         ><v-card-actions
           ><v-btn variant="text" :disabled="busy" @click="reviewing = false"
-            >{{ $t('admin:general.keepEditing') }}</v-btn
+            >{{ gt('keepEditing') }}</v-btn
           ><v-spacer /><v-btn
             color="primary"
             variant="flat"
+            :data-commitment="!busy && !stale && reason.trim().length >= 3 ? 'active' : undefined"
             :disabled="busy || stale || reason.trim().length < 3"
             :loading="busy"
             @click="confirm"
-            >{{ $t('admin:general.saveWorkspaceSettings') }}</v-btn
+            >{{ gt('saveWorkspaceSettings') }}</v-btn
           ></v-card-actions
         >
       </v-card>
@@ -635,6 +650,7 @@ import {
 } from "../../../shared/site-banner.ts";
 import { renderFooterMarkdown } from "../../helpers/footer-markdown.ts";
 import { getErrorMessage } from "../../helpers/root-ui-store.ts";
+import { useTranslate } from '../../helpers/use-translate.ts'
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const sections = [
   { key: "identity", title: "admin:general.identity" },
@@ -645,6 +661,9 @@ const sections = [
 ];
 export default {
   components: { AsyncState, SiteBanner, GeneralLogoManager },
+  setup() {
+    return { gt: useTranslate('admin:general') };
+  },
   data() {
     return {
       saved: null as GeneralWorkspace | null,
@@ -671,32 +690,32 @@ export default {
       now: Date.now(),
       clockTimer: undefined as number | undefined,
       announcementLabels: {
-        disabled: this.$t('admin:general.notPublished'),
-        scheduled: this.$t('admin:general.scheduledAppear'),
-        ended: this.$t('admin:general.publicationWindowEnded'),
-        visible: this.$t('admin:general.visibleDuringCurrentWindow'),
+        disabled: this.gt('notPublished'),
+        scheduled: this.gt('scheduledAppear'),
+        ended: this.gt('publicationWindowEnded'),
+        visible: this.gt('visibleDuringCurrentWindow'),
       },
       tones: [
-        { title: this.$t('admin:general.information'), value: "info" },
-        { title: this.$t('admin:general.notice'), value: "warning" },
-        { title: this.$t('admin:general.criticalUpdate'), value: "critical" },
+        { title: this.gt('information'), value: "info" },
+        { title: this.gt('notice'), value: "warning" },
+        { title: this.gt('criticalUpdate'), value: "critical" },
       ],
       indexOptions: [
-        { title: this.$t('admin:general.searchEngineDefault'), value: "" },
-        { title: this.$t('admin:general.allowIndexing'), value: "index" },
-        { title: this.$t('admin:general.requestNoIndexing'), value: "noindex" },
+        { title: this.gt('searchEngineDefault'), value: "" },
+        { title: this.gt('allowIndexing'), value: "index" },
+        { title: this.gt('requestNoIndexing'), value: "noindex" },
       ],
       followOptions: [
-        { title: this.$t('admin:general.searchEngineDefault'), value: "" },
-        { title: this.$t('admin:general.allowFollowingLinks'), value: "follow" },
-        { title: this.$t('admin:general.requestNoFollowing'), value: "nofollow" },
+        { title: this.gt('searchEngineDefault'), value: "" },
+        { title: this.gt('allowFollowingLinks'), value: "follow" },
+        { title: this.gt('requestNoFollowing'), value: "nofollow" },
       ],
       related: [
-        { label: this.$t('admin:general.editorsAuthoringDefaults'), to: "/editor" },
-        { label: this.$t('admin:general.pageDiscussions'), to: "/comments" },
-        { label: this.$t('admin:general.themeAppearance'), to: "/theme" },
-        { label: this.$t('admin:general.navigation'), to: "/navigation" },
-        { label: this.$t('admin:general.analytics'), to: "/analytics" },
+        { label: this.gt('editorsAuthoringDefaults'), to: "/editor" },
+        { label: this.gt('pageDiscussions'), to: "/comments" },
+        { label: this.gt('themeAppearance'), to: "/theme" },
+        { label: this.gt('navigation'), to: "/navigation" },
+        { label: this.gt('analytics'), to: "/analytics" },
       ],
     };
   },
@@ -733,14 +752,14 @@ export default {
     },
     announcementExplanation(): string {
       if (this.announcementState === "disabled")
-        return this.$t('admin:general.messageRemainsAvailableEditing');
+        return this.gt('messageRemainsAvailableEditing');
       if (this.announcementState === "scheduled")
-        return this.$t('admin:general.readersReceiveNoticePage');
+        return this.gt('readersReceiveNoticePage');
       if (this.announcementState === "ended")
-        return this.$t('admin:general.chooseNewPublicationWindow');
+        return this.gt('chooseNewPublicationWindow');
       return this.dirty
-        ? this.$t('admin:general.draftsCurrentScheduleReview')
-        : this.$t('admin:general.savedAnnouncementAvailableReaders');
+        ? this.gt('draftsCurrentScheduleReview')
+        : this.gt('savedAnnouncementAvailableReaders');
     },
     indexDirective(): string {
       return (
@@ -774,7 +793,7 @@ export default {
     },
     dateFormats() {
       return [
-        { title: this.$t('admin:general.localeDefault'), value: "" },
+        { title: this.gt('localeDefault'), value: "" },
         { title: "DD/MM/YYYY", value: "DD/MM/YYYY" },
         { title: "DD.MM.YYYY", value: "DD.MM.YYYY" },
         { title: "MM/DD/YYYY", value: "MM/DD/YYYY" },
@@ -784,8 +803,8 @@ export default {
     },
     timeFormats() {
       return [
-        { title: this.$t('admin:general.localeDefault'), value: "locale" },
-        { title: this.$t('admin:general.n12HourAmPm'), value: "12h" },
+        { title: this.gt('localeDefault'), value: "locale" },
+        { title: this.gt('n12HourAmPm'), value: "12h" },
         { title: "24-hour", value: "24h" },
       ];
     },
@@ -860,7 +879,7 @@ export default {
     },
     async reload() {
       if (this.busy || this.initializing) return;
-      if (this.dirty && !(await confirmDiscard(this.$t('admin:general.discardUnsavedWorkspaceChanges'))))
+      if (this.dirty && !(await confirmDiscard(this.gt('discardUnsavedWorkspaceChanges'))))
         return;
       await this.load();
     },
@@ -906,30 +925,30 @@ export default {
       field: keyof GeneralPolicy,
       value: GeneralPolicy[keyof GeneralPolicy],
     ): string {
-      if (typeof value === "boolean") return value ? this.$t('admin:general.shown') : this.$t('admin:general.hidden');
+      if (typeof value === "boolean") return value ? this.gt('shown') : this.gt('hidden');
       if (field === "banner") {
         const banner = value as SiteBannerConfig;
         return [
-          banner.isEnabled ? this.$t('admin:general.publishedDuringWindow') : this.$t('admin:general.notPublished'),
-          banner.title || this.$t('admin:general.noTitle'),
-          banner.content || this.$t('admin:general.noMessage'),
-          this.$t('admin:general.tone', { tone: this.tones.find((tone) => tone.value === (banner.tone || "warning"))!.title, interpolation: { escapeValue: false } }),
-          this.$t('admin:general.starts', { startsAt: (banner.startsAt || this.$t('admin:general.immediately')), interpolation: { escapeValue: false } }),
-          this.$t('admin:general.ends', { endsAt: (banner.endsAt || this.$t('admin:general.untilDisabled')), interpolation: { escapeValue: false } }),
+          banner.isEnabled ? this.gt('publishedDuringWindow') : this.gt('notPublished'),
+          banner.title || this.gt('noTitle'),
+          banner.content || this.gt('noMessage'),
+          this.gt('tone', { tone: this.tones.find((tone) => tone.value === (banner.tone || "warning"))!.title, interpolation: { escapeValue: false } }),
+          this.gt('starts', { startsAt: (banner.startsAt || this.gt('immediately')), interpolation: { escapeValue: false } }),
+          this.gt('ends', { endsAt: (banner.endsAt || this.gt('untilDisabled')), interpolation: { escapeValue: false } }),
         ].join("\n");
       }
       if (field === "userDefaults") {
         const defaults = value as GeneralPolicy["userDefaults"];
         return [
-          this.$t('admin:general.timeZone', { timezone: defaults.timezone, interpolation: { escapeValue: false } }),
-          this.$t('admin:general.dateFormat', { dateFormat: (defaults.dateFormat || this.$t('admin:general.localeDefault')), interpolation: { escapeValue: false } }),
-          this.$t('admin:general.timeFormat', { timeFormat: defaults.timeFormat, interpolation: { escapeValue: false } }),
+          this.gt('timeZone', { timezone: defaults.timezone, interpolation: { escapeValue: false } }),
+          this.gt('dateFormat', { dateFormat: (defaults.dateFormat || this.gt('localeDefault')), interpolation: { escapeValue: false } }),
+          this.gt('timeFormat', { timeFormat: defaults.timeFormat, interpolation: { escapeValue: false } }),
         ].join("\n");
       }
-      if (Array.isArray(value)) return value.join(", ") || this.$t('admin:general.noneSelected');
+      if (Array.isArray(value)) return value.join(", ") || this.gt('noneSelected');
       if (field === "contentLicense")
         return this.$t("common:license." + (value || "none"));
-      return String(value || this.$t('admin:general.notSet'));
+      return String(value || this.gt('notSet'));
     },
     review() {
       if (this.locked || !this.saved || !this.draft || !this.dirty) return;
@@ -986,8 +1005,8 @@ export default {
         this.reviewed = null;
         this.reason = "";
         this.notice =
-          this.$t('admin:general.workspaceSettingsSaved', { activation: (result.activation === "needs-attention"
-            ? ` ${this.$t('admin:general.runtimeActivationNeedsAttention')}`
+          this.gt('workspaceSettingsSaved', { activation: (result.activation === "needs-attention"
+            ? ` ${this.gt('runtimeActivationNeedsAttention')}`
             : ""), interpolation: { escapeValue: false } });
         this.attention = result.activation === "needs-attention";
         this.busy = false;
@@ -1006,11 +1025,11 @@ export default {
           this.saveError =
             getErrorMessage(error) +
             (!status
-              ? ` ${this.$t('admin:general.outcomeUnconfirmedReloadBefore')}`
+              ? ` ${this.gt('outcomeUnconfirmedReloadBefore')}`
               : "");
           if (this.stale) {
             this.notice =
-              this.$t('admin:general.reloadSavedSettingsBefore');
+              this.gt('reloadSavedSettingsBefore');
             this.attention = true;
           }
         }
@@ -1022,7 +1041,7 @@ export default {
       if (
         this.busy ||
         !(await confirmDiscard(
-          this.$t('admin:general.discardReviewLoadSaved'),
+          this.gt('discardReviewLoadSaved'),
         ))
       )
         return;
@@ -1036,8 +1055,8 @@ export default {
         const result = await retryGeneralRuntime(this.saved.fingerprint);
         this.notice =
           result.activation === "applied"
-            ? this.$t('admin:general.runtimeWorkspaceConfigurationApplied')
-            : this.$t('admin:general.runtimeActivationNeedsAttention2');
+            ? this.gt('runtimeWorkspaceConfigurationApplied')
+            : this.gt('runtimeActivationNeedsAttention2');
         this.attention = result.activation !== "applied";
         await this.load();
       } catch (error) {
@@ -1052,7 +1071,7 @@ export default {
         !this.busy &&
         !this.initializing &&
         ((!this.dirty && !(this.reviewing && this.reason)) ||
-          (await confirmDiscard(this.$t('admin:general.discardUnsavedWorkspaceChanges'))))
+          (await confirmDiscard(this.gt('discardUnsavedWorkspaceChanges'))))
       );
     },
     beforeUnload(event: BeforeUnloadEvent) {

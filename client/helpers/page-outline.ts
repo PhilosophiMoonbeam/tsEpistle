@@ -285,9 +285,13 @@ function readingRangeText(range: Range): string {
     if (!/[^\t\r\n\f ]/.test(content)) {
       const previous = node.previousSibling
       const next = node.nextSibling
-      if (!previous || !next ||
+      if (
+        !previous ||
+        !next ||
         (previous.nodeType === 8 && (next.nodeType === 8 || next.nodeType === 1)) ||
-        (previous.nodeType === 1 && (next.nodeType === 8 || (next.nodeType === 1 && /[\r\n]/.test(content))))) continue
+        (previous.nodeType === 1 && (next.nodeType === 8 || (next.nodeType === 1 && /[\r\n]/.test(content))))
+      )
+        continue
       content = ' '
     } else {
       content = content.replace(/[\t\r\n\f ]+/g, ' ')
@@ -375,20 +379,44 @@ function createReadingProgress(container: HTMLElement, options: PageReadingProgr
     try {
       const record = JSON.parse(raw) as ReadingRecord
       const now = Date.now()
-      if (!record || record.version !== 1 || record.scope !== scopeIdentity || record.fingerprint !== fingerprint ||
-        !Number.isFinite(record.savedAt) || record.savedAt > now || now - record.savedAt > READING_MAX_AGE_MS ||
-        !Array.isArray(record.sections) || record.sections.length !== sections.length) return null
+      if (
+        !record ||
+        record.version !== 1 ||
+        record.scope !== scopeIdentity ||
+        record.fingerprint !== fingerprint ||
+        !Number.isFinite(record.savedAt) ||
+        record.savedAt > now ||
+        now - record.savedAt > READING_MAX_AGE_MS ||
+        !Array.isArray(record.sections) ||
+        record.sections.length !== sections.length
+      )
+        return null
       for (let index = 0; index < sections.length; index++) {
         const expected = sections[index]!
         const saved = record.sections[index]
-        if (!saved || saved.index !== index || saved.fingerprint !== expected.fingerprint ||
-          !Array.isArray(saved.coverage) || saved.coverage.length !== expected.units.length) return null
+        if (
+          !saved ||
+          saved.index !== index ||
+          saved.fingerprint !== expected.fingerprint ||
+          !Array.isArray(saved.coverage) ||
+          saved.coverage.length !== expected.units.length
+        )
+          return null
         for (const ranges of saved.coverage) {
           if (!Array.isArray(ranges) || ranges.length > 4_096) return null
           let end = -1
           for (const range of ranges) {
-            if (!Array.isArray(range) || range.length !== 2 || !Number.isFinite(range[0]) || !Number.isFinite(range[1]) ||
-              range[0] < 0 || range[1] > 1 || range[0] >= range[1] || range[0] <= end) return null
+            if (
+              !Array.isArray(range) ||
+              range.length !== 2 ||
+              !Number.isFinite(range[0]) ||
+              !Number.isFinite(range[1]) ||
+              range[0] < 0 ||
+              range[1] > 1 ||
+              range[0] >= range[1] ||
+              range[0] <= end
+            )
+              return null
             end = range[1]
           }
         }
@@ -400,11 +428,13 @@ function createReadingProgress(container: HTMLElement, options: PageReadingProgr
   }
   const mergeRecord = (record: ReadingRecord): boolean => {
     let merged = false
-    sections.forEach((section, sectionIndex) => section.units.forEach((unit, unitIndex) => {
-      const before = readingCoverage(unit)
-      unit.ranges = mergeReadingRanges([...unit.ranges, ...record.sections[sectionIndex]!.coverage[unitIndex]!])
-      if (readingCoverage(unit) > before) merged = true
-    }))
+    sections.forEach((section, sectionIndex) => {
+      section.units.forEach((unit, unitIndex) => {
+        const before = readingCoverage(unit)
+        unit.ranges = mergeReadingRanges([...unit.ranges, ...record.sections[sectionIndex]!.coverage[unitIndex]!])
+        if (readingCoverage(unit) > before) merged = true
+      })
+    })
     return merged
   }
   const readRecord = (): ReadingRecord | null => {
@@ -464,8 +494,14 @@ function createReadingProgress(container: HTMLElement, options: PageReadingProgr
     for (const section of sections) {
       for (const unit of section.units) {
         if (!Number.isFinite(unit.start) || unit.end <= unit.start) continue
-        if (unit.disclosure && (!unit.disclosure.open || !deliberatelyOpen.has(unit.disclosure) ||
-          deliberatelyOpen.get(unit.disclosure)?.defaultPrevented || !isVisible(unit.disclosure))) continue
+        if (
+          unit.disclosure &&
+          (!unit.disclosure.open ||
+            !deliberatelyOpen.has(unit.disclosure) ||
+            deliberatelyOpen.get(unit.disclosure)?.defaultPrevented ||
+            !isVisible(unit.disclosure))
+        )
+          continue
         const start = Math.max(unit.start, viewTop)
         const end = Math.min(unit.end, viewBottom)
         if (end <= start) continue
@@ -482,13 +518,25 @@ function createReadingProgress(container: HTMLElement, options: PageReadingProgr
   }
   const setScope = (next: PageReadingProgressScope | null): void => {
     if (disposed) return
-    const valid = (next?.authority === 'public-readable' || (next?.authority === 'private-readable' && next.reader?.kind === 'account')) &&
-      [next.canonicalWorkspaceId, next.locale, next.pageId, next.sourceRevision, next.authorityKey].every(value => typeof value === 'string' && value.trim().length > 0) &&
+    const valid =
+      (next?.authority === 'public-readable' || (next?.authority === 'private-readable' && next.reader?.kind === 'account')) &&
+      [next.canonicalWorkspaceId, next.locale, next.pageId, next.sourceRevision, next.authorityKey].every(
+        value => typeof value === 'string' && value.trim().length > 0
+      ) &&
       (next.reader?.kind === 'anonymous' || (next.reader?.kind === 'account' && typeof next.reader.accountId === 'string' && next.reader.accountId.length > 0))
-    const identity = valid && next ? JSON.stringify([
-      next.canonicalWorkspaceId, next.reader.kind, next.reader.kind === 'account' ? next.reader.accountId : null,
-      next.locale, next.pageId, next.sourceRevision, next.authority, next.authorityKey
-    ]) : ''
+    const identity =
+      valid && next
+        ? JSON.stringify([
+            next.canonicalWorkspaceId,
+            next.reader.kind,
+            next.reader.kind === 'account' ? next.reader.accountId : null,
+            next.locale,
+            next.pageId,
+            next.sourceRevision,
+            next.authority,
+            next.authorityKey
+          ])
+        : ''
     if (identity === scopeIdentity && Boolean(scope) === Boolean(valid)) return
     suspend()
     cancelSave()
@@ -522,17 +570,19 @@ function createReadingProgress(container: HTMLElement, options: PageReadingProgr
       const disclosures = details.filter(detail => range.intersectsNode(detail))
       const sectionFingerprint = readingFingerprint(`${readingRangeText(range)}\u0000${disclosures.length}`)
       const anchor = heading?.anchor ?? ''
-      const units: ReadingUnit[] = [{
-        start: heading && heading.top === null ? Infinity : index === 0 ? articleTop : heading!.top!,
-        end: following?.top ?? articleBottom,
-        ranges: []
-      }]
+      const units: ReadingUnit[] = [
+        {
+          start: heading && heading.top === null ? Infinity : index === 0 ? articleTop : heading!.top!,
+          end: following?.top ?? articleBottom,
+          ranges: []
+        }
+      ]
       for (const detail of disclosures) {
         const summary = detail.querySelector(':scope > summary')
         const rect = detail.getBoundingClientRect()
         const summaryRect = summary?.getBoundingClientRect()
         const bodyStart = summaryRect?.bottom ?? rect.top
-        const start = (rect.bottom > bodyStart ? bodyStart : summaryRect?.top ?? rect.top) + window.scrollY
+        const start = (rect.bottom > bodyStart ? bodyStart : (summaryRect?.top ?? rect.top)) + window.scrollY
         units.push({ start, end: Math.max(start, rect.bottom + window.scrollY), ranges: [], disclosure: detail })
       }
       const previous = old.get(anchor)
@@ -604,16 +654,22 @@ function createReadingProgress(container: HTMLElement, options: PageReadingProgr
       suspend()
       cancelSave()
       changed = false
-      sections.forEach(section => section.units.forEach(unit => { unit.ranges = [] }))
+      sections.forEach(section => {
+        section.units.forEach(unit => {
+          unit.ranges = []
+        })
+      })
       publish()
       return
     }
     const record = decode(event.newValue)
     if (!record) return
     const merged = mergeRecord(record)
-    const needsRepair = sections.some((section, sectionIndex) => section.units.some((unit, unitIndex) =>
-      readingCoverage(unit) > record.sections[sectionIndex]!.coverage[unitIndex]!.reduce((total, [start, end]) => total + end - start, 0)
-    ))
+    const needsRepair = sections.some((section, sectionIndex) =>
+      section.units.some(
+        (unit, unitIndex) => readingCoverage(unit) > record.sections[sectionIndex]!.coverage[unitIndex]!.reduce((total, [start, end]) => total + end - start, 0)
+      )
+    )
     if (merged) publish()
     // Repair a losing simultaneous write even if its sender closes before it
     // can receive our storage event. Equal records do not cause a write loop.
@@ -633,7 +689,12 @@ function createReadingProgress(container: HTMLElement, options: PageReadingProgr
   setScope(options.scope)
   publish()
   return {
-    measure, sample, intent, suspend, setScope, toggle,
+    measure,
+    sample,
+    intent,
+    suspend,
+    setScope,
+    toggle,
     dispose(): void {
       persist()
       disposed = true

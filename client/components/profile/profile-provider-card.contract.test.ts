@@ -42,6 +42,7 @@ const evaluate = new Function(
   'passwordPolicyMixin',
   'newPasswordIssue',
   'AsyncState',
+  'AdminHero',
   'PasswordStrength',
   'ProfileMcpKeys',
   'ProfileExternalMcp',
@@ -100,9 +101,7 @@ const asyncStateScript = compileScript(asyncStateSfc, {
 // Bun cannot statically import the SFC's runtime-generated JavaScript module.
 const { default: AsyncState } = await import(
   'data:text/javascript;base64,' +
-    Buffer.from(
-      new Bun.Transpiler({ loader: 'ts' }).transformSync(`${asyncStateScript.content}\nexport default __asyncState__`)
-    ).toString('base64')
+    Buffer.from(new Bun.Transpiler({ loader: 'ts' }).transformSync(`${asyncStateScript.content}\nexport default __asyncState__`)).toString('base64')
 )
 
 const translations: Record<string, string> = {
@@ -310,7 +309,14 @@ const mount = async (initialProfile = profile(), initial: { authenticated?: bool
   const activeLoading = new Set<string>()
   const loadingCounts = new Map<string, number>()
   const store = Vue.reactive({
-    user: { authenticated: initial.authenticated ?? true, id: initialProfile.id, name: 'Example Reader', email: 'reader@example.test', pictureUrl: '', appearance: 'light' },
+    user: {
+      authenticated: initial.authenticated ?? true,
+      id: initialProfile.id,
+      name: 'Example Reader',
+      email: 'reader@example.test',
+      pictureUrl: '',
+      appearance: 'light'
+    },
     startLoading: vi.fn((key: string) => {
       loadingCounts.set(key, (loadingCounts.get(key) ?? 0) + 1)
       activeLoading.add(key)
@@ -348,6 +354,7 @@ const mount = async (initialProfile = profile(), initial: { authenticated?: bool
     passwordPolicyMixin,
     newPasswordIssue,
     AsyncState,
+    AdminHero,
     placeholder,
     placeholder,
     placeholder,
@@ -392,7 +399,6 @@ const mount = async (initialProfile = profile(), initial: { authenticated?: bool
     app!.use(installed)
     return installed
   })!
-  app.component('admin-hero', AdminHero)
   const router = createRouter({ history: createMemoryHistory(), routes: [] })
   vi.spyOn(router, 'push').mockResolvedValue(undefined)
   app.config.globalProperties.$router = router
@@ -414,6 +420,7 @@ const button = (host: ParentNode, name: string) => {
 const field = (host: ParentNode, label: string) => {
   const labels = [...host.querySelectorAll<HTMLLabelElement>('label[for]')].filter(item => item.textContent?.trim() === label)
   expect(labels.length).toBeGreaterThan(0)
+  expect(new Set(labels.map(item => item.htmlFor)).size).toBe(1)
   const input = document.getElementById(labels[0]!.htmlFor) as HTMLInputElement | null
   expect(input).not.toBeNull()
   return input!
@@ -457,8 +464,7 @@ const requestsTo = (fetch: { mock: { calls: Array<[string, RequestInit?]> } }, u
 
 describe('profile workspace contracts', () => {
   test('edits every account field inline with localized labels and hides the decorative provider mark', async () => {
-    const { host } = await mount()
-    expect(host.querySelector('.v-menu, .v-toolbar')).toBeNull()
+    const { host, fetch } = await mount()
     for (const key of ['displayName', 'mentionHandle', 'location', 'jobTitle', 'timezone', 'dateFormat', 'timeFormat', 'appearance']) {
       const input = field(host, translations[`profile:${key}`]!)
       expect(input.disabled).toBe(false)
@@ -472,6 +478,12 @@ describe('profile workspace contracts', () => {
     expect(dockText(host)).toBe(translations['profile:dock.clean'])
     expect(saveButton(host).getAttribute('aria-disabled')).toBe('true')
     expect(saveButton(host).getAttribute('aria-describedby')).toBe('profile-save-state')
+    expect(saveButton(host).hasAttribute('data-commitment')).toBe(false)
+    saveButton(host).click()
+    await settle()
+    expect(requestsTo(fetch, '/_api/users/profile')).toHaveLength(0)
+    expect(requestsTo(fetch, '/_api/users/profile/preferences')).toHaveLength(0)
+    expect(host.querySelector('button[type="submit"]')?.hasAttribute('data-commitment')).toBe(false)
   })
 
   test('counts unsaved fields in one dock and Reset restores them and the theme preview', async () => {
@@ -488,6 +500,7 @@ describe('profile workspace contracts', () => {
     await settle()
     expect(dockText(host)).toBe('4 modifications non enregistrées')
     expect(saveButton(host).hasAttribute('aria-disabled')).toBe(false)
+    expect(saveButton(host).getAttribute('data-commitment')).toBe('active')
     const requests = fetch.mock.calls.length
     button(host, translations['profile:dock.reset']!).click()
     await settle()
@@ -497,6 +510,7 @@ describe('profile workspace contracts', () => {
     expect(vuetify.theme.name.value).toBe('light')
     expect(applyUserPresentation).toHaveBeenLastCalledWith(expect.objectContaining({ dateFormat: '' }))
     expect(dockText(host)).toBe(translations['profile:dock.clean'])
+    expect(saveButton(host).hasAttribute('data-commitment')).toBe(false)
     expect([...host.querySelectorAll('button')].some(item => item.textContent?.trim() === translations['profile:dock.reset'])).toBe(false)
   })
 
@@ -573,6 +587,14 @@ describe('profile workspace contracts', () => {
     expect(store.showNotification).not.toHaveBeenCalled()
     expect(dockText(host)).toBe(translations['profile:dock.unsavedOne'])
     expect(saveButton(host).hasAttribute('aria-disabled')).toBe(false)
+    expect(saveButton(host).getAttribute('data-commitment')).toBe('active')
+    fetch.mockResolvedValueOnce(response({ message: 'Preferences saved' }))
+    saveButton(host).click()
+    await settle()
+    expect(requestsTo(fetch, '/_api/users/profile')).toHaveLength(2)
+    expect(requestsTo(fetch, '/_api/users/profile/preferences')).toHaveLength(2)
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
+    expect(saveButton(host).hasAttribute('data-commitment')).toBe(false)
   })
 
   test('invalidates the loaded account draft immediately when the authenticated account changes', async () => {
@@ -861,12 +883,22 @@ describe('profile workspace contracts', () => {
     const save = saveButton(host)
     expect(save.getAttribute('aria-disabled')).toBe('true')
     expect(save.disabled).toBe(false)
+    expect(save.hasAttribute('data-commitment')).toBe(false)
     const requests = fetch.mock.calls.length
     save.click()
     await settle()
     expect(fetch.mock.calls).toHaveLength(requests)
     expect(document.activeElement).toBe(input)
     expect(host.textContent).toContain('Use 3–32 letters, numbers, underscores or hyphens.')
+    await fill(input, 'valid_handle')
+    expect(input.getAttribute('aria-invalid')).not.toBe('true')
+    expect(dockText(host)).toBe(translations['profile:dock.unsavedOne'])
+    expect(save.hasAttribute('aria-disabled')).toBe(false)
+    expect(save.getAttribute('data-commitment')).toBe('active')
+    await fill(input, 'reader')
+    expect(dockText(host)).toBe(translations['profile:dock.clean'])
+    expect(save.getAttribute('aria-disabled')).toBe('true')
+    expect(save.hasAttribute('data-commitment')).toBe(false)
   })
 
   test('guards leaving with unsaved changes and restores the saved theme on discard or unmount', async () => {
@@ -968,6 +1000,7 @@ describe('profile workspace contracts', () => {
     const submit = host.querySelector<HTMLButtonElement>('button[type="submit"]')!
     const form = host.querySelector<HTMLFormElement>('form')!
     expect(submit.form).toBe(form)
+    expect(submit.getAttribute('data-commitment')).toBe('active')
     const initialRequests = fetch.mock.calls.length
     submit.click()
     await settle()
@@ -979,11 +1012,13 @@ describe('profile workspace contracts', () => {
     expect(activeLoading.has('profile-changepassword')).toBe(true)
     for (const input of passwordInputs(host)) expect(input.disabled).toBe(true)
     expect(submit.disabled).toBe(true)
+    expect(submit.hasAttribute('data-commitment')).toBe(false)
     pending.resolve(response({ message: 'Password changed' }))
     await settle()
     expect(form.getAttribute('aria-busy')).toBe('false')
     expect(activeLoading.has('profile-changepassword')).toBe(false)
     expect(submit.disabled).toBe(false)
+    expect(submit.hasAttribute('data-commitment')).toBe(false)
     for (const input of passwordInputs(host)) {
       expect(input.disabled).toBe(false)
       expect(input.value).toBe('')

@@ -5,7 +5,7 @@ import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import type { i18n } from 'i18next'
 import i18next from 'i18next'
 import type { RenderFunction } from 'vue'
-import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
+import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import type {
   AgentArtifactView,
   AgentMediaView,
@@ -16,6 +16,8 @@ import type {
   AgentToolCallView
 } from '../../../shared/agents/contracts.ts'
 import { wikiSourceSelectorFromHref } from '../../../shared/wiki-source.ts'
+import type { WikiSourcePreview } from '../../../shared/wiki-source.ts'
+import type { BrowserFetch } from '../../helpers/json-transport.ts'
 import { agentMediaContentUrl } from '../../helpers/agents-api.ts'
 import type { Translate } from '../../helpers/use-translate.ts'
 import { resolveUserPicture, type UserPicture } from '../../helpers/user-picture.ts'
@@ -48,7 +50,7 @@ const renderAgentThread = new Function('Vue', compiledTemplate.code)(Vue) as Ren
 Bun.plugin({
   name: 'agent-thread-real-children',
   setup(builder) {
-    builder.onLoad({ filter: /(?:agent-artifact-grid|status-indicator)\.vue$/ }, async ({ path: filename }) => {
+    builder.onLoad({ filter: /(?:agent-artifact-grid|status-indicator|agent-markdown)\.vue$/ }, async ({ path: filename }) => {
       const parsed = parse(await Bun.file(filename).text(), { filename })
       if (parsed.errors.length) throw parsed.errors[0]
       const script = compileScript(parsed.descriptor, { id: 'agent-thread-real-artifact-grid', genDefaultAs: '__component', inlineTemplate: true })
@@ -59,6 +61,7 @@ Bun.plugin({
 const AgentArtifactGrid = (await import('./agent-artifact-grid.vue')).default
 // The test loader must be installed before this known module is imported.
 const StatusIndicator = (await import('../common/status-indicator.vue')).default
+const AgentMarkdown = (await import('./agent-markdown.vue')).default
 
 const scriptWithoutImports = parsedSfc.descriptor.scriptSetup.content.replace(/import[\s\S]*?from\s+['"][^'"]+['"]\s*/g, '')
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(scriptWithoutImports)
@@ -77,7 +80,7 @@ const evaluateAgentThread = new Function(
   'agentMediaContentUrl',
   'placeAgentArtifacts',
   `${executableScript}
-return { t, artifactPlacement, artifactTimeLabel, temporalMetadataFor, emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelector, previewCitation, activityOpen, markActivityToggle, handleActivityToggle, threadPresentation, threadProjection, toolStateColor, toolStateIcon, toolStateLabel, reattachConfirmId, requestReattach, cancelReattach, confirmReattach, agentMediaContentUrl }`
+return { t, presetLabel, artifactPlacement, artifactTimeLabel, temporalMetadataFor, emit, forwardDecision, liveSummary, liveSummaryRevision, previewSelector, previewCitation, activityOpen, markActivityToggle, handleActivityToggle, threadPresentation, threadProjection, toolStateColor, toolStateIcon, toolStateLabel, reattachConfirmId, requestReattach, cancelReattach, confirmReattach, agentMediaContentUrl }`
 ) as (...dependencies: unknown[]) => Record<string, unknown>
 
 const NullStub = Vue.defineComponent({
@@ -150,9 +153,7 @@ const ButtonStub = Vue.defineComponent({
 })
 const PreviewStub = Vue.defineComponent({
   props: { selector: { type: Object, required: true } },
-  setup(props) {
-    return () => Vue.h('div', { class: 'wiki-source-preview', 'data-selector': JSON.stringify(props.selector) })
-  }
+  setup: () => () => Vue.h('div', { class: 'wiki-source-preview' })
 })
 
 const makeSession = (id: string): AgentSessionView => ({
@@ -228,8 +229,11 @@ const makeTool = (overrides: Partial<AgentToolCallView> = {}): AgentToolCallView
 
 const makeThread = (sessionId: string, overrides: Partial<AgentThreadState> = {}): AgentThreadState => ({
   memoryContext: {
-    ownerId: 1, sessionId, frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
-    latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } }, nextSession: { user: 'unknown', agent: 'unknown' }
+    ownerId: 1,
+    sessionId,
+    frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+    latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } },
+    nextSession: { user: 'unknown', agent: 'unknown' }
   },
   session: makeSession(sessionId),
   messages: [],
@@ -274,7 +278,8 @@ const mountThread = async (
   initialThread: AgentThreadState,
   initialConnection = 'connected',
   initialUserPicture: UserPicture = resolveUserPicture({ id: 42, name: 'Ada Lovelace', pictureUrl: '' }),
-  localization: { readonly translate: Translate; readonly engine: i18n } = { translate: translateEnglish, engine: i18next }
+  localization: { readonly translate: Translate; readonly engine: i18n } = { translate: translateEnglish, engine: i18next },
+  realMarkdown = false
 ): Promise<MountedThread> => {
   const host = document.createElement('div')
   document.body.append(host)
@@ -328,7 +333,8 @@ const mountThread = async (
   })
   const app = Vue.createApp(harness)
   app.config.globalProperties.$t = localization.translate
-  for (const name of ['AgentAnswerActions', 'AgentMarkdown', 'AgentTaskProgress', 'AgentToolCard']) app.component(name, NullStub)
+  for (const name of ['AgentAnswerActions', 'AgentTaskProgress', 'AgentToolCard']) app.component(name, NullStub)
+  app.component('AgentMarkdown', realMarkdown ? AgentMarkdown : NullStub)
   app.component('StatusIndicator', StatusIndicator)
   app.component('v-avatar', AvatarStub)
   app.component('v-icon', IconStub)
@@ -339,7 +345,10 @@ const mountThread = async (
   app.component('AgentArtifactGrid', AgentArtifactGrid)
   app.mount(host)
   await settle()
+  let active = true
   const unmount = (): void => {
+    if (!active) return
+    active = false
     app.unmount()
     host.remove()
   }
@@ -349,6 +358,7 @@ const mountThread = async (
 
 afterEach(() => {
   for (const unmount of mountedApps.splice(0)) unmount()
+  vi.restoreAllMocks()
   document.body.replaceChildren()
 })
 
@@ -948,11 +958,7 @@ describe('AgentThread live status and interaction behavior', () => {
     hashLink.dispatchEvent(click)
     expect(click.defaultPrevented).toBe(true)
     await settle()
-    expect(JSON.parse(mounted.host.querySelector('.wiki-source-preview')?.getAttribute('data-selector') ?? '{}')).toEqual({
-      locale: 'en',
-      path: 'runbook',
-      visibility: 'public'
-    })
+    expect(mounted.host.querySelector('.wiki-source-preview')).not.toBeNull()
   })
 
   it('renders artifacts when the thread has no messages', async () => {
@@ -1093,5 +1099,216 @@ describe('AgentThread live status and interaction behavior', () => {
     await settle()
     expect(mounted.emittedReattachments).toEqual([[media]])
     expect(buttonWithText('Re-attach')).toBeTruthy()
+  })
+})
+
+describe('AgentThread preset disclosure and citation previews', () => {
+  it('shows only explicitly tagged user presets compactly and preserves the exact full prompt after reopening', async () => {
+    const original = '  # Deliberately authored request\n\n*Keep* the entire prompt, including <img src=x onerror=alert(1)>.\n  '
+    const savedThread = makeThread('session-preset-history', {
+      messages: [
+        makeMessage({ id: 'tagged', role: 'user', status: 'complete', content: original, presetId: 'page-summary' }),
+        makeMessage({ id: 'untagged', ordinal: 2, role: 'user', status: 'complete', content: original }),
+        makeMessage({ id: 'assistant', ordinal: 3, role: 'assistant', status: 'complete', content: 'Summarize the current page' })
+      ]
+    })
+    for (const state of [savedThread, structuredClone(savedThread)]) {
+      const mounted = await mountThread(state, 'connected', undefined, undefined, true)
+      const messages = mounted.host.querySelectorAll('article.agent-message')
+      const disclosure = messages[0]?.querySelector<HTMLDetailsElement>('details.agent-message__full-prompt')
+      expect(disclosure).not.toBeNull()
+      expect(disclosure?.open).toBe(false)
+      expect(messages[0]?.querySelector('.agent-message__preset-intent')?.textContent?.trim()).toBe(translateEnglish('common:agentThread.presetPageSummary'))
+      disclosure!.open = true
+      disclosure!.dispatchEvent(new browserWindow.Event('toggle'))
+      await settle()
+      expect(disclosure?.querySelector('.agent-message__original-prompt')?.textContent).toBe(original)
+      expect(disclosure?.querySelector('h1, em, img')).toBeNull()
+      expect(messages[0]?.querySelector('.agent-markdown')).toBeNull()
+      for (const message of [messages[1], messages[2]]) {
+        expect(message?.querySelector('.agent-message__preset-intent, .agent-message__full-prompt')).toBeNull()
+        expect(message?.querySelector('.agent-markdown')).not.toBeNull()
+      }
+      expect(messages[1]?.querySelector('h1')?.textContent).toBe('Deliberately authored request')
+      mounted.unmount()
+    }
+  })
+
+  const citedThread = (): AgentThreadState =>
+    makeThread('session-citation-preview', {
+      messages: [
+        makeMessage({
+          status: 'complete',
+          content: 'Verified claim.\n\n[[cite:page:42:section:2]]',
+          citations: [{ evidenceId: 'page:42:section:2', kind: 'page', label: 'Old citation label', href: '/en/guide#installation' }]
+        })
+      ]
+    })
+  const authorizedPreview: WikiSourcePreview = {
+    id: 42,
+    locale: 'en',
+    path: 'guide',
+    title: 'Authorized current title',
+    description: '',
+    visibility: 'public',
+    updatedAt: '2026-09-18T00:00:00Z',
+    sourceRevision: '3',
+    excerpt: 'Fresh authorized source excerpt.',
+    excerptTruncated: false,
+    structuredExcerpt: { html: '<p>Fresh authorized source excerpt.</p>', truncated: false }
+  }
+  const settleRequest = async (): Promise<void> => {
+    const turn = Promise.withResolvers<void>()
+    setImmediate(() => turn.resolve())
+    await turn.promise
+    await settle()
+  }
+
+  it('loads hover previews through the authorized preview endpoint and keeps resolved citations in the answer paragraph', async () => {
+    const pending = Promise.withResolvers<Response>()
+    const fetchHost: { fetch: BrowserFetch } = window
+    const fetcher = vi.spyOn(fetchHost, 'fetch').mockImplementation(() => pending.promise)
+    const mounted = await mountThread(citedThread(), 'connected', undefined, undefined, true)
+    const markdown = mounted.host.querySelector('.agent-markdown')
+    expect(markdown?.querySelectorAll(':scope > p')).toHaveLength(1)
+    const anchor = markdown?.querySelector<HTMLAnchorElement>('a[data-agent-citation]')
+    if (!anchor) throw new Error('Resolved citation did not render')
+    expect(anchor.getAttribute('href')).toBe('/en/guide#installation')
+    anchor.dispatchEvent(new browserWindow.Event('pointerover', { bubbles: true }))
+    await settle()
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    const [url, init] = fetcher.mock.calls[0]!
+    const request = new URL(String(url), window.location.origin)
+    expect(request.pathname).toBe('/_api/pages/preview')
+    expect(Object.fromEntries(request.searchParams)).toEqual({ locale: 'en', path: 'guide', visibility: 'public' })
+    expect(init).toMatchObject({ credentials: 'same-origin', cache: 'no-store' })
+    expect(document.querySelector('[role="tooltip"] [role="status"]')).not.toBeNull()
+    pending.resolve(Response.json(authorizedPreview))
+    await settleRequest()
+    const preview = document.querySelector('[role="tooltip"]')
+    if (!preview) throw new Error('Authorized source preview did not appear')
+    expect(preview.querySelector('strong')?.textContent).toBe('Authorized current title')
+    expect(preview.querySelector('p')?.textContent).toBe('Fresh authorized source excerpt.')
+    expect(preview.querySelector('[role="status"]')).toBeNull()
+    expect(anchor.getAttribute('aria-describedby')).toBe(preview.id)
+    document.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await settle()
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    expect(anchor.hasAttribute('aria-describedby')).toBe(false)
+  })
+
+  it('leaves authored links and off-site citations navigable without requesting Wiki previews', async () => {
+    const fetchHost: { fetch: BrowserFetch } = window
+    const fetcher = vi.spyOn(fetchHost, 'fetch')
+    const state = citedThread()
+    const message = state.messages[0]!
+    const mounted = await mountThread(
+      {
+        ...state,
+        messages: [
+          {
+            ...message,
+            content: '[Authored Wiki link](/en/manual) External claim.[[cite:external]]',
+            citations: [...message.citations, { evidenceId: 'external', kind: 'page', label: 'External reference', href: 'https://outside.test/en/guide' }]
+          }
+        ]
+      },
+      'connected',
+      undefined,
+      undefined,
+      true
+    )
+    const anchors = mounted.host.querySelectorAll<HTMLAnchorElement>('.agent-markdown a')
+    expect([...anchors].map(anchor => anchor.getAttribute('href'))).toEqual(['/en/manual', 'https://outside.test/en/guide'])
+    for (const anchor of anchors) {
+      expect(anchor.getAttribute('target')).toBe('_blank')
+      anchor.focus()
+      anchor.dispatchEvent(new browserWindow.Event('pointerover', { bubbles: true }))
+      const click = new browserWindow.MouseEvent('click', { bubbles: true, cancelable: true })
+      let intercepted = true
+      mounted.host.addEventListener(
+        'click',
+        event => {
+          intercepted = event.defaultPrevented
+          event.preventDefault()
+        },
+        { once: true }
+      )
+      anchor.dispatchEvent(click)
+      expect(intercepted).toBe(false)
+    }
+    await settle()
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(document.querySelector('[role="tooltip"]')).toBeNull()
+    expect(mounted.host.querySelector('.wiki-source-preview')).toBeNull()
+  })
+
+  it('does not expose denied or malformed source content when a citation receives keyboard focus', async () => {
+    const fetchHost: { fetch: BrowserFetch } = window
+    const fetcher = vi.spyOn(fetchHost, 'fetch')
+    for (const response of [
+      Response.json({ ...authorizedPreview, excerpt: 'DENIED CONTENT' }, { status: 403 }),
+      Response.json({ ...authorizedPreview, sourceRevision: null, excerpt: 'MALFORMED CONTENT' })
+    ]) {
+      fetcher.mockResolvedValueOnce(response)
+      const mounted = await mountThread(citedThread(), 'connected', undefined, undefined, true)
+      const anchor = mounted.host.querySelector<HTMLAnchorElement>('.agent-markdown a[data-agent-citation]')!
+      anchor.focus()
+      await settleRequest()
+      expect(document.activeElement).toBe(anchor)
+      const preview = document.querySelector('[role="tooltip"]')
+      expect(preview?.querySelector('[role="status"]')).not.toBeNull()
+      expect(preview?.querySelector('p')).toBeNull()
+      expect(preview?.textContent).not.toContain('DENIED CONTENT')
+      expect(preview?.textContent).not.toContain('MALFORMED CONTENT')
+      mounted.unmount()
+    }
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('cancels late previews after Escape, owner replacement or unmount without intercepting modified navigation', async () => {
+    const fetchHost: { fetch: BrowserFetch } = window
+    const fetcher = vi.spyOn(fetchHost, 'fetch')
+    for (const retire of ['escape', 'owner', 'unmount']) {
+      const pending = Promise.withResolvers<Response>()
+      fetcher.mockImplementationOnce(() => pending.promise)
+      const mounted = await mountThread(citedThread(), 'connected', undefined, undefined, true)
+      const anchor = mounted.host.querySelector<HTMLAnchorElement>('.agent-markdown a[data-agent-citation]')!
+      for (const modifier of ['ctrlKey', 'metaKey', 'shiftKey', 'altKey'] as const) {
+        const click = new browserWindow.MouseEvent('click', { bubbles: true, cancelable: true, [modifier]: true })
+        let intercepted = true
+        mounted.host.addEventListener(
+          'click',
+          event => {
+            intercepted = event.defaultPrevented
+            event.preventDefault()
+          },
+          { once: true }
+        )
+        anchor.dispatchEvent(click)
+        expect(intercepted).toBe(false)
+        expect(mounted.host.querySelector('.wiki-source-preview')).toBeNull()
+      }
+      anchor.focus()
+      await settle()
+      const signal = fetcher.mock.calls.at(-1)?.[1]?.signal
+      expect(signal?.aborted).toBe(false)
+      expect(document.querySelector('[role="tooltip"]')).not.toBeNull()
+      if (retire === 'escape') document.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      else if (retire === 'owner')
+        mounted.thread.value = {
+          ...mounted.thread.value,
+          memoryContext: { ...mounted.thread.value.memoryContext, ownerId: 2 }
+        }
+      else mounted.unmount()
+      await settle()
+      expect(signal?.aborted).toBe(true)
+      expect(anchor.hasAttribute('aria-describedby')).toBe(false)
+      pending.resolve(Response.json(authorizedPreview))
+      await settleRequest()
+      expect(document.querySelector('[role="tooltip"]')).toBeNull()
+      expect(document.body.textContent).not.toContain('Fresh authorized source excerpt.')
+      if (retire !== 'unmount') mounted.unmount()
+    }
   })
 })

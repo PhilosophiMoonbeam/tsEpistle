@@ -1,8 +1,10 @@
+import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 import { z } from 'zod'
 import {
   AGENT_ACTION_NAMES,
   AGENT_PROPOSAL_STATUSES,
+  AGENT_PRESET_IDS,
   AGENT_TOOL_CALL_NAMES,
   AGENT_TOOL_CONTROL_NAMES,
   type AgentActionName,
@@ -15,6 +17,7 @@ import {
   type AgentFollowUpSuggestion,
   type AgentGoogleSearchGrounding,
   type AgentMessageView,
+  type AgentPresetId,
   type AgentPageActionLink,
   type AgentProposalView,
   type AgentRunView,
@@ -53,6 +56,7 @@ const approvalStatusSchema = z.enum(['pending', 'approved', 'denied', 'expired',
 const riskSchema = z.enum(['read', 'open-world-read', 'proposal', 'reversible-write', 'destructive-write'])
 const toolRiskSchema = z.union([riskSchema, z.literal('external')])
 const currentPageSchema = AgentCurrentPageHintSchema
+const presetIdSchema = z.enum(AGENT_PRESET_IDS)
 
 const iso = (value: Date | string): string => (value instanceof Date ? value.toISOString() : new Date(value).toISOString())
 const nullableIso = (value: Date | string | null): string | null => (value === null ? null : iso(value))
@@ -585,7 +589,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
     if (runId) prioritizedRunIds.add(runId)
   }
   const selectedRunIds = [...prioritizedRunIds].slice(0, THREAD_RUN_LIMIT)
-  const runQuery = knex<ProjectAgentRunInput>('agentRuns')
+  const runQuery = knex<ProjectAgentRunInput & { readonly userMessageId: string }>('agentRuns')
     .where('sessionId', sessionId)
     .andWhere('ownerId', ownerId)
     .orderBy('queuedAt', 'desc')
@@ -649,9 +653,13 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
     proposalQuery,
     artifactQuery,
     listOwnedAgentProjectionEvents(knex, ownerId, runRows, THREAD_LATEST_ATTEMPT_EVENT_LIMIT),
-    knex('agentEvents').whereIn('runId', selectedRunIds).where({ type: 'run.queued' }).select('runId', 'data') as Promise<
-      Array<{ runId: string; data: string }>
-    >
+    knex('agentEvents')
+      .whereIn(
+        'runId',
+        runRows.map(run => run.id)
+      )
+      .where({ type: 'run.queued', sequence: 1, attempt: 0, schemaVersion: 1 })
+      .select('runId', 'data', 'dataSha256') as Promise<Array<{ runId: string; data: string; dataSha256: string }>>
   ])
   if (proposalRows.length > THREAD_RELATED_RECORD_LIMIT || artifactRows.length > THREAD_RELATED_RECORD_LIMIT)
     throw new AgentRepositoryError('AGENT_THREAD_PROJECTION_OVERFLOW', 'Agent session has too many related records to project safely', 500)
@@ -694,6 +702,8 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
   const reduced = reduceAgentEvents(events, runRows[0]?.id ?? null)
   const approvals = new Map(approvalRows.map(row => [row.proposalId, approvalView(row)]))
   const sourceContexts = new Map<string, Pick<AgentMessageView, 'knowledgeContext' | 'currentPage'>>()
+  const ownedRunsById = new Map(runRows.map(run => [run.id, run]))
+  const messagePresets = new Map<string, AgentPresetId>()
   for (const row of sourceContextRows) {
     try {
       const payload: unknown = JSON.parse(row.data)
@@ -702,6 +712,10 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
       const context: { knowledgeContext?: AgentKnowledgeContext; currentPage?: Exclude<AgentMessageView['currentPage'], undefined> } = {}
       if (parsed.success) context.knowledgeContext = parsed.data
       if (Reflect.get(payload, 'status') === 'queued' && Buffer.byteLength(row.data, 'utf8') <= 32 * 1_024) {
+        const preset = presetIdSchema.safeParse(Reflect.get(payload, 'presetId'))
+        const ownedRun = ownedRunsById.get(row.runId)
+        if (preset.success && ownedRun && createHash('sha256').update(row.data).digest('hex') === row.dataSha256)
+          messagePresets.set(ownedRun.userMessageId, preset.data)
         const hint = Reflect.get(payload, 'currentPage')
         if (hint === undefined) context.currentPage = null
         else {
@@ -709,7 +723,9 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
           // the canonical navigation fields; never project that enrichment.
           if (typeof hint === 'object' && hint !== null && !Array.isArray(hint)) {
             const page = currentPageSchema.safeParse({
-              id: Reflect.get(hint, 'id'), locale: Reflect.get(hint, 'locale'), path: Reflect.get(hint, 'path'),
+              id: Reflect.get(hint, 'id'),
+              locale: Reflect.get(hint, 'locale'),
+              path: Reflect.get(hint, 'path'),
               observedUpdatedAt: Reflect.get(hint, 'observedUpdatedAt')
             })
             if (page.success) context.currentPage = page.data
@@ -733,6 +749,8 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
   const messages: AgentMessageView[] = messageRows.map(message => {
     const grounding = googleSearchGrounding(message.googleSearchGrounding)
     const run = message.role === 'assistant' && message.runId ? runsById.get(message.runId) : undefined
+    const presetId =
+      message.role === 'user' && message.runId && ownedRunsById.get(message.runId)?.userMessageId === message.id ? messagePresets.get(message.id) : undefined
     return {
       id: message.id,
       runId: message.runId,
@@ -747,6 +765,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
         ? { media: mediaRows.filter(media => media.messageId === message.id).map(projectAgentMedia) }
         : {}),
       ...(message.role === 'user' && message.runId ? sourceContexts.get(message.runId) : {}),
+      ...(presetId === undefined ? {} : { presetId }),
       createdAt: message.createdAt,
       updatedAt: message.updatedAt
     }

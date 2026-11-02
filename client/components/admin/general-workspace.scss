@@ -1,7 +1,7 @@
 .general-workspace {
   --general-line: rgba(var(--v-theme-on-surface), .14);
   --general-muted: var(--wiki-text-muted);
-  --general-soft: rgba(var(--v-theme-on-surface), .035);
+  --general-soft: var(--wiki-surface-sunken);
   padding-bottom: 70px;
   .general-status { display:flex; justify-content:space-between; gap:14px; padding:22px 0; color:var(--general-muted); font-size:.76rem; span:first-child { display:flex; align-items:center; gap:9px; } i { width:6px; height:6px; border-radius:50%; background:rgb(var(--v-theme-success)); &.is-draft { background:rgb(var(--v-theme-warning)); } } }
   .general-tabs { display:flex; gap:27px; border-bottom:1px solid var(--general-line); margin-bottom:34px; overflow-x:auto; button { background:transparent; border:0; border-radius:0; cursor:pointer; flex:none; position:relative; padding:15px 0 17px; color:var(--general-muted); font-size:.82rem; font-weight:600; white-space:nowrap; &[aria-current] { color:rgb(var(--v-theme-on-surface)); &::after { content:''; position:absolute; inset:auto 0 0; height:3px; background:rgb(var(--v-theme-primary)); } } &:focus-visible { outline:2px solid rgb(var(--v-theme-primary)); outline-offset:-2px; } } }
@@ -10,7 +10,7 @@
   .general-heading { margin-bottom:28px; h2 { font-size:1.6rem; line-height:1.3; letter-spacing:-.03em; font-weight:550; margin:9px 0; } p { color:var(--general-muted); font-size:.88rem; line-height:1.75; max-width:70ch; } }
   .general-kicker { text-transform:uppercase; letter-spacing:.12em; font-size:.64rem; font-weight:700; color:var(--general-muted); }
   .general-setting-group { padding:30px 0; border-bottom:1px solid var(--general-line); >div:first-child:not(.v-input) { margin-bottom:22px; } h3 { font-size:1.06rem; font-weight:600; letter-spacing:-.015em; } p { margin-top:8px; color:var(--general-muted); font-size:.81rem; line-height:1.8; } .v-input + .v-input { margin-top:14px; } .v-switch { padding-bottom:9px; } .v-messages { line-height:1.65; hyphens:none; } }
-  .general-panel { border:1px solid var(--general-line); border-radius:10px; padding:23px; margin-bottom:19px; h3 { margin:9px 0 12px; font-size:1.06rem; font-weight:600; } p { color:var(--general-muted); font-size:.78rem; line-height:1.8; } dl { margin:20px 0 12px; div { padding:12px 0; border-top:1px solid var(--general-line); } dt { font-size:.69rem; color:var(--general-muted); } dd { margin-top:5px; font-size:.75rem; overflow-wrap:anywhere; } } >a { display:flex; justify-content:space-between; padding:12px 0; color:rgb(var(--v-theme-on-surface)); font-size:.78rem; text-decoration:none; border-top:1px solid var(--general-line); &:hover { color:var(--wiki-primary-ink); } } .v-btn { white-space:normal; height:auto; min-height:40px; } }
+  .general-panel { background:var(--wiki-surface-gradient); border:1px solid var(--wiki-material-border); border-radius:10px; padding:23px; margin-bottom:19px; h3 { margin:9px 0 12px; font-size:1.06rem; font-weight:600; } p { color:var(--general-muted); font-size:.78rem; line-height:1.8; } dl { margin:20px 0 12px; div { padding:12px 0; border-top:1px solid var(--general-line); } dt { font-size:.69rem; color:var(--general-muted); } dd { margin-top:5px; font-size:.75rem; overflow-wrap:anywhere; } } >a { display:flex; justify-content:space-between; padding:12px 0; color:rgb(var(--v-theme-on-surface)); font-size:.78rem; text-decoration:none; border-top:1px solid var(--general-line); &:hover { color:var(--wiki-primary-ink); } } .v-btn { white-space:normal; height:auto; min-height:40px; } }
   .general-activity { list-style:none; padding:0; >li { padding:24px 0; border-bottom:1px solid var(--general-line); >div { display:flex; gap:20px; justify-content:space-between; align-items:baseline; } strong { font-size:.9rem; font-weight:600; line-height:1.7; } time,p { color:var(--general-muted); font-size:.72rem; line-height:1.7; } time { flex:none; } p { margin:8px 0 12px; } ul { padding-left:18px; font-size:.79rem; line-height:1.9; } } }
   @media(max-width:1150px) { .general-layout { grid-template-columns:minmax(0,1fr); } .general-aside { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:18px; } }
 }
@@ -20,13 +20,19 @@
   .general-setting-group > p { margin: 0 0 20px; }
   .general-note { color:var(--general-muted); font-size:.78rem; line-height:1.8; margin-top:12px; }
   .general-pair { display:grid; grid-template-columns:1fr 1fr; gap:16px; .v-input + .v-input { margin-top:0; } }
-  .general-identity-card { padding:25px; margin-bottom:20px; background:var(--general-soft); border:1px solid var(--general-line); border-radius:10px; img { display:block; width:58px; height:58px; object-fit:contain; margin:27px 0 18px; } h3 { font-size:1.6rem; font-weight:550; letter-spacing:-.025em; overflow-wrap:anywhere; margin-top:20px; } p { color:var(--general-muted); font-size:.8rem; line-height:1.7; margin:10px 0; } code { display:block; max-width:100%; font-family:var(--wiki-font-mono); color:var(--general-muted); font-size:.75rem; line-height:1.7; overflow-x:auto; overflow-wrap:normal; white-space:nowrap; word-break:keep-all; } .general-preview-label { display:block; font-size:.66rem; color:var(--general-muted); margin-top:25px; padding-top:16px; border-top:1px solid var(--general-line); } }
+  .general-identity-card { padding:25px; margin-bottom:20px; background:var(--wiki-surface-gradient); border:1px solid var(--wiki-material-border); border-radius:10px; img { display:block; width:58px; height:58px; object-fit:contain; margin:27px 0 18px; } h3 { font-size:1.6rem; font-weight:550; letter-spacing:-.025em; overflow-wrap:anywhere; margin-top:20px; } p { color:var(--general-muted); font-size:.8rem; line-height:1.7; margin:10px 0; } code { display:block; min-width:0; max-width:100%; font-family:var(--wiki-font-mono); color:var(--general-muted); font-size:.8125rem; line-height:1.7; overflow-wrap:anywhere; white-space:normal; word-break:normal; unicode-bidi:isolate; } .general-preview-label { display:block; font-size:.66rem; color:var(--general-muted); margin-top:25px; padding-top:16px; border-top:1px solid var(--general-line); } }
   .general-announcement-state { display:flex; align-items:start; gap:17px; background:var(--general-soft); padding:22px; border:1px solid var(--general-line); border-radius:9px; strong { font-size:.9rem; font-weight:600; } p { color:var(--general-muted); font-size:.78rem; line-height:1.7; margin-top:6px; } }
   .general-preview-fragment { padding:24px; border:1px solid var(--general-line); border-radius:9px; margin-top:22px; >.general-kicker { display:block; margin-bottom:20px; } .site-banner { margin-bottom:0; } }
   .general-markdown { line-height:1.75; overflow-wrap:anywhere; font-size:.84rem; p { margin-top:10px; } img { max-width:100%; } pre { overflow:auto; } }
   .general-search-preview { border:1px solid var(--general-line); padding:24px; border-radius:9px; span, strong, small { display:block; } span { font-size:.72rem; overflow-wrap:anywhere; color:var(--general-muted); } strong { font-size:1.3rem; font-weight:550; margin:10px 0; color:rgb(var(--v-theme-on-surface)); } p { font-size:.82rem; line-height:1.7; margin:0 0 18px; } small { font-size:.67rem; color:var(--general-muted); border-top:1px solid var(--general-line); padding-top:14px; } }
   .general-url-examples { margin-top:18px; padding:18px; background:var(--general-soft); border-radius:8px; >div { display:flex; align-items:center; gap:16px; margin:8px 0; } code { font-size:.77rem; overflow-wrap:anywhere; } p { font-size:.78rem; line-height:1.7; color:var(--general-muted); } }
   .general-source-preview { margin-top:16px; padding:20px; background:var(--general-soft); border-radius:8px; code { display:block; margin-top:12px; font-size:.75rem; line-height:1.8; overflow-wrap:anywhere; } }
+  .general-announcement-state, .general-preview-fragment, .general-search-preview, .general-url-examples, .general-source-preview {
+    background:var(--wiki-surface-sunken);
+    background-image:none;
+    border:1px solid var(--wiki-well-border);
+    box-shadow:var(--wiki-shadow-inset);
+  }
   @media(max-width:600px) { .general-pair { grid-template-columns:1fr; gap:0; } .general-preview-fragment { padding:18px; } }
 }
 
@@ -38,4 +44,11 @@
     .general-aside { grid-template-columns:minmax(0,1fr); gap:0; }
     .general-activity > li > div { flex-direction:column; gap:6px; }
   }
+}
+.general-review .general-differences > div {
+  background:var(--wiki-surface-sunken);
+  background-image:none;
+  border:1px solid var(--wiki-well-border);
+  box-shadow:var(--wiki-shadow-inset);
+  padding:18px;
 }

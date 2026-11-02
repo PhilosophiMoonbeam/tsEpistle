@@ -21,12 +21,23 @@ describe('source editor contents', () => {
       '',
       '> ### Nested [link](https://example.com)',
       '',
-      '<h2>Not a Markdown heading</h2>'
+      '<h2>Not a Markdown heading</h2>',
+      '',
+      '#### Detail',
+      '',
+      '##### Detail child',
+      '',
+      '###### Last supported level',
+      '',
+      '####### Not a heading'
     ].join('\n')
     expect(markdownHeadings(markdown.parse(source, {}))).toEqual([
       { line: 0, level: 1, title: 'Alpha bold' },
       { line: 2, level: 2, title: 'Beta code' },
-      { line: 11, level: 3, title: 'Nested link' }
+      { line: 11, level: 3, title: 'Nested link' },
+      { line: 15, level: 4, title: 'Detail' },
+      { line: 17, level: 5, title: 'Detail child' },
+      { line: 19, level: 6, title: 'Last supported level' }
     ])
   })
 

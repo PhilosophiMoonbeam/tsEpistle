@@ -8,6 +8,7 @@ import { sameReaderPageIdentity } from '../../../helpers/page-action-events.ts'
 import { buildOutlineTree, filterOutlineTree, getInitialExpandedAnchors } from '../../../helpers/page-outline.ts'
 import { revealContentExtensionTarget } from '../../../helpers/content-extension-runtime.ts'
 import { normalizeTableOfContents } from '../../../helpers/table-of-contents.ts'
+import { publicationBoundaryTimestamp, publicationWindowOpen } from '../../../../shared/publication-window.ts'
 import { browserWindow, document as browserDocument, resetBody } from '../../../test/browser-dom.mts'
 import { keyTranslator, renderTemplate as renderWithSlots } from '../../../test/render-template.mts'
 
@@ -26,6 +27,8 @@ const baseState = (overrides: Record<string, unknown> = {}): Record<string, unkn
   navMode: 'NONE',
   readerFocus: false,
   readerSectionsOpen: false,
+  readerSectionsEscape: () => {},
+  navigationEscape: () => {},
   readerHasSections: false,
   readerSectionsAvailable: false,
   readerSectionIndex: -1,
@@ -92,22 +95,28 @@ const baseState = (overrides: Record<string, unknown> = {}): Record<string, unkn
 const countText = (html: string, needle: string): number => html.split(needle).length - 1
 
 describe('page reader chrome template', () => {
-  it('shows the empty outline message once', async () => {
-    const { document } = await renderTemplate(PAGE, baseState())
-    const empty = document.querySelectorAll('.page-toc-empty')
-    expect(empty).toHaveLength(1)
-    expect(countText(empty[0]!.textContent ?? '', 'common:page.noSections')).toBe(1)
+  it('suppresses the outline below two headings instead of displaying an empty rail', async () => {
+    for (const tocFlattened of [[], [{ anchor: '#only', title: 'Only heading', depth: 0 }]]) {
+      const { document } = await renderTemplate(PAGE, baseState({ tocFlattened }))
+      expect(document.querySelector<HTMLElement>('.page-toc-card')?.style.display).toBe('none')
+      expect(document.querySelector('.page-main--with-rail')).toBeNull()
+    }
   })
 
   it('uses one "On this page" heading that becomes a disclosure button only below the rail breakpoint', async () => {
-    const wide = (await renderTemplate(PAGE, baseState())).document
+    const outlined = {
+      readerHasSections: true,
+      tocFlattened: [
+        { anchor: '#one', title: 'One', depth: 0 },
+        { anchor: '#two', title: 'Two', depth: 0 }
+      ]
+    }
+    const wide = (await renderTemplate(PAGE, baseState(outlined))).document
     expect(wide.querySelectorAll('.page-toc-card .page-toc-heading')).toHaveLength(1)
     expect(wide.querySelector('.page-toc-card .page-toc-toggle')).toBeNull()
     expect(wide.querySelector('.page-toc-card')?.textContent).toContain('common:page.onThisPage')
 
-    const compact = (
-      await renderTemplate(PAGE, baseState({ isTocCompact: true, winWidth: 900, tocDisclosureExpanded: false }))
-    ).document
+    const compact = (await renderTemplate(PAGE, baseState({ ...outlined, isTocCompact: true, winWidth: 900, tocDisclosureExpanded: false }))).document
     const toggle = compact.querySelector('.page-toc-card .page-toc-toggle')
     expect(toggle?.getAttribute('aria-expanded')).toBe('false')
     expect(toggle?.getAttribute('aria-controls')).toBe('page-toc-content')
@@ -126,7 +135,6 @@ describe('page reader chrome template', () => {
     expect(provenance?.querySelector('.page-document-author')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('by Ada')
   })
 
-
   it('renders an author placeholder in the middle of a translated sentence without moving the name', async () => {
     const { document } = await renderTemplate(PAGE, baseState({ authorAttribution: { before: 'Zuletzt von ', after: ' bearbeitet' } }))
     const author = document.querySelector('.page-document-author')
@@ -134,26 +142,27 @@ describe('page reader chrome template', () => {
     expect(author?.querySelector('bdi')?.textContent).toBe('Ada')
   })
 
-
-
   it('exposes both offline toggle states and omits pressed state for non-toggle actions', async () => {
     for (const { pressed, attribute } of [
       { pressed: false, attribute: 'false' },
       { pressed: true, attribute: 'true' },
       { pressed: undefined, attribute: null }
     ]) {
-      const { document } = await renderTemplate(PAGE, baseState({
-        offlineControl: {
-          state: 'off',
-          tone: 'neutral',
-          icon: 'mdi-cloud-download-outline',
-          blocked: false,
-          label: 'Save offline',
-          title: 'Save offline',
-          detail: 'Keep a copy on this device.',
-          pressed
-        }
-      }))
+      const { document } = await renderTemplate(
+        PAGE,
+        baseState({
+          offlineControl: {
+            state: 'off',
+            tone: 'neutral',
+            icon: 'mdi-cloud-download-outline',
+            blocked: false,
+            label: 'Save offline',
+            title: 'Save offline',
+            detail: 'Keep a copy on this device.',
+            pressed
+          }
+        })
+      )
       const control = document.querySelector('.page-offline-control')
       expect(control).not.toBeNull()
       expect(control?.getAttribute('aria-pressed')).toBe(attribute)
@@ -169,12 +178,12 @@ describe('page reader chrome template', () => {
     expect(countText(html, 'common:page.unpublishedWarning')).toBe(1)
   })
 
-  it('marks the reading position bar as decorative', async () => {
-    const { document } = await renderTemplate(PAGE, baseState())
+  it('names scalar article position without exposing it as earned reading', async () => {
+    const { document } = await renderTemplate(PAGE, baseState({ readingProgress: 42 }))
     const bar = document.querySelector('.page-position')
-    expect(bar?.getAttribute('aria-hidden')).toBe('true')
-    expect(bar?.hasAttribute('role')).toBe(false)
-    expect(bar?.hasAttribute('aria-valuenow')).toBe(false)
+    expect(bar?.getAttribute('role')).toBe('progressbar')
+    expect(bar?.getAttribute('aria-label')).toBe('common:page.articlePosition')
+    expect(bar?.getAttribute('aria-valuenow')).toBe('42')
   })
 
   it('shows the decorative navigation cue only while enabled and pending without changing reading progress or busy status', async () => {
@@ -275,6 +284,8 @@ const page = new Function(
   'sameReaderPageIdentity',
   'AbortController',
   'normalizeTableOfContents',
+  'publicationBoundaryTimestamp',
+  'publicationWindowOpen',
   executableScript
 )(
   (options: unknown) => options,
@@ -299,7 +310,9 @@ const page = new Function(
   revealContentExtensionTarget,
   sameReaderPageIdentity,
   browserWindow.AbortController,
-  normalizeTableOfContents
+  normalizeTableOfContents,
+  publicationBoundaryTimestamp,
+  publicationWindowOpen
 ) as Rules
 
 const call = (name: string, vm: Record<string, unknown>) => page.computed[name]!.call(vm)
@@ -330,23 +343,38 @@ describe('page reader chrome rules', () => {
     expect(vm.readerFocus).toBe(true)
   })
 
-  it('shows one edit control on small screens', () => {
-    const shortcuts = (editFab: boolean) => ({ editMenuBar: true, editMenuBtn: true, editFab })
+  it('keeps one authorized Edit in the hero and reserves the optional mobile menu for other page actions', async () => {
+    const shortcuts = (editFab: boolean, editMenu = true) => ({ editMenuBar: editMenu, editMenuBtn: editMenu, editFab })
     const cases = [
-      { smAndDown: true, editFab: true, write: true, fab: true, header: false },
-      { smAndDown: true, editFab: false, write: true, fab: false, header: true },
-      { smAndDown: false, editFab: true, write: true, fab: false, header: false },
-      { smAndDown: true, editFab: true, write: false, fab: true, header: true }
+      { smAndDown: true, editFab: true, editMenu: true, write: true, fab: true, header: true },
+      { smAndDown: true, editFab: false, editMenu: true, write: true, fab: false, header: true },
+      { smAndDown: false, editFab: true, editMenu: true, write: true, fab: false, header: true },
+      { smAndDown: true, editFab: true, editMenu: true, write: false, fab: true, header: false },
+      { smAndDown: true, editFab: true, editMenu: false, write: true, fab: true, header: true },
+      { smAndDown: true, editFab: false, editMenu: false, write: true, fab: false, header: false }
     ]
     for (const entry of cases) {
       const vm: Record<string, unknown> = {
         ...display(entry.smAndDown),
-        editShortcutsObj: shortcuts(entry.editFab),
+        editShortcutsObj: shortcuts(entry.editFab, entry.editMenu),
         hasWritePagesPermission: entry.write,
         hasAnyPagePermissions: true
       }
-      vm.showEditFab = call('showEditFab', vm)
-      expect({ fab: vm.showEditFab, header: call('showHeaderEditButton', vm) }).toEqual({ fab: entry.fab, header: entry.header })
+      const showEditFab = call('showEditFab', vm)
+      const showHeaderEditButton = call('showHeaderEditButton', vm)
+      expect({ fab: showEditFab, header: showHeaderEditButton }).toEqual({ fab: entry.fab, header: entry.header })
+      const { document } = await renderTemplate(
+        PAGE,
+        baseState({
+          editShortcutsObj: vm.editShortcutsObj,
+          hasWritePagesPermission: entry.write,
+          showEditFab,
+          showHeaderEditButton
+        })
+      )
+      expect(document.querySelectorAll('.page-hero [aria-label="common:actions.edit"]')).toHaveLength(entry.header ? 1 : 0)
+      expect(document.querySelector('.page-edit-fab') !== null).toBe(entry.fab)
+      expect([...document.querySelectorAll('[data-stub="v-list-item"]')].some(item => item.textContent?.trim() === 'common:page.editPage')).toBe(false)
     }
   })
 
@@ -395,7 +423,6 @@ describe('page reader chrome rules', () => {
       { id: 9, label: 'User #9', source: 'manual' }
     ])
   })
-
 
   it('names the browser time zone on Updated only when the account could not load and no zone is saved', () => {
     const vmFor = (known: boolean) => {
@@ -448,6 +475,137 @@ describe('page reader chrome rules', () => {
   })
 })
 
+describe('reader sharing context', () => {
+  afterEach(() => resetBody())
+
+  it('shares only a currently rendered outline target, not a stale, removed or non-article heading', () => {
+    const container = browserDocument.createElement('article')
+    container.innerHTML = '<h2 id="café / chapter #%23?">Chapter</h2><p id="unlisted">Not a section</p>'
+    browserDocument.body.append(container)
+    const vm: Record<string, unknown> = {
+      $refs: { container },
+      activeAnchor: '#caf%C3%A9%20%2F%20chapter%20%23%2523%3F',
+      tocFlattened: [{ anchor: '#caf%C3%A9%20%2F%20chapter%20%23%2523%3F', title: 'Chapter', depth: 0 }],
+      navigationPending: false,
+      selectedPageView: 'article'
+    }
+    expect(call('shareSectionAnchor', vm)).toBe('café / chapter #%23?')
+    for (const change of [
+      { navigationPending: true },
+      { selectedPageView: 'talk' },
+      { activeAnchor: '#unlisted' },
+      { tocFlattened: [] },
+      { $refs: { container: browserDocument.createElement('article') } }
+    ]) {
+      expect(call('shareSectionAnchor', { ...vm, ...change })).toBe('')
+    }
+  })
+
+  it('requires independent anonymous-sharing proof as well as current published content and reader authority', () => {
+    const container = browserDocument.createElement('article')
+    const admitted: Record<string, unknown> = {
+      visibility: 'public',
+      publicSharingEligible: true,
+      isPublished: true,
+      currentPublicationEligible: true,
+      pageTransportVerified: true,
+      readingReaderAuthority: 'reader-7',
+      readingContentAuthority: 'reader-7',
+      readingAdmittedContentKey: 'content-2',
+      readingContentKey: 'content-2',
+      readingContentNode: container,
+      $refs: { container },
+      offlineDisposed: false,
+      navigationPending: false,
+      printView: false,
+      selectedPageView: 'article'
+    }
+    expect(call('publicSharingContextEligible', admitted)).toBe(true)
+    for (const revoked of [
+      { publicSharingEligible: false },
+      { publicSharingEligible: undefined },
+      { publicSharingEligible: 'true' },
+      { visibility: 'private' },
+      { currentPublicationEligible: false },
+      { pageTransportVerified: false },
+      { readingReaderAuthority: null },
+      { readingContentAuthority: 'previous-reader' },
+      { readingAdmittedContentKey: 'previous-content' },
+      { readingContentNode: browserDocument.createElement('article') },
+      { offlineDisposed: true },
+      { navigationPending: true },
+      { printView: true },
+      { selectedPageView: 'links' }
+    ]) {
+      expect(call('publicSharingContextEligible', { ...admitted, ...revoked })).toBe(false)
+    }
+  })
+
+  it('requires server publication authority and never promotes a scheduled or expired writer-only page', () => {
+    const now = Date.now()
+    const vm = {
+      isPublished: true,
+      effectiveIsPublished: true,
+      publicationClock: now,
+      publishStartDate: new Date(now - 10_000).toISOString(),
+      publishEndDate: new Date(now + 10_000).toISOString()
+    }
+    expect(call('currentPublicationEligible', vm)).toBe(true)
+    for (const change of [
+      { effectiveIsPublished: false },
+      { effectiveIsPublished: undefined },
+      { isPublished: false },
+      { publishStartDate: new Date(now + 60_000).toISOString() },
+      { publishEndDate: new Date(now - 1).toISOString() },
+      { publishEndDate: 'invalid' }
+    ]) {
+      expect(Boolean(call('currentPublicationEligible', { ...vm, ...change }))).toBe(false)
+    }
+  })
+
+  it('retires sharing across the inclusive end boundary while the reader stays open', () => {
+    const start = Date.parse('2026-11-01T12:00:00Z')
+    let now = start
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    let scheduled: (() => void) | undefined
+    const timer = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: () => void, delay: number) => {
+      scheduled = callback
+      expect(delay).toBe(2)
+      return 123
+    }) as typeof setTimeout)
+    const vm: Record<string, unknown> = {
+      isPublished: true,
+      effectiveIsPublished: true,
+      publicationClock: start,
+      publicationTimer: null,
+      offlineDisposed: false,
+      publishStartDate: null,
+      publishEndDate: new Date(start + 1).toISOString()
+    }
+    vm.refreshPublicationClock = () => page.methods.refreshPublicationClock!.call(vm)
+    try {
+      page.methods.refreshPublicationClock!.call(vm)
+      now = start + 1
+      expect(call('currentPublicationEligible', vm)).toBe(true)
+      now = start + 2
+      scheduled!()
+      expect(call('currentPublicationEligible', vm)).toBe(false)
+      expect(vm.publicationTimer).toBe(null)
+      expect(timer).toHaveBeenCalledTimes(1)
+    } finally {
+      timer.mockRestore()
+      clock.mockRestore()
+    }
+  })
+
+  it('encodes locale and each stored path segment without losing literal URL punctuation or private scope', () => {
+    const vm = { locales: ['en'], locale: 'fr#?%é', path: 'café #?/literal%23/雪', visibility: 'public' }
+    const suffix = '/fr%23%3F%25%C3%A9/caf%C3%A9%20%23%3F/literal%2523/%E9%9B%AA'
+    expect(call('pageUrl', vm)).toBe(`${browserWindow.location.origin}${suffix}`)
+    expect(call('pageUrl', { ...vm, visibility: 'private' })).toBe(`${browserWindow.location.origin}/_private${suffix}`)
+    expect(call('pageUrl', { ...vm, locales: [] })).toBe(`${browserWindow.location.origin}/caf%C3%A9%20%23%3F/literal%2523/%E9%9B%AA`)
+  })
+})
 
 describe('page route motion policy', () => {
   beforeEach(() => resetBody())
@@ -532,7 +690,8 @@ describe('responsive navigation focus', () => {
   })
 
   it('returns closed drawer focus to its opener without stealing newly claimed content focus', async () => {
-    browserDocument.body.innerHTML = '<button id="opener">Navigation</button><nav id="page-navigation-drawer"><button id="inside">Home</button></nav><input id="filter">'
+    browserDocument.body.innerHTML =
+      '<button id="opener">Navigation</button><nav id="page-navigation-drawer"><button id="inside">Home</button></nav><input id="filter">'
     const opener = browserDocument.querySelector<HTMLButtonElement>('#opener')!
     const inside = browserDocument.querySelector<HTMLButtonElement>('#inside')!
     const filter = browserDocument.querySelector<HTMLInputElement>('#filter')!
@@ -574,7 +733,15 @@ describe('focus reading section navigation', () => {
       ensureActiveTocVisible: () => {},
       ...overrides
     })
-    for (const name of ['readerHasSections', 'readerSectionsAvailable', 'readerSectionIndex', 'readerSection', 'tocTree', 'tocTreeVisible']) {
+    for (const name of [
+      'readerHasSections',
+      'readerDockVisible',
+      'readerSectionsAvailable',
+      'readerSectionIndex',
+      'readerSection',
+      'tocTree',
+      'tocTreeVisible'
+    ]) {
       Object.defineProperty(vm, name, { configurable: true, get: () => call(name, vm) })
     }
     for (const name of [
@@ -682,7 +849,7 @@ describe('focus reading section navigation', () => {
     expect(vm.tocQuery).toBe('Section 23')
   })
 
-  it('targets Exit focus rather than the new first navigation button, then returns to the original focus control', async () => {
+  it('keeps activation at the hero control on entry and returns there on exit without focusing the bottom dock', async () => {
     browserDocument.body.innerHTML = `<div id="reader">
       <button class="page-reading-previous">Previous</button>
       <button class="page-reading-exit">Exit focus</button>
@@ -695,14 +862,19 @@ describe('focus reading section navigation', () => {
       $el: root,
       $refs: { container: root.querySelector('article') },
       scrollAnimationFrame: null,
-      scrollAnimationToken: 0
+      scrollAnimationToken: 0,
+      readerPageIdentity: { pageId: 1, locale: 'en', path: 'home', visibility: 'public', sourceRevision: '' },
+      readingReaderAuthority: 'reader-7'
     })
+    const control = root.querySelector<HTMLElement>('.page-focus-control')!
+    control.focus()
     await page.methods.toggleReaderFocus!.call(vm)
     await vi.advanceTimersByTimeAsync(32)
     expect(vm.readerFocus).toBe(true)
-    expect(browserDocument.activeElement).toBe(root.querySelector('.page-reading-exit'))
+    expect(browserDocument.activeElement).toBe(control)
 
     vm.readerSectionsOpen = true
+    root.querySelector<HTMLElement>('.page-reading-exit')!.focus()
     await page.methods.toggleReaderFocus!.call(vm)
     await vi.advanceTimersByTimeAsync(32)
     expect(vm.readerFocus).toBe(false)
@@ -710,7 +882,7 @@ describe('focus reading section navigation', () => {
     expect(browserDocument.activeElement).toBe(root.querySelector('.page-focus-control'))
   })
 
-  it('opens on the outline search and lets Escape close it before clearing the filter, restoring its opener', async () => {
+  it('opens on outline search and respects a consumed filter Escape before closing the picker from its opener', async () => {
     browserDocument.body.innerHTML = `<div id="reader">
       <button class="page-reading-sections-toggle">Choose a section</button>
       <button class="page-reading-exit">Exit focus</button>
@@ -721,9 +893,11 @@ describe('focus reading section navigation', () => {
     const opener = root.querySelector<HTMLElement>('.page-reading-sections-toggle')!
     const input = panel.querySelector<HTMLInputElement>('input')!
     const vm = reader({ $el: root, $refs: { readerSections: panel }, tocQuery: 'chapter' })
-    root.addEventListener('keydown', event => page.methods.readerSectionsEscape!.call(vm, event), { capture: true })
+    root.addEventListener('keydown', event => {
+      if (event.key === 'Escape') page.methods.readerSectionsEscape!.call(vm, event)
+    })
     input.addEventListener('keydown', event => {
-      if (event.key === 'Escape') vm.tocQuery = ''
+      if (event.key === 'Escape') event.stopPropagation()
     })
     opener.focus()
     await page.methods.toggleReaderSections!.call(vm)
@@ -732,10 +906,54 @@ describe('focus reading section navigation', () => {
 
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     await Vue.nextTick()
+    expect(vm.readerSectionsOpen).toBe(true)
+    expect(vm.tocQuery).toBe('chapter')
+    expect(browserDocument.activeElement).toBe(input)
+    expect(vm.readerFocus).toBe(true)
+    opener.focus()
+    opener.dispatchEvent(new browserWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await Vue.nextTick()
     expect(vm.readerSectionsOpen).toBe(false)
     expect(vm.tocQuery).toBe('chapter')
     expect(browserDocument.activeElement).toBe(opener)
     expect(vm.readerFocus).toBe(true)
+  })
+
+  it('does not let reader Escape override an overlay, a consumed key or IME composition', () => {
+    const vm = reader()
+    const exit = vi.fn()
+    vm.toggleReaderFocus = exit
+    for (const protectedBy of ['overlay', 'consumed', 'composing']) {
+      const overlay = browserDocument.createElement('div')
+      if (protectedBy === 'overlay') {
+        overlay.className = 'v-overlay--active'
+        browserDocument.body.append(overlay)
+      }
+      const event = new browserWindow.KeyboardEvent('keydown', { key: 'Escape', cancelable: true, isComposing: protectedBy === 'composing' })
+      if (protectedBy === 'consumed') event.preventDefault()
+      page.methods.readerSectionsEscape!.call(vm, event)
+      expect(exit).not.toHaveBeenCalled()
+      expect(vm.readerFocus).toBe(true)
+      overlay.remove()
+    }
+    const escapeEvent = new browserWindow.KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+    page.methods.readerSectionsEscape!.call(vm, escapeEvent)
+    expect(escapeEvent.defaultPrevented).toBe(true)
+    expect(exit).toHaveBeenCalledTimes(1)
+  })
+
+  it('moves a left outline inline while site navigation is open and restores its rail after closing', async () => {
+    const vm = reader({ readerFocus: false, navMode: 'MIXED', wideViewport: true, navigationOpen: false, tocFlattened: sections.slice(0, 2) })
+    expect(vm.readerHasSections).toBe(true)
+    for (const navigationOpen of [false, true, false]) {
+      vm.navigationOpen = navigationOpen
+      vm.isTocCompact = call('isTocCompact', vm)
+      const rendered = await renderTemplate(PAGE, vm)
+      const outline = rendered.document.querySelector('.page-toc-card')!
+      expect(outline.closest('[data-teleport]')?.getAttribute('data-teleport')).toBe(navigationOpen ? '#page-inline-toc' : '#page-desktop-rail')
+      expect(rendered.document.querySelectorAll('.page-toc-card')).toHaveLength(1)
+      expect(rendered.document.querySelector('.page-main')?.classList.contains('page-main--with-rail')).toBe(!navigationOpen)
+    }
   })
 
   it('selects and reveals a collapsed section, then focuses its heading with reduced motion and anchor reconciliation', async () => {
@@ -783,8 +1001,8 @@ describe('focus reading section navigation', () => {
     expect(vm.readerFocus).toBe(true)
   })
 
-  it('omits section controls when headings are absent or the outline is disabled, and closes on page or view changes', async () => {
-    for (const overrides of [{ tocFlattened: [] }, { tocPosition: 'off' }]) {
+  it('omits section controls below two headings or with the outline disabled, and closes on page or view changes', async () => {
+    for (const overrides of [{ tocFlattened: [] }, { tocFlattened: sections.slice(0, 1) }, { tocPosition: 'off' }]) {
       const vm = reader(overrides)
       const { document } = await renderTemplate(PAGE, vm)
       expect(document.querySelector('.page-reading-dock-title')?.textContent).toBe('Field guide')
@@ -819,7 +1037,8 @@ describe('Reader native Print completion', () => {
 
   for (const outcome of ['returned', 'threw', 'navigated'] as const) {
     it(`restores disclosure state after Print ${outcome}, without focusing a different page`, () => {
-      browserDocument.body.innerHTML = '<main><button data-page-actions-activator>Page actions</button><article><details><summary>Closed section</summary>Body</details><details open><summary>Open section</summary>Body</details></article></main>'
+      browserDocument.body.innerHTML =
+        '<main><button data-page-actions-activator>Page actions</button><article><details><summary>Closed section</summary>Body</details><details open><summary>Open section</summary>Body</details></article></main>'
       const root = browserDocument.querySelector('main')!
       const original = root.querySelector('button')!
       const article = root.querySelector('article')!
@@ -833,7 +1052,9 @@ describe('Reader native Print completion', () => {
       const vm: Record<string, unknown> = {
         $el: root,
         $refs: { container: article },
-        $nextTick: (callback: () => void) => { ticks.push(callback) },
+        $nextTick: (callback: () => void) => {
+          ticks.push(callback)
+        },
         readerPageIdentity: identity,
         offlineDisposed: false,
         printView: false,
@@ -868,14 +1089,19 @@ describe('leading Markdown reader title', () => {
   afterEach(() => resetBody())
 
   const fixture = (html: string, title = 'Café Guide', navigationKey = 0) => {
-    browserDocument.body.innerHTML = '<h1 class="page-title" id="shell-title"><span></span></h1><article><div class="wiki-page-rendered-contents"></div></article>'
+    browserDocument.body.innerHTML =
+      '<h1 class="page-title" id="shell-title"><span></span></h1><article><div class="wiki-page-rendered-contents"></div></article>'
     const hero = browserDocument.querySelector<HTMLElement>('.page-title')!
     hero.firstElementChild!.textContent = title
     const container = browserDocument.querySelector<HTMLElement>('article')!
     container.firstElementChild!.innerHTML = html
     const vm: Record<string, unknown> = {
-      $refs: { container, pageTitle: hero, pageTitleText: hero.firstElementChild }, editor: 'markdown', title,
-      leadingTitle: null, tocDecoded: [], navigationKey
+      $refs: { container, pageTitle: hero, pageTitleText: hero.firstElementChild },
+      editor: 'markdown',
+      title,
+      leadingTitle: null,
+      tocDecoded: [],
+      navigationKey
     }
     vm.restoreLeadingTitle = () => page.methods.restoreLeadingTitle!.call(vm)
     const sync = () => page.methods.syncLeadingTitle!.call(vm)
@@ -883,7 +1109,9 @@ describe('leading Markdown reader title', () => {
   }
 
   it('deduplicates canonically equivalent formatted text, preserves its fragment and leaves authored markup intact', () => {
-    const { vm, hero, container, sync } = fixture('<h1 id="café guide" class="toc-header"><a class="toc-anchor" aria-label="Link to heading" href="#café%20guide">¶</a> <em>CAFÉ</em>&nbsp;<br>Guide</h1><h2 id="chapter">Chapter</h2><h1 id="later">Café Guide</h1>')
+    const { vm, hero, container, sync } = fixture(
+      '<h1 id="café guide" class="toc-header"><a class="toc-anchor" aria-label="Link to heading" href="#café%20guide">¶</a> <em>CAFÉ</em>&nbsp;<br>Guide</h1><h2 id="chapter">Chapter</h2><h1 id="later">Café Guide</h1>'
+    )
     const heading = container.querySelector<HTMLElement>('h1')!
     const authoredContents = heading.innerHTML
     vm.tocDecoded = [
@@ -907,12 +1135,17 @@ describe('leading Markdown reader title', () => {
   })
 
   it('crosses both marked SPA transports but retains authored content below that boundary', () => {
-    const { vm, hero, container, sync } = fixture('<div class="wiki-page-rendered-contents" data-v-scope><h1 id="spa-title">Café Guide</h1></div>', 'Café Guide', 1)
+    const { vm, hero, container, sync } = fixture(
+      '<div class="wiki-page-rendered-contents" data-v-scope><h1 id="spa-title">Café Guide</h1></div>',
+      'Café Guide',
+      1
+    )
     sync()
     expect(container.querySelector<HTMLElement>('h1')!.hidden).toBe(true)
     expect(browserDocument.getElementById('spa-title')?.parentElement).toBe(hero)
     page.methods.restoreLeadingTitle!.call(vm)
-    container.firstElementChild!.innerHTML = '<div class="wiki-page-rendered-contents"><div class="wiki-page-rendered-contents"><h1 id="authored">Café Guide</h1></div></div>'
+    container.firstElementChild!.innerHTML =
+      '<div class="wiki-page-rendered-contents"><div class="wiki-page-rendered-contents"><h1 id="authored">Café Guide</h1></div></div>'
     sync()
     expect(container.querySelector<HTMLElement>('h1')!.hidden).toBe(false)
     expect(container.querySelector<HTMLElement>('h1')!.id).toBe('authored')
@@ -967,10 +1200,15 @@ describe('leading Markdown reader title', () => {
     sync()
     let destination: unknown
     Object.assign(vm, {
-      tocFlattened: [], scrollAnimationToken: 0, scrollAnimationFrame: null, outlineCleanup: null,
+      tocFlattened: [],
+      scrollAnimationToken: 0,
+      scrollAnimationFrame: null,
+      outlineCleanup: null,
       cancelScheduledScroll: () => page.methods.cancelScheduledScroll!.call(vm),
       pageScrollTarget: () => 0,
-      animatePageScroll: (_top: number, target: HTMLElement) => { destination = target }
+      animatePageScroll: (_top: number, target: HTMLElement) => {
+        destination = target
+      }
     })
     const frame = vi.spyOn(browserWindow, 'requestAnimationFrame').mockImplementation(callback => {
       callback(0)

@@ -610,20 +610,20 @@ type LogoStaticOutcome =
   | { readonly state: 'static'; readonly source: 'backend'; readonly diagnostic: LogoBackendDiagnostic }
   | { readonly state: 'static'; readonly source: 'startup-deadline'; readonly expiredAt: number }
 
-type LogoBackendOutcome =
-  | { readonly state: 'animated'; readonly backend: ParticleBackendKind }
-  | LogoStaticOutcome
+type LogoBackendOutcome = { readonly state: 'animated'; readonly backend: ParticleBackendKind } | LogoStaticOutcome
 
 function annotateLogoStaticOutcome(testInfo: TestInfo, outcome: LogoStaticOutcome): void {
-  testInfo.annotations.push(outcome.source === 'startup-deadline'
-    ? {
-        type: 'bounded-startup-fallback',
-        description: `The particle enhancement reached its existing 1,500 ms startup deadline at ${outcome.expiredAt} ms before creating a backend; the personalized static treatment remains visible. This is not animated coverage or an unsupported-capability claim.`
-      }
-    : {
-        type: 'capability-fallback',
-        description: `The particle backend ended startup in ${outcome.diagnostic.phase} before any visible commit; the explicit static outcome remains usable.`
-      })
+  testInfo.annotations.push(
+    outcome.source === 'startup-deadline'
+      ? {
+          type: 'bounded-startup-fallback',
+          description: `The particle enhancement reached its existing 1,500 ms startup deadline at ${outcome.expiredAt} ms before creating a backend; the personalized static treatment remains visible. This is not animated coverage or an unsupported-capability claim.`
+        }
+      : {
+          type: 'capability-fallback',
+          description: `The particle backend ended startup in ${outcome.diagnostic.phase} before any visible commit; the explicit static outcome remains usable.`
+        }
+  )
 }
 
 async function waitForBackendOutcome(page: Page): Promise<LogoBackendOutcome> {
@@ -657,7 +657,8 @@ async function waitForBackendOutcome(page: Page): Promise<LogoBackendOutcome> {
         diagnostic.effectiveBackend === null ||
         benchmark.startup?.firstSubmissionAt === undefined ||
         benchmark.startup.visibleCommitAt === undefined
-      ) return false
+      )
+        return false
       const field = document.querySelector('.login-particle-logo')
       const image = field?.querySelector<HTMLElement>('.login-particle-logo__image')
       if (field?.querySelectorAll('canvas').length !== 1 || !image || getComputedStyle(image).opacity !== '0') return false
@@ -983,7 +984,7 @@ async function installZeroFreeSpaceLogin(page: Page): Promise<void> {
       const loginDocument = await response.text()
       const zeroSpaceDocument = loginDocument.replace(
         '</head>',
-        '<style id="login-logo-zero-space-fixture">.auth-shell > main.auth-shell__card { width: 100% !important; max-width: none !important; }</style></head>'
+        '<style id="login-logo-zero-space-fixture">.auth-shell > main.auth-shell__card { grid-column: 1 / -1; width: 100% !important; max-width: none !important; }</style></head>'
       )
       if (zeroSpaceDocument === loginDocument) throw new Error('The login document did not contain the expected head element.')
       await route.fulfill({ response, body: zeroSpaceDocument })
@@ -1579,9 +1580,10 @@ function expectStraightSourceOver(composition: PageCompositionCapture, colorSche
     const screenshotPixel = mapCanvasPixelToScreenshot(composition.geometry, composition.visible, canvasPixel)
     const pagePixel = readRgbaPixel(composition.visible, screenshotPixel.x, screenshotPixel.y)
     const backdropPixel = readRgbaPixel(composition.backdrop, screenshotPixel.x, screenshotPixel.y)
-    const source = colorScheme === 'dark' && sample.role !== 'source'
-      ? [canvasPixel.red, canvasPixel.green, canvasPixel.blue]
-      : [sample.color[0], sample.color[1], sample.color[2]]
+    const source =
+      colorScheme === 'dark' && sample.role !== 'source'
+        ? [canvasPixel.red, canvasPixel.green, canvasPixel.blue]
+        : [sample.color[0], sample.color[1], sample.color[2]]
     const backdrop = [backdropPixel.red, backdropPixel.green, backdropPixel.blue]
     const actual = [pagePixel.red, pagePixel.green, pagePixel.blue]
     const sourceDistances = source.map((channel, index) => backdrop[index]! - channel)
@@ -2150,9 +2152,12 @@ test.describe('strict particle backend consumer coverage', () => {
     await expect(canvas).toHaveCount(0)
     await expect(email).toBeFocused()
     await expect
-      .poll(async () => (await readLogoPerformance(page)).backendDiagnostics?.some(
-        (diagnostic: LogoBackendDiagnostic) => diagnostic.phase === 'lost' && diagnostic.reason === 'device-lost'
-      ) ?? false)
+      .poll(
+        async () =>
+          (await readLogoPerformance(page)).backendDiagnostics?.some(
+            (diagnostic: LogoBackendDiagnostic) => diagnostic.phase === 'lost' && diagnostic.reason === 'device-lost'
+          ) ?? false
+      )
       .toBe(true)
     const terminal = await readLogoPerformance(page)
     expect(terminal.resumes?.at(-1)?.outcome).not.toBe('committed')
@@ -2497,7 +2502,9 @@ test.describe('managed login logo auth independence', () => {
       await expect(loader).toBeVisible()
       await expect(illustration).toHaveCount(1)
       await expect(illustration).toBeVisible()
-      expect(await firstBook.evaluate(element => element.isConnected && element === document.querySelector('.loader-dialog .login-success-animation'))).toBe(true)
+      expect(await firstBook.evaluate(element => element.isConnected && element === document.querySelector('.loader-dialog .login-success-animation'))).toBe(
+        true
+      )
       expect(ordinaryAttempts).toBe(1)
     } finally {
       loginResponse.resolve()
@@ -2544,15 +2551,17 @@ test.describe('managed login logo auth independence', () => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     const secret = 'JBSWY3DPEHPK3PXP'
     const qrImage = qr.imageSync(`otpauth://totp/NativeQR:qr@example.test?secret=${secret}`, { type: 'svg' })
-    await page.route(/\/_api\/auth\/login$/, route => route.fulfill({
-      json: {
-        authenticated: false,
-        mustSetupTFA: true,
-        continuationToken: 'native-qr-fixture',
-        tfaQRImage: qrImage,
-        tfaSecret: secret
-      }
-    }))
+    await page.route(/\/_api\/auth\/login$/, route =>
+      route.fulfill({
+        json: {
+          authenticated: false,
+          mustSetupTFA: true,
+          continuationToken: 'native-qr-fixture',
+          tfaQRImage: qrImage,
+          tfaSecret: secret
+        }
+      })
+    )
     await page.goto('/login?native-qr=paint')
     await page.getByLabel('Email Address', { exact: true }).fill('qr@example.test')
     await page.getByLabel('Password', { exact: true }).fill('native-qr-fixture-password')
@@ -2563,7 +2572,9 @@ test.describe('managed login logo auth independence', () => {
     await expect(surface.locator(':scope > svg')).toHaveCount(1)
     await expect(surface.locator(':scope > svg')).toBeVisible()
     // A light inherited SVG fill must not erase modules against the quiet space.
-    await surface.evaluate(element => { element.style.fill = '#fff' })
+    await surface.evaluate(element => {
+      element.style.fill = '#fff'
+    })
     const image = await surface.screenshot({ animations: 'disabled' })
     const pixels = await sharp(image).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
     let dark = 0
@@ -2619,10 +2630,6 @@ test.describe('managed login logo auth independence', () => {
       await expectOrdinaryLogin(page)
       await expect(page.locator('.login-particle-logo')).toHaveCount(0)
       await expect(page.locator('.auth-shell__brand .auth-shell__logo img')).toBeVisible()
-      if (viewport.width === 390) {
-        const trailing = await page.locator('main.auth-shell__card').evaluate(card => innerHeight - card.getBoundingClientRect().bottom)
-        expect(trailing).toBeLessThan(160)
-      }
       const email = page.getByLabel('Email Address', { exact: true })
       await email.focus()
       await expect(email).toBeFocused()
@@ -2662,6 +2669,102 @@ test.describe('managed login logo auth independence', () => {
     await expectScrollable(page.locator('main.auth-shell__card'))
   })
 
+  test('keeps credentials content-sized with a quiet subtitle and reversible plain-prose recovery', async ({ page }, testInfo) => {
+    requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
+    const invalidGeometry: string[] = []
+    page.on('console', message => {
+      if (/scale\(NaN\)|Invalid keyframe/iu.test(message.text())) invalidGeometry.push(message.text())
+    })
+    await installManagedLogo(page, squareEffect)
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ reducedMotion: 'reduce', colorScheme })
+      await page.setViewportSize({ width: 390, height: 844 })
+      await page.goto(`/login?composition=${colorScheme}`)
+      await expectOrdinaryLogin(page)
+      const card = page.locator('main.auth-shell__card')
+      const subtitle = card.locator('p.login-credentials-subtitle')
+      await expect(subtitle).toBeVisible()
+      await expect(card.getByRole('heading')).toHaveCount(1)
+      const email = page.getByLabel('Email Address', { exact: true })
+      const password = page.getByLabel('Password', { exact: true })
+      await email.focus()
+      await email.evaluate(async element => {
+        await document.fonts.ready
+        // Inactive field loaders retain paused animations, including finite ones
+        // under reduced motion. Only the native labels own this measurement.
+        const frame = Promise.withResolvers<void>()
+        requestAnimationFrame(() => frame.resolve())
+        await frame.promise
+        const animations = Array.from(element.closest('.v-field')!.querySelectorAll('.v-field-label'))
+          .flatMap(label => label.getAnimations())
+          .filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+        await Promise.all(animations.map(animation => animation.finished))
+      })
+      const clearance = await subtitle.evaluate(element => {
+        const label = document.querySelector('form.login-form--credentials .v-field__outline .v-field-label')!
+        const text = document.createRange()
+        text.selectNodeContents(label)
+        return text.getBoundingClientRect().top - element.getBoundingClientRect().bottom
+      })
+      expect(clearance, 'The visible floating email label stays at least 20px below supporting prose').toBeGreaterThanOrEqual(20)
+      const passwordField = password.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " v-field ")][1]')
+      const passwordBox = await passwordField.boundingBox()
+      const submitBox = await page.getByRole('button', { name: 'Log In', exact: true }).boundingBox()
+      if (!passwordBox || !submitBox) throw new Error('The clean credential controls are unavailable')
+      expect(Math.abs(submitBox.y - passwordBox.y - passwordBox.height - 20), 'The clean password-to-submit gap is 20px').toBeLessThan(1)
+      const compactHeight = (await card.boundingBox())!.height
+      await page.setViewportSize({ width: 390, height: 1044 })
+      expect(Math.abs((await card.boundingBox())!.height - compactHeight), 'Extra viewport height does not stretch the narrow card').toBeLessThan(1)
+
+      await email.fill('draft@example.test')
+      await page.getByRole('button', { name: 'Forgot your password?', exact: true }).click()
+      const instructions = card.locator('p#login-recovery-instructions')
+      await expect(instructions).toBeVisible()
+      const prose = await instructions.evaluate(element => {
+        const style = getComputedStyle(element)
+        return {
+          background: style.backgroundColor,
+          borders: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+          padding: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft]
+        }
+      })
+      expect(prose.background, 'Recovery instructions are not a second input/status well').toBe('rgba(0, 0, 0, 0)')
+      expect(prose.borders).toEqual(['0px', '0px', '0px', '0px'])
+      expect(prose.padding).toEqual(['0px', '0px', '0px', '0px'])
+      await expect(email).toHaveAttribute('aria-describedby', /(?:^|\s)login-recovery-instructions(?:\s|$)/u)
+      await expect(email).toHaveValue('draft@example.test')
+      await expect(email).toBeFocused()
+      const recoveryOrder = await instructions.evaluate(element => {
+        const input = document.querySelector('.login-form--recovery input')!
+        return {
+          precedesInput: Boolean(element.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING),
+          proseBottom: element.getBoundingClientRect().bottom,
+          inputTop: input.getBoundingClientRect().top
+        }
+      })
+      expect(recoveryOrder.precedesInput, 'Recovery instructions precede their input in reading order').toBe(true)
+      expect(recoveryOrder.proseBottom, 'Recovery instructions stay above their input').toBeLessThan(recoveryOrder.inputTop)
+      await card.getByRole('button', { name: 'Cancel', exact: true }).click()
+      await expect(subtitle).toBeVisible()
+      await expect(email).toHaveValue('draft@example.test')
+      await expect(email).toBeFocused()
+
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await expectStaticFallback(page, squareEffect)
+      await expect(card, 'Login glass retains its specular inset and elevation paint').toHaveCSS('box-shadow', /inset/u)
+      const desktopCard = (await card.boundingBox())!
+      expect(Math.abs(desktopCard.y + desktopCard.height / 2 - 450), 'The desktop card remains vertically balanced').toBeLessThan(1)
+      expect(desktopCard.x + desktopCard.width, 'Credentials occupy the left side of the desktop composition').toBeLessThan(720)
+      const colophon = page.locator('.login-colophon')
+      await expect(colophon).toBeVisible()
+      const colophonBox = (await colophon.boundingBox())!
+      const imageBox = (await page.locator('.login-particle-logo__image').boundingBox())!
+      expect(colophonBox.x).toBeGreaterThan(desktopCard.x + desktopCard.width)
+      expect(imageBox.y + imageBox.height, 'The emblem leaves room for the actual colophon').toBeLessThanOrEqual(colophonBox.y)
+    }
+    expect(invalidGeometry, 'Recovery transitions retain finite floating-label geometry').toEqual([])
+  })
+
   test('preserves unmanaged landmark, heading, textbox, and button names, tab order, title, focus geometry, and auth controls', async ({ page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
     await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -2674,7 +2777,7 @@ test.describe('managed login logo auth independence', () => {
     expect(baselineButtonNames).toEqual(expect.arrayContaining(['Show password', 'Log In']))
     const expectedAccessibility: LoginAccessibilityContract = {
       buttons: baselineButtonNames,
-      headings: [siteTitle ?? '', 'Enter your credentials'],
+      headings: [siteTitle ?? ''],
       landmarks: [siteTitle ?? ''],
       textboxes: ['Email Address', 'Password']
     }
@@ -2845,26 +2948,28 @@ test.describe('managed login logo auth independence', () => {
       outcome = await waitForBackendOutcome(page)
     } finally {
       await testInfo.attach('logo-startup', {
-        body: Buffer.from(JSON.stringify({
-          benchmark: await readLogoPerformance(page),
-          resources: await readLogoResourceTrace(page),
-          sceneRequests,
-          particleRequests: artifacts.particle.map(request => request.url()),
-          surface: await page.evaluate(() => ({
-            visibilityState: document.visibilityState,
-            desktopEligible: matchMedia('(min-width: 960px) and (min-height: 651px) and (hover: hover) and (pointer: fine)').matches,
-            reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
-            canvasCount: document.querySelectorAll('.login-particle-logo canvas').length,
-            images: Array.from(document.querySelectorAll<HTMLImageElement>('.login-particle-logo img')).map(image => ({
-              src: image.currentSrc,
-              complete: image.complete,
-              naturalWidth: image.naturalWidth,
-              naturalHeight: image.naturalHeight,
-              opacity: getComputedStyle(image).opacity
-            })),
-            resourceTiming: performance.getEntriesByType('resource').map(resource => resource.toJSON())
-          }))
-        })),
+        body: Buffer.from(
+          JSON.stringify({
+            benchmark: await readLogoPerformance(page),
+            resources: await readLogoResourceTrace(page),
+            sceneRequests,
+            particleRequests: artifacts.particle.map(request => request.url()),
+            surface: await page.evaluate(() => ({
+              visibilityState: document.visibilityState,
+              desktopEligible: matchMedia('(min-width: 960px) and (min-height: 651px) and (hover: hover) and (pointer: fine)').matches,
+              reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+              canvasCount: document.querySelectorAll('.login-particle-logo canvas').length,
+              images: Array.from(document.querySelectorAll<HTMLImageElement>('.login-particle-logo img')).map(image => ({
+                src: image.currentSrc,
+                complete: image.complete,
+                naturalWidth: image.naturalWidth,
+                naturalHeight: image.naturalHeight,
+                opacity: getComputedStyle(image).opacity
+              })),
+              resourceTiming: performance.getEntriesByType('resource').map(resource => resource.toJSON())
+            }))
+          })
+        ),
         contentType: 'application/json'
       })
     }
@@ -3235,9 +3340,7 @@ test.describe('particle compositor without service workers', () => {
       return outcome
     }
 
-    const cold = async (
-      colorScheme: 'light' | 'dark'
-    ): Promise<(PageCompositionCapture & { readonly theme: ApplicationThemeObservation }) | null> => {
+    const cold = async (colorScheme: 'light' | 'dark'): Promise<(PageCompositionCapture & { readonly theme: ApplicationThemeObservation }) | null> => {
       const target = await context.newPage()
       try {
         if ((await prepare(target, colorScheme, `logo-color-probe-cold-${colorScheme}`)).state === 'static') return null
@@ -3263,7 +3366,14 @@ test.describe('particle compositor without service workers', () => {
     }
     if (coldLight && coldDark) {
       expect(coldLight.theme.background).not.toBe(coldDark.theme.background)
-      expectIntrinsicProbeSamplesEquivalent('cold light/dark unchanged colors and all alpha', coldLight.frame, coldLight.geometry, coldDark.frame, coldDark.geometry, 'unchanged')
+      expectIntrinsicProbeSamplesEquivalent(
+        'cold light/dark unchanged colors and all alpha',
+        coldLight.frame,
+        coldLight.geometry,
+        coldDark.frame,
+        coldDark.geometry,
+        'unchanged'
+      )
     }
 
     if ((await prepare(page, 'light', 'logo-color-probe-live')).state === 'static') return
@@ -3303,9 +3413,18 @@ test.describe('particle compositor without service workers', () => {
       expectColorProbePixels(liveDark.frame, liveDarkComposition.geometry, 'dark')
       expectDarkGlyphCoreContrast(liveDarkComposition)
       expectColorProbePixels(liveLightAgain.frame, liveLightAgainComposition.geometry)
-      if (coldLight) expectIntrinsicProbeSamplesEquivalent('cold light/live light', coldLight.frame, coldLight.geometry, liveLight.frame, liveLightComposition.geometry)
-      if (coldDark) expectIntrinsicProbeSamplesEquivalent('cold dark/live dark', coldDark.frame, coldDark.geometry, liveDark.frame, liveDarkComposition.geometry)
-      expectIntrinsicProbeSamplesEquivalent('live light/dark unchanged colors and all alpha', liveLight.frame, liveLightComposition.geometry, liveDark.frame, liveDarkComposition.geometry, 'unchanged')
+      if (coldLight)
+        expectIntrinsicProbeSamplesEquivalent('cold light/live light', coldLight.frame, coldLight.geometry, liveLight.frame, liveLightComposition.geometry)
+      if (coldDark)
+        expectIntrinsicProbeSamplesEquivalent('cold dark/live dark', coldDark.frame, coldDark.geometry, liveDark.frame, liveDarkComposition.geometry)
+      expectIntrinsicProbeSamplesEquivalent(
+        'live light/dark unchanged colors and all alpha',
+        liveLight.frame,
+        liveLightComposition.geometry,
+        liveDark.frame,
+        liveDarkComposition.geometry,
+        'unchanged'
+      )
       expectIntrinsicProbeSamplesEquivalent(
         'live light/light again',
         liveLight.frame,

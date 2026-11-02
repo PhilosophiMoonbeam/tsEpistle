@@ -5,15 +5,25 @@ import { browserWindow, document } from '../../test/browser-dom.mts'
 import { translateEnglish } from '../../test/english-translate.mts'
 import { searchPages } from '../../helpers/pages-api.ts'
 import { pageHref } from '../../helpers/admin-pages.ts'
+import { useTranslate } from '../../helpers/use-translate.ts'
 
 const source = fs.readFileSync('client/components/admin/admin-search.vue', 'utf8')
 const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)[1]
 const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, '').replace('export default', 'return'))
-const engine = () => ({ key: 'postgres', title: 'PostgreSQL', isEnabled: true, isAvailable: true, config: [{ key: 'dictLanguage', value: { value: 'english' } }] })
+const engine = () => ({
+  key: 'postgres',
+  title: 'PostgreSQL',
+  isEnabled: true,
+  isAvailable: true,
+  config: [{ key: 'dictLanguage', value: { value: 'english' } }]
+})
 const deferred = () => {
   let resolve
   let reject
-  const promise = new Promise((done, fail) => { resolve = done; reject = fail })
+  const promise = new Promise((done, fail) => {
+    resolve = done
+    reject = fail
+  })
   return { promise, resolve, reject }
 }
 const inspectionStatus = dictionary => ({
@@ -37,12 +47,33 @@ function harness() {
   const saveEngines = vi.fn(async () => ({ message: 'saved' }))
   const inspectIndex = vi.fn(async () => ({ engine: 'postgres', inspection: null }))
   const rebuildIndex = vi.fn(async () => ({ message: 'rebuilt' }))
-  const options = new Function('AdminSearchEvaluate', 'fetchSearchEngines', 'saveSearchEngines', 'rebuildSearchIndex', 'inspectSearchIndex', 'wikiStore', 'getErrorMessage', 'loadingStart', 'loadingStop', 'showNotification', 'pushGraphError', executable)(
-    {}, fetchEngines, saveEngines, rebuildIndex, inspectIndex, {}, (error) => error.message, vi.fn(), vi.fn(), vi.fn(), vi.fn()
-  )
-  const instance = { ...options.data(), $t: (key) => key, $refs: {} }
-  for (const [key, value] of Object.entries(options.methods)) { if (typeof value === 'function') instance[key] = value.bind(instance) }
-  for (const [key, value] of Object.entries(options.computed)) { if (typeof value === 'function') Object.defineProperty(instance, key, { get: value.bind(instance) }) }
+  const options = new Function(
+    'AdminSearchEvaluate',
+    'fetchSearchEngines',
+    'saveSearchEngines',
+    'rebuildSearchIndex',
+    'inspectSearchIndex',
+    'wikiStore',
+    'getErrorMessage',
+    'loadingStart',
+    'loadingStop',
+    'showNotification',
+    'pushGraphError',
+    'useTranslate',
+    executable
+  )({}, fetchEngines, saveEngines, rebuildIndex, inspectIndex, {}, error => error.message, vi.fn(), vi.fn(), vi.fn(), vi.fn(), useTranslate)
+  const setupHost = document.createElement('div')
+  const setupApp = Vue.createApp({ setup: options.setup, render: () => null })
+  setupApp.config.globalProperties.$t = translateEnglish
+  const { tr } = setupApp.mount(setupHost)
+  setupApp.unmount()
+  const instance = { ...options.data(), tr, $t: translateEnglish, $refs: {}, $nextTick: callback => Vue.nextTick(callback) }
+  for (const [key, value] of Object.entries(options.methods)) {
+    if (typeof value === 'function') instance[key] = value.bind(instance)
+  }
+  for (const [key, value] of Object.entries(options.computed)) {
+    if (typeof value === 'function') Object.defineProperty(instance, key, { get: value.bind(instance) })
+  }
   return { instance, fetchEngines, saveEngines, rebuildIndex, inspectIndex, options }
 }
 
@@ -52,14 +83,32 @@ const vuetifyComponents = await import('vuetify/components')
 const vuetifyDirectives = await import('vuetify/directives')
 const mounted = []
 afterEach(() => {
-  for (const { app, host } of mounted.splice(0)) { app.unmount(); host.remove() }
+  for (const { app, host } of mounted.splice(0)) {
+    app.unmount()
+    host.remove()
+  }
 })
-const settle = async () => { await new Promise(resolve => setTimeout(resolve, 0)); await Vue.nextTick() }
+const settle = async () => {
+  await new Promise(resolve => setTimeout(resolve, 0))
+  await Vue.nextTick()
+}
 const evaluatorSource = fs.readFileSync('client/components/admin/admin-search-evaluate.vue', 'utf8')
 const evaluatorScript = evaluatorSource.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
-const evaluatorExecutable = new Bun.Transpiler({ loader: 'ts' }).transformSync(evaluatorScript.replace(/^import .*$/gm, '')) +
+const evaluatorExecutable =
+  new Bun.Transpiler({ loader: 'ts' }).transformSync(evaluatorScript.replace(/^import .*$/gm, '')) +
   '\nreturn { query, locale, path, canEvaluate, submitted, loading, error, result, rows, elapsedMs, matchFieldLabel, evaluate, cancelEvaluation, pageHref }'
-const setupEvaluator = new Function('computed', 'ref', 'shallowRef', 'onBeforeUnmount', 'defineExpose', 'searchPages', 'pageHref', 'useTranslate', 'window', evaluatorExecutable)
+const setupEvaluator = new Function(
+  'computed',
+  'ref',
+  'shallowRef',
+  'onBeforeUnmount',
+  'defineExpose',
+  'searchPages',
+  'pageHref',
+  'useTranslate',
+  'window',
+  evaluatorExecutable
+)
 const evaluatorTemplate = compileTemplate({
   source: evaluatorSource.match(/<template>([\s\S]*?)<\/template>\s*<script/)[1],
   filename: 'admin-search-evaluate.vue',
@@ -89,7 +138,9 @@ function evaluatorHarness(fetchImpl = vi.fn(async () => jsonResponse(searchResul
   document.body.append(host)
   const app = Vue.createApp({
     setup(_, { expose }) {
-      state = setupEvaluator(Vue.computed, Vue.ref, Vue.shallowRef, Vue.onBeforeUnmount, expose, searchPages, pageHref, () => translateEnglish, { fetch: fetchImpl })
+      state = setupEvaluator(Vue.computed, Vue.ref, Vue.shallowRef, Vue.onBeforeUnmount, expose, searchPages, pageHref, useTranslate, {
+        fetch: fetchImpl
+      })
       return state
     },
     render: evaluatorRender
@@ -111,6 +162,8 @@ describe('search administration drafts', () => {
     instance.engine.config[0].value.value = 'simple'
     expect(instance.dirty).toBe(true)
     expect(instance.canSave).toBe(true)
+    await instance.save()
+    expect(saveEngines).not.toHaveBeenCalled()
     expect(instance.savedEngines[0].config[0].value.value).toBe('english')
     instance.resetDraft()
     expect(instance.engine.config[0].value.value).toBe('english')
@@ -122,10 +175,13 @@ describe('search administration drafts', () => {
     await instance.loadEngines()
     instance.engine.config[0].value.value = 'simple'
     saveEngines.mockRejectedValueOnce(new Error('Connection failed'))
+    instance.review()
     await instance.save()
     expect(instance.dirty).toBe(true)
     expect(instance.operationError).toBe('Connection failed')
     expect(instance.saving).toBe(false)
+    expect(instance.reviewOpen).toBe(true)
+    expect(instance.reviewDraft.engines[0].config[0].value.value).toBe('simple')
     await instance.refresh()
     expect(fetchEngines).toHaveBeenCalledTimes(1)
   })
@@ -219,6 +275,7 @@ describe('search administration drafts', () => {
           rebuildIndex.mockReturnValueOnce(mutation.promise)
         }
 
+        if (operation === 'save') instance.review()
         const inspectingOld = instance.inspect()
         const oldController = instance.inspectController
         expect(instance.inspecting).toBe(true)
@@ -366,7 +423,8 @@ describe('search query evaluation', () => {
   })
 
   it('uses the submitted scope for cursors despite edited invalid input and preserves private links and unique rows', async () => {
-    const fetchImpl = vi.fn()
+    const fetchImpl = vi
+      .fn()
       .mockResolvedValueOnce(jsonResponse(searchResult([pageRow(1, 'private')], 'next-page')))
       .mockResolvedValueOnce(jsonResponse(searchResult([pageRow('1', 'private'), pageRow(2)])))
     const { state, host } = evaluatorHarness(fetchImpl)
@@ -393,9 +451,7 @@ describe('search query evaluation', () => {
 
   it('retains the loading guard, reports request errors, and clears them on a successful retry', async () => {
     const request = deferred()
-    const fetchImpl = vi.fn()
-      .mockReturnValueOnce(request.promise)
-      .mockResolvedValueOnce(jsonResponse(searchResult()))
+    const fetchImpl = vi.fn().mockReturnValueOnce(request.promise).mockResolvedValueOnce(jsonResponse(searchResult()))
     const { state, host } = evaluatorHarness(fetchImpl)
     state.query.value = 'optical'
     const pending = state.evaluate()

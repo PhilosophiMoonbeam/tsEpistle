@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-app-bar.nav-header(:height='dense ? 48 : 52', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown', :extension-height='52', :style='{ "--v-toolbar-height": dense ? "48px" : "52px" }')
+  v-app-bar.nav-header(:height='dense ? 48 : 52', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions, "nav-header--reading-hidden": readingChromeHidden }', :extended='searchIsShown && $vuetify.display.smAndDown', :extension-height='52', :style='{ "--v-toolbar-height": dense ? "48px" : "52px" }', @focusin='revealReadingChrome')
     template(v-slot:extension)
       .nav-header-mobile-search(v-if='searchIsShown && $vuetify.display.smAndDown', id='nav-header-mobile-search')
         v-text-field.nav-header-search-control(
@@ -32,7 +32,7 @@
           a.nav-header-logo(
             v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp'
             :href='homePath'
-            :aria-label='$t(`common:header.home`)'
+            :aria-label='`${title} · ${$t(`common:header.home`)}`'
           )
             img.org-logo(
               v-if='logoUrl && !logoImageFailed'
@@ -49,7 +49,7 @@
       v-col.nav-header-search-col(md='4', v-if='$vuetify.display.mdAndUp')
         .nav-header-inner.nav-header-command
           v-btn.nav-header-browse(
-            v-if='!hideSearch'
+            v-if='!hideSearch && mode !== `edit`'
             icon
             href='/t'
             :aria-disabled='!transportVerified ? `true` : undefined'
@@ -98,7 +98,8 @@
           .navHeaderLoading(v-show='isLoading')
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2', :aria-label='$t(`common:header.pageLoading`, { defaultValue: `Page loading` })')
           v-btn.nav-header-agent(
-            v-if='canEnterAgent && ($vuetify.display.mdAndUp || ($vuetify.display.smAndDown && !$vuetify.display.xs))'
+            v-if='canEnterAgent'
+            ref='agentOpener'
             icon
             rounded='lg'
             :aria-label='$t(`common:header.agentOpen`, { defaultValue: `Open Wiki Agent` })'
@@ -134,7 +135,7 @@
           )
             v-icon {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
           v-btn.nav-header-browse(
-            v-if='!hideSearch && $vuetify.display.smAndDown && !$vuetify.display.xs'
+            v-if='!hideSearch && mode !== `edit` && $vuetify.display.smAndDown && !$vuetify.display.xs'
             icon
             href='/t'
             :aria-disabled='!transportVerified ? `true` : undefined'
@@ -157,7 +158,7 @@
           //- LANGUAGES
 
           template(v-if='mode === `view` && locales.length > 0 && $vuetify.display.mdAndUp')
-            v-menu(location="bottom end", transition='slide-y-transition', max-height='320px', min-width='210px')
+            v-menu(v-model='languageMenuOpen', location="bottom end", transition='slide-y-transition', max-height='320px', min-width='210px')
               template(v-slot:activator='{ props: menuProps }')
                 v-btn(
                   icon
@@ -198,7 +199,8 @@
               v-list.nav-header-menu.page-actions-menu(ref='pageActionsMenu' nav)
                 .text-label-small.pa-4 {{$t('common:header.currentPage')}}
                 template(v-for='(action, index) of desktopPageMenuActions', :key='action.handler')
-                  v-divider(v-if='index > 0 && action.group !== desktopPageMenuActions[index - 1].group')
+                  v-divider(v-if='index > 0 && pageMenuSection(action) !== pageMenuSection(desktopPageMenuActions[index - 1])')
+                  v-list-subheader(v-if='index === 0 || pageMenuSection(action) !== pageMenuSection(desktopPageMenuActions[index - 1])') {{ pageMenuSectionLabel(action) }}
                   v-list-item.pl-4(
                     role='button'
                     link
@@ -225,23 +227,7 @@
               v-icon mdi-text-box-plus-outline
               v-tooltip(activator='parent', location='bottom', :text='onlineActionReady ? $t(`common:header.newPage`) : onlineActionUnavailableReason')
 
-          //- ADMIN
-
-          template(v-if='isAuthenticated && isAdmin && $vuetify.display.mdAndUp')
-            v-btn(
-              v-if='mode !== `admin`'
-              icon
-              rounded='lg'
-              :aria-disabled='!onlineActionReady ? `true` : undefined'
-              @click='openAdmin'
-              :aria-label='$t(`common:header.admin`)'
-            )
-              v-icon mdi-cog
-              v-tooltip(activator='parent', location='bottom', :text='onlineActionReady ? $t(`common:header.admin`) : onlineActionUnavailableReason')
-            v-btn(v-else, variant="text", rounded='lg', @click='exitAdmin', :aria-label='$t(`common:actions.exit`)', :aria-disabled='!onlineActionReady ? `true` : undefined')
-              v-icon(start) mdi-exit-to-app
-              v-tooltip(activator='parent', location='bottom', :text='onlineActionReady ? $t(`common:actions.exit`) : onlineActionUnavailableReason')
-          v-menu(ref='mobilePageActions', v-model='mobilePageActionsAreOpen', v-if='(hasMobilePageActions || ($vuetify.display.xs && !hideSearch)) && $vuetify.display.smAndDown', location='bottom end', min-width='240', @update:model-value='pageActionsVisibilityChanged($event, `mobilePageActions`)')
+          v-menu(ref='mobilePageActions', v-model='mobilePageActionsAreOpen', v-if='(hasMobilePageActions || ($vuetify.display.xs && !hideSearch && mode !== `edit`)) && $vuetify.display.smAndDown', location='bottom end', min-width='240', @update:model-value='pageActionsVisibilityChanged($event, `mobilePageActions`)')
             template(v-slot:activator='{ props }')
               v-btn.nav-header-mobile-actions(
                 icon
@@ -253,19 +239,9 @@
               )
                 v-icon mdi-dots-vertical
             v-list.nav-header-menu.page-actions-menu(ref='mobilePageActionsMenu' nav)
+              p.nav-header-menu__note(v-if='$vuetify.display.xs && !hideSearch && mode !== `edit` && !transportVerified') {{ navigationUnavailableReason }}
               v-list-item(
-                v-if='$vuetify.display.xs && canEnterAgent'
-                role='button'
-                link
-                prepend-icon='mdi-creation-outline'
-                :aria-label='$t(`common:header.agentOpen`, { defaultValue: `Open Wiki Agent` })'
-                data-search-modal-action
-                @click='openAgent'
-              )
-                v-list-item-title {{ $t('common:header.agent', { defaultValue: 'Wiki Agent' }) }}
-              p.nav-header-menu__note(v-if='$vuetify.display.xs && !hideSearch && !transportVerified') {{ navigationUnavailableReason }}
-              v-list-item(
-                v-if='$vuetify.display.xs && !hideSearch'
+                v-if='$vuetify.display.xs && !hideSearch && mode !== `edit`'
                 href='/t'
                 prepend-icon='mdi-tag-outline'
                 :aria-label='$t(`common:header.browseTags`)'
@@ -275,10 +251,11 @@
                 @click='guardHeaderNavigation'
               )
                 v-list-item-title {{ $t('common:header.browseTags') }}
-              v-divider(v-if='$vuetify.display.xs && !hideSearch && hasMobilePageActions')
+              v-divider(v-if='$vuetify.display.xs && !hideSearch && mode !== `edit` && hasMobilePageActions')
               v-list-subheader(v-if='hasMobilePageActions') {{ $t('common:header.pageActions') }}
               template(v-for='(action, index) of mobilePageMenuActions', :key='action.handler')
-                v-divider(v-if='index > 0 && action.group !== mobilePageMenuActions[index - 1].group')
+                v-divider(v-if='index > 0 && pageMenuSection(action) !== pageMenuSection(mobilePageMenuActions[index - 1])')
+                v-list-subheader(v-if='index === 0 || pageMenuSection(action) !== pageMenuSection(mobilePageMenuActions[index - 1])') {{ pageMenuSectionLabel(action) }}
                 v-list-item(
                   role='button'
                   link
@@ -291,7 +268,7 @@
                 )
                   v-list-item-title {{ action.label }}
                   v-list-item-subtitle(v-if='action.blockedReason') {{ action.blockedReason }}
-              v-divider(v-if='hasNewPagePermission || (isAuthenticated && isAdmin)')
+              v-divider(v-if='hasNewPagePermission && path && mode !== `edit`')
               v-list-item(
                 role='button'
                 link
@@ -301,20 +278,6 @@
                 @click='pageNew'
               )
                 v-list-item-title {{$t('common:header.newPage')}}
-              v-list-item(
-                v-if='isAuthenticated && isAdmin && mode !== `admin`'
-                :disabled='!onlineActionReady'
-                prepend-icon='mdi-cog'
-                @click='openAdmin'
-              )
-                v-list-item-title {{$t('common:header.admin')}}
-              v-list-item(
-                v-if='isAuthenticated && isAdmin && mode === `admin`'
-                :disabled='!onlineActionReady'
-                prepend-icon='mdi-exit-to-app'
-                @click='exitAdmin'
-              )
-                v-list-item-title {{$t('common:actions.exit')}}
               template(v-if='mode === `view` && locales.length > 0')
                 v-divider
                 v-list-subheader {{$t('common:header.language')}}
@@ -389,6 +352,14 @@
                     | {{name}}
                   v-list-item-subtitle {{ onlineActionReady ? email : $t('common:accountMenu.lastVerifiedDetail', { defaultValue: 'Last verified account · Reconnect for account actions' }) }}
                 v-divider
+                v-list-item(
+                  v-if='isAdmin && mode !== `admin`'
+                  :aria-disabled='!onlineActionReady ? `true` : undefined'
+                  prepend-icon='mdi-cog'
+                  @click='openAdmin'
+                )
+                  v-list-item-title {{ $t('common:header.admin') }}
+                v-divider(v-if='isAdmin && mode !== `admin`')
                 .account-menu__tabs(
                   role='tablist'
                   :aria-label='$t(`common:accountMenu.sections`, { defaultValue: `Account menu sections` })'
@@ -468,10 +439,10 @@
                   :aria-disabled='logoutPending || !onlineActionReady ? `true` : undefined'
                   :class='{ "account-menu__session--blocked": logoutPending || !onlineActionReady }'
                 )
-                  template(v-slot:append): v-icon(color='error') mdi-logout
+                  template(v-slot:prepend): v-icon(color='error') mdi-logout
                   v-list-item-title.text-error {{ logoutPending ? $t('common:accountMenu.signingOut', { defaultValue: 'Signing out…' }) : $t('common:header.logout') }}
                   v-list-item-subtitle(v-if='!onlineActionReady && !logoutPending') {{ $t('common:accountMenu.reconnectToSignOut', { defaultValue: 'Reconnect to sign out.' }) }}
-    page-selector(mode='create', v-model='newPageModal', :open-handler='pageNewCreate', :locale='locale')
+    page-selector(mode='create', v-model='newPageModal', :open-handler='pageNewCreate', :path='newPageSeed.path', :locale='newPageSeed.locale')
     page-selector(
       mode='move'
       v-model='movePageModal'
@@ -533,7 +504,7 @@ import {
   onPageMove,
   onPageSource
 } from '../../helpers/page-action-events'
-import { emitSearchEnter, emitSearchExit, emitSearchMove, onSearchFocus, offSearchFocus } from '../../helpers/search-navigation-events'
+import { emitSearchEnter, emitSearchExit, emitSearchMove, onSearchFocus, offSearchFocus, registerSearchQuickCreate } from '../../helpers/search-navigation-events'
 import { resolveUserPicture } from '../../helpers/user-picture.ts'
 import type { UserPicture } from '../../helpers/user-picture.ts'
 import * as pwa from '../../helpers/pwa.ts'
@@ -605,6 +576,10 @@ export default defineComponent({
     return { siteNotifications }
   },
   props: {
+    readingMode: {
+      type: Boolean,
+      default: false
+    },
     beforeSearchExit: Function as PropType<() => boolean>,
     navigationBreakpoint: {
       type: Number,
@@ -627,10 +602,16 @@ export default defineComponent({
       default: false
     }
   },
+  emits: ['reading-chrome-change'],
   data() {
     return {
       searchIsShown: true,
+      readingChromeHidden: false,
+      readingScrollY: 0,
+      languageMenuOpen: false,
+      retireSearchQuickCreate: null as (() => void) | null,
       newPageModal: false,
+      newPageSeed: { path: 'new-page', locale: siteConfig.lang } as PageLocation,
       movePageModal: false,
       convertPageModal: false,
       deletePageModal: false,
@@ -662,6 +643,14 @@ export default defineComponent({
     }
   },
   computed: {
+    canQuickCreate(): boolean {
+      return this.hasNewPagePermission && this.onlineActionReady && this.mode !== 'edit'
+    },
+    readingChromeLocked(): boolean {
+      return this.searchIsFocused || this.pageActionsAreOpen || this.mobilePageActionsAreOpen ||
+        this.languageMenuOpen || this.accountMenuOpen || this.newPageModal || this.movePageModal ||
+        this.convertPageModal || this.deletePageModal || this.duplicateOpts.modal
+    },
     currentPageIdentity(): ReaderPageIdentity {
       return {
         pageId: this.sourcePageId,
@@ -703,7 +692,7 @@ export default defineComponent({
       const readerActions: HeaderPageMenuAction[] = []
       for (const action of READER_PAGE_MENU_ACTIONS) {
         const availability = reader?.actions[action.handler]
-        if (!availability?.visible) continue
+        if (!availability?.visible || (action.handler === 'fullWidth' && this.$vuetify.display.width < 1145)) continue
         const enabled = reader?.ready === true && availability.enabled
         readerActions.push({
           handler: action.handler,
@@ -718,10 +707,10 @@ export default defineComponent({
       }
       return [
         ...readerActions.filter(action => action.group === 'read'),
-        ...pageActions.filter(action => action.group === 'read'),
         ...readerActions.filter(action => action.group === 'watch'),
         ...pageActions.filter(action => action.group === 'mutation'),
         ...readerActions.filter(action => action.group === 'mutation'),
+        ...pageActions.filter(action => action.group === 'read'),
         ...pageActions.filter(action => action.group === 'destructive')
       ]
     },
@@ -899,14 +888,20 @@ export default defineComponent({
       return Boolean(
         (this.path && (
           this.mobilePageMenuActions.length > 0 ||
-          this.hasNewPagePermission
+          (this.hasNewPagePermission && this.mode !== 'edit')
         )) ||
-        (this.isAuthenticated && this.isAdmin) ||
         (this.mode === 'view' && this.locales.length > 0)
       )
     }
   },
   watch: {
+    readingMode(): void {
+      this.readingScrollY = window.scrollY
+      this.revealReadingChrome()
+    },
+    readingChromeLocked(locked: boolean): void {
+      if (locked) this.revealReadingChrome()
+    },
     pageActionContextKey: {
       flush: 'sync',
       handler(): void {
@@ -979,6 +974,10 @@ export default defineComponent({
     }
   },
   mounted () {
+    this.readingScrollY = window.scrollY
+    window.addEventListener('scroll', this.handleReadingScroll, { passive: true })
+    window.addEventListener('pointermove', this.handleReadingPointer, { passive: true })
+    this.retireSearchQuickCreate = registerSearchQuickCreate({ canCreate: () => this.canQuickCreate, open: this.openSearchQuickCreate })
     onPageEdit(this.pageEdit)
     onPageHistory(this.pageHistory)
     onPageSource(this.pageSource)
@@ -996,6 +995,10 @@ export default defineComponent({
     this.syncSiteNotifications()
   },
   beforeUnmount () {
+    window.removeEventListener('scroll', this.handleReadingScroll)
+    window.removeEventListener('pointermove', this.handleReadingPointer)
+    this.retireSearchQuickCreate?.()
+    this.retireSearchQuickCreate = null
     this.searchFocusGeneration += 1
     this.notificationIdentityRecoveryGeneration += 1
     this.headerActionGeneration += 1
@@ -1016,6 +1019,62 @@ export default defineComponent({
     this.deletePageReturnFocusTarget = null
   },
   methods: {
+    pageMenuSection(action: HeaderPageMenuAction): string {
+      if (action.group === 'destructive') return 'destructive'
+      if (action.group === 'mutation') return 'authoring'
+      if (action.handler === 'pageView' || action.handler === 'pageSource' || action.handler === 'pageHistory') return 'history'
+      return 'layout'
+    },
+    pageMenuSectionLabel(action: HeaderPageMenuAction): string {
+      const section = this.pageMenuSection(action)
+      const labels: Record<string, string> = {
+        layout: 'Assistant & Layout', authoring: 'Page Authoring', history: 'History & Source', destructive: 'Destructive actions'
+      }
+      return this.$t(`common:header.actionGroup.${section}`, { defaultValue: labels[section] })
+    },
+    setReadingChromeHidden(hidden: boolean): void {
+      if (this.readingChromeHidden === hidden) return
+      this.readingChromeHidden = hidden
+      void this.$nextTick(() => this.$emit('reading-chrome-change'))
+    },
+    revealReadingChrome(): void {
+      this.setReadingChromeHidden(false)
+    },
+    handleReadingPointer(event: PointerEvent): void {
+      if (this.readingMode && event.clientY <= 64) this.revealReadingChrome()
+    },
+    handleReadingScroll(): void {
+      const y = Math.max(0, window.scrollY)
+      const delta = y - this.readingScrollY
+      this.readingScrollY = y
+      if (!this.readingMode || y <= 52 || delta < 0) {
+        this.revealReadingChrome()
+        return
+      }
+      if (delta <= 0 || this.readingChromeLocked || this.$el?.contains(document.activeElement)) return
+      this.setReadingChromeHidden(true)
+    },
+    openSearchQuickCreate(): boolean {
+      if (!this.canQuickCreate || this.beforeSearchExit?.() === false) return false
+      // Only a mounted reader can supply folder context; other app roots may
+      // retain old page metadata. Snapshot the seed so selector drafts stay put.
+      const reader = this.readerPageActions
+      const readerPath = reader?.page.path ?? ''
+      const separator = readerPath.lastIndexOf('/')
+      const uiLocale = this.$i18n.resolvedLanguage || this.$i18n.language || siteConfig.lang
+      const supportedLocales = this.locales.length ? this.locales.map(locale => locale.code) : [siteConfig.lang]
+      this.newPageSeed = {
+        path: separator < 0 ? 'new-page' : `${readerPath.slice(0, separator)}/new-page`,
+        locale: reader?.page.locale || supportedLocales.find(locale => locale === uiLocale) ||
+          supportedLocales.find(locale => locale === uiLocale.split('-')[0]) || siteConfig.lang
+      }
+      emitSearchExit(false)
+      this.searchIsFocused = false
+      this.searchMode = 'search'
+      this.revealReadingChrome()
+      this.newPageModal = true
+      return true
+    },
     invalidateNotificationSession(): void {
       this.siteNotifications.reset()
       this.siteNotifications.identityStale = true
@@ -1294,17 +1353,16 @@ export default defineComponent({
     async openAgent(): Promise<void> {
       if (!this.canEnterAgent || !this.onlineActionReady) return
       if (this.beforeSearchExit?.() === false) return
-      if (this.$vuetify.display.xs) {
-        // Retire an existing Search scope so Agent owns the stable menu opener,
-        // rather than inheriting Search's original restore target.
-        if (this.searchIsFocused) {
-          emitSearchExit(false)
-          this.searchIsFocused = false
-          await this.$nextTick()
-        }
-        // VMenu's activator props own the ref; capture the rendered button.
-        document.querySelector<HTMLButtonElement>('.nav-header-mobile-actions')?.focus({ preventScroll: true })
+      this.revealReadingChrome()
+      // Retire Search's scope before Agent captures the persistent direct opener.
+      if (this.searchIsFocused) {
+        emitSearchExit(false)
+        this.searchIsFocused = false
+        await this.$nextTick()
       }
+      if (!this.canEnterAgent || !this.onlineActionReady) return
+      const opener = this.$refs.agentOpener as { $el?: HTMLElement } | undefined
+      opener?.$el?.focus({ preventScroll: true })
       this.searchMode = 'ask'
       void this.focusSearchField()
     },
@@ -1349,12 +1407,11 @@ export default defineComponent({
       event.preventDefault()
       emitSearchMove(dir)
     },
-    pageNew () {
-      if (!this.onlineActionReady) return
-      this.newPageModal = true
+    pageNew (): void {
+      this.openSearchQuickCreate()
     },
     pageNewCreate ({ path, locale }: PageLocation): void {
-      if (!this.onlineActionReady) return
+      if (!this.canQuickCreate || this.beforeSearchExit?.() === false) return
       window.location.assign(`/e/${locale}/${path}`)
     },
     pageView () {
@@ -1482,10 +1539,6 @@ export default defineComponent({
     openAdmin (): void {
       if (!this.onlineActionReady || !this.isAdmin) return
       window.location.assign('/a')
-    },
-    exitAdmin (): void {
-      if (!this.onlineActionReady) return
-      window.location.assign('/')
     }
   }
 })
@@ -1522,17 +1575,25 @@ export default defineComponent({
   --nav-header-agent-icon-color: color-mix(in srgb, rgb(var(--v-theme-info)) 85%, rgb(var(--v-theme-on-surface)));
   --nav-header-edit-icon-color: #fdb600;
   --nav-header-edit-eraser-color: #dbb7bb;
-  --nav-header-tint: linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent), transparent 42%, color-mix(in srgb, var(--wiki-accent-spectral) 6%, transparent));
   --nav-header-surface: var(--wiki-chrome-surface);
+  --nav-header-border: var(--wiki-surface-border);
   isolation: isolate;
-  border-bottom: 1px solid var(--wiki-surface-border) !important;
-  background-color: var(--nav-header-surface) !important;
-  background-image: var(--nav-header-tint) !important;
+  border-bottom: 0 !important;
+  background: var(--nav-header-surface) !important;
   color: rgb(var(--v-theme-on-surface));
-  box-shadow: 0 3px 10px color-mix(in srgb, var(--wiki-shadow-color) 35%, transparent) !important;
-  // One app-bar backdrop; nested search paints retain their existing alpha/tints.
+  box-shadow: var(--wiki-glass-specular), var(--wiki-shadow-md) !important;
+  // One app-bar backdrop; nested search fields use the shared recessed material.
   -webkit-backdrop-filter: var(--wiki-chrome-filter) !important;
   backdrop-filter: var(--wiki-chrome-filter) !important;
+  // Decorative hairline must not increase Vuetify's registered app-bar height.
+  &::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    inset-block-end: 0;
+    border-block-end: 1px solid var(--nav-header-border);
+    pointer-events: none;
+  }
 
 
   > .v-toolbar__content {
@@ -1543,8 +1604,7 @@ export default defineComponent({
   .v-toolbar__extension {
     overflow: hidden;
     padding-inline: var(--wiki-space-4);
-    background-color: var(--nav-header-surface) !important;
-    background-image: var(--nav-header-tint) !important;
+    background: var(--nav-header-surface) !important;
 
     .v-toolbar__content {
       height: auto !important;
@@ -1675,9 +1735,9 @@ export default defineComponent({
     .v-field {
       min-height: var(--wiki-search-field-height, 2.25rem);
       overflow: hidden;
-      border: 1px solid var(--wiki-surface-border-strong, var(--wiki-surface-border));
+      border: 1px solid var(--wiki-well-border);
       border-radius: var(--wiki-control-radius);
-      background-color: rgba(var(--v-theme-surface), .42) !important;
+      background: var(--wiki-surface-sunken) !important;
       background-image: none !important;
       color: rgb(var(--v-theme-on-surface)) !important;
       box-shadow: var(--wiki-shadow-inset);
@@ -1728,8 +1788,8 @@ export default defineComponent({
     }
 
     .v-field--focused {
-      border-color: transparent;
-      background-color: rgba(var(--v-theme-surface), .54) !important;
+      border-color: var(--wiki-well-border);
+      background: var(--wiki-surface-sunken) !important;
       box-shadow: var(--wiki-focus-ring), var(--wiki-shadow-inset);
 
       .v-field__prepend-inner {
@@ -1757,8 +1817,7 @@ export default defineComponent({
     align-items: center;
     width: 100%;
     height: 100%;
-    background-color: var(--nav-header-surface) !important;
-    background-image: var(--nav-header-tint) !important;
+    background: transparent !important;
 
     .nav-header-search-control {
       max-width: none;
@@ -2024,9 +2083,11 @@ export default defineComponent({
   padding: var(--wiki-space-2) !important;
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-panel-radius) !important;
-  background: var(--wiki-surface-raised) !important;
+  background: var(--wiki-hud-surface) !important;
   color: rgb(var(--v-theme-on-surface));
-  box-shadow: var(--wiki-shadow-md) !important;
+  box-shadow: var(--wiki-glass-specular), var(--wiki-shadow-md) !important;
+  -webkit-backdrop-filter: var(--wiki-hud-filter);
+  backdrop-filter: var(--wiki-hud-filter);
 
   .v-list-subheader,
   > .text-label-small {
@@ -2076,7 +2137,7 @@ export default defineComponent({
 
 .nav-header-menu.page-actions-menu {
   max-width: min(calc(100vw - (var(--wiki-space-4) * 2)), 24rem);
-  max-height: min(70dvh, 36rem);
+  max-height: min(72dvh, 420px);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -2272,6 +2333,15 @@ export default defineComponent({
   background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent);
   color: var(--wiki-text-muted);
 }
+.account-menu > .v-list-item,
+.account-menu__session > .v-list-item {
+  grid-template-columns: 56px 1fr auto;
+}
+.account-menu > .v-list-item > .v-list-item__prepend,
+.account-menu__session > .v-list-item > .v-list-item__prepend {
+  width: 40px;
+  justify-content: center;
+}
 
 .account-menu__session--blocked {
   cursor: default;
@@ -2289,7 +2359,7 @@ export default defineComponent({
   position: sticky;
   inset-block-end: 0;
   z-index: 1;
-  background: rgb(var(--v-theme-surface));
+  background: var(--wiki-hud-surface);
 }
 
 .account-menu__preferences {
@@ -2343,7 +2413,7 @@ export default defineComponent({
 }
 
 .v-theme--dark .nav-header {
-  border-bottom-color: var(--wiki-surface-border-strong) !important;
+  --nav-header-border: var(--wiki-surface-border-strong);
 }
 
 @media (min-width: 960px) {
@@ -2534,6 +2604,14 @@ export default defineComponent({
     max-height: min(70dvh, 34rem);
     overflow-y: auto;
   }
+}
+@media (max-width: 439px) {
+  .nav-header .nav-header-title { display: none; }
+  .nav-header .nav-header-logo { max-width: 44px; flex-shrink: 0; }
+}
+.nav-header.nav-header--reading-hidden {
+  transform: translateY(-100%) !important;
+  transition: none !important;
 }
 @media (pointer: coarse) {
   .nav-header .nav-header-inner .nav-header-browse {

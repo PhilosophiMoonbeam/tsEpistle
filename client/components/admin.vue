@@ -56,6 +56,8 @@
           nav.admin-nav(:aria-label='$t(`admin:shell.sections`)')
             v-list-item.admin-nav__dashboard(
               to='/dashboard'
+              :active='isDashboard'
+              :aria-current='isDashboard ? `page` : undefined'
               color='primary'
               prepend-icon='mdi-view-dashboard-variant-outline'
               rounded='lg'
@@ -191,7 +193,7 @@ export default defineComponent({
       }
     }
 
-    return { adminDrawerShown, navSearch, openedSections, scrollStyle, loadInfo }
+    return { adminDrawerShown, navSearch, openedSections, sectionsBeforeSearch, scrollStyle, loadInfo }
   },
   data() {
     return {
@@ -220,6 +222,9 @@ export default defineComponent({
       return this.navGroups.find(group =>
         group.items.some(item => item.to && (currentPath === item.to || currentPath.startsWith(`${item.to}/`)))
       )
+    },
+    currentRouteGroupKey(): string | undefined {
+      return this.currentRouteGroup?.key
     },
     currentRouteItem(): AdminNavItem | undefined {
       const currentPath = this.$route.path
@@ -263,6 +268,16 @@ export default defineComponent({
     this.removeAfterEach = null
   },
   watch: {
+    currentRouteGroupKey(key: string | undefined) {
+      // Permission hydration may resolve a group after the initial route.
+      // Summary/count refreshes must not collapse groups opened manually.
+      if (!key) return
+      if (this.sectionsBeforeSearch !== null) {
+        if (!this.sectionsBeforeSearch.includes(key)) this.sectionsBeforeSearch.push(key)
+      } else if (!this.openedSections.includes(key)) {
+        this.openedSections.push(key)
+      }
+    },
     '$route.path' () {
       window.scrollTo({ top: 0, behavior: 'instant' })
       this.navSearch = ''
@@ -451,18 +466,6 @@ export default defineComponent({
   &__search {
     padding: var(--wiki-space-2) var(--wiki-space-3) var(--wiki-space-3);
 
-    .v-field {
-      border: 1px solid var(--wiki-surface-border);
-      border-radius: var(--wiki-control-radius);
-      background: var(--wiki-surface-sunken) !important;
-      box-shadow: none;
-      font-size: .82rem;
-    }
-
-    .v-field--focused {
-      border-color: color-mix(in srgb, var(--wiki-focus-color) 56%, transparent);
-      background: rgb(var(--v-theme-surface)) !important;
-    }
   }
 
   &__scroll {
@@ -503,9 +506,6 @@ export default defineComponent({
   &__dashboard {
     min-height: 2.75rem;
     margin-bottom: 1rem;
-    border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 18%, transparent);
-    background: color-mix(in srgb, var(--wiki-ambient-accent) 8%, transparent);
-    font-weight: 680;
 
     .v-list-item__prepend > .v-icon {
       font-size: 1.2rem;
@@ -606,27 +606,27 @@ export default defineComponent({
   .v-list-item--active {
     opacity: 1;
     background: color-mix(in oklch, var(--wiki-accent-warm) 12%, transparent);
-    color: var(--wiki-accent-ink);
-    box-shadow: inset .1875rem 0 0 var(--wiki-accent-ink);
+    color: rgb(var(--v-theme-on-surface));
+    font-weight: 600;
 
-    .v-locale--is-rtl & {
-      box-shadow: inset -.1875rem 0 0 var(--wiki-accent-ink);
-    }
-
-    .v-list-item-title {
-      color: rgb(var(--v-theme-on-surface));
-    }
-
+    .v-list-item-title,
     .v-icon {
-      color: var(--wiki-accent-ink);
+      color: inherit;
+      font-weight: 600;
       opacity: 1;
+    }
+
+    @media (forced-colors: active) {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
     }
   }
 }
 
 .admin-main {
   min-width: 0;
-  background: var(--wiki-surface-sunken);
+  --admin-sticky-offset: calc(var(--v-layout-top, var(--wiki-chrome-height, 3.25rem)) + .5rem);
+  background: var(--wiki-canvas-bg);
 
   h1[tabindex='-1']:focus {
     outline: none;
@@ -636,28 +636,22 @@ export default defineComponent({
   > .admin-route-bar {
     display: flex;
     width: min(100%, var(--wiki-content-max));
-    min-height: 3rem;
+    min-height: 1.75rem;
     align-items: center;
     justify-content: space-between;
     gap: var(--wiki-space-4);
     margin: 0 auto;
-    padding: .75rem var(--wiki-page-gutter) 0;
+    padding: .25rem var(--wiki-page-gutter) 0;
   }
 
   > .v-container {
     width: min(100%, var(--wiki-content-max));
     margin: 0 auto;
-    padding: 1.5rem var(--wiki-page-gutter) var(--wiki-space-12);
+    padding: .5rem var(--wiki-page-gutter) var(--wiki-space-12);
   }
 
   > .v-container:not(.admin-agents) {
 
-    .v-card:not(.v-card--flat, .v-card--variant-flat) {
-      border: 1px solid var(--wiki-surface-border);
-      border-radius: var(--admin-radius);
-      background: var(--wiki-surface-raised);
-      box-shadow: none;
-    }
 
     .v-card > .v-toolbar:not(.bg-error):not(.bg-warning) {
       border-bottom: 1px solid var(--wiki-surface-border);
@@ -813,11 +807,11 @@ export default defineComponent({
 
   .admin-main {
     > .admin-route-bar {
-      padding: var(--wiki-space-2) var(--wiki-page-gutter);
+      padding: .25rem var(--wiki-page-gutter);
     }
 
     > .v-container {
-      padding: var(--wiki-space-4) var(--wiki-page-gutter) var(--wiki-space-10);
+      padding: .5rem var(--wiki-page-gutter) var(--wiki-space-10);
     }
 
     > .v-container:not(.admin-agents) {

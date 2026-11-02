@@ -6,7 +6,16 @@ import { type Request, type Response } from './_types.ts'
 import pageHelper from '../helpers/page.ts'
 import { parsePrivatePagePath } from '../../shared/private-page-route.ts'
 import { prepareReaderAnalytics } from '../helpers/reader-analytics.ts'
-import { canReadPage, canWritePage, managesSystem, pageAuthorizationContext, pageRoute, principalId, type PageVisibility } from '../helpers/page-access.ts'
+import {
+  canReadPage,
+  canWritePage,
+  managesSystem,
+  pageAuthorizationContext,
+  pageRoute,
+  principalId,
+  type PagePrincipal,
+  type PageVisibility
+} from '../helpers/page-access.ts'
 import _ from 'lodash'
 import CleanCSS from 'clean-css'
 import { publicationWindowOpen } from '../../shared/publication-window.ts'
@@ -138,7 +147,7 @@ export interface CommonWiki {
     lang: { namespacing: boolean }
     theming: { injectCSS: string; injectHead: string; injectBody: string }
     pageExtensions: string[]
-    features: { featurePageComments: boolean; featurePageRatings?: boolean }
+    features: { featurePageComments: boolean; featurePageRatings?: boolean; publicSocialSharing?: boolean }
     host: string
   }
   metrics: { render(response: Response): unknown }
@@ -199,13 +208,15 @@ const getEditorWikiLinkSettings = async (wiki: CommonWiki): Promise<{ wikiLinksE
   }
 }
 
-export const createHealthHandler = (knex: Knex): express.RequestHandler => (_req, res) => {
-  if (knex.client.pool.numFree() < 1 && knex.client.pool.numUsed() < 1) {
-    res.status(503).json({ ok: false }).end()
-  } else {
-    res.status(200).json({ ok: true }).end()
+export const createHealthHandler =
+  (knex: Knex): express.RequestHandler =>
+  (_req, res) => {
+    if (knex.client.pool.numFree() < 1 && knex.client.pool.numUsed() < 1) {
+      res.status(503).json({ ok: false }).end()
+    } else {
+      res.status(200).json({ ok: true }).end()
+    }
   }
-}
 
 export default function createCommonController(wiki: CommonWiki): express.Router {
   const router = express.Router()
@@ -402,6 +413,12 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       body: wiki.config.theming.injectBody
     }
     const protectedPage = await isPageProtected(page.id)
+    let publicSharingEligible = false
+    if (wiki.config.features.publicSocialSharing === true && page.visibility === 'public' && pageIsPublished && !protectedPage) {
+      const guest = { id: 2, ownershipUserId: null } as unknown as PagePrincipal
+      const guestAuthority = await wiki.auth.loadPageRuleAuthority(guest)
+      publicSharingEligible = canReadPage(guest, page, guestAuthority)
+    }
     const brandingAssignment = pageBrandingAssignmentFrom(page)
     const branding = await resolvePageBranding(req, brandingAssignment)
     const commentsEnabled =
@@ -447,6 +464,8 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       comments: commentTmpl,
       commentsEnabled,
       effectivePermissions,
+      effectiveIsPublished: Boolean(pageIsPublished),
+      publicSharingEligible,
       spaNavigation,
       pageFeatures,
       ratingsSiteEnabled,
@@ -1091,9 +1110,26 @@ export default function createCommonController(wiki: CommonWiki): express.Router
   /**
    * Tags
    */
-  router.get(['/t', '/t/*tagPath'], (req, res) => {
+  router.get(['/t', '/t/*tagPath'], async (req, res) => {
     _.set(res.locals, 'pageMeta.title', 'Tags')
-    res.render('tags')
+    res.set('Cache-Control', 'private, no-store')
+    const locale = String(_.get(res.locals, 'siteConfig.lang'))
+    let sidebarIndex = 1
+    const sidebar = (
+      await wiki.models.navigation.getTree({
+        cache: true,
+        locale,
+        groups: requesterGroups(req)
+      })
+    ).map(item => ({
+      i: `sdi-${sidebarIndex++}`,
+      k: item.kind,
+      l: item.label,
+      c: item.icon,
+      y: item.targetType,
+      t: item.target
+    }))
+    res.render('tags', { sidebar, locale })
   })
 
   /**

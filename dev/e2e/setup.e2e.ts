@@ -1,10 +1,12 @@
 import AxeBuilder from '@axe-core/playwright'
-import type { Page } from '@playwright/test'
+import type { BrowserContext, Page, Request, Route } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 import tfa from 'node-2fa'
 import { adminEmail, adminPassword, authenticateAsAdmin, openSearch, sameOriginHeaders } from './helpers.ts'
 import { waitForPageRender } from '../../client/helpers/pages-api.ts'
 import { serializeContentExtensionFence, type ContentExtensionEnvelope } from '../../shared/content-extensions.ts'
+import { validateGeneralPolicy, type GeneralPolicy, type GeneralWorkspace } from '../../shared/general-policy.ts'
+import type { GroupPolicyDraft, GroupWorkspace } from '../../shared/group-policy.ts'
 
 type BrowserVisualEditor = {
   commands: {
@@ -171,13 +173,34 @@ async function openEditorForCurrentPage(page: Page): Promise<void> {
   await page.locator('.v-overlay--active').getByText('Edit Page', { exact: true }).click()
 }
 
+type NativeCleanupStep = { label: string; run(): Promise<unknown> }
+
+async function finishNativeCleanup(steps: NativeCleanupStep[], primaryFailed: boolean): Promise<void> {
+  const failures: Error[] = []
+  for (const step of steps) {
+    try {
+      await step.run()
+    } catch (error) {
+      failures.push(new Error(step.label, { cause: error }))
+    }
+  }
+  if (!failures.length) return
+  const failure = new AggregateError(failures, 'Native fixture cleanup failed.')
+  if (!primaryFailed) throw failure
+  // Preserve the original assertion/phase stack, while retaining every teardown failure.
+  test.info().annotations.push({ type: 'cleanup-error', description: failure.errors.map(error => `${error.message}: ${String(error.cause)}`).join('\n') })
+  console.error(failure)
+}
+
 test.describe('critical post-install workflows', () => {
   test.describe.configure({ mode: 'serial', retries: 0 })
 
   test('boots standalone setup in a fresh context without a locale API', async ({ page }) => {
     const browserErrors: string[] = []
     page.on('pageerror', error => browserErrors.push(error.message))
-    page.on('console', message => { if (message.type() === 'error') browserErrors.push(message.text()) })
+    page.on('console', message => {
+      if (message.type() === 'error') browserErrors.push(message.text())
+    })
     let localeRequests = 0
     await page.route('**/_api/locales/**', route => {
       localeRequests += 1
@@ -349,6 +372,12 @@ test.describe('critical post-install workflows', () => {
     await expect(page.locator('.theme-tabs')).toBeVisible()
     await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
     await expectLightFromFirstFrame()
+    const previewModes = page.locator('.theme-preview-controls [aria-label="Preview appearance"]')
+    await expect(previewModes.getByRole('button', { name: 'light', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expect(previewModes.getByRole('button', { name: 'dark', exact: true })).toHaveAttribute('aria-pressed', 'false')
+    await previewModes.getByRole('button', { name: 'dark', exact: true }).click()
+    await expect(previewModes.getByRole('button', { name: 'dark', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.v-application'), 'A dark specimen never changes the saved light workspace appearance').toHaveClass(/v-theme--light/)
     await openClientPage(page, '/a/', '.admin-main')
     await expect(page.locator('.admin-main')).toBeVisible()
     await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
@@ -438,7 +467,7 @@ test.describe('critical post-install workflows', () => {
     await editor.click()
     await page.keyboard.press('Control+s')
 
-    await expect(page.locator('#root').getByRole('button', { name: 'Saved', exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('.editor-save-status')).toHaveText(/^Saved(?:\s.+)?$/u, { timeout: 30_000 })
 
     await setVisualEditorData(page, `${await getVisualEditorData(page)}\n\nUnsaved draft.`)
     await expect(editor).toContainText('Unsaved draft.')
@@ -510,52 +539,54 @@ test.describe('critical post-install workflows', () => {
 
     await expect.poll(() => getMarkdownSourceData(page)).toContain('"key":"gallery"')
     const galleryFence = await getMarkdownSourceData(page)
-    const additionalFences = ([
-      { key: 'index', version: 1, props: { path: '', locale: 'en', depth: 1, columns: 2, showIcons: true, order: 'title', limit: 20 } },
-      {
-        key: 'tabs',
-        version: 1,
-        props: {
-          tabs: [
-            { label: 'Overview', content: 'First panel content.' },
-            { label: 'Details', content: 'Second panel content.' }
-          ],
-          active: 0
-        }
-      },
-      { key: 'spoiler', version: 1, props: { label: 'Reveal answer', hint: 'Show hidden content', content: 'The hidden answer is 42.' } },
-      {
-        key: 'infobox',
-        version: 1,
-        props: {
-          title: 'Smoke facts',
-          caption: 'Structured facts',
-          facts: [
-            { label: 'Status', value: 'Verified' },
-            { label: 'Safe', value: true }
-          ]
-        }
-      },
-      { key: 'pdf', version: 1, props: { src: '/document.pdf', title: 'Example PDF', page: 1, height: 360 } },
-      { key: 'media', version: 1, props: { kind: 'audio', src: '/audio.mp3', title: 'Example audio', caption: 'Native media controls' } },
-      { key: 'youtube', version: 1, props: { videoId: 'dQw4w9WgXcQ', title: 'Consent-gated video', start: 0, controls: true } },
-      {
-        key: 'diagram',
-        version: 1,
-        props: { source: 'flowchart LR\n  A[Start] --> B[Verified]', caption: 'Local Mermaid', theme: 'default', align: 'center' }
-      },
-      {
-        key: 'kroki',
-        version: 1,
-        props: { type: 'plantuml', source: '@startuml\nAlice -> Bob: Hello\n@enduml', format: 'svg', caption: 'Consent-gated Kroki', align: 'left' }
-      },
-      {
-        key: 'plantuml',
-        version: 1,
-        props: { source: '@startuml\nAlice -> Bob: Hello\n@enduml', format: 'svg', caption: 'Consent-gated PlantUML', align: 'left' }
-      },
-      { key: 'map', version: 1, props: { latitude: 40.7128, longitude: -74.006, zoom: 12, height: 320, label: 'New York City' } }
-    ] satisfies ContentExtensionEnvelope[])
+    const additionalFences = (
+      [
+        { key: 'index', version: 1, props: { path: '', locale: 'en', depth: 1, columns: 2, showIcons: true, order: 'title', limit: 20 } },
+        {
+          key: 'tabs',
+          version: 1,
+          props: {
+            tabs: [
+              { label: 'Overview', content: 'First panel content.' },
+              { label: 'Details', content: 'Second panel content.' }
+            ],
+            active: 0
+          }
+        },
+        { key: 'spoiler', version: 1, props: { label: 'Reveal answer', hint: 'Show hidden content', content: 'The hidden answer is 42.' } },
+        {
+          key: 'infobox',
+          version: 1,
+          props: {
+            title: 'Smoke facts',
+            caption: 'Structured facts',
+            facts: [
+              { label: 'Status', value: 'Verified' },
+              { label: 'Safe', value: true }
+            ]
+          }
+        },
+        { key: 'pdf', version: 1, props: { src: '/document.pdf', title: 'Example PDF', page: 1, height: 360 } },
+        { key: 'media', version: 1, props: { kind: 'audio', src: '/audio.mp3', title: 'Example audio', caption: 'Native media controls' } },
+        { key: 'youtube', version: 1, props: { videoId: 'dQw4w9WgXcQ', title: 'Consent-gated video', start: 0, controls: true } },
+        {
+          key: 'diagram',
+          version: 1,
+          props: { source: 'flowchart LR\n  A[Start] --> B[Verified]', caption: 'Local Mermaid', theme: 'default', align: 'center' }
+        },
+        {
+          key: 'kroki',
+          version: 1,
+          props: { type: 'plantuml', source: '@startuml\nAlice -> Bob: Hello\n@enduml', format: 'svg', caption: 'Consent-gated Kroki', align: 'left' }
+        },
+        {
+          key: 'plantuml',
+          version: 1,
+          props: { source: '@startuml\nAlice -> Bob: Hello\n@enduml', format: 'svg', caption: 'Consent-gated PlantUML', align: 'left' }
+        },
+        { key: 'map', version: 1, props: { latitude: 40.7128, longitude: -74.006, zoom: 12, height: 320, label: 'New York City' } }
+      ] satisfies ContentExtensionEnvelope[]
+    )
       .map(serializeContentExtensionFence)
       .join('\n\n')
     const remoteRequests: string[] = []
@@ -627,7 +658,10 @@ test.describe('critical post-install workflows', () => {
   test('exposes the full editor catalog through administration', async ({ page }) => {
     await openAuthenticatedHome(page)
     await page.goto('/a/editor')
-    const registeredChoices = page.locator('.authoring-option').filter({ hasNot: page.locator('.authoring-registration') }).getByRole('checkbox')
+    const registeredChoices = page
+      .locator('.authoring-option')
+      .filter({ hasNot: page.locator('.authoring-registration') })
+      .getByRole('checkbox')
     await expect(registeredChoices.first()).toBeVisible()
     const enabledChoiceNames = await registeredChoices.evaluateAll(elements => elements.map(element => element.getAttribute('aria-label')!))
     await page.getByRole('button', { name: 'Enable all registered', exact: true }).click()
@@ -800,9 +834,7 @@ test.describe('critical post-install workflows', () => {
     const editor = page.locator('.cm-content')
     await expect(editor).toBeVisible({ timeout: 30_000 })
     await editor.fill('# Browser Workflow Updated\n\nEdited and rendered through the modern editor.')
-    await page.locator('#root').getByRole('button', { name: dirtySaveButtonName }).click()
-    await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible({ timeout: 30_000 })
-    await page.locator('#root').getByRole('button', { name: 'Close', exact: true }).click()
+    await page.getByRole('button', { name: 'Save and close', exact: true }).click()
 
     await expect(page).toHaveURL('/en/home', { timeout: 30_000 })
     await expect(page.getByRole('heading', { name: 'Browser Workflow Updated' })).toBeVisible()
@@ -847,8 +879,7 @@ test.describe('critical post-install workflows', () => {
       // context. Keep asset/mutation failures and non-transition rating aborts.
       if (failure === 'net::ERR_ABORTED' && request.method() === 'GET') {
         const requestPath = new URL(request.url()).pathname
-        if (requestPath === '/_api/glossary/access' ||
-          (changingIdentity && /^\/_api\/page-ratings\/[1-9]\d*$/u.test(requestPath))) return
+        if (requestPath === '/_api/glossary/access' || (changingIdentity && /^\/_api\/page-ratings\/[1-9]\d*$/u.test(requestPath))) return
       }
       failedRequests.push(`${request.method()} ${request.url()}: ${failure}`)
     })
@@ -972,7 +1003,9 @@ test.describe('critical post-install workflows', () => {
     await openEditorForCurrentPage(page)
     await expect(page).toHaveURL('/e/en/home')
     await expect(page.getByRole('textbox', { name: 'Title', exact: true })).toHaveValue('Home')
-    await expect(page.locator('#root').getByRole('button', { name: 'Saved', exact: true })).toBeVisible()
+    await expect(page.locator('.editor-save-status')).toHaveText('Saved')
+    await expect(page.getByRole('button', { name: 'Saved', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Save and close', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'More editor actions', exact: true })).toBeVisible()
     await expectNoHorizontalOverflow(page)
 
@@ -982,7 +1015,9 @@ test.describe('critical post-install workflows', () => {
     await page.getByRole('button', { name: 'Show editor' }).click()
     await expect(page.locator('.editor-markdown-editor')).toBeVisible()
 
-    await page.getByRole('button', { name: 'Page', exact: true }).click()
+    const propertiesAction = page.getByRole('button', { name: 'Page Properties', exact: true })
+    await expect(propertiesAction).toHaveCount(1)
+    await propertiesAction.click()
     await expect(page.getByText('Page Properties', { exact: true })).toBeVisible()
     await page.getByRole('tab', { name: 'Scheduling' }).click()
     await expect(page.getByRole('textbox', { name: 'Publish starting on...' })).toBeVisible()
@@ -1026,16 +1061,20 @@ test.describe('critical post-install workflows', () => {
     })
 
     try {
-      await waitForPageRender(async url => {
-        const response = await page.request.get(url)
-        return new Response(await response.body(), { status: response.status(), headers: response.headers() })
-      }, {
-        id: privatePage.page.id,
-        sourceRevision: String(privatePage.page.sourceRevision),
-        locale: 'en',
-        path: 'private-sidebar-link',
-        visibility: 'private'
-      }, AbortSignal.timeout(15_000))
+      await waitForPageRender(
+        async url => {
+          const response = await page.request.get(url)
+          return new Response(await response.body(), { status: response.status(), headers: response.headers() })
+        },
+        {
+          id: privatePage.page.id,
+          sourceRevision: String(privatePage.page.sourceRevision),
+          locale: 'en',
+          path: 'private-sidebar-link',
+          visibility: 'private'
+        },
+        AbortSignal.timeout(15_000)
+      )
       await page.goto('/en/home')
       await page.getByRole('button', { name: 'Browse', exact: true }).click()
       const privateLink = page.getByRole('link', { name: 'Private Sidebar Link', exact: true })
@@ -1060,6 +1099,614 @@ test.describe('critical post-install workflows', () => {
       })
       expect(removal.ok()).toBe(true)
     }
+  })
+
+  test.describe('private SPA session retirement', () => {
+    // The race holds the server's actual response, rather than a worker/cache response.
+    test.use({ serviceWorkers: 'block' })
+
+    test('keeps an authorized private SPA response unpublished after same-context logout', async ({ page, browser }) => {
+      test.setTimeout(60_000)
+      await openAuthenticatedHome(page)
+      const suffix = crypto.randomUUID()
+      const path = `private-spa-logout-${suffix}`
+      const title = `Private SPA logout ${suffix}`
+      const secret = `Private response payload ${suffix}`
+      const description = `Private response metadata ${suffix}`
+      const origin = new URL(page.url()).origin
+      const privateUrl = new URL(`/_private/en/${path}`, origin).href
+      const authorized = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      let fixture: { id: number; sourceRevision: string } | undefined
+      let heldRequest: Request | undefined
+      let routeTask: Promise<void> | undefined
+      let routeFailure: { error: unknown } | undefined
+      let transport: { kind: 'finished' } | { kind: 'failed'; error: string | undefined } | undefined
+      let logoutPage: Page | undefined
+      let cleanupContext: BrowserContext | undefined
+      let primaryFailed = false
+      const holdAuthorizedResponse = (route: Route): Promise<void> => {
+        routeTask = (async () => {
+          try {
+            heldRequest = route.request()
+            expect(heldRequest.isNavigationRequest(), 'The private link must use the real SPA fetch, not a document navigation').toBe(false)
+            expect(heldRequest.headers()['x-wiki-navigation']).toBe('1')
+            expect(heldRequest.headers().accept).toBe('text/html')
+            const response = await route.fetch({ timeout: 15_000, maxRedirects: 0 })
+            expect(response.ok(), 'The server must authorize the private response before logout').toBe(true)
+            expect(response.url()).toBe(privateUrl)
+            expect(response.headers()['x-wiki-page']).toBe('1')
+            expect(response.headers()['content-type']).toMatch(/^text\/html(?:;|$)/iu)
+            expect(await response.text(), 'The held upstream response genuinely contains the private fixture').toContain(secret)
+            authorized.resolve()
+            await release.promise
+            // Release the unmodified, authorized upstream body even after native cancellation.
+            await route.fulfill({ response })
+          } catch (error) {
+            // Wake the primary phase and rethrow there, rather than hiding it behind a timeout.
+            routeFailure = { error }
+            authorized.resolve()
+          }
+        })()
+        return routeTask
+      }
+      const requestFinished = (request: Request): void => {
+        if (request === heldRequest) transport = { kind: 'finished' }
+      }
+      const requestFailed = (request: Request): void => {
+        if (request === heldRequest) transport = { kind: 'failed', error: request.failure()?.errorText }
+      }
+      const readerIdentity = () =>
+        page.evaluate(() => {
+          const app = (
+            window as typeof window & {
+              WIKI?: {
+                config: {
+                  globalProperties: {
+                    $pinia?: {
+                      _s: Map<
+                        string,
+                        {
+                          offlineIdentityEpoch: number
+                          offlineIdentityReady: boolean
+                          authRefreshOutcome: string | null
+                          authRefreshPending: boolean
+                          authRefreshSettled: boolean
+                          user: { id: number; authenticated: boolean }
+                        }
+                      >
+                    }
+                  }
+                }
+              }
+            }
+          ).WIKI
+          const store = app?.config.globalProperties.$pinia?._s.get('wiki')
+          if (!store) throw new Error('The mounted reader identity store is unavailable.')
+          return {
+            epoch: store.offlineIdentityEpoch,
+            ready: store.offlineIdentityReady,
+            outcome: store.authRefreshOutcome,
+            pending: store.authRefreshPending,
+            settled: store.authRefreshSettled,
+            authenticated: store.user.authenticated,
+            accountId: store.user.id
+          }
+        })
+      const metadata = () =>
+        page.locator('meta[name="description"], meta[property^="og:"], meta[name^="twitter:"], link[rel="canonical"]').evaluateAll(elements =>
+          elements.map(element => ({
+            tag: element.tagName,
+            key: element.getAttribute('name') ?? element.getAttribute('property') ?? element.getAttribute('rel'),
+            value: element.getAttribute('content') ?? element.getAttribute('href')
+          }))
+        )
+      try {
+        // Acquire cleanup authority before logout or a failing browser phase can retire it.
+        cleanupContext = await browser.newContext({ baseURL: origin, serviceWorkers: 'block' })
+        await authenticateAsAdmin(await cleanupContext.newPage())
+        const creation = await page.request.post('/_api/pages', {
+          headers: sameOriginHeaders(),
+          data: {
+            content: `# ${title}\n\n${secret}`,
+            description,
+            editor: 'markdown',
+            visibility: 'private',
+            isPublished: true,
+            locale: 'en',
+            path,
+            publishEndDate: '',
+            publishStartDate: '',
+            scriptCss: '',
+            scriptJs: '',
+            tags: [],
+            title
+          }
+        })
+        expect(creation.ok(), `Private race fixture creation returned HTTP ${creation.status()}`).toBe(true)
+        fixture = ((await creation.json()) as { page: { id: number; sourceRevision: string } }).page
+        await waitForPageRender(
+          async url => {
+            const response = await page.request.get(url)
+            return new Response(await response.body(), { status: response.status(), headers: response.headers() })
+          },
+          { id: fixture.id, sourceRevision: String(fixture.sourceRevision), locale: 'en', path, visibility: 'private' },
+          AbortSignal.timeout(15_000)
+        )
+        await openClientPage(page, '/en/home', '.page-header-section')
+        await expectAuthenticatedAdmin(page)
+        await expect.poll(readerIdentity).toMatchObject({ ready: true, outcome: 'authenticated', pending: false, settled: true, authenticated: true })
+        const publicTitle = await page.title()
+        const publicPageTitle = await page.locator('.page-title').first().innerText()
+        const publicHeading = await page.locator('article.contents h1').first().innerText()
+        const publicMetadata = await metadata()
+        const documentOrigin = await page.evaluate(() => performance.timeOrigin)
+        const initialEpoch = (await readerIdentity()).epoch
+        await page.route(privateUrl, holdAuthorizedResponse)
+        page.on('requestfinished', requestFinished)
+        page.on('requestfailed', requestFailed)
+        // Desktop already exposes its native sidebar; there is no Browse button.
+        const privateLink = page.getByRole('navigation', { name: 'Main Menu', exact: true }).getByRole('link', { name: title, exact: true })
+        await expect(privateLink).toBeVisible()
+        await expect(privateLink).toHaveAttribute('href', `/_private/en/${path}`)
+        await Promise.all([page.waitForRequest(request => request.url() === privateUrl, { timeout: 10_000 }), privateLink.click()])
+        await authorized.promise
+        if (routeFailure) throw routeFailure.error
+        await expect(page.locator('.page-main')).toHaveAttribute('aria-busy', 'true')
+
+        logoutPage = await page.context().newPage()
+        await openClientPage(logoutPage, '/en/home', '.page-header-section')
+        await expectAuthenticatedAdmin(logoutPage)
+        await logoutFromAccountMenu(logoutPage)
+        await expect(logoutPage).toHaveURL('/')
+        await expect
+          .poll(async () => (await readerIdentity()).epoch, { message: 'The original reader receives the genuine cross-tab identity retirement' })
+          .toBeGreaterThan(initialEpoch)
+        // Native focus may reverify auth; explicit logout can intentionally quarantine
+        // the retired reader as unavailable. Neither state may retain account A or admit content.
+        await page.bringToFront()
+        await expect.poll(readerIdentity, { message: 'The original mounted reader retires its authenticated account and content authority' }).toMatchObject({
+          ready: false,
+          pending: false,
+          settled: true,
+          authenticated: false,
+          accountId: 0
+        })
+        expect(['anonymous', 'unavailable']).toContain((await readerIdentity()).outcome)
+        const anonymous = await page.request.get('/_api/users/whoami')
+        expect(anonymous.status()).toBe(200)
+        expect(await anonymous.json()).toEqual({ authenticated: false, user: null })
+        const denied = await page.request.get(privateUrl)
+        expect(denied.status()).toBe(404)
+        const deniedHtml = await denied.text()
+        expect(deniedHtml).not.toContain(secret)
+        expect(deniedHtml).not.toContain(title)
+        expect(deniedHtml).not.toContain(description)
+
+        release.resolve()
+        await routeTask
+        if (routeFailure) throw routeFailure.error
+        await expect.poll(() => transport, { message: 'The real held SPA transport must finish or abort after body release', timeout: 10_000 }).toBeDefined()
+        if (transport?.kind === 'failed') {
+          expect(transport.error, 'Only a real Chromium request cancellation is an acceptable failed release').toBe('net::ERR_ABORTED')
+        }
+        await expect(page.locator('.navHeaderLoading')).toBeHidden()
+        await expect(page.locator('.page-main')).not.toHaveAttribute('aria-busy', 'true')
+        await page.evaluate(async () => {
+          const painted = Promise.withResolvers<void>()
+          requestAnimationFrame(() => requestAnimationFrame(() => painted.resolve()))
+          await painted.promise
+        })
+        // Negative publication checks run only after transport, identity, and native rendering settle.
+        expect(await page.evaluate(() => performance.timeOrigin), 'Retirement must not publish the response through a hard navigation').toBe(documentOrigin)
+        await expect(page).toHaveURL('/en/home')
+        await expect(page).toHaveTitle(publicTitle)
+        await expect(page.locator('.page-title').first()).toHaveText(publicPageTitle)
+        await expect(page.locator('article.contents h1').first()).toHaveText(publicHeading)
+        await expect(page.locator('article.contents')).toBeVisible()
+        await expect(page.locator('body')).not.toContainText(secret)
+        await expect(page.locator('.page-title')).not.toContainText(title)
+        expect(await metadata()).toEqual(publicMetadata)
+        expect(JSON.stringify(await metadata())).not.toContain(suffix)
+        await expect.poll(readerIdentity).toMatchObject({ ready: false, pending: false, settled: true, authenticated: false, accountId: 0 })
+        expect(['anonymous', 'unavailable']).toContain((await readerIdentity()).outcome)
+
+        await page.reload({ waitUntil: 'domcontentloaded' })
+        await expect(page.locator('.page-header-section')).toBeVisible()
+        await expect(page.locator('.nav-header-sign-in')).toBeVisible()
+        await expect.poll(readerIdentity, { message: 'A fresh native reader positively verifies the anonymous identity after reload' }).toMatchObject({
+          ready: false,
+          outcome: 'anonymous',
+          pending: false,
+          settled: true,
+          authenticated: false,
+          accountId: 0
+        })
+        await expect(page.locator('article.contents h1').first()).toHaveText(publicHeading)
+        await expect(page).toHaveTitle(publicTitle)
+        expect(JSON.stringify(await metadata())).not.toContain(suffix)
+      } catch (error) {
+        primaryFailed = true
+        throw error
+      } finally {
+        release.resolve()
+        await finishNativeCleanup(
+          [
+            {
+              label: 'Settle the held real private response',
+              run: async () => {
+                await routeTask
+                if (routeFailure) throw routeFailure.error
+              }
+            },
+            {
+              label: 'Detach private interception',
+              run: async () => {
+                page.off('requestfinished', requestFinished)
+                page.off('requestfailed', requestFailed)
+                if (!page.isClosed()) await page.unroute(privateUrl, holdAuthorizedResponse)
+              }
+            },
+            {
+              label: 'Close the same-context logout tab',
+              run: async () => {
+                if (logoutPage && !logoutPage.isClosed()) await logoutPage.close()
+              }
+            },
+            {
+              label: `Delete exact private fixture ${path}`,
+              run: async () => {
+                if (!fixture || !cleanupContext) return
+                const removal = await cleanupContext.request.delete(`/_api/pages/${fixture.id}`, {
+                  headers: sameOriginHeaders(),
+                  data: { expectedSourceRevision: fixture.sourceRevision }
+                })
+                expect(removal.ok(), `Private race fixture cleanup returned HTTP ${removal.status()}`).toBe(true)
+              }
+            },
+            {
+              label: 'Close independent cleanup session',
+              run: async () => {
+                await cleanupContext?.close()
+              }
+            }
+          ],
+          primaryFailed
+        )
+      }
+    })
+  })
+
+  test.describe('native public sharing admission', () => {
+    test.use({ serviceWorkers: 'block' })
+
+    test('admits external sharing only for anonymously readable unprotected pages after persisted opt-in', async ({ page, browser }) => {
+      test.setTimeout(60_000)
+      const baseURL = test.info().project.use.baseURL
+      if (typeof baseURL !== 'string') throw new Error('The native sharing gate requires the owned installed application base URL.')
+      const origin = new URL(baseURL).origin
+      const suffix = crypto.randomUUID()
+      const prefix = `sharing-${suffix}`
+      const deniedTag = `public-sharing-tag-denied-${suffix}`
+      const fixtures = [
+        { kind: 'public', path: `${prefix}/public`, tags: [] },
+        { kind: 'protected', path: `${prefix}/protected`, tags: [] },
+        { kind: 'path-denied', path: `${prefix}/path-denied`, tags: [] },
+        { kind: 'tag-denied', path: `${prefix}/tag-denied`, tags: [deniedTag] }
+      ].map(fixture => ({
+        ...fixture,
+        title: `Native sharing ${fixture.kind} ${suffix}`,
+        description: `Native sharing description ${fixture.kind} ${suffix}`,
+        secret: `Native sharing body ${fixture.kind} ${suffix}`,
+        id: undefined as number | undefined,
+        sourceRevision: undefined as string | undefined
+      }))
+      const blockedEgress: string[] = []
+      const preventEgress = async (route: Route) => {
+        if (new URL(route.request().url()).origin === origin) await route.continue()
+        else {
+          blockedEgress.push(route.request().url())
+          await route.abort('blockedbyclient')
+        }
+      }
+      let originalGeneral: GeneralPolicy | undefined
+      let originalGuest: GroupPolicyDraft | undefined
+      let anonymousContext: BrowserContext | undefined
+      let primaryFailed = false
+      const readGeneral = async () => {
+        const response = await page.request.get('/_api/site/general')
+        expect(response.ok(), `Read persisted General policy: HTTP ${response.status()}`).toBe(true)
+        return (await response.json()) as GeneralWorkspace
+      }
+      const canonicalGeneralPolicy = (policy: GeneralPolicy) => {
+        const validation = validateGeneralPolicy(policy)
+        if (!validation.ok) throw new Error(`Saved General policy cannot be canonically restored: ${validation.issues.join(' ')}`)
+        return validation.value
+      }
+      const saveGeneral = async (policy: GeneralPolicy, reason: string) => {
+        const current = await readGeneral()
+        if (JSON.stringify(canonicalGeneralPolicy(current.policy)) !== JSON.stringify(canonicalGeneralPolicy(policy))) {
+          const response = await page.request.put('/_api/site/general', {
+            headers: sameOriginHeaders(),
+            data: { policy, fingerprint: current.fingerprint, reason }
+          })
+          expect(response.ok(), `Save real General policy: HTTP ${response.status()}`).toBe(true)
+          expect(await response.json()).toMatchObject({ activation: 'applied' })
+        }
+        const saved = await readGeneral()
+        expect(saved.policy.publicSocialSharing).toBe(policy.publicSocialSharing)
+        expect(saved.runtime.state).toBe('applied')
+      }
+      const readGuest = async () => {
+        const response = await page.request.get('/_api/groups/workspace/2')
+        expect(response.ok(), `Read real Guest policy: HTTP ${response.status()}`).toBe(true)
+        const workspace = (await response.json()) as GroupWorkspace
+        // The reviewed API canonicalizes set ordering on writes; preserve every original value.
+        return {
+          ...workspace,
+          permissions: [...workspace.permissions].sort(),
+          pageRules: workspace.pageRules.map(rule => ({ ...rule, roles: [...rule.roles].sort(), locales: [...rule.locales].sort() }))
+        }
+      }
+      const saveGuest = async (policy: GroupPolicyDraft, reason: string) => {
+        const current = await readGuest()
+        const response = await page.request.put('/_api/groups/workspace/2/policy', {
+          headers: sameOriginHeaders(),
+          data: { policy, fingerprint: current.fingerprint, reason }
+        })
+        expect(response.ok(), `Save real Guest policy: HTTP ${response.status()}`).toBe(true)
+        expect(await response.json()).toMatchObject({ id: 2, currentSessionEnded: false })
+        const saved = await readGuest()
+        expect({
+          name: saved.name,
+          description: saved.description,
+          redirectOnLogin: saved.redirectOnLogin,
+          permissions: saved.permissions,
+          pageRules: saved.pageRules
+        }).toEqual(policy)
+      }
+      const providerButtons = /^(Facebook|LinkedIn|Reddit|Telegram|X|Weibo|WhatsApp)$/u
+      try {
+        await page.context().route('**/*', preventEgress)
+        await openAuthenticatedHome(page)
+        originalGeneral = structuredClone((await readGeneral()).policy)
+        const guest = await readGuest()
+        expect(guest.id).toBe(2)
+        expect(guest.capabilities).toMatchObject({ edit: true, permissions: true })
+        expect(guest.permissions).toContain('read:pages')
+        expect(guest.permissions).not.toContain('manage:system')
+        originalGuest = structuredClone({
+          name: guest.name,
+          description: guest.description,
+          redirectOnLogin: guest.redirectOnLogin,
+          permissions: guest.permissions,
+          pageRules: guest.pageRules
+        })
+        const guestPolicy: GroupPolicyDraft = {
+          ...originalGuest,
+          pageRules: [
+            ...originalGuest.pageRules,
+            { id: `allow-${suffix}`, match: 'SUBTREE', path: prefix, deny: false, roles: ['read:pages'], locales: ['en'] },
+            { id: `path-${suffix}`, match: 'EXACT', path: `${prefix}/path-denied`, deny: true, roles: ['read:pages'], locales: ['en'] },
+            { id: `tag-${suffix}`, match: 'TAG', path: deniedTag, deny: true, roles: ['read:pages'], locales: ['en'] }
+          ]
+        }
+        // Both complete restoration values and every UUID fixture are registered before mutation.
+        await saveGuest(guestPolicy, `Native public sharing admission ${suffix}`)
+        await saveGeneral({ ...originalGeneral, publicSocialSharing: false }, `Native sharing explicit opt-out ${suffix}`)
+        for (const fixture of fixtures) {
+          const response = await page.request.post('/_api/pages', {
+            headers: sameOriginHeaders(),
+            data: {
+              content: `# ${fixture.title}\n\n${fixture.secret}\n\n> Authorized citation ${suffix}`,
+              description: fixture.description,
+              editor: 'markdown',
+              visibility: 'public',
+              isPublished: true,
+              locale: 'en',
+              path: fixture.path,
+              publishEndDate: '',
+              publishStartDate: '',
+              scriptCss: '',
+              scriptJs: '',
+              tags: fixture.tags,
+              title: fixture.title
+            }
+          })
+          expect(response.ok(), `Create ${fixture.kind} fixture: HTTP ${response.status()}`).toBe(true)
+          const created = ((await response.json()) as { page: { id: number; sourceRevision: string } }).page
+          fixture.id = created.id
+          fixture.sourceRevision = created.sourceRevision
+          await waitForPageRender(
+            async url => {
+              const rendered = await page.request.get(url)
+              return new Response(await rendered.body(), { status: rendered.status(), headers: rendered.headers() })
+            },
+            { id: created.id, sourceRevision: String(created.sourceRevision), locale: 'en', path: fixture.path, visibility: 'public' },
+            AbortSignal.timeout(15_000)
+          )
+        }
+        const publicFixture = fixtures[0]!
+        const protectedFixture = fixtures[1]!
+        const protection = await page.request.put(`/_api/pages/${protectedFixture.id}/protection`, {
+          headers: sameOriginHeaders(),
+          data: { password: `Native sharing password ${suffix}` }
+        })
+        expect(protection.ok(), `Persist real password protection: HTTP ${protection.status()}`).toBe(true)
+        const savedProtection = await page.request.get(`/_api/pages/${protectedFixture.id}/protection`)
+        expect(savedProtection.ok()).toBe(true)
+        expect(await savedProtection.json()).toMatchObject({ protected: true })
+
+        // Real Guest HTTP/UI results are independent of the administrator's successful reader.
+        // Each fixture gets a new context: no login cookie or password-unlock grant can leak across them.
+        for (const fixture of fixtures) {
+          anonymousContext = await browser.newContext({ baseURL: origin, serviceWorkers: 'block' })
+          await anonymousContext.route('**/*', preventEgress)
+          const anonymousPage = await anonymousContext.newPage()
+          const identity = await anonymousContext.request.get('/_api/users/whoami')
+          expect(identity.status()).toBe(200)
+          expect(await identity.json()).toEqual({ authenticated: false, user: null })
+          const response = await anonymousPage.goto(`/${fixture.path}`, { waitUntil: 'domcontentloaded' })
+          expect(response, `A real anonymous document response is required for ${fixture.kind}`).not.toBeNull()
+          if (fixture.kind === 'public') {
+            expect(response!.ok()).toBe(true)
+            await expect(anonymousPage.locator('.page-title').first()).toHaveText(fixture.title)
+            await expect(anonymousPage.locator('article.contents')).toContainText(fixture.secret)
+            await expect(anonymousPage.locator('meta[property="og:title"]')).toHaveAttribute('content', fixture.title)
+            await expect(anonymousPage.locator('meta[name="description"]')).toHaveAttribute('content', fixture.description)
+          } else {
+            // A protected/denied gate may be delivered as HTML 200; its real DOM and body decide access.
+            if (fixture.kind === 'protected') {
+              await expect(anonymousPage.getByRole('heading', { name: 'This page is password-protected', exact: true })).toBeVisible()
+              await expect(anonymousPage.getByRole('textbox', { name: 'Page password', exact: true })).toBeVisible()
+            } else {
+              await expect(anonymousPage.locator('.page-header-section')).toHaveCount(0)
+              await expect(anonymousPage.getByRole('heading', { name: 'Unauthorized', exact: true })).toBeVisible()
+              await expect(anonymousPage.getByText('You cannot view this page.', { exact: true })).toBeVisible()
+            }
+            await expect(anonymousPage.locator('article.contents')).toHaveCount(0)
+            await expect(anonymousPage.locator('body')).not.toContainText(fixture.secret)
+            expect(await response!.text()).not.toContain(fixture.secret)
+            await expect(anonymousPage.locator('meta[name="description"]')).not.toHaveAttribute('content', fixture.description)
+            await expect(anonymousPage.locator('meta[property="og:title"]')).not.toHaveAttribute('content', fixture.title)
+          }
+          await anonymousContext.close()
+          anonymousContext = undefined
+        }
+
+        // The opt-out is a persisted policy, not a synthetic siteConfig value.
+        await openClientPage(page, `/${publicFixture.path}`, '.page-header-section')
+        await expectAuthenticatedAdmin(page)
+        await expect(page.locator('article.contents')).toContainText(publicFixture.secret)
+        await page.locator('[data-reader-share-trigger]:visible').click()
+        let share = page.locator('.social-sharing:visible')
+        await expect(share).toBeVisible()
+        await expect(share.getByRole('button', { name: providerButtons })).toHaveCount(0)
+        await expect(share.getByRole('link', { name: 'Viber', exact: true })).toHaveCount(0)
+        await page.keyboard.press('Escape')
+        await expect(share).toBeHidden()
+        await saveGeneral({ ...originalGeneral, publicSocialSharing: true }, `Native sharing explicit opt-in ${suffix}`)
+
+        // All restrictions are checked under the same real opt-in. Soft admission assertions let
+        // password, path and tag regressions all produce baseline evidence in this single case.
+        for (const fixture of fixtures) {
+          const response = await page.goto(`/${fixture.path}`, { waitUntil: 'domcontentloaded' })
+          expect(response?.ok(), `The current administrator must really read ${fixture.kind}`).toBe(true)
+          await expectAuthenticatedAdmin(page)
+          await expect(page.locator('.page-title').first()).toHaveText(fixture.title)
+          await expect(page.locator('article.contents')).toBeVisible()
+          await expect(page.locator('article.contents')).toContainText(fixture.secret)
+          // Enabled cited copy independently proves this exact live content has acquired
+          // current transport/reader authority; a transient admission guard cannot hide a provider.
+          await expect(page.locator('article.contents .cited-copy-action__button')).toBeEnabled()
+          await expect(page.locator('meta[property="og:title"]')).toHaveAttribute('content', fixture.title)
+          await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', fixture.description)
+          const canonicalUrl = page.url()
+          await page.locator('[data-reader-share-trigger]:visible').click()
+          share = page.locator('.social-sharing:visible')
+          await expect(share).toBeVisible()
+          await expect(share.getByRole('textbox', { name: 'Page URL', exact: true })).toHaveValue(canonicalUrl)
+          await expect(share.getByRole('button', { name: 'Copy link', exact: true })).toBeEnabled()
+          await expect(share.getByRole('button', { name: 'Copy Markdown link', exact: true })).toBeEnabled()
+          await expect(share.getByRole('link', { name: 'Share via Email', exact: true })).toHaveAttribute(
+            'href',
+            `mailto:?subject=${encodeURIComponent(fixture.title)}&body=${encodeURIComponent(canonicalUrl)}%0D%0A%0D%0A${encodeURIComponent(fixture.description)}`
+          )
+          if (fixture.kind === 'public') {
+            await expect(share.getByRole('button', { name: providerButtons })).toHaveCount(7)
+            await expect(share.getByRole('link', { name: 'Viber', exact: true })).toHaveAttribute(
+              'href',
+              `viber://forward?text=${encodeURIComponent(canonicalUrl)} ${encodeURIComponent(fixture.description)}`
+            )
+          } else {
+            expect
+              .soft(
+                await share.getByRole('button', { name: providerButtons }).count(),
+                `${fixture.kind} must not expose external provider actions to an authorized administrator`
+              )
+              .toBe(0)
+            expect
+              .soft(await share.getByRole('link', { name: 'Viber', exact: true }).count(), `${fixture.kind} must not expose an external provider URI`)
+              .toBe(0)
+            expect
+              .soft(await share.getByRole('button', { name: 'Share', exact: true }).count(), `${fixture.kind} must not expose native external sharing`)
+              .toBe(0)
+          }
+          await page.keyboard.press('Escape')
+          await expect(share).toBeHidden()
+        }
+        expect(blockedEgress, 'No provider or other offsite request may be attempted by the native admission gate').toEqual([])
+      } catch (error) {
+        primaryFailed = true
+        throw error
+      } finally {
+        await finishNativeCleanup(
+          [
+            {
+              label: 'Close fresh anonymous proof context',
+              run: async () => {
+                await anonymousContext?.close()
+              }
+            },
+            {
+              label: 'Restore complete original Guest policy and rules',
+              run: async () => {
+                if (!originalGuest) return
+                const current = await readGuest()
+                const policy = {
+                  name: current.name,
+                  description: current.description,
+                  redirectOnLogin: current.redirectOnLogin,
+                  permissions: current.permissions,
+                  pageRules: current.pageRules
+                }
+                if (JSON.stringify(policy) !== JSON.stringify(originalGuest)) await saveGuest(originalGuest, `Restore native sharing Guest fixture ${suffix}`)
+              }
+            },
+            {
+              label: 'Restore complete original General policy',
+              run: async () => {
+                if (!originalGeneral) return
+                await saveGeneral(originalGeneral, `Restore native sharing General fixture ${suffix}`)
+                const restored = await readGeneral()
+                expect(canonicalGeneralPolicy(restored.policy)).toEqual(canonicalGeneralPolicy(originalGeneral))
+              }
+            },
+            ...fixtures.map(fixture => ({
+              label: `Delete exact UUID sharing fixture ${fixture.path}`,
+              run: async () => {
+                if (fixture.id === undefined || fixture.sourceRevision === undefined) return
+                const removal = await page.request.delete(`/_api/pages/${fixture.id}`, {
+                  headers: sameOriginHeaders(),
+                  data: { expectedSourceRevision: fixture.sourceRevision }
+                })
+                expect(removal.ok(), `Delete ${fixture.kind} fixture: HTTP ${removal.status()}`).toBe(true)
+              }
+            })),
+            {
+              label: `Retire exact UUID tag ${deniedTag} through canonical taxonomy cleanup`,
+              run: async () => {
+                const response = await page.request.get('/_api/pages/tags')
+                expect(response.ok(), `Find exact UUID tag for cleanup: HTTP ${response.status()}`).toBe(true)
+                const matches = ((await response.json()) as Array<{ id: number; tag: string }>).filter(tag => tag.tag === deniedTag)
+                expect(matches.length).toBeLessThanOrEqual(1)
+                for (const tag of matches) {
+                  const removal = await page.request.delete(`/_api/pages/tags/${tag.id}`, { headers: sameOriginHeaders() })
+                  expect(removal.ok(), `Archive exact UUID tag: HTTP ${removal.status()}`).toBe(true)
+                }
+              }
+            },
+            {
+              label: 'Detach owned-origin egress guard',
+              run: async () => {
+                await page.context().unroute('**/*', preventEgress)
+              }
+            }
+          ],
+          primaryFailed || test.info().errors.length > 0
+        )
+      }
+    })
   })
 
   test('restores an earlier published page revision from history', async ({ page }) => {
@@ -1098,7 +1745,7 @@ test.describe('critical post-install workflows', () => {
       mimeType: 'text/plain',
       buffer: Buffer.from('Uploaded through the browser file manager.')
     })
-    await mediaDialog.getByRole('button', { name: 'Upload', exact: true }).click()
+    await mediaDialog.getByRole('button', { name: 'Upload 1', exact: true }).click()
     const uploadedAsset = mediaDialog.getByRole('row', { name: 'Select browser-upload.txt', exact: true })
     await expect(uploadedAsset).toBeVisible({ timeout: 30_000 })
     await uploadedAsset.click()
@@ -1106,7 +1753,7 @@ test.describe('critical post-install workflows', () => {
 
     expect(await getMarkdownSourceData(page)).toContain('[browser-upload.txt](')
     await page.locator('#root').getByRole('button', { name: dirtySaveButtonName }).click()
-    await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('.editor-save-status')).toHaveText(/^Saved(?:\s.+)?$/u, { timeout: 30_000 })
     await page.locator('#root').getByRole('button', { name: 'Close', exact: true }).click()
     await expect(page.getByRole('link', { name: 'browser-upload.txt' })).toBeVisible()
   })

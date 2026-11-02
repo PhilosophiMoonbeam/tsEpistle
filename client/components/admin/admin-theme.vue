@@ -1,9 +1,14 @@
 <template>
-  <v-container fluid class="theme-workspace">
+  <v-container
+    fluid
+    class="theme-workspace"
+    :class="{ 'has-admin-draft-bar': dirty }"
+    :style="{ '--admin-draft-bar-height': draftBarHeight }"
+  >
     <admin-hero
       icon="mdi-palette-outline"
-      :title="$t('admin:theme.title')"
-      :description="$t('admin:theme.shapeQuietLegibleHome')"
+      :title="tr('title')"
+      :description="tr('manageThemeSettings')"
     >
       <template #actions>
         <v-btn
@@ -12,27 +17,28 @@
           :loading="loading"
           :disabled="busy || initializing"
           @click="reload"
-          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ $t('admin:theme.reloadSavedThemeSettings') }}</v-tooltip></v-btn
+          >{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ tr('reloadSavedThemeSettings') }}</v-tooltip></v-btn
         >
         <v-btn v-if="dirty" variant="text" :disabled="locked" @click="reset"
-          >{{ $t('admin:theme.resetDraft') }}</v-btn
+          >{{ tr('resetDraft') }}</v-btn
         >
         <v-btn
           color="primary"
-          variant="flat"
+          variant="tonal"
+          :data-commitment="dirty && !locked ? 'active' : undefined"
           :disabled="locked || !dirty"
           @click="review"
-          >{{ $t('admin:theme.reviewChanges') }}</v-btn
+          >{{ tr('reviewChanges') }}</v-btn
         >
       </template>
     </admin-hero>
     <p v-if="!saved && loading" role="status" class="theme-empty">
-      {{ $t('admin:theme.loadingPaletteLibrary') }}
+      {{ tr('loadingPaletteLibrary') }}
     </p>
     <v-alert v-if="loadError" type="error" variant="tonal"
       >{{ loadError
       }}<v-btn variant="text" :disabled="busy" @click="reload"
-        >{{ $t('admin:theme.reloadSavedSettings') }}</v-btn
+        >{{ tr('reloadSavedSettings') }}</v-btn
       ></v-alert
     >
     <v-alert
@@ -46,15 +52,15 @@
       <div class="theme-status">
         <span
           ><i :class="{ 'is-draft': dirty }" />{{
-            dirty ? $t('admin:theme.unsavedThemeDraft') : $t('admin:theme.showingSavedSettings')
+            dirty ? tr('unsavedThemeDraft') : tr('showingSavedSettings')
           }}</span
         ><span>{{
           saved.runtime.state === "applied"
-            ? $t('admin:theme.runtimeConfigurationCurrent')
-            : $t('admin:theme.runtimeActivationNeedsAttention2')
+            ? tr('runtimeConfigurationCurrent')
+            : tr('runtimeActivationNeedsAttention2')
         }}</span>
       </div>
-      <nav class="theme-tabs" :aria-label="$t('admin:theme.themeSections')">
+      <nav ref="sectionNavigation" class="theme-tabs" :aria-label="tr('themeSections')">
         <button
           v-for="tab in sections"
           :key="tab.key"
@@ -70,13 +76,12 @@
         <section class="theme-editor">
           <template v-if="section === 'palettes'">
             <div class="theme-heading">
-              <span class="theme-kicker">{{ $t('admin:theme.n01ColorLanguage') }}</span>
-              <h2>{{ $t('admin:theme.palettePlace') }}</h2>
+              <h2>{{ tr('paletteLibrary') }}</h2>
               <p>
-                {{ $t('admin:theme.keepCollectionPossibilitiesChoose') }}
+                {{ tr('paletteLibraryHelp') }}
               </p>
             </div>
-            <div class="theme-palette-list" :aria-label="$t('admin:theme.paletteLibrary')">
+            <div class="theme-palette-list wiki-surface-well" :aria-label="tr('paletteLibrary')">
               <button
                 v-for="item in draft.palettes"
                 :key="item.id"
@@ -96,13 +101,13 @@
                     :key="key"
                     :style="{ background: item.colors[mode][key] }"
                 /></span>
-                <strong>{{ item.name || $t('admin:theme.untitledPalette') }}</strong
+                <strong>{{ item.name || tr('untitledPalette') }}</strong
                 ><small>{{
                   item.id === draft.activePaletteId
                     ? dirty
-                      ? $t('admin:theme.chosenPublishing')
-                      : $t('admin:theme.publishedPalette')
-                    : $t('admin:theme.library')
+                      ? tr('chosenPublishing')
+                      : tr('publishedPalette')
+                    : tr('library')
                 }}</small>
               </button>
             </div>
@@ -112,24 +117,24 @@
                 prepend-icon="mdi-plus"
                 :disabled="locked || draft.palettes.length >= maxPalettes"
                 @click="addPalette(false)"
-                >{{ $t('admin:theme.newPalette') }}</v-btn
+                >{{ tr('newPalette') }}</v-btn
               ><span>{{ draft.palettes.length }} / {{ maxPalettes }}</span>
             </div>
             <div class="theme-setting-group">
               <div class="theme-section-title">
-                <h3>{{ $t('admin:theme.editPalette') }}</h3>
+                <h3>{{ tr('editPalette') }}</h3>
                 <v-btn
                   v-if="palette.id !== draft.activePaletteId"
                   size="small"
                   variant="tonal"
                   :disabled="locked"
                   @click="draft.activePaletteId = palette.id"
-                  >{{ $t('admin:theme.usePalette') }}</v-btn
+                  >{{ tr('usePalette') }}</v-btn
                 >
               </div>
               <v-text-field
                 v-model="palette.name"
-                :label="$t('admin:theme.paletteName')"
+                :label="tr('paletteName')"
                 variant="outlined"
                 maxlength="80"
                 counter="80"
@@ -141,24 +146,24 @@
                   variant="text"
                   :disabled="locked || draft.palettes.length >= maxPalettes"
                   @click="addPalette(true)"
-                  >{{ $t('admin:theme.duplicate') }}</v-btn
+                  >{{ tr('duplicate') }}</v-btn
                 ><v-btn
                   size="small"
                   variant="text"
                   :disabled="locked || !savedPalette"
                   @click="restorePalette"
-                  >{{ $t('admin:theme.restoreSavedColors') }}</v-btn
+                  >{{ tr('restoreSavedColors') }}</v-btn
                 ><v-btn
                   size="small"
                   variant="text"
                   :disabled="locked || draft.palettes.length === 1"
                   @click="deleteOpen = true"
-                  >{{ $t('admin:theme.deletePalette') }}</v-btn
+                  >{{ tr('deletePalette') }}</v-btn
                 >
               </div>
               <div class="theme-mode-heading">
-                <h3>{{ $t('admin:theme.colors', { value: mode === "light" ? $t('admin:theme.light') : $t('admin:theme.dark'), interpolation: { escapeValue: false } }) }}</h3>
-                <div class="theme-segmented" :aria-label="$t('admin:theme.editColorMode')">
+                <h3>{{ tr('colors', { value: mode === "light" ? tr('light') : tr('dark'), interpolation: { escapeValue: false } }) }}</h3>
+                <div class="theme-segmented" :aria-label="tr('editColorMode')">
                   <button
                     v-for="item in modes"
                     :key="item"
@@ -184,16 +189,15 @@
                 variant="text"
                 :disabled="locked"
                 @click="resetMode"
-                >{{ $t('admin:theme.resetOriginalColors', { mode, interpolation: { escapeValue: false } }) }}</v-btn
+                >{{ tr('resetOriginalColors', { mode, interpolation: { escapeValue: false } }) }}</v-btn
               >
             </div>
           </template>
           <template v-else-if="section === 'reader'">
             <div class="theme-heading">
-              <span class="theme-kicker">{{ $t('admin:theme.n02ReadingRhythm') }}</span>
-              <h2>{{ $t('admin:theme.makeRoomThought') }}</h2>
+              <h2>{{ tr('readerLayout') }}</h2>
               <p>
-                {{ $t('admin:theme.setReadingProportionsAcross') }}
+                {{ tr('setReadingProportionsAcross') }}
               </p>
             </div>
             <div class="theme-setting-group theme-reader-fields">
@@ -203,11 +207,11 @@
                 min="14"
                 max="24"
                 step="1"
-                :label="$t('admin:theme.readerTextSize')"
-                :suffix="$t('admin:theme.px')"
+                :label="tr('readerTextSize')"
+                :suffix="tr('px')"
                 variant="outlined"
                 :disabled="locked"
-                :hint="$t('admin:theme.n1424PxBrowsers')"
+                :hint="tr('n1424PxBrowsers')"
                 persistent-hint
               />
               <v-text-field
@@ -216,11 +220,11 @@
                 min="1.4"
                 max="2"
                 step="0.01"
-                :label="$t('admin:theme.lineSpacing')"
+                :label="tr('lineSpacing')"
                 suffix="×"
                 variant="outlined"
                 :disabled="locked"
-                :hint="$t('admin:theme.n142Times')"
+                :hint="tr('n142Times')"
                 persistent-hint
               />
               <v-text-field
@@ -229,27 +233,27 @@
                 min="48"
                 max="110"
                 step="1"
-                :label="$t('admin:theme.maximumLineLength')"
-                :suffix="$t('admin:theme.ch')"
+                :label="tr('maximumLineLength')"
+                :suffix="tr('ch')"
                 variant="outlined"
                 :disabled="locked"
-                :hint="$t('admin:theme.n48110CharacterWidths')"
+                :hint="tr('n48110CharacterWidths')"
                 persistent-hint
               />
               <v-select
                 v-model="draft.tocPosition"
                 :items="tocOptions"
-                :label="$t('admin:theme.contentsPageInformation')"
+                :label="tr('contentsPageInformation')"
                 variant="outlined"
                 :disabled="locked"
-                :hint="$t('admin:theme.chooseSidePageRail')"
+                :hint="tr('chooseSidePageRail')"
                 persistent-hint
               />
               <v-btn
                 variant="text"
                 :disabled="locked"
                 @click="draft.reading = { ...defaultReading }"
-                >{{ $t('admin:theme.restoreReadingDefaults') }}</v-btn
+                >{{ tr('restoreReadingDefaults') }}</v-btn
               >
             </div>
             <div class="theme-setting-group">
@@ -270,12 +274,12 @@
               >Restore saved code appearance</v-btn>
             </div>
             <div class="theme-setting-group">
-              <h3>{{ $t('admin:theme.navigationFeedback', { defaultValue: 'Navigation feedback' }) }}</h3>
+              <h3>{{ tr('navigationFeedback', { defaultValue: 'Navigation feedback' }) }}</h3>
               <v-switch
                 :model-value="draft.pageTransitions"
                 @update:model-value="$event !== null && (draft.pageTransitions = $event)"
-                :label="$t('admin:theme.pageTransitions', { defaultValue: 'Animate page transitions' })"
-                :hint="$t('admin:theme.pageTransitionsHint', { defaultValue: 'Use a brief entrance when navigating between pages. The reader’s reduced-motion preference always takes priority.' })"
+                :label="tr('pageTransitions', { defaultValue: 'Animate page transitions' })"
+                :hint="tr('pageTransitionsHint', { defaultValue: 'Use a brief entrance when navigating between pages. The reader’s reduced-motion preference always takes priority.' })"
                 :disabled="locked"
                 color="primary"
                 persistent-hint
@@ -283,53 +287,52 @@
               <v-switch
                 :model-value="draft.showPageProgress"
                 @update:model-value="$event !== null && (draft.showPageProgress = $event)"
-                :label="$t('admin:theme.showPageProgress', { defaultValue: 'Show navigation loading cue' })"
-                :hint="$t('admin:theme.showPageProgressHint', { defaultValue: 'Show a decorative top-edge cue while the next page loads. Reading-position progress and the accessible loading indicator remain unchanged.' })"
+                :label="tr('showPageProgress', { defaultValue: 'Show navigation loading cue' })"
+                :hint="tr('showPageProgressHint', { defaultValue: 'Show a decorative top-edge cue while the next page loads. Reading-position progress and the accessible loading indicator remain unchanged.' })"
                 :disabled="locked"
                 color="primary"
                 persistent-hint
               />
             </div>
             <div class="theme-setting-group">
-              <h3>{{ $t('admin:theme.personalPresentation') }}</h3>
+              <h3>{{ tr('personalPresentation') }}</h3>
               <p>
-                {{ $t('admin:theme.eachReaderChoosesSystem') }}
+                {{ tr('eachReaderChoosesSystem') }}
               </p>
               <p class="theme-note">
-                {{ $t('admin:theme.workspaceColorsApplyBoth') }}
+                {{ tr('workspaceColorsApplyBoth') }}
               </p>
             </div>
             <div class="theme-setting-group">
-              <h3>{{ $t('admin:theme.iconCompatibility') }}</h3>
+              <h3>{{ tr('iconCompatibility') }}</h3>
               <v-select
                 v-model="draft.iconset"
                 :items="iconOptions"
-                :label="$t('admin:theme.pageIconLibrary')"
+                :label="tr('pageIconLibrary')"
                 variant="outlined"
                 :disabled="locked"
               />
               <p class="theme-note">
-                {{ $t('admin:theme.materialDesignIconsBuilt') }}
+                {{ tr('materialDesignIconsBuilt') }}
               </p>
             </div>
           </template>
           <template v-else-if="section === 'code'">
             <div class="theme-heading">
-              <span class="theme-kicker">{{ $t('admin:theme.n03FinishingDetails') }}</span>
-              <h2>{{ $t('admin:theme.beyondPalette') }}</h2>
+              <h2>{{ tr('customCode') }}</h2>
               <p>
-                {{ $t('admin:theme.extendReaderPagesCustom') }}
+                {{ tr('extendReaderPagesCustom') }}
               </p>
             </div>
             <v-alert type="info" variant="tonal" class="mb-5"
-              >{{ $t('admin:theme.customHtmlCanRun') }}</v-alert
+              >{{ tr('customHtmlCanRun') }}</v-alert
             >
             <v-alert
               v-if="!saved.capabilities.editCustomCode"
               type="warning"
               variant="tonal"
               class="mb-5"
-              >{{ $t('admin:theme.customCssHtmlManaged') }}</v-alert
+              >{{ tr('customCssHtmlManaged') }}</v-alert
             >
             <div
               v-for="field in codeFields"
@@ -353,14 +356,13 @@
           </template>
           <template v-else>
             <div class="theme-heading">
-              <span class="theme-kicker">{{ $t('admin:theme.n04PublicationRecord') }}</span>
-              <h2>{{ $t('admin:theme.shapeChange') }}</h2>
+              <h2>{{ tr('activity') }}</h2>
               <p>
-                {{ $t('admin:theme.latest50SavedTheme') }}
+                {{ tr('latest50SavedTheme') }}
               </p>
             </div>
-            <p v-if="!saved.history.length" class="theme-empty">
-              {{ $t('admin:theme.noThemeChangesHave') }}
+            <p v-if="!saved.history.length" class="theme-empty wiki-surface-well">
+              {{ tr('noThemeChangesHave') }}
             </p>
             <article
               v-for="event in saved.history"
@@ -381,8 +383,8 @@
               </p>
               <small>{{
                 event.actorId === null
-                  ? $t('admin:theme.apiAdministrator')
-                  : $t('admin:theme.administrator', { actorId: event.actorId, interpolation: { escapeValue: false } })
+                  ? tr('apiAdministrator')
+                  : tr('administrator', { actorId: event.actorId, interpolation: { escapeValue: false } })
               }}</small>
             </article>
           </template>
@@ -390,10 +392,10 @@
         <aside class="theme-aside">
           <div class="theme-preview-controls">
             <div>
-              <span class="theme-kicker">{{ $t('admin:theme.liveSpecimen') }}</span
-              ><strong>{{ palette.name || $t('admin:theme.untitledPalette') }}</strong>
+              <span class="theme-kicker">{{ tr('liveSpecimen') }}</span
+              ><strong>{{ palette.name || tr('untitledPalette') }}</strong>
             </div>
-            <div class="theme-segmented" :aria-label="$t('admin:theme.previewAppearance')">
+            <div class="theme-segmented" :aria-label="tr('previewAppearance')">
               <button
                 v-for="item in modes"
                 :key="item"
@@ -408,17 +410,17 @@
           <div
             class="theme-specimen"
             :style="previewStyle"
-            :aria-label="$t('admin:theme.readerPreview')"
+            :aria-label="tr('readerPreview')"
           >
             <div class="theme-specimen-nav">
-              <strong>{{ $t('admin:theme.epistle') }}</strong><span>{{ $t('admin:theme.knowledgeConnected') }}</span
+              <strong>{{ tr('epistle') }}</strong><span>{{ tr('knowledgeConnected') }}</span
               ><i :style="{ background: previewColors.primary }" />
             </div>
             <p
               v-if="draft.tocPosition !== 'off'"
               class="theme-specimen-adaptation"
             >
-              {{ $t('admin:theme.narrowPreview') }}
+              {{ tr('narrowPreview') }}
             </p>
             <div
               class="theme-specimen-body"
@@ -428,32 +430,32 @@
                 v-if="draft.tocPosition !== 'off'"
                 class="theme-specimen-toc"
               >
-                <small>{{ $t('common:page.onThisPage') }}</small><span>{{ $t('admin:theme.sharedUnderstanding') }}</span
-                ><span>{{ $t('admin:theme.leaveUsefulTrail') }}</span>
+                <small>{{ $t('common:page.onThisPage') }}</small><span>{{ tr('sharedUnderstanding') }}</span
+                ><span>{{ tr('leaveUsefulTrail') }}</span>
               </div>
               <article>
-                <span class="theme-specimen-eyebrow">{{ $t('admin:theme.fieldNotes01') }}</span>
-                <h2>{{ $t('admin:theme.sharedUnderstanding') }}</h2>
+                <span class="theme-specimen-eyebrow">{{ tr('fieldNotes01') }}</span>
+                <h2>{{ tr('sharedUnderstanding') }}</h2>
                 <p>
-                  {{ $t('admin:theme.goodKnowledgeHasRoom') }}
+                  {{ tr('goodKnowledgeHasRoom') }}
                 </p>
-                <h3>{{ $t('admin:theme.leaveUsefulTrail') }}</h3>
+                <h3>{{ tr('leaveUsefulTrail') }}</h3>
                 <p>
-                  {{ $t('admin:theme.writeNextReaderLink') }}
+                  {{ tr('writeNextReaderLink') }}
                 </p>
                 <div class="theme-specimen-callout">
-                  <strong>{{ $t('admin:theme.connectedKnowledge') }}</strong
-                  ><span>{{ $t('admin:theme.usefulPersonDiscoverableAgent') }}</span>
+                  <strong>{{ tr('connectedKnowledge') }}</strong
+                  ><span>{{ tr('usefulPersonDiscoverableAgent') }}</span>
                 </div>
                 <div class="theme-specimen-footer">
-                  <span>{{ $t('admin:theme.updatedJustNowExample') }}</span
+                  <span>{{ tr('updatedJustNowExample') }}</span
                   ><span
                     class="theme-specimen-button"
                     :style="{
                       background: previewColors.primary,
                       color: foreground(previewColors.primary),
                     }"
-                    >{{ $t('admin:theme.exploreWiki') }}</span
+                    >{{ tr('exploreWiki') }}</span
                   >
                 </div>
               </article>
@@ -481,24 +483,24 @@
             <v-select
               v-model="previewFont"
               :items="fontOptions"
-              :label="$t('admin:theme.previewFontOnly')"
+              :label="tr('previewFontOnly')"
               variant="outlined"
               density="compact"
               hide-details
             />
             <p>
-              {{ $t('admin:theme.previewingCustomCodeIcon', { value: palette.id === draft.activePaletteId
-                  ? $t('admin:theme.chosenPalette')
-                  : $t('admin:theme.libraryPalette'), interpolation: { escapeValue: false } }) }}
+              {{ tr('previewingCustomCodeIcon', { value: palette.id === draft.activePaletteId
+                  ? tr('chosenPalette')
+                  : tr('libraryPalette'), interpolation: { escapeValue: false } }) }}
             </p>
           </div>
           <section class="theme-contrast">
             <div class="theme-section-title">
-              <h3>{{ $t('admin:theme.colorContrast') }}</h3>
-              <span>{{ $t('admin:theme.surface2', { mode, interpolation: { escapeValue: false } }) }}</span>
+              <h3>{{ tr('colorContrast') }}</h3>
+              <span>{{ tr('surface2', { mode, interpolation: { escapeValue: false } }) }}</span>
             </div>
             <p>
-              {{ $t('admin:theme.normalSizeColoredText') }}
+              {{ tr('normalSizeColoredText') }}
             </p>
             <div
               v-for="item in contrastChecks"
@@ -511,17 +513,17 @@
                 }}</span
               ><strong>{{ item.ratio.toFixed(2) }}:1</strong
               ><span>{{
-                item.ratio >= 4.5 ? $t('admin:theme.meets451') : $t('admin:theme.useCare')
+                item.ratio >= 4.5 ? tr('meets451') : tr('useCare')
               }}</span>
             </div>
             <small
-              >{{ $t('admin:theme.theseCalculatedColorPairs') }}</small
+              >{{ tr('theseCalculatedColorPairs') }}</small
             >
           </section>
           <section class="theme-runtime">
-            <h3>{{ $t('admin:theme.publication') }}</h3>
+            <h3>{{ tr('publication') }}</h3>
             <p>
-              {{ $t('admin:theme.savedPalette') }}
+              {{ tr('savedPalette') }}
               <strong>{{
                 saved.policy.palettes.find(
                   (item) => item.id === saved!.policy.activePaletteId,
@@ -529,7 +531,7 @@
               }}</strong>
             </p>
             <p>
-              {{ $t('admin:theme.changesReachReadersTheir') }}
+              {{ tr('changesReachReadersTheir') }}
             </p>
             <v-btn
               v-if="saved.runtime.state !== 'applied'"
@@ -537,29 +539,30 @@
               :disabled="locked || dirty"
               :loading="initializing"
               @click="initialize"
-              >{{ $t('admin:theme.retryRuntimeActivation') }}</v-btn
+              >{{ tr('retryRuntimeActivation') }}</v-btn
             >
           </section>
         </aside>
       </div>
-      <div v-if="dirty" class="theme-savebar">
+      <div v-if="dirty" ref="draftBar" class="theme-savebar">
         <span
-          >{{ $t('admin:theme.themeDraftImpact', { count: changedFields.length }) }}</span
-        ><v-btn variant="text" :disabled="locked" @click="reset">{{ $t('admin:theme.reset') }}</v-btn
+          >{{ tr('themeDraftImpact', { count: changedFields.length }) }}</span
+        ><v-btn variant="text" :disabled="locked" @click="reset">{{ tr('reset') }}</v-btn
         ><v-btn
           color="primary"
-          variant="flat"
+          variant="tonal"
+          :data-commitment="dirty && !locked ? 'active' : undefined"
           :disabled="locked"
           @click="review"
-          >{{ $t('admin:theme.reviewChanges') }}</v-btn
+          >{{ tr('reviewChanges') }}</v-btn
         >
       </div>
     </template>
     <v-dialog v-model="deleteOpen" max-width="520"
-      ><v-card v-if="draft && palette" :title="$t('admin:theme.deletePalette2')"
+      ><v-card v-if="draft && palette" :title="tr('deletePalette2')"
         ><v-card-text
           ><p>
-            {{ $t('admin:theme.removeDraftYouCan', { name: palette.name, interpolation: { escapeValue: false } }) }}
+            {{ tr('removeDraftYouCan', { name: palette.name, interpolation: { escapeValue: false } }) }}
           </p>
           <v-select
             v-if="palette.id === draft.activePaletteId"
@@ -567,7 +570,7 @@
             :items="draft.palettes.filter((item) => item.id !== palette!.id)"
             item-title="name"
             item-value="id"
-            :label="$t('admin:theme.replacementPublishedPalette')"
+            :label="tr('replacementPublishedPalette')"
             variant="outlined"
             class="mt-5" /></v-card-text
         ><v-card-actions
@@ -577,16 +580,16 @@
               locked || (palette.id === draft.activePaletteId && !replacementId)
             "
             @click="deletePalette"
-            >{{ $t('admin:theme.deleteDraft') }}</v-btn
+            >{{ tr('deleteDraft') }}</v-btn
           ></v-card-actions
         ></v-card
       ></v-dialog
     >
     <v-dialog v-model="reviewing" :persistent="busy" max-width="900"
-      ><v-card v-if="reviewed && saved" :title="$t('admin:theme.publishThemeChanges')"
+      ><v-card v-if="reviewed && saved" :title="tr('publishThemeChanges')"
         ><v-card-text
           ><p class="mb-5">
-            {{ $t('admin:theme.reviewExactDraftBelow') }}
+            {{ tr('reviewExactDraftBelow') }}
           </p>
           <details
             v-for="field in reviewFields"
@@ -597,26 +600,26 @@
             <summary>{{ fieldLabels[field] }}</summary>
             <div>
               <section>
-                <strong>{{ $t('admin:theme.saved') }}</strong>
+                <strong>{{ tr('saved') }}</strong>
                 <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded source/report viewport needs a tab stop for keyboard scrolling. -->
-                <pre  tabindex="0" >{{ displayValue(saved.policy[field]) }}</pre>
+                <pre class="wiki-surface-well" tabindex="0">{{ displayValue(saved.policy[field]) }}</pre>
               </section>
               <section>
-                <strong>{{ $t('admin:theme.publishing') }}</strong>
+                <strong>{{ tr('publishing') }}</strong>
                 <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: This bounded source/report viewport needs a tab stop for keyboard scrolling. -->
-                <pre  tabindex="0" >{{ displayValue(reviewed[field]) }}</pre>
+                <pre class="wiki-surface-well" tabindex="0">{{ displayValue(reviewed[field]) }}</pre>
               </section>
             </div>
           </details>
           <v-textarea
             v-model="reason"
-            :label="$t('admin:theme.reasonChange')"
+            :label="tr('reasonChange')"
             rows="2"
             variant="outlined"
             maxlength="1000"
             :disabled="busy || stale"
             class="mt-6"
-            :hint="$t('admin:theme.n31000Characters')"
+            :hint="tr('n31000Characters')"
             persistent-hint
           /><v-alert
             v-if="saveError"
@@ -627,19 +630,20 @@
           ></v-card-text
         ><v-card-actions
           ><v-btn :disabled="busy" @click="reviewing = false"
-            >{{ $t('admin:theme.backDraft') }}</v-btn
+            >{{ tr('backDraft') }}</v-btn
           ><v-spacer /><v-btn
             v-if="stale"
             :disabled="busy"
             @click="reloadReview"
-            >{{ $t('admin:theme.reloadSavedSettings') }}</v-btn
+            >{{ tr('reloadSavedSettings') }}</v-btn
           ><v-btn
             color="primary"
-            variant="flat"
+            variant="tonal"
+            :data-commitment="dirty && !locked && reason.trim().length >= 3 ? 'active' : undefined"
             :loading="busy"
             :disabled="locked || reason.trim().length < 3"
             @click="confirm"
-            >{{ $t('admin:theme.publishChanges') }}</v-btn
+            >{{ tr('publishChanges') }}</v-btn
           ></v-card-actions
         ></v-card
       ></v-dialog
@@ -649,6 +653,7 @@
 <script setup lang="ts">
 import { confirmDiscard, requestConfirmation } from "../common/confirm-dialog.ts";
 import {
+  nextTick,
   computed,
   defineAsyncComponent,
   onMounted,
@@ -699,7 +704,7 @@ import {
 } from "../../helpers/theme-workspace-api.ts";
 import { useTranslate } from '../../helpers/use-translate.ts'
 
-const t = useTranslate()
+const tr = useTranslate('admin:theme')
 const ThemeCodeEditor = defineAsyncComponent(
   () => import("./theme-code-editor.vue"),
 );
@@ -707,7 +712,7 @@ const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const errorMessage = (error: unknown) =>
   error instanceof Error
     ? error.message
-    : t('admin:theme.themeAdministrationUnavailable');
+    : tr('themeAdministrationUnavailable');
 const route = useRoute(),
   router = useRouter(),
   theme = useTheme();
@@ -743,7 +748,7 @@ const codeThemeOptions = [
 ];
 const customCodeFields = ["injectCSS", "injectHead", "injectBody"] as const;
 type CustomCodeField = (typeof customCodeFields)[number];
-const mode = ref<"light" | "dark">("light"),
+const mode = ref<"light" | "dark">(theme.current.value.dark ? "dark" : "light"),
   previewFont = ref(wikiStore.user.fontFamily);
 const modes = ["light", "dark"] as const,
   maxPalettes = MAX_THEME_PALETTES,
@@ -751,21 +756,21 @@ const modes = ["light", "dark"] as const,
   fieldLabels = themeFieldLabels,
   defaultReading = defaultReaderLayout;
 const colorLabels: Record<ThemeColorKey, string> = {
-  background: t('admin:theme.background'),
-  surface: t('admin:theme.surface'),
-  primary: t('admin:theme.primary'),
-  secondary: t('admin:theme.secondary'),
-  accent: t('admin:theme.accent'),
-  info: t('admin:theme.information'),
-  success: t('admin:theme.success'),
-  warning: t('admin:theme.warning'),
-  error: t('admin:theme.error'),
+  background: tr('background'),
+  surface: tr('surface'),
+  primary: tr('primary'),
+  secondary: tr('secondary'),
+  accent: tr('accent'),
+  info: tr('information'),
+  success: tr('success'),
+  warning: tr('warning'),
+  error: tr('error'),
 };
 const sections = [
-  { key: "palettes", title: t('admin:theme.paletteLibrary') },
-  { key: "reader", title: t('admin:theme.readerLayout') },
-  { key: "code", title: t('admin:theme.customCode') },
-  { key: "activity", title: t('admin:theme.activity') },
+  { key: "palettes", title: tr('paletteLibrary') },
+  { key: "reader", title: tr('readerLayout') },
+  { key: "code", title: tr('customCode') },
+  { key: "activity", title: tr('activity') },
 ];
 const section = computed(
   () =>
@@ -796,6 +801,23 @@ const changedFields = computed(() => {
   return fields;
 });
 const dirty = computed(() => changedFields.value.length > 0);
+const draftBar = ref<HTMLElement | null>(null);
+const sectionNavigation = ref<HTMLElement | null>(null);
+const draftBarHeight = ref("5rem");
+let draftBarObserver: ResizeObserver | undefined;
+watch(draftBar, (element) => {
+  draftBarObserver?.disconnect();
+  if (!element) {
+    draftBarHeight.value = "5rem";
+    return;
+  }
+  const measure = () => {
+    draftBarHeight.value = `${element.getBoundingClientRect().height}px`;
+  };
+  measure();
+  draftBarObserver = new ResizeObserver(measure);
+  draftBarObserver.observe(element);
+}, { flush: "post" });
 const locked = computed(
   () =>
     loading.value ||
@@ -864,42 +886,42 @@ const contrastChecks = computed(() =>
   })),
 );
 const tocOptions = [
-  { title: t('admin:theme.automaticContents'), value: "auto" },
-  { title: t('admin:theme.leftRail'), value: "left" },
-  { title: t('admin:theme.rightRail'), value: "right" },
-  { title: t('admin:theme.hidden'), value: "off" },
+  { title: tr('automaticContents'), value: "auto" },
+  { title: tr('leftRail'), value: "left" },
+  { title: tr('rightRail'), value: "right" },
+  { title: tr('hidden'), value: "off" },
 ];
 const iconOptions = [
-  { title: t('admin:theme.materialDesignIcons'), value: "mdi" },
-  { title: t('admin:theme.fontAwesome5Legacy'), value: "fa" },
-  { title: t('admin:theme.fontAwesome4Legacy'), value: "fa4" },
+  { title: tr('materialDesignIcons'), value: "mdi" },
+  { title: tr('fontAwesome5Legacy'), value: "fa" },
+  { title: tr('fontAwesome4Legacy'), value: "fa4" },
 ];
 const fontOptions = [
-  { title: t('admin:theme.blendSerifHeadingsSans'), value: "blend" },
-  { title: t('admin:theme.newsreaderSerif'), value: "newsreader" },
-  { title: t('admin:theme.robotoFlexSansSerif'), value: "roboto-flex" },
+  { title: tr('blendSerifHeadingsSans'), value: "blend" },
+  { title: tr('newsreaderSerif'), value: "newsreader" },
+  { title: tr('robotoFlexSansSerif'), value: "roboto-flex" },
 ];
 const codeFields = [
   {
     key: "injectCSS",
-    title: t('admin:theme.customCss'),
+    title: tr('customCss'),
     language: "css",
     description:
-      t('admin:theme.stylesReaderEditorPages'),
+      tr('stylesReaderEditorPages'),
   },
   {
     key: "injectHead",
-    title: t('admin:theme.headHtml'),
+    title: tr('headHtml'),
     language: "html",
     description:
-      t('admin:theme.markupInsertedIntoReader'),
+      tr('markupInsertedIntoReader'),
   },
   {
     key: "injectBody",
-    title: t('admin:theme.bodyHtml'),
+    title: tr('bodyHtml'),
     language: "html",
     description:
-      t('admin:theme.markupInsertedIntoReader2'),
+      tr('markupInsertedIntoReader2'),
   },
 ] as const;
 const preserveCustomCode = (
@@ -955,16 +977,22 @@ async function load() {
 }
 async function reload() {
   if (busy.value || initializing.value) return;
-  if (dirty.value && !(await confirmDiscard(t('admin:theme.discardUnsavedThemeChanges'))))
+  if (dirty.value && !(await confirmDiscard(tr('discardUnsavedThemeChanges'))))
     return;
   if (busy.value || initializing.value) return;
   await load();
 }
 function reset() {
   if (!locked.value && saved.value) {
+    const restoreFocus = draftBar.value?.contains(document.activeElement);
     draft.value = copy(saved.value.policy);
     notice.value = "";
     selectedId.value = saved.value.policy.activePaletteId;
+    if (restoreFocus) {
+      void nextTick(() => {
+        sectionNavigation.value?.querySelector<HTMLButtonElement>("[aria-current]")?.focus();
+      });
+    }
   }
 }
 function selectSection(key: string) {
@@ -983,7 +1011,7 @@ function addPalette(duplicate: boolean) {
     return;
   const next = duplicate ? copy(palette.value) : createDefaultThemePalette();
   next.id = "palette-" + crypto.randomUUID();
-  next.name = duplicate ? t('admin:theme.copy', { name: next.name.slice(0, 70), interpolation: { escapeValue: false } }) : t('admin:theme.newPalette');
+  next.name = duplicate ? tr('copy', { name: next.name.slice(0, 70), interpolation: { escapeValue: false } }) : tr('newPalette');
   draft.value.palettes.push(next);
   selectedId.value = next.id;
 }
@@ -995,8 +1023,8 @@ async function resetMode() {
   if (locked.value || !palette.value) return;
   const target = mode.value;
   const confirmed = await requestConfirmation({
-    title: t('admin:theme.resetColorsOriginalPalette', { target, interpolation: { escapeValue: false } }),
-    confirmLabel: t('admin:theme.resetColors'),
+    title: tr('resetColorsOriginalPalette', { target, interpolation: { escapeValue: false } }),
+    confirmLabel: tr('resetColors'),
     tone: "destructive",
   });
   if (confirmed && !locked.value && palette.value)
@@ -1100,8 +1128,8 @@ async function confirm() {
     reason.value = "";
     attention.value = result.activation !== "applied";
     notice.value = attention.value
-      ? t('admin:theme.themeSavedRuntimeActivation')
-      : t('admin:theme.themePublishedReadersSee');
+      ? tr('themeSavedRuntimeActivation')
+      : tr('themePublishedReadersSee');
     busy.value = false;
     stale.value = true;
     await load();
@@ -1114,11 +1142,11 @@ async function confirm() {
       saveError.value =
         errorMessage(error) +
         (!status
-          ? ` ${t('admin:theme.outcomeUnconfirmedReloadBefore')}`
+          ? ` ${tr('outcomeUnconfirmedReloadBefore')}`
           : "");
       if (stale.value) {
         notice.value =
-          t('admin:theme.reloadSavedSettingsBefore');
+          tr('reloadSavedSettingsBefore');
         attention.value = true;
       }
     }
@@ -1130,7 +1158,7 @@ async function reloadReview() {
   if (
     busy.value ||
     !(await confirmDiscard(
-      t('admin:theme.discardReviewLoadSaved'),
+      tr('discardReviewLoadSaved'),
     )) ||
     busy.value
   )
@@ -1145,8 +1173,8 @@ async function initialize() {
     const result = await retryThemeRuntime(saved.value.fingerprint);
     notice.value =
       result.activation === "applied"
-        ? t('admin:theme.runtimeThemeConfigurationApplied')
-        : t('admin:theme.runtimeActivationNeedsAttention');
+        ? tr('runtimeThemeConfigurationApplied')
+        : tr('runtimeActivationNeedsAttention');
     attention.value = result.activation !== "applied";
     await load();
   } catch (error) {
@@ -1169,7 +1197,7 @@ const canLeave = async () =>
   !busy.value &&
   !initializing.value &&
   ((!dirty.value && !(reviewing.value && reason.value)) ||
-    (await confirmDiscard(t('admin:theme.discardUnsavedThemeChanges'))));
+    (await confirmDiscard(tr('discardUnsavedThemeChanges'))));
 function beforeUnload(event: BeforeUnloadEvent) {
   if (
     busy.value ||
@@ -1189,6 +1217,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   disposed = true;
+  draftBarObserver?.disconnect();
   sequence++;
   codePreviewController.abort();
   window.removeEventListener("beforeunload", beforeUnload);

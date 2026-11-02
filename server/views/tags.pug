@@ -2,4 +2,9 @@ extends master.pug
 
 block body
   #root
-    tags
+    tags(
+      sidebar=Buffer.from(JSON.stringify(sidebar)).toString('base64')
+      shell-locale=locale
+      nav-mode=config.nav.mode
+      :nav-expand-parent=config.nav.expandParent !== false ? 'true' : 'false'
+    )

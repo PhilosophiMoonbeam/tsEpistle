@@ -101,12 +101,22 @@ describe('frontend theme helpers', () => {
   test('derives palette variations for every configurable semantic color', () => {
     const colors = cloneThemeColors(DEFAULT_THEME_COLORS)
     Object.assign(colors.light, {
-      primary: '#416B91', secondary: '#775A8A', accent: '#846647', info: '#357B75',
-      success: '#587B45', warning: '#8A702B', error: '#8B4C5F'
+      primary: '#416B91',
+      secondary: '#775A8A',
+      accent: '#846647',
+      info: '#357B75',
+      success: '#587B45',
+      warning: '#8A702B',
+      error: '#8B4C5F'
     })
     Object.assign(colors.dark, {
-      primary: '#83A7C9', secondary: '#B29BC5', accent: '#C3A486', info: '#86BFB8',
-      success: '#A0C48B', warning: '#C8B36A', error: '#C78F9F'
+      primary: '#83A7C9',
+      secondary: '#B29BC5',
+      accent: '#C3A486',
+      info: '#86BFB8',
+      success: '#A0C48B',
+      warning: '#C8B36A',
+      error: '#C78F9F'
     })
     const changed = { light: { ...colors.dark }, dark: { ...colors.light } }
     const previousSiteConfig = Object.getOwnPropertyDescriptor(globalThis, 'siteConfig')
@@ -114,13 +124,15 @@ describe('frontend theme helpers', () => {
     let updatedCleanup: (() => void) | undefined
     try {
       Object.defineProperty(globalThis, 'siteConfig', {
-        configurable: true, value: { lang: 'en', rtl: false, darkMode: false, themeColors: colors }
+        configurable: true,
+        value: { lang: 'en', rtl: false, darkMode: false, themeColors: colors }
       })
       const initialInstance = createAppVuetify()
       initialCleanup = initialInstance.unmount
       const initial = initialInstance.theme.computedThemes.value
       Object.defineProperty(globalThis, 'siteConfig', {
-        configurable: true, value: { lang: 'en', rtl: false, darkMode: false, themeColors: changed }
+        configurable: true,
+        value: { lang: 'en', rtl: false, darkMode: false, themeColors: changed }
       })
       const updatedInstance = createAppVuetify()
       updatedCleanup = updatedInstance.unmount
@@ -130,7 +142,10 @@ describe('frontend theme helpers', () => {
         for (const role of ['primary', 'secondary', 'accent', 'info', 'success', 'warning', 'error'] as const) {
           expect(initial[mode].colors[role]).toBe(colors[mode][role])
           expect(updated[mode].colors[role]).toBe(changed[mode][role])
-          for (const [runtime, palette] of [[initial[mode].colors, colors[mode]], [updated[mode].colors, changed[mode]]] as const) {
+          for (const [runtime, palette] of [
+            [initial[mode].colors, colors[mode]],
+            [updated[mode].colors, changed[mode]]
+          ] as const) {
             expect(luminanceForTest(runtime[`${role}-lighten-1`])).toBeGreaterThan(luminanceForTest(palette[role]))
             expect(luminanceForTest(runtime[`${role}-darken-1`])).toBeLessThan(luminanceForTest(palette[role]))
           }
@@ -146,7 +161,7 @@ describe('frontend theme helpers', () => {
     }
   })
 
-  test('derives WCAG-readable disabled primary ink for raised and sunken composites in both modes', () => {
+  test('derives WCAG-readable disabled primary ink for the actual sunken role in both modes', () => {
     const colors = cloneThemeColors(DEFAULT_THEME_COLORS)
     colors.light.primary = '#E7B34A'
     colors.dark.primary = '#ABCDEF'
@@ -154,15 +169,8 @@ describe('frontend theme helpers', () => {
     const themes = createWikiThemes(colors)
     for (const mode of ['light', 'dark'] as const) {
       const themeColors = themes[mode].colors! as Record<string, string>
-      const surfaceRaised = mixHexForTest(themeColors.surface, themeColors['surface-bright'], 0.06)
-      const raisedComposite = mixHexForTest(surfaceRaised, themeColors.primary, 0.8)
-      const sunkenSurface = mixHexForTest(themeColors.background, themeColors.surface, 0.28)
-      const sunkenComposite = mixHexForTest(sunkenSurface, themeColors.primary, 0.8)
-      const raisedInk = themeColors['on-primary-disabled-raised']
-      const sunkenInk = themeColors['on-primary-disabled-sunken']
-
-      expect(contrastForTest(raisedInk, raisedComposite)).toBeGreaterThanOrEqual(4.5)
-      expect(contrastForTest(sunkenInk, sunkenComposite)).toBeGreaterThanOrEqual(4.5)
+      const sunkenComposite = mixHexForTest(themeColors['surface-sunken'], themeColors.primary, 0.8)
+      expect(contrastForTest(themeColors['on-primary-disabled-sunken'], sunkenComposite)).toBeGreaterThanOrEqual(4.5)
     }
   })
 
@@ -176,20 +184,35 @@ describe('frontend theme helpers', () => {
     const themes = createWikiThemes(colors)
     for (const mode of ['light', 'dark'] as const) {
       const themeColors = themes[mode].colors! as Record<string, string>
-      const surfaceRaised = mixHexForTest(themeColors.surface, themeColors['surface-bright'], 0.06)
-      // These seven purpose tokens are consumed independently in base.scss.
+      const backings = ['surface', 'material-top', 'material-bottom', 'surface-sunken', 'glass-bottom']
+      // Native gradient interiors and their configured palettes are covered by materials.e2e.ts.
       for (const purpose of ['primary', 'secondary', 'success', 'info', 'warning', 'error', 'neutral']) {
         const ink = themeColors[`purpose-${purpose}-ink`]
         const fill = themeColors[`purpose-${purpose}-fill`]
 
         expect(ink).toMatch(/^#[0-9A-F]{6}$/)
         expect(fill).toMatch(/^#[0-9A-F]{6}$/)
-        expect(contrastForTest(ink, themeColors.surface)).toBeGreaterThanOrEqual(4.5)
-        expect(contrastForTest(ink, surfaceRaised)).toBeGreaterThanOrEqual(4.5)
+        for (const backing of backings) expect(contrastForTest(ink, themeColors[backing])).toBeGreaterThanOrEqual(4.5)
         expect(contrastForTest(ink, fill)).toBeGreaterThanOrEqual(4.5)
       }
 
       expect(themeColors['purpose-neutral-ink']).toBe(mode === 'light' ? '#000000' : '#FFFFFF')
+    }
+  })
+
+  test('keeps actionable commitment labels readable across custom primary gradient backings', () => {
+    for (const primary of ['#F8DC98', '#244264', '#808080']) {
+      const colors = cloneThemeColors(DEFAULT_THEME_COLORS)
+      colors.light.primary = primary
+      colors.dark.primary = primary
+      const themes = createWikiThemes(colors)
+      for (const mode of ['light', 'dark'] as const) {
+        const runtime = themes[mode].colors! as Record<string, string>
+        for (const amount of [0, 0.25, 0.5, 0.75, 1]) {
+          const backing = mixHexForTest(primary, runtime['commitment-end'], amount)
+          expect(contrastForTest(runtime['commitment-ink'], backing)).toBeGreaterThanOrEqual(4.5)
+        }
+      }
     }
   })
 

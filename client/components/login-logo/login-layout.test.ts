@@ -522,6 +522,8 @@ const createLoginHarness = (
       username: ''
     }),
     methods: {
+      retireAuthForm: (Login as Vue.ComponentOptions).methods!.retireAuthForm,
+      focusAuthForm: (Login as Vue.ComponentOptions).methods!.focusAuthForm,
       cancelContinuation: () => undefined,
       forgotPassword: () => undefined
     },
@@ -653,7 +655,6 @@ describe('login personalized static-logo integration', () => {
     ])
     expect(providerList?.textContent).toContain('mdi-login')
   })
-
 
   it('accepts only a valid descriptor bound to the current site logo', () => {
     const staleEffect: LogoEffectDescriptor = {

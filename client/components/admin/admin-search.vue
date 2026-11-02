@@ -1,32 +1,35 @@
 <template>
-  <v-container class="admin-search" fluid>
-    <AdminHero :title="$t('admin:search.search')" :description="$t('admin:search.tuneDiscoveryReadersAgents')" :eyebrow="$t('admin:search.intelligenceConnections')" icon="mdi-text-search-variant">
-      <template #status><v-chip size="small" variant="tonal" :color="dirty ? 'warning' : undefined">{{ enginesLoading ? $t('admin:search.loadingConfiguration') : enginesLoadError ? $t('admin:search.configurationUnavailable') : dirty ? $t('admin:search.unsavedChanges') : $t('admin:search.configurationUpDate') }}</v-chip></template>
-      <template #actions><v-btn :aria-disabled="dirty || undefined" variant="text" prepend-icon="mdi-refresh" :loading="enginesLoading" :disabled="saving || rebuilding" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ dirty ? $t('admin:search.saveResetSearchChanges') : $t('admin:search.reloadSavedSearchConfiguration') }}</v-tooltip></v-btn></template>
+  <v-container class="admin-search" :class="{ 'has-admin-draft-bar': dockVisible }" :style="{ '--admin-draft-bar-height': `${dockHeight}px` }" fluid @focusin="revealFocusedField">
+    <AdminHero :title="tr('search')" :description="tr('tuneDiscoveryReadersAgents')" :eyebrow="tr('intelligenceConnections')" icon="mdi-text-search-variant">
+      <template #status><v-chip size="small" variant="tonal" :color="dirty ? 'warning' : undefined">{{ enginesLoading ? tr('loadingConfiguration') : enginesLoadError ? tr('configurationUnavailable') : dirty ? tr('unsavedChanges') : tr('configurationUpDate') }}</v-chip></template>
+      <template #actions>
+        <v-btn :aria-disabled="dirty || undefined" variant="text" prepend-icon="mdi-refresh" :loading="enginesLoading" :disabled="saving || rebuilding" @click="refresh">{{ $t('admin:shell.reload') }}<v-tooltip activator="parent" location="bottom">{{ dirty ? tr('saveResetSearchChanges') : tr('reloadSavedSearchConfiguration') }}</v-tooltip></v-btn>
+        <v-btn variant="tonal" prepend-icon="mdi-check" :data-commitment="canSave ? 'active' : undefined" :disabled="!canSave" @click="review">{{ tr('reviewChanges') }}</v-btn>
+      </template>
     </AdminHero>
-    <v-tabs v-model="tab" class="search-tabs" color="primary" show-arrows :aria-label="$t('admin:search.searchAdministrationSections')">
-      <v-tab id="search-tab-configure" aria-controls="search-panel-configure" value="configure" prepend-icon="mdi-tune-variant">{{ $t('admin:search.configuration') }}</v-tab>
-      <v-tab id="search-tab-evaluate" aria-controls="search-panel-evaluate" value="evaluate" prepend-icon="mdi-text-box-search-outline">{{ $t('admin:search.evaluateQueries') }}</v-tab>
-      <v-tab id="search-tab-index" aria-controls="search-panel-index" value="index" prepend-icon="mdi-database-sync-outline">{{ $t('admin:search.indexMaintenance') }}</v-tab>
+    <v-tabs v-model="tab" class="search-tabs" color="primary" show-arrows :aria-label="tr('searchAdministrationSections')">
+      <v-tab id="search-tab-configure" aria-controls="search-panel-configure" value="configure" prepend-icon="mdi-tune-variant">{{ tr('configuration') }}</v-tab>
+      <v-tab id="search-tab-evaluate" aria-controls="search-panel-evaluate" value="evaluate" prepend-icon="mdi-text-box-search-outline">{{ tr('evaluateQueries') }}</v-tab>
+      <v-tab id="search-tab-index" aria-controls="search-panel-index" value="index" prepend-icon="mdi-database-sync-outline">{{ tr('indexMaintenance') }}</v-tab>
     </v-tabs>
-    <v-alert v-if="enginesLoadError" type="error" variant="tonal" class="mb-5">{{ $t('admin:search.searchConfigurationCouldNot') }}<template #append><v-btn variant="text" @click="retryLoad">{{ $t('admin:search.retry') }}</v-btn></template></v-alert>
+    <v-alert v-if="enginesLoadError" type="error" variant="tonal" class="mb-5">{{ tr('searchConfigurationCouldNot') }}<template #append><v-btn variant="text" @click="retryLoad">{{ tr('retry') }}</v-btn></template></v-alert>
     <v-alert v-if="operationError" type="error" variant="tonal" class="mb-5" closable @click:close="operationError = ''">{{ operationError }}</v-alert>
     <v-window v-model="tab">
       <v-window-item id="search-panel-configure" role="tabpanel" aria-labelledby="search-tab-configure" value="configure">
         <v-skeleton-loader v-if="enginesLoading" type="article, article" />
         <div v-else-if="enginesLoaded" class="search-configuration">
           <section class="search-panel" aria-labelledby="search-engine-title">
-            <header><div class="search-kicker">{{ $t('admin:search.retrievalFoundation') }}</div><h2 id="search-engine-title">{{ $t('admin:search.searchEngine2') }}</h2><p>{{ $t('admin:search.savedEngineServesReader') }}</p></header>
-            <v-radio-group :model-value="selectedEngine" @update:model-value="$event !== null && (selectedEngine = $event)" :label="$t('admin:search.chooseEngine')" :disabled="saving || rebuilding">
+            <header><div class="search-kicker">{{ tr('retrievalFoundation') }}</div><h2 id="search-engine-title">{{ tr('searchEngine2') }}</h2><p>{{ tr('savedEngineServesReader') }}</p></header>
+            <v-radio-group :model-value="selectedEngine" @update:model-value="$event !== null && (selectedEngine = $event)" :label="tr('chooseEngine')" :disabled="saving || rebuilding">
               <v-radio v-for="eng in engines" :key="eng.key" :value="eng.key" :disabled="saving || rebuilding || !eng.isAvailable" class="engine-choice">
-                <template #label><span><strong>{{ eng.title }}</strong><small>{{ eng.description }}{{ !eng.isAvailable ? ` ${$t('admin:search.unavailableDeployment')}` : '' }}</small><v-chip v-if="eng.isEnabled" size="x-small" variant="tonal" class="mt-1">{{ $t('admin:search.savedEngine') }}</v-chip></span></template>
+                <template #label><span><strong>{{ eng.title }}</strong><small>{{ eng.description }}{{ !eng.isAvailable ? ` ${tr('unavailableDeployment')}` : '' }}</small><v-chip v-if="eng.isEnabled" size="x-small" variant="tonal" class="mt-1">{{ tr('savedEngine') }}</v-chip></span></template>
               </v-radio>
             </v-radio-group>
-            <p v-if="!engines.length">{{ $t('admin:search.noSearchEnginesInstalled') }}</p>
+            <p v-if="!engines.length">{{ tr('noSearchEnginesInstalled') }}</p>
             <div v-if="engine.key" class="engine-settings">
-              <h3>{{ $t('admin:search.retrievalSettings') }}</h3>
-              <p v-if="engine.key === 'postgres'">{{ $t('admin:search.dictionaryControlsStemmingStop') }}</p>
-              <p v-if="!engine.config.length">{{ $t('admin:search.engineNeedsNoAdditional') }}</p>
+              <h3>{{ tr('retrievalSettings') }}</h3>
+              <p v-if="engine.key === 'postgres'">{{ tr('dictionaryControlsStemmingStop') }}</p>
+              <p v-if="!engine.config.length">{{ tr('engineNeedsNoAdditional') }}</p>
               <div v-for="cfg in engine.config" :key="cfg.key" class="engine-setting">
                 <v-select v-if="cfg.value.type === 'string' && cfg.value.enum" :model-value="String(cfg.value.value ?? '')" @update:model-value="cfg.value.value = $event" :items="cfg.value.enum" :label="cfg.value.title" :hint="cfg.value.hint || ''" persistent-hint :disabled="saving || rebuilding" />
                 <v-switch v-else-if="cfg.value.type === 'boolean'" v-model="cfg.value.value" :label="cfg.value.title" :hint="cfg.value.hint || ''" persistent-hint color="primary" inset :disabled="saving || rebuilding" />
@@ -36,37 +39,58 @@
             </div>
           </section>
           <aside class="search-principles">
-            <div class="search-kicker">{{ $t('admin:search.questionSource') }}</div><h2>{{ $t('admin:search.howDiscoveryWorks') }}</h2>
-            <ol><li><strong>{{ $t('admin:search.matchLanguage') }}</strong><p>{{ $t('admin:search.textSpellingMatchesHelp') }}</p></li><li><strong>{{ $t('admin:search.followConnections') }}</strong><p>{{ $t('admin:search.postgresqlEngineAlsoUses') }}</p></li><li><strong>{{ $t('admin:search.respectAccess') }}</strong><p>{{ $t('admin:search.searchResultsFilteredCurrent') }}</p></li></ol>
-            <v-btn variant="tonal" append-icon="mdi-arrow-right" @click="tab = 'evaluate'">{{ $t('admin:search.evaluateQuery') }}</v-btn>
+            <div class="search-kicker">{{ tr('questionSource') }}</div><h2>{{ tr('howDiscoveryWorks') }}</h2>
+            <ol><li><strong>{{ tr('matchLanguage') }}</strong><p>{{ tr('textSpellingMatchesHelp') }}</p></li><li><strong>{{ tr('followConnections') }}</strong><p>{{ tr('postgresqlEngineAlsoUses') }}</p></li><li><strong>{{ tr('respectAccess') }}</strong><p>{{ tr('searchResultsFilteredCurrent') }}</p></li></ol>
+            <v-btn variant="tonal" append-icon="mdi-arrow-right" @click="tab = 'evaluate'">{{ tr('evaluateQuery') }}</v-btn>
           </aside>
         </div>
       </v-window-item>
-      <v-window-item id="search-panel-evaluate" role="tabpanel" aria-labelledby="search-tab-evaluate" value="evaluate"><v-alert v-if="dirty" type="info" variant="tonal" class="mb-5">{{ $t('admin:search.theseResultsUseSaved') }}</v-alert><AdminSearchEvaluate ref="searchEvaluate" /></v-window-item>
+      <v-window-item id="search-panel-evaluate" role="tabpanel" aria-labelledby="search-tab-evaluate" value="evaluate"><v-alert v-if="dirty" type="info" variant="tonal" class="mb-5">{{ tr('theseResultsUseSaved') }}</v-alert><AdminSearchEvaluate ref="searchEvaluate" /></v-window-item>
       <v-window-item id="search-panel-index" role="tabpanel" aria-labelledby="search-tab-index" value="index">
         <section class="search-panel search-index" aria-labelledby="search-index-title">
-          <header class="index-heading"><div><div class="search-kicker">{{ $t('admin:search.maintenanceEvidence') }}</div><h2 id="search-index-title">{{ $t('admin:search.indexCoverage') }}</h2><p>{{ $t('admin:search.inspectSavedEnginesDerived') }}</p></div><v-btn variant="tonal" prepend-icon="mdi-database-search-outline" :loading="inspecting" :disabled="saving || rebuilding || inspecting || enginesLoading || !enginesLoaded" @click="inspect">{{ $t('admin:search.inspectIndex') }}</v-btn></header>
+          <header class="index-heading"><div><div class="search-kicker">{{ tr('maintenanceEvidence') }}</div><h2 id="search-index-title">{{ tr('indexCoverage') }}</h2><p>{{ tr('inspectSavedEnginesDerived') }}</p></div><v-btn variant="tonal" prepend-icon="mdi-database-search-outline" :loading="inspecting" :disabled="saving || rebuilding || inspecting || enginesLoading || !enginesLoaded" @click="inspect">{{ tr('inspectIndex') }}</v-btn></header>
           <v-alert v-if="inspectionError" type="error" variant="tonal">{{ inspectionError }}</v-alert>
           <v-skeleton-loader v-if="inspecting && !inspection" type="list-item-three-line" />
           <template v-if="inspection">
-            <div class="index-verdict"><v-icon :color="indexAligned ? 'success' : 'warning'">{{ indexAligned ? 'mdi-check-circle-outline' : 'mdi-alert-circle-outline' }}</v-icon><div><strong>{{ indexAligned ? $t('admin:search.sourceRevisionsDictionaryAlign') : $t('admin:search.indexMaintenanceNeeded') }}</strong><p>{{ $t('admin:search.observed', { checkedAt: formatDate(inspection.checkedAt), inspectedEngine, interpolation: { escapeValue: false } }) }}</p></div></div>
-            <dl class="index-metrics"><div><dt>{{ $t('admin:search.publishedPublicPages') }}</dt><dd>{{ inspection.publicPages.toLocaleString() }}</dd></div><div><dt>{{ $t('admin:search.indexedEntries') }}</dt><dd>{{ inspection.indexedPages.toLocaleString() }}</dd></div><div><dt>{{ $t('admin:search.missingPages') }}</dt><dd>{{ inspection.missingPages.toLocaleString() }}</dd></div><div><dt>{{ $t('admin:search.staleRevisions') }}</dt><dd>{{ inspection.stalePages.toLocaleString() }}</dd></div><div><dt>{{ $t('admin:search.entriesRemove') }}</dt><dd>{{ inspection.excludedEntries.toLocaleString() }}</dd></div></dl>
-            <p class="index-note">{{ $t('admin:search.configuredDictionary') }} <strong>{{ inspection.configuredDictionary }}</strong> {{ $t('admin:search.indexedDictionary') }} <strong>{{ inspection.indexedDictionary || $t('admin:search.notRecorded') }}</strong>{{ $t('admin:search.snapshotChecksCoverageMetadata') }}</p>
+            <div class="index-verdict"><v-icon :color="indexAligned ? 'success' : 'warning'">{{ indexAligned ? 'mdi-check-circle-outline' : 'mdi-alert-circle-outline' }}</v-icon><div><strong>{{ indexAligned ? tr('sourceRevisionsDictionaryAlign') : tr('indexMaintenanceNeeded') }}</strong><p>{{ tr('observed', { checkedAt: formatDate(inspection.checkedAt), inspectedEngine, interpolation: { escapeValue: false } }) }}</p></div></div>
+            <dl class="index-metrics"><div><dt>{{ tr('publishedPublicPages') }}</dt><dd>{{ inspection.publicPages.toLocaleString() }}</dd></div><div><dt>{{ tr('indexedEntries') }}</dt><dd>{{ inspection.indexedPages.toLocaleString() }}</dd></div><div><dt>{{ tr('missingPages') }}</dt><dd>{{ inspection.missingPages.toLocaleString() }}</dd></div><div><dt>{{ tr('staleRevisions') }}</dt><dd>{{ inspection.stalePages.toLocaleString() }}</dd></div><div><dt>{{ tr('entriesRemove') }}</dt><dd>{{ inspection.excludedEntries.toLocaleString() }}</dd></div></dl>
+            <p class="index-note">{{ tr('configuredDictionary') }} <strong>{{ inspection.configuredDictionary }}</strong> {{ tr('indexedDictionary') }} <strong>{{ inspection.indexedDictionary || tr('notRecorded') }}</strong>{{ tr('snapshotChecksCoverageMetadata') }}</p>
           </template>
-          <p v-else-if="!inspecting && !inspectionError" class="index-empty">{{ inspectionUnsupported ? $t('admin:search.activeEngineDoesNot') : $t('admin:search.runInspectionSeeCurrent') }}</p>
-          <div class="index-rebuild"><div><h3>{{ $t('admin:search.rebuildDerivedSearchData') }}</h3><p>{{ $t('admin:search.useAfterConfigurationChange') }}</p><p class="index-note">{{ $t('admin:search.privatePagesOutsidePublic') }}</p></div><v-btn variant="outlined" color="primary" prepend-icon="mdi-cached" :loading="rebuilding" :disabled="saving || enginesLoading || dirty || !enginesLoaded" @click="rebuildConfirm = true">{{ $t('admin:search.rebuildIndex2') }}</v-btn></div>
+          <p v-else-if="!inspecting && !inspectionError" class="index-empty">{{ inspectionUnsupported ? tr('activeEngineDoesNot') : tr('runInspectionSeeCurrent') }}</p>
+          <div class="index-rebuild"><div><h3>{{ tr('rebuildDerivedSearchData') }}</h3><p>{{ tr('useAfterConfigurationChange') }}</p><p class="index-note">{{ tr('privatePagesOutsidePublic') }}</p></div><v-btn variant="outlined" color="primary" prepend-icon="mdi-cached" :loading="rebuilding" :disabled="saving || enginesLoading || dirty || !enginesLoaded" @click="rebuildConfirm = true">{{ tr('rebuildIndex2') }}</v-btn></div>
           <v-alert v-if="rebuildMessage" type="info" variant="tonal" class="mt-4" role="status">{{ rebuildMessage }}</v-alert>
-          <p v-if="dirty" class="index-note">{{ $t('admin:search.saveResetConfigurationChanges') }}</p>
+          <p v-if="dirty" class="index-note">{{ tr('saveResetConfigurationChanges') }}</p>
         </section>
       </v-window-item>
     </v-window>
-        <div v-if="enginesLoaded && (tab === 'configure' || dirty || saving)" class="search-savebar" role="status">
-          <span>{{ saving ? $t('admin:search.savingActivatingEngine') : dirty ? $t('admin:search.changesNotActiveYet') : $t('admin:search.configurationMatchesLastLoad') }}</span>
-          <div><v-btn variant="text" prepend-icon="mdi-restore" :disabled="!dirty || saving || rebuilding" @click="resetDraft">{{ $t('admin:search.resetChanges') }}</v-btn><v-btn color="primary" prepend-icon="mdi-check" :disabled="!canSave" :loading="saving" @click="save">{{ $t('admin:search.saveConfiguration') }}</v-btn></div>
-        </div>
+    <Transition name="search-dock">
+      <div v-if="dockVisible" ref="savebar" class="search-savebar">
+        <span role="status" aria-live="polite">{{ saving ? tr('savingActivatingEngine') : tr('changesNotActiveYet') }}</span>
+        <div><v-btn variant="text" prepend-icon="mdi-restore" :disabled="!dirty || saving || rebuilding" @click="resetDraft">{{ tr('resetChanges') }}</v-btn><v-btn variant="tonal" prepend-icon="mdi-check" :data-commitment="canSave ? 'active' : undefined" :disabled="!canSave" :loading="saving" @click="review">{{ tr('reviewChanges') }}</v-btn></div>
+      </div>
+    </Transition>
 
-    <v-dialog v-model="rebuildConfirm" max-width="32rem" :persistent="rebuilding" aria-labelledby="rebuild-confirm-title"><v-card><v-card-title id="rebuild-confirm-title">{{ $t('admin:search.rebuildSearchIndex') }}</v-card-title><v-card-text>{{ $t('admin:search.rebuildsSavedEnginesDerived') }}</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="rebuilding" @click="rebuildConfirm = false">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="primary" :loading="rebuilding" :disabled="saving || enginesLoading" @click="rebuild">{{ $t('admin:search.rebuildIndex2') }}</v-btn></v-card-actions></v-card></v-dialog>
-    <v-dialog :model-value="Boolean(leaveResolve)" persistent max-width="30rem" aria-labelledby="search-discard-title"><v-card><v-card-title id="search-discard-title">{{ $t('admin:search.discardSearchChanges') }}</v-card-title><v-card-text>{{ $t('admin:search.configurationEditsHaveNot') }}</v-card-text><v-card-actions><v-spacer /><v-btn @click="finishLeave(false)">{{ $t('admin:search.keepEditing') }}</v-btn><v-btn color="warning" @click="finishLeave(true)">{{ $t('admin:search.discardChanges') }}</v-btn></v-card-actions></v-card></v-dialog>
+    <v-dialog v-model="reviewOpen" max-width="42rem" :persistent="saving" aria-labelledby="search-review-title" @after-leave="restoreReviewFocus">
+      <v-card v-if="reviewDraft">
+        <v-card-title id="search-review-title">{{ tr('reviewChanges') }}</v-card-title>
+        <v-card-text>
+          <p>{{ tr('reviewHelp') }}</p>
+          <dl class="search-review-list wiki-surface-well">
+            <template v-for="change in reviewChanges" :key="change.key">
+              <dt>{{ change.label }}</dt><dd><del>{{ change.before }}</del><strong>{{ change.after }}</strong></dd>
+            </template>
+          </dl>
+          <v-alert v-if="operationError" type="error" variant="tonal" class="mt-4">{{ operationError }}</v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-btn :disabled="saving" @click="reviewOpen = false">{{ tr('backToDraft') }}</v-btn><v-spacer />
+          <v-btn variant="tonal" :data-commitment="canSave ? 'active' : undefined" :disabled="!canSave" :loading="saving" @click="save">{{ tr('saveConfiguration') }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="rebuildConfirm" max-width="32rem" :persistent="rebuilding" aria-labelledby="rebuild-confirm-title"><v-card><v-card-title id="rebuild-confirm-title">{{ tr('rebuildSearchIndex') }}</v-card-title><v-card-text>{{ tr('rebuildsSavedEnginesDerived') }}</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="rebuilding" @click="rebuildConfirm = false">{{ $t('common:actions.cancel') }}</v-btn><v-btn color="primary" :loading="rebuilding" :disabled="saving || enginesLoading" @click="rebuild">{{ tr('rebuildIndex2') }}</v-btn></v-card-actions></v-card></v-dialog>
+    <v-dialog :model-value="Boolean(leaveResolve)" persistent max-width="30rem" aria-labelledby="search-discard-title"><v-card><v-card-title id="search-discard-title">{{ tr('discardSearchChanges') }}</v-card-title><v-card-text>{{ tr('configurationEditsHaveNot') }}</v-card-text><v-card-actions><v-spacer /><v-btn @click="finishLeave(false)">{{ tr('keepEditing') }}</v-btn><v-btn color="warning" @click="finishLeave(true)">{{ tr('discardChanges') }}</v-btn></v-card-actions></v-card></v-dialog>
   </v-container>
 </template>
 
@@ -78,6 +102,7 @@ import type { SearchIndexInspection } from '../../../shared/search-admin.ts'
 
 import { fetchSearchEngines, rebuildSearchIndex, saveSearchEngines, type SearchEngine } from '../../helpers/search-api'
 import { getErrorMessage, loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
+import { useTranslate } from '../../helpers/use-translate.ts'
 
 const createAbortableFetch = (signal: AbortSignal) => (
   url: string,
@@ -97,11 +122,19 @@ const createEmptySearchEngine = (): SearchEngine => ({
 
 export default {
   components: { AdminSearchEvaluate },
+  setup() {
+    return { tr: useTranslate('admin:search') }
+  },
   data() {
     return {
       engines: [] as SearchEngine[],
       savedEngines: [] as SearchEngine[],
       baseline: '',
+      reviewOpen: false,
+      reviewDraft: null as { engines: SearchEngine[]; selectedEngine: string } | null,
+      reviewChanges: [] as { key: string; label: string; before: string; after: string }[],
+      dockHeight: 80,
+      dockObserver: null as ResizeObserver | null,
       tab: 'configure',
       operationError: '',
       inspecting: false,
@@ -127,6 +160,7 @@ export default {
   },
   computed: {
     dirty(): boolean { return this.enginesLoaded && this.fingerprint() !== this.baseline },
+    dockVisible(): boolean { return this.dirty || this.saving },
     indexAligned(): boolean {
       const item = this.inspection
       return Boolean(item && !item.missingPages && !item.stalePages && !item.excludedEntries && item.configuredDictionary === item.indexedDictionary && item.schemaVersion === item.expectedSchemaVersion)
@@ -147,19 +181,89 @@ export default {
     if (['configure', 'evaluate', 'index'].includes(section)) this.tab = section
     this.loadEngines().catch(() => {})
   },
-  watch: { tab(value: string) { const url = new URL(window.location.href); url.hash = value === 'configure' ? '' : value; window.history.replaceState(window.history.state, '', url) } },
-  mounted() { window.addEventListener('beforeunload', this.warnBeforeUnload) },
+  watch: {
+    tab(value: string) { const url = new URL(window.location.href); url.hash = value === 'configure' ? '' : value; window.history.replaceState(window.history.state, '', url) },
+    dockVisible() { void this.$nextTick(this.observeDock) }
+  },
+  mounted() {
+    window.addEventListener('beforeunload', this.warnBeforeUnload)
+    this.observeDock()
+  },
   beforeRouteLeave(): boolean | Promise<boolean> {
     if (!this.dirty) return true
     return new Promise(resolve => { this.leaveResolve = resolve })
   },
   methods: {
+    focusStableControl() {
+      const control = document.getElementById(`search-tab-${this.tab}`)
+      control?.focus({ preventScroll: true })
+    },
+    restoreReviewFocus() {
+      if (this.reviewOpen) return
+      if (!this.dockVisible) this.focusStableControl()
+      if (!this.saving) this.reviewDraft = null
+    },
+    observeDock() {
+      this.dockObserver?.disconnect()
+      const dock = this.$refs.savebar as HTMLElement | undefined
+      if (!dock) return
+      this.dockHeight = dock.getBoundingClientRect().height
+      if (typeof ResizeObserver === 'undefined') return
+      this.dockObserver = new ResizeObserver(() => {
+        this.dockHeight = dock.getBoundingClientRect().height
+        this.revealFocusedField()
+      })
+      this.dockObserver.observe(dock)
+      this.revealFocusedField()
+    },
+    revealFocusedField() {
+      const focused = document.activeElement
+      const dock = this.$refs.savebar as HTMLElement | undefined
+      if (!(focused instanceof HTMLElement) || !focused.closest('.engine-setting') || !dock) return
+      const field = focused.closest('.engine-setting') as HTMLElement
+      const bounds = field.getBoundingClientRect()
+      const dockBounds = dock.getBoundingClientRect()
+      if (bounds.bottom + 24 > dockBounds.top && bounds.top < dockBounds.bottom) {
+        field.scrollIntoView({ block: 'center', behavior: 'instant' })
+      }
+    },
+    review() {
+      if (!this.canSave) return
+      const engines = JSON.parse(JSON.stringify(this.engines)) as SearchEngine[]
+      const savedSelection = this.savedEngines.find(engine => engine.isEnabled)
+      const selected = engines.find(engine => engine.key === this.selectedEngine)
+      const changes: { key: string; label: string; before: string; after: string }[] = []
+      if (savedSelection?.key !== selected?.key) changes.push({
+        key: 'engine', label: this.tr('searchEngine2'),
+        before: savedSelection?.title || this.tr('notRecorded'),
+        after: selected?.title || this.tr('notRecorded')
+      })
+      for (const engine of engines) {
+        const saved = this.savedEngines.find(row => row.key === engine.key)
+        for (const cfg of engine.config) {
+          const previous = saved?.config.find(row => row.key === cfg.key)
+          if (JSON.stringify(previous?.value.value) === JSON.stringify(cfg.value.value)) continue
+          // Engine configuration has no authoritative secret classification.
+          // Never place arbitrary configuration values into the review DOM.
+          changes.push({
+            key: `${engine.key}:${cfg.key}`, label: `${engine.title} — ${cfg.value.title || cfg.key}`,
+            before: this.tr('savedValueHidden'),
+            after: this.tr('changedValueHidden')
+          })
+        }
+      }
+      this.reviewDraft = { engines, selectedEngine: this.selectedEngine }
+      this.reviewChanges = changes
+      this.operationError = ''
+      this.reviewOpen = true
+    },
     finishLeave(leave: boolean) { const resolve = this.leaveResolve; this.leaveResolve = null; resolve?.(leave) },
     warnBeforeUnload(event: BeforeUnloadEvent) { if (this.dirty) { event.preventDefault(); event.returnValue = '' } },
     formatDate(value: string): string { return new Date(value).toLocaleString() },
     fingerprint(selection?: string): string { return JSON.stringify(this.engines.map(engine => ({ key: engine.key, isEnabled: engine.key === (selection ?? this.selectedEngine), config: engine.config.map(cfg => ({ key: cfg.key, value: cfg.value.value })) }))) },
     resetDraft() {
       if (this.saving || this.rebuilding) return
+      if ((this.$refs.savebar as HTMLElement | undefined)?.contains(document.activeElement)) this.focusStableControl()
       this.engines = JSON.parse(JSON.stringify(this.savedEngines)) as SearchEngine[]
       this.selectedEngine = this.engines.find(engine => engine.isEnabled)?.key || ''
       this.operationError = ''
@@ -177,7 +281,7 @@ export default {
       this.inspecting = true
       this.inspectionError = ''
       try {
-        const status = await inspectSearchIndex(createAbortableFetch(controller.signal), this.$t('admin:search.indexInspectionResponseInvalid'))
+        const status = await inspectSearchIndex(createAbortableFetch(controller.signal), this.tr('indexInspectionResponseInvalid'))
         if (controller.signal.aborted || this.inspectController !== controller || this.isUnmounted) return
         this.inspection = status.inspection
         this.inspectedEngine = status.engine
@@ -207,7 +311,7 @@ export default {
       try {
         const engines = await fetchSearchEngines(
           createAbortableFetch(controller.signal),
-          this.$t('admin:search.searchEnginesResponseInvalid')
+          this.tr('searchEnginesResponseInvalid')
         )
         if (controller.signal.aborted) {
           return false
@@ -257,7 +361,7 @@ export default {
         const loaded = await this.loadEngines()
         if (!loaded) return
         showNotification(wikiStore, {
-          message: this.$t('admin:search.listRefreshSuccess'),
+          message: this.tr('listRefreshSuccess'),
           style: 'success',
           icon: 'cached'
         })
@@ -266,7 +370,8 @@ export default {
       }
     },
     async save() {
-      if (!this.canSave) return
+      const snapshot = this.reviewDraft
+      if (!this.canSave || !this.reviewOpen || !snapshot) return
       this.cancelInspection()
       let saveAccepted = false
       const controller = new AbortController()
@@ -275,8 +380,8 @@ export default {
       this.operationError = ''
       loadingStart(wikiStore, 'admin-search-saveengines')
       try {
-        await saveSearchEngines(createAbortableFetch(controller.signal), this.engines.map(tgt => ({
-          isEnabled: tgt.key === this.selectedEngine,
+        await saveSearchEngines(createAbortableFetch(controller.signal), snapshot.engines.map(tgt => ({
+          isEnabled: tgt.key === snapshot.selectedEngine,
           key: tgt.key,
           config: tgt.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))
         })), this.$t('common:error.unexpected'))
@@ -284,6 +389,7 @@ export default {
           return
         }
         saveAccepted = true
+        this.reviewOpen = false
         this.inspection = null
         this.inspectionUnsupported = false
         const loaded = await this.loadEngines({ notifyError: false })
@@ -291,13 +397,13 @@ export default {
           return
         }
         showNotification(wikiStore, {
-          message: this.$t('admin:search.configSaveSuccess'),
+          message: this.tr('configSaveSuccess'),
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
         if (!controller.signal.aborted) {
-          this.operationError = saveAccepted ? this.$t('admin:search.configurationWasSavedBut', { err: getErrorMessage(err), interpolation: { escapeValue: false } }) : getErrorMessage(err)
+          this.operationError = saveAccepted ? this.tr('configurationWasSavedBut', { err: getErrorMessage(err), interpolation: { escapeValue: false } }) : getErrorMessage(err)
           pushGraphError(wikiStore, err)
         }
       } finally {
@@ -305,6 +411,10 @@ export default {
           this.saveController = null
           if (!this.isUnmounted) {
             this.saving = false
+            if (saveAccepted) {
+              this.reviewDraft = null
+              void this.$nextTick(this.focusStableControl)
+            }
           }
         }
         loadingStop(wikiStore, 'admin-search-saveengines')
@@ -318,7 +428,7 @@ export default {
       this.rebuildController = controller
       this.rebuilding = true
       this.rebuildConfirm = false
-      this.rebuildMessage = this.$t('admin:search.rebuildingSavedEngineWaiting')
+      this.rebuildMessage = this.tr('rebuildingSavedEngineWaiting')
       this.operationError = ''
       loadingStart(wikiStore, 'admin-search-rebuildindex')
       try {
@@ -326,17 +436,17 @@ export default {
         if (controller.signal.aborted) {
           return
         }
-        this.rebuildMessage = this.$t('admin:search.serverConfirmedIndexRebuild')
+        this.rebuildMessage = this.tr('serverConfirmedIndexRebuild')
         this.inspection = null
         this.inspectionUnsupported = false
         showNotification(wikiStore, {
-          message: this.$t('admin:search.indexRebuildSuccess'),
+          message: this.tr('indexRebuildSuccess'),
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
         if (!controller.signal.aborted) {
-          this.rebuildMessage = this.$t('admin:search.requestEndedWithoutCompletion')
+          this.rebuildMessage = this.tr('requestEndedWithoutCompletion')
           this.operationError = getErrorMessage(err)
           pushGraphError(wikiStore, err)
         }
@@ -354,6 +464,7 @@ export default {
   beforeUnmount () {
     this.isUnmounted = true
     window.removeEventListener('beforeunload', this.warnBeforeUnload)
+    this.dockObserver?.disconnect()
     this.finishLeave(false)
     this.inspectController?.abort()
     this.loadController?.abort()
@@ -365,10 +476,10 @@ export default {
 
 <style lang="scss" scoped>
 @use './admin-workspace.scss' as workspace;
-.admin-search { padding-bottom: calc(var(--wiki-footer-height) + 2rem); }
+.admin-search { padding-block-end: calc(var(--wiki-footer-height, 1rem) + 2rem); @include workspace.admin-draft-clearance; }
 .search-tabs { margin-bottom: 1.75rem; border-bottom: 1px solid var(--wiki-surface-border); }
 .search-configuration { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 2rem; align-items: start; }
-.search-panel { border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-panel-radius); padding: clamp(1rem, 2vw, 2rem); background: var(--wiki-surface-raised); }
+.search-panel { border: 1px solid var(--wiki-material-border); border-radius: var(--wiki-panel-radius); padding: clamp(1rem, 2vw, 2rem); background: var(--wiki-surface-gradient); }
 .search-kicker { font-size: .75rem; letter-spacing: .09em; text-transform: uppercase; color: var(--wiki-accent-ink); }
 h2 { font: 500 1.65rem var(--wiki-font-display); margin-block: .5rem .75rem; }
 h3 { font-size: 1rem; margin-bottom: .5rem; }
@@ -387,6 +498,13 @@ p { font-size: .85rem; line-height: 1.7; margin-bottom: 1rem; }
 .search-savebar { @include workspace.admin-draft-bar; }
 .search-savebar > span { font-size: .85rem; }
 .search-savebar > div { display: flex; gap: .5rem; flex-wrap: wrap; }
+.search-dock-enter-active, .search-dock-leave-active { transition: opacity 180ms cubic-bezier(.22, 1, .36, 1), transform 180ms cubic-bezier(.22, 1, .36, 1); }
+.search-dock-enter-from, .search-dock-leave-to { opacity: 0; transform: translateY(.75rem); }
+.search-review-list { padding: 1rem; border-radius: var(--wiki-panel-radius); }
+.search-review-list dt { font-weight: 600; overflow-wrap: anywhere; }
+.search-review-list dd { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin: .25rem 0 1rem; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .search-dock-enter-active, .search-dock-leave-active { transition: none; } }
+@media (max-width: 760px) { .search-savebar { position: static; margin-block: 1rem 0; } }
 .index-heading, .index-rebuild { display: flex; gap: 1.5rem; align-items: start; justify-content: space-between; }
 .index-heading > div, .index-rebuild > div { max-width: 65ch; }
 .index-verdict { display: flex; align-items: start; gap: .8rem; margin-top: 1.5rem; }

@@ -43,6 +43,7 @@ const siteConfig: SiteConfig = {
     sourceUrl: `${packageMetadata.product.sourceRepository}/tree/${'a'.repeat(40)}`
   },
   featurePageRatings: true,
+  publicSocialSharing: false,
   availableEditors: ['markdown'],
   agentsEnabled: false,
   agentProviderEnabled: false,
@@ -200,10 +201,7 @@ describe('post-contribution reply notification consent', () => {
     const owner = { id: 7, email: 'reader@example.test' }
     await knex('users').insert({ id: owner.id, email: owner.email })
     Reflect.set(globalThis, 'WIKI', { models: { knex } })
-    const operations = await vi.importFresh<typeof NotificationPreferenceOperations>(
-      '../../../server/operations/page-watching.ts',
-      import.meta.url
-    )
+    const operations = await vi.importFresh<typeof NotificationPreferenceOperations>('../../../server/operations/page-watching.ts', import.meta.url)
     await operations.updateNotificationPreferences(owner, { preferences: preferences() })
     const snapshotReady = Promise.withResolvers<void>()
     const releaseSnapshot = Promise.withResolvers<void>()

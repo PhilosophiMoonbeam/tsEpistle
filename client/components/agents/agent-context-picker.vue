@@ -1,85 +1,18 @@
 <template>
   <div class="agent-context" :aria-label="$t('common:agentContextPicker.sourcesSearchScope')">
-    <fieldset class="agent-context__scope" :aria-label="$t('common:agentContextPicker.conversationSourceControls')">
-      <v-menu content-class="agent-owned-overlay" location="top start">
-        <template #activator="{ props: menuProps }">
-          <v-tooltip location="top" :text="$t('common:agentContextPicker.searchScopeHelp')">
-            <template #activator="{ props: tooltipProps }">
-              <v-btn v-bind="mergeProps(menuProps, tooltipProps)" class="agent-context__control agent-context__scope-control" :disabled="disabled || connectionBlocked" variant="text" rounded="pill" size="small" prepend-icon="mdi-text-search" append-icon="mdi-chevron-down" :aria-label="$t('common:agentContextPicker.chooseAgentSearchScope')" type="button">{{ scopeLabel }}</v-btn>
-            </template>
-          </v-tooltip>
-        </template>
-        <v-list density="compact" :aria-label="$t('common:agentContextPicker.agentSearchScope')">
-          <v-list-item :title="$t('common:agentContextPicker.allWiki')" :subtitle="$t('common:agentContextPicker.searchEveryPageYou')" prepend-icon="mdi-earth" :active="draft.scope.kind === 'all'" :disabled="disabled || connectionBlocked" @click="setScope({ kind: 'all' })" />
-          <v-list-item v-if="currentPage" :title="$t('common:agentContextPicker.pageTree')" :subtitle="currentPage.path" prepend-icon="mdi-file-tree-outline" :active="draft.scope.kind === 'section'" :disabled="disabled || connectionBlocked" @click="setScope({ kind: 'section', locale: currentPage.locale, path: currentPage.path })" />
-          <v-list-item :title="$t('common:agentContextPicker.selectedPages')" :subtitle="$t(draft.sources.length ? 'common:agentContextPicker.searchWithinSourcesAttached' : 'common:agentContextPicker.attachSourcesFirst')" prepend-icon="mdi-file-multiple-outline" :disabled="disabled || connectionBlocked || !draft.sources.length" :aria-disabled="disabled || connectionBlocked || !draft.sources.length ? 'true' : undefined" :active="draft.scope.kind === 'selected'" @click="setScope({ kind: 'selected' })" />
-        </v-list>
-      </v-menu>
-      <v-btn
-        ref="sourcesActivator"
-        class="agent-context__control agent-context__sources-control"
-        size="small"
-        variant="text"
-        rounded="pill"
-        prepend-icon="mdi-plus"
-        :disabled="disabled || connectionBlocked"
-        type="button"
-        :aria-label="$t('common:agentContextPicker.addSources')"
-        @click="openSources"
-      ><span aria-hidden="true">{{ $t('common:agentContextPicker.sources') }}</span></v-btn>
-    </fieldset>
-    <!-- The current-page hint is separate from the eight committed attachments. -->
-    <v-tooltip v-if="currentPage" location="top" :text="connectionBlocked
-        ? $t('common:agentContext.pageNeedsConnection')
-        : disabled
-          ? $t('common:agentContext.pageBusy')
-          : $t(draft.includeCurrentPage ? 'common:agentContext.pageIncluded' : 'common:agentContext.pageExcluded', { path: `${currentPage.locale}/${currentPage.path}`, interpolation: { escapeValue: false } })">
-      <template #activator="{ props: tooltipProps }">
-        <button
-          v-bind="tooltipProps"
-          type="button"
-          class="agent-context__page-chip"
-          :class="{ 'agent-context__page-chip--excluded': !draft.includeCurrentPage }"
-          :aria-disabled="disabled || connectionBlocked ? 'true' : undefined"
-          :aria-pressed="draft.includeCurrentPage"
-          :aria-label="$t('common:agentContext.includePage', { title: currentPageLabel, interpolation: { escapeValue: false } })"
-          @click="toggleCurrentPage"
-        >
-          <v-icon :icon="draft.includeCurrentPage ? 'mdi-file-check-outline' : 'mdi-file-hidden'" size="15" aria-hidden="true" />
-          <span class="agent-context__page-copy">{{ currentPageLabel }}</span>
-          <span class="agent-context__page-state-label">{{ $t(draft.includeCurrentPage ? 'common:agentContextUi.included' : 'common:agentContextUi.excluded') }}</span>
-          <v-icon
-            class="agent-context__page-state"
-            :icon="draft.includeCurrentPage ? 'mdi-check' : 'mdi-minus'"
-            size="14"
-            aria-hidden="true"
-          />
+    <!-- The navigation hint never consumes one of the eight explicit attachments. -->
+    <section v-if="visibleSources.length" ref="sourceStrip" class="agent-context__sources" :aria-label="$t('common:agentContextPicker.pagesAttachedNextMessage')">
+      <fieldset v-for="source in visibleSources" :key="source.key" class="agent-context__source-group" :aria-label="source.title">
+        <button type="button" class="agent-context__source-preview" :disabled="interactionBlocked" :data-source-key="source.key" :aria-label="$t('common:agentContextPicker.previewAttachedSource', { title: source.title, interpolation: { escapeValue: false } })" @click="openPreview(source.selector)">
+          <v-icon :icon="source.current ? 'mdi-file-check-outline' : 'mdi-file-document-outline'" size="15" aria-hidden="true" />
+          <span class="agent-context__source-label">{{ source.title }}</span>
+          <small v-if="source.current">{{ $t(source.attached ? 'common:agentContextPicker.currentAndAttached' : 'common:agentContextPicker.currentHint') }}</small>
         </button>
-      </template>
-    </v-tooltip>
-    <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: The bounded overflow-y scroll region must remain keyboard-scrollable. -->
-    <section v-if="draft.sources.length" class="agent-context__sources" tabindex="0" :aria-label="$t('common:agentContextPicker.pagesAttachedNextMessage')">
-      <!-- biome-ignore lint/a11y/useSemanticElements: VChip owns Enter/Space activation and contains a separate native close button; a button root would nest buttons. -->
-      <v-chip
-        v-for="source in draft.sources"
-        :key="source.id"
-        size="small"
-        closable
-        role="button"
-        :disabled="disabled || connectionBlocked"
-        :close-label="$t('common:agentContextPicker.removeSource', { title: source.title, interpolation: { escapeValue: false } })"
-        :aria-label="$t('common:agentContextPicker.previewAttachedSource', { title: source.title, interpolation: { escapeValue: false } })"
-        :title="$t('common:agentContextPicker.previewAttachedSource', { title: source.title, interpolation: { escapeValue: false } })"
-        variant="outlined"
-        prepend-icon="mdi-file-document-outline"
-        @click.stop="previewSource(source.id)"
-        @click:close.stop="removeSource(source.id)"
-      >
-        <span class="agent-context__source-label">{{ source.title }}</span>
-        <v-icon class="agent-context__preview-icon" icon="mdi-eye-outline" size="14" aria-hidden="true" />
-      </v-chip>
+        <button type="button" class="agent-context__source-remove" :disabled="interactionBlocked" :aria-label="$t('common:agentContextPicker.removeSource', { title: source.title, interpolation: { escapeValue: false } })" @click="removeVisibleSource(source.key)">
+          <v-icon icon="mdi-close" size="16" aria-hidden="true" />
+        </button>
+      </fieldset>
     </section>
-    <p v-if="draft.sources.length === 8" class="agent-context__limit" role="status">{{ $t('common:agentContextPicker.eightSourcesAttachedRemove') }}</p>
     <WikiSourcePreview v-if="previewSelector" :selector="previewSelector" @close="previewSelector = null" />
 
     <v-dialog
@@ -102,10 +35,11 @@
           <div class="agent-context__dialog-corner">
             <v-btn
               class="agent-context__dialog-confirm"
-              variant="flat"
+              :variant="selectedRows.length && !addingSources && !interactionBlocked ? 'flat' : 'tonal'"
               color="primary"
               :loading="addingSources"
               :disabled="!selectedRows.length || addingSources || disabled || connectionBlocked"
+              :data-commitment="selectedRows.length && !addingSources && !interactionBlocked ? 'active' : undefined"
               type="button"
               @click="addSources"
             >{{ $t('common:actions.apply') }} ({{ selectedRows.length }})</v-btn>
@@ -119,6 +53,20 @@
         </header>
         <v-card-text class="agent-context__dialog-body">
           <p :id="`${sourceDialogId}-description`" class="agent-context__dialog-guidance">{{ $t('common:agentContextPicker.selectUpEightPages') }}</p>
+          <p v-if="draft.sources.length === 8" class="agent-context__limit" role="status">{{ $t('common:agentContextPicker.eightSourcesAttachedRemove') }}</p>
+          <fieldset class="agent-context__scope" :aria-label="$t('common:agentContextPicker.conversationSourceControls')">
+            <v-menu content-class="agent-owned-overlay" location="bottom start">
+              <template #activator="{ props: menuProps }">
+                <v-btn v-bind="menuProps" :disabled="interactionBlocked" variant="text" prepend-icon="mdi-text-search" append-icon="mdi-chevron-down">{{ scopeLabel }}</v-btn>
+              </template>
+              <v-list density="compact" :aria-label="$t('common:agentContextPicker.agentSearchScope')">
+                <v-list-item :title="$t('common:agentContextPicker.allWiki')" :active="draft.scope.kind === 'all'" @click="setScope({ kind: 'all' })" />
+                <v-list-item v-if="currentPage" :title="$t('common:agentContextPicker.pageTree')" :subtitle="currentPage.path" :active="draft.scope.kind === 'section'" @click="setScope({ kind: 'section', locale: currentPage.locale, path: currentPage.path })" />
+                <v-list-item :title="$t('common:agentContextPicker.selectedPages')" :disabled="!draft.sources.length" :aria-disabled="!draft.sources.length ? 'true' : undefined" :active="draft.scope.kind === 'selected'" @click="setScope({ kind: 'selected' })" />
+              </v-list>
+            </v-menu>
+            <v-btn v-if="currentPage" variant="text" :disabled="interactionBlocked" :aria-pressed="draft.includeCurrentPage" :prepend-icon="draft.includeCurrentPage ? 'mdi-file-check-outline' : 'mdi-file-hidden'" @click="toggleCurrentPage">{{ $t('common:agentContext.includePage', { title: currentPageLabel, interpolation: { escapeValue: false } }) }}</v-btn>
+          </fieldset>
           <v-alert v-if="connectionBlocked" class="agent-context__connection-alert" type="warning" variant="tonal" density="compact" role="status">
             <span>{{ $t('common:agentContextPicker.connectionRequiredSearchAttach') }}</span>
             <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :loading="connectionRetrying" :disabled="connectionRetrying" type="button" @click="emit('retry-connection')">{{ $t('common:agentContextPicker.retryConnection') }}</v-btn>
@@ -208,7 +156,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, mergeProps, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import type { AgentDraft, AgentSearchScope } from '../../helpers/agent-draft.ts'
 import { fetchRecentPages, searchPages, type PageSearchResult, type PageSearchRow, type RecentPageRow } from '../../helpers/pages-api.ts'
 import { fetchWikiSource } from '../../helpers/wiki-source.ts'
@@ -231,6 +179,7 @@ const props = defineProps<{
   connectionRetrying?: boolean
   /** Title of the page the Agent opened over; the chip falls back to its path. */
   currentPageTitle?: string
+  sourceTrigger?: HTMLElement | null
 }>()
 const emit = defineEmits<{
   change: [patch: Partial<AgentDraft>]
@@ -252,7 +201,6 @@ const moreError = ref('')
 const attachmentError = ref('')
 const successfulClose = ref(false)
 const sourceSearchInput = ref<{ focus?: () => void; $el?: HTMLElement } | null>(null)
-const sourcesActivator = ref<{ focus?: () => void; $el?: HTMLElement } | HTMLElement | null>(null)
 let sourcesOpener: HTMLElement | null = null
 let restoreExternalOpenerOnApply = false
 let searchTimer: ReturnType<typeof setTimeout> | null = null
@@ -263,6 +211,41 @@ let resolveController: AbortController | null = null
 let requestGeneration = 0
 const interactionBlocked = computed(() => Boolean(props.disabled || props.connectionBlocked))
 const currentPageLabel = computed(() => props.currentPageTitle?.trim() || (props.currentPage ? `${props.currentPage.locale}/${props.currentPage.path}` : ''))
+const sourceStrip = ref<HTMLElement | null>(null)
+const sameCurrentPage = (source: WikiSource): boolean => Boolean(props.currentPage && source.id === props.currentPage.id && source.locale === props.currentPage.locale && source.path === props.currentPage.path)
+const visibleSources = computed(() => {
+  const rows = props.draft.sources.map(source => ({
+    key: `id:${source.id}`, title: source.title, attached: true,
+    current: props.draft.includeCurrentPage && sameCurrentPage(source),
+    selector: { id: source.id } as WikiSourceSelector
+  }))
+  if (props.currentPage && props.draft.includeCurrentPage && !rows.some(row => row.current)) {
+    rows.unshift({ key: 'current', title: currentPageLabel.value, attached: false, current: true, selector: { id: props.currentPage.id } })
+  }
+  return rows
+})
+const removeVisibleSource = async (key: string): Promise<void> => {
+  if (interactionBlocked.value) return
+  const rows = visibleSources.value
+  const index = rows.findIndex(row => row.key === key)
+  const row = rows[index]
+  if (!row) return
+  const sources = props.draft.sources.filter(source => `id:${source.id}` !== key)
+  emit('change', {
+    sources,
+    ...(row.current ? { includeCurrentPage: false } : {}),
+    ...(props.draft.scope.kind === 'selected' && !sources.length ? { scope: { kind: 'all' as const } } : {})
+  })
+  await nextTick()
+  const next = sourceStrip.value?.querySelectorAll<HTMLButtonElement>('.agent-context__source-preview')
+  const target = next?.[Math.min(index, next.length - 1)]
+  if (target) target.focus({ preventScroll: true })
+  else if (props.sourceTrigger?.isConnected) props.sourceTrigger.focus({ preventScroll: true })
+  else if (sourcesOpener?.isConnected) sourcesOpener.focus({ preventScroll: true })
+}
+const openPreview = (selector: WikiSourceSelector): void => {
+  if (!interactionBlocked.value) previewSelector.value = selector
+}
 const toggleCurrentPage = (): void => {
   if (interactionBlocked.value) return
   emit('change', { includeCurrentPage: !props.draft.includeCurrentPage })
@@ -339,15 +322,6 @@ const setScope = (scope: AgentSearchScope): void => {
   if (interactionBlocked.value || (scope.kind === 'selected' && !props.draft.sources.length)) return
   emit('change', { scope })
 }
-const previewSource = (id: number): void => {
-  if (interactionBlocked.value) return
-  previewSelector.value = { id }
-}
-const removeSource = (id: number): void => {
-  if (interactionBlocked.value) return
-  const sources = props.draft.sources.filter(source => source.id !== id)
-  emit('change', { sources, ...(props.draft.scope.kind === 'selected' && !sources.length ? { scope: { kind: 'all' } } : {}) })
-}
 const clearSearchTimer = (): void => {
   if (searchTimer !== null) {
     clearTimeout(searchTimer)
@@ -400,7 +374,7 @@ const focusSourceSearch = (): void => {
 // The caller owns the opener; the picker owns the one dialog and its return.
 const openSources = (opener?: HTMLElement | Event): void => {
   if (interactionBlocked.value || sourcesOpen.value) return
-  sourcesOpener = opener instanceof HTMLElement ? opener : opener?.currentTarget instanceof HTMLElement ? opener.currentTarget : null
+  sourcesOpener = opener instanceof HTMLElement ? opener : opener?.currentTarget instanceof HTMLElement ? opener.currentTarget : props.sourceTrigger ?? null
   restoreExternalOpenerOnApply = opener instanceof HTMLElement
   invalidateAll()
   resetTransient()
@@ -438,7 +412,7 @@ const onSourcesAfterLeave = (): void => {
   void nextTick(() => {
     if (!disposed && !sourcesOpen.value) {
       if (sourcesOpener?.isConnected && sourcesOpener.getClientRects().length) focusElement(sourcesOpener)
-      else focusElement(sourcesActivator.value)
+      else focusElement(props.sourceTrigger ?? null)
       sourcesOpener = null
     }
   })
@@ -704,107 +678,15 @@ onBeforeUnmount(() => {
   gap: var(--wiki-space-1);
 }
 .agent-context__scope :deep(.v-btn__content) { max-width: min(28rem, 65vw); overflow: hidden; text-overflow: ellipsis; }
-.agent-context__control {
-  position: relative;
-  box-sizing: border-box;
-  min-width: max(44px, var(--agent-context-control-face-height));
-  height: var(--agent-context-control-face-height);
-  min-height: var(--agent-context-control-face-height);
-  padding-inline: calc(var(--wiki-space-3) * .9);
-  border-radius: var(--wiki-radius-pill) !important;
-  font-size: var(--v-btn-size, .875rem);
-  font-weight: 500;
-  letter-spacing: .01em;
-}
-.agent-context__control::before {
-  position: absolute;
-  inset-block: var(--agent-context-control-hit-inset);
-  inset-inline-start: 50%;
-  width: 100%;
-  min-width: var(--agent-context-control-hit-height);
-  min-height: var(--agent-context-control-hit-height);
-  border-radius: inherit;
-  content: '';
-  pointer-events: auto;
-  transform: translateX(-50%);
-}
-.agent-context__page-chip {
-  position: relative;
-  display: inline-flex;
-  min-width: 0;
-  max-width: 100%;
-  flex: 0 1 auto;
-  align-items: center;
-  gap: var(--wiki-space-1);
-  min-height: var(--agent-context-control-face-height);
-  padding: 0 var(--wiki-space-2);
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-radius-pill);
-  background: color-mix(in srgb, var(--wiki-surface-raised) 72%, transparent);
-  color: rgb(var(--v-theme-on-surface));
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--wiki-label-size);
-  line-height: 1.25;
-}
-.agent-context__page-chip > .v-icon:first-child { flex: 0 0 auto; color: var(--wiki-primary-ink); }
-.agent-context__page-chip--excluded {
-  border-style: dashed;
-  color: var(--wiki-text-muted);
-}
-.agent-context__page-chip--excluded .agent-context__page-copy {
-  text-decoration: line-through;
-  text-decoration-thickness: 1px;
-}
-.agent-context__page-chip--excluded > .v-icon:first-child { color: var(--wiki-text-muted); }
-.agent-context__page-chip:focus-visible {
-  outline: 2px solid var(--wiki-focus-color);
-  outline-offset: 2px;
-}
-.agent-context__page-chip[aria-disabled='true'] { cursor: default; opacity: .6; }
-.agent-context__page-state {
-  flex: 0 0 auto;
-  color: var(--wiki-primary-ink);
-}
-.agent-context__page-chip--excluded .agent-context__page-state {
-  color: var(--wiki-text-muted);
-}
-.agent-context__page-copy {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.agent-context__page-state-label { flex: 0 0 auto; font-size: var(--wiki-label-size); }
-.agent-context__sources {
-  display: flex;
-  order: 1;
-  min-width: 0;
-  max-width: 100%;
-  max-height: 6rem;
-  flex: 1 1 100%;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--wiki-space-1);
-  overflow-y: scroll;
-  scrollbar-gutter: stable;
-  scrollbar-width: auto;
-  overscroll-behavior: contain;
-}
-.agent-context__sources:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
-.agent-context__sources .v-chip { max-width: 100%; border-radius: var(--wiki-radius-pill); }
-.agent-context__source-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-context__preview-icon { flex: 0 0 auto; margin-inline-start: var(--wiki-space-1); color: var(--wiki-text-muted); }
-.agent-context__sources .v-chip:not(.v-chip--disabled):is(:hover, :focus-within) {
-  border-color: var(--wiki-surface-border-strong);
-  background: var(--wiki-surface-sunken);
-}
-.agent-context__sources .v-chip:not(.v-chip--disabled):is(:hover, :focus-within) .agent-context__source-label {
-  text-decoration: underline dotted;
-  text-underline-offset: .2em;
-}
-.agent-context__sources .v-chip:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: 2px; }
-.agent-context__sources .v-chip:is(:hover, :focus-within) .agent-context__preview-icon { color: var(--wiki-primary-ink); }
+.agent-context__sources { display: flex; min-width: 0; max-width: 100%; flex: 0 1 auto; gap: var(--wiki-space-1); overflow-x: auto; overscroll-behavior: contain; }
+.agent-context__source-group { display: inline-flex; flex: 0 0 auto; min-width: 0; max-width: 100%; margin: 0; padding: 0; border: 1px solid var(--wiki-surface-border); border-radius: var(--wiki-radius-pill); background: var(--wiki-surface-sunken); }
+.agent-context__source-group button { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; gap: var(--wiki-space-1); padding-inline: var(--wiki-space-2); border: 0; background: transparent; color: inherit; font: inherit; font-size: var(--wiki-label-size); cursor: pointer; }
+.agent-context__source-preview { min-width: 0; max-width: min(26rem, 70vw); border-start-start-radius: inherit; border-end-start-radius: inherit; }
+.agent-context__source-group .agent-context__source-remove { border-inline-start: 1px solid var(--wiki-surface-border); border-start-end-radius: inherit; border-end-end-radius: inherit; justify-content: center; }
+.agent-context__source-group button:focus-visible { outline: 2px solid var(--wiki-focus-color); outline-offset: -2px; }
+.agent-context__source-group button:disabled { opacity: .65; cursor: not-allowed; }
+.agent-context__source-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-context__source-preview small { color: var(--wiki-text-muted); white-space: nowrap; }
 .agent-context__limit {
   order: 2;
   flex: 1 1 100%;

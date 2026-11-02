@@ -9,6 +9,7 @@ import {
   type AgentEventType,
   type AgentExecutionMode,
   type AgentGenerationTool,
+  type AgentPresetId,
   type AgentMediaView,
   type AgentGoalBudgetLimitReason,
   type AgentGoalTokenTier,
@@ -958,6 +959,7 @@ export interface SubmitAgentMessageInput {
   readonly clientRequestId: string
   readonly expectedSessionVersion: number
   readonly content: string
+  readonly presetId?: AgentPresetId
   readonly invokedSkillVersionIds?: readonly string[]
   readonly currentPage?: Readonly<Record<string, unknown>>
   readonly knowledgeContext?: AgentKnowledgeContext
@@ -2745,6 +2747,7 @@ export class AgentProductRuntime {
         clientRequestId: input.clientRequestId,
         expectedSessionVersion: context.sessionVersion,
         content: input.content,
+        ...(input.presetId === undefined ? {} : { presetId: input.presetId }),
         mediaBindings,
         ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
         ...(input.transcription
@@ -2829,19 +2832,26 @@ export class AgentProductRuntime {
     if (!run) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost while recording output', 409)
     assertNoTransientGoogleSearchSuggestions(data)
     validateAgentEventData(type, data)
-    const receipt = type === 'memory.contextIncluded' ? AgentMemoryContextIncludedDataSchema.parse(data)
-      : type === 'memory.saved' ? AgentMemorySavedDataSchema.parse(data) : null
+    const receipt =
+      type === 'memory.contextIncluded'
+        ? AgentMemoryContextIncludedDataSchema.parse(data)
+        : type === 'memory.saved'
+          ? AgentMemorySavedDataSchema.parse(data)
+          : null
     if (receipt !== null && (receipt.ownerId !== claim.ownerId || receipt.sessionId !== claim.sessionId || receipt.snapshotId !== claim.sessionId))
       throw new AgentRepositoryError('INVALID_AGENT_EVENT', 'Agent memory receipt does not match its owned session', 500)
     const encoded = canonicalJson(data)
     const sequence = Number(run.eventSequence) + 1
-    const receiptHash = receipt === null ? null : sha256(JSON.stringify([
-      'agent-memory-receipt', claim.id, claim.attempts, type, 'deliveryId' in receipt ? receipt.deliveryId : receipt.operationId
-    ]))
+    const receiptHash =
+      receipt === null
+        ? null
+        : sha256(JSON.stringify(['agent-memory-receipt', claim.id, claim.attempts, type, 'deliveryId' in receipt ? receipt.deliveryId : receipt.operationId]))
     // Durable event ids are PostgreSQL UUIDs. Encode the deterministic receipt
     // hash as UUIDv8, retaining the required version and RFC variant bits.
-    const eventId = receiptHash === null ? randomUUID()
-      : `${receiptHash.slice(0, 8)}-${receiptHash.slice(8, 12)}-8${receiptHash.slice(13, 16)}-${((Number.parseInt(receiptHash[16]!, 16) & 3) | 8).toString(16)}${receiptHash.slice(17, 20)}-${receiptHash.slice(20, 32)}`
+    const eventId =
+      receiptHash === null
+        ? randomUUID()
+        : `${receiptHash.slice(0, 8)}-${receiptHash.slice(8, 12)}-8${receiptHash.slice(13, 16)}-${((Number.parseInt(receiptHash[16]!, 16) & 3) | 8).toString(16)}${receiptHash.slice(17, 20)}-${receiptHash.slice(20, 32)}`
     if (receipt !== null) {
       const existing = await transaction('agentEvents').where({ id: eventId, runId: claim.id, attempt: claim.attempts }).first('dataSha256')
       if (existing) {
@@ -4012,19 +4022,37 @@ export class AgentProductRuntime {
           const publicDeliveryId = createHmac('sha256', this.#memorySigningSecret)
             .update(JSON.stringify(['agent-memory-context-delivery', claim.id, claim.attempts, claim.leaseToken, deliveryId]))
             .digest('hex')
-          await this.#appendPresentationEvent(claim, 'memory.contextIncluded', AgentMemoryContextIncludedDataSchema.parse({
-            ownerId: claim.ownerId, sessionId: claim.sessionId, snapshotId: claim.sessionId, deliveryId: publicDeliveryId, targets
-          }))
+          await this.#appendPresentationEvent(
+            claim,
+            'memory.contextIncluded',
+            AgentMemoryContextIncludedDataSchema.parse({
+              ownerId: claim.ownerId,
+              sessionId: claim.sessionId,
+              snapshotId: claim.sessionId,
+              deliveryId: publicDeliveryId,
+              targets
+            })
+          )
         },
         memorySaved: async (operationId, operation, result) => {
           if (!result.changed) return
           const count = agentMemoryTargetCount(claim.ownerId, result.target, result.entries, this.#memorySigningSecret)
           if (count.characters !== result.characters || count.limit !== result.limit)
             throw new AgentRepositoryError('INVALID_ENGINE_RESULT', 'Saved memory metadata does not match the committed operation', 500)
-          await this.#appendPresentationEvent(claim, 'memory.saved', AgentMemorySavedDataSchema.parse({
-            ownerId: claim.ownerId, sessionId: claim.sessionId, snapshotId: claim.sessionId, origin: 'memory.manage',
-            operationId, operation, changed: true, targets: [count]
-          }))
+          await this.#appendPresentationEvent(
+            claim,
+            'memory.saved',
+            AgentMemorySavedDataSchema.parse({
+              ownerId: claim.ownerId,
+              sessionId: claim.sessionId,
+              snapshotId: claim.sessionId,
+              origin: 'memory.manage',
+              operationId,
+              operation,
+              changed: true,
+              targets: [count]
+            })
+          )
         },
         beforeExternalTool: () => this.#authorizeExternalTool(claim),
         messages,
