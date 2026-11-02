@@ -5459,7 +5459,6 @@ export default defineComponent({
     align-items: center;
     gap: 8px;
     margin-inline-start: auto;
-    .v-btn { min-height: 44px; }
   }
 }
 .wiki-page.is-rtl .page-header-headings--branded {
