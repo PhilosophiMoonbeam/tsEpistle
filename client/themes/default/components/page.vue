@@ -2249,7 +2249,7 @@ export default defineComponent({
       return this.lastEditorVisible && Boolean(this.authorName && this.authorName.trim() && this.authorName.toLowerCase() !== 'unknown')
     },
     isTocCompact (): boolean {
-      return !this.wideViewport || (this.tocPosition === 'left' && this.navigationOpen)
+      return !this.wideViewport
     },
     tocDisclosureExpanded (): boolean {
       return !this.isTocCompact || this.tocExpanded

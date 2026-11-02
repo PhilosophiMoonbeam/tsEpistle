@@ -942,17 +942,18 @@ describe('focus reading section navigation', () => {
     expect(exit).toHaveBeenCalledTimes(1)
   })
 
-  it('moves a left outline inline while site navigation is open and restores its rail after closing', async () => {
-    const vm = reader({ readerFocus: false, navMode: 'MIXED', wideViewport: true, navigationOpen: false, tocFlattened: sections.slice(0, 2) })
+  it('keeps the left desktop outline expanded beside site navigation and uses a disclosure only on narrow screens', async () => {
+    const vm = reader({ readerFocus: false, navMode: 'MIXED', tocPosition: 'left', tocFlattened: sections.slice(0, 2) })
     expect(vm.readerHasSections).toBe(true)
-    for (const navigationOpen of [false, true, false]) {
+    for (const [wideViewport, navigationOpen] of [[true, false], [true, true], [false, true], [true, true]]) {
+      vm.wideViewport = wideViewport
       vm.navigationOpen = navigationOpen
       vm.isTocCompact = call('isTocCompact', vm)
       const rendered = await renderTemplate(PAGE, vm)
       const outline = rendered.document.querySelector('.page-toc-card')!
-      expect(outline.closest('[data-teleport]')?.getAttribute('data-teleport')).toBe(navigationOpen ? '#page-inline-toc' : '#page-desktop-rail')
+      expect(outline.closest('[data-teleport]')?.getAttribute('data-teleport')).toBe(wideViewport ? '#page-desktop-rail' : '#page-inline-toc')
       expect(rendered.document.querySelectorAll('.page-toc-card')).toHaveLength(1)
-      expect(rendered.document.querySelector('.page-main')?.classList.contains('page-main--with-rail')).toBe(!navigationOpen)
+      expect(rendered.document.querySelector('.page-main')?.classList.contains('page-main--with-rail')).toBe(wideViewport)
     }
   })
 
