@@ -50,7 +50,7 @@ const baseState = (overrides: Record<string, unknown> = {}): Record<string, unkn
   isPublished: true,
   visibility: 'public',
   updatedAt: '2026-01-02T03:04:05.000Z',
-  formattedUpdatedAt: 'Today at 3:04 AM',
+  updatedAtLabel: 'Updated Today at 3:04 AM',
   accessibleUpdatedAt: 'Friday, January 2, 2026 3:04 AM',
   authorAttribution: { before: 'by ', after: '' },
   authorName: 'Ada',
@@ -140,7 +140,7 @@ describe('page reader chrome template', () => {
       expect(provenance?.querySelector('time')?.getAttribute('datetime')).toBe('2026-01-02T03:04:05.000Z')
       expect(provenance?.querySelector('time')?.getAttribute('title')).toBe('Friday, January 2, 2026 3:04 AM')
       expect(provenance?.querySelector('.page-document-author')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('by Ada')
-      const history = provenance?.querySelector<HTMLButtonElement>('button:has(time)')
+      const history = provenance?.querySelector<HTMLButtonElement>('time button')
       if (hasReadHistoryPermission && !printView) {
         expect(history).not.toBeNull()
         expect(history?.disabled).toBe(!pageOnlineActionReady)
@@ -443,10 +443,10 @@ describe('page reader chrome rules', () => {
     const vmFor = (known: boolean) => {
       const vm: Record<string, unknown> = {
         updatedAt: '2026-01-02T03:04:05.000Z',
-        $t: (_key: string, options: { time: string; zone: string }) => `${options.time} (${options.zone})`,
+        $t: (_key: string, options: { time?: string; zone?: string; date?: string }) => options.date ?? `${options.time} (${options.zone})`,
         $helpers: { formatMoment: () => 'Today at 3:04 AM', timeZoneKnown: () => known, timeZoneLabel: () => 'UTC' }
       }
-      vm.withUpdatedZone = (time: string) => page.methods.withUpdatedZone!.call(vm, time)
+      vm.formatUpdatedAt = (format: 'calendar' | 'LLLL') => page.methods.formatUpdatedAt!.call(vm, format)
       return vm
     }
     try {
@@ -459,8 +459,7 @@ describe('page reader chrome rules', () => {
       ] as const) {
         wikiStore.authRefreshOutcome = outcome
         const vm = vmFor(known)
-        vm.labelUpdatedZone = call('labelUpdatedZone', vm)
-        expect(call('formattedUpdatedAt', vm)).toBe(expected)
+        expect(call('updatedAtLabel', vm)).toBe(expected)
       }
     } finally {
       wikiStore.authRefreshOutcome = 'authenticated'

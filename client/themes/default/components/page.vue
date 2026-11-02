@@ -146,16 +146,15 @@
             .page-header-summary(v-if='description')
               p.page-description {{description}}
             .page-document-provenance(v-if='updatedAt || hasAuthor')
-              button.page-updated-history(
-                v-if='updatedAt && hasReadHistoryPermission && !printView'
-                type='button'
-                :disabled='!pageOnlineActionReady'
-                :title='$t(`common:header.history`)'
-                :aria-label='`${$t(`common:header.history`)}: ${accessibleUpdatedAt}`'
-                @click='pageHistory'
-              )
-                time(:datetime='updatedAt', :title='accessibleUpdatedAt') {{ $t('common:page.updatedAt', { date: formattedUpdatedAt, interpolation: { escapeValue: false } }) }}
-              time(v-else-if='updatedAt', :datetime='updatedAt', :title='accessibleUpdatedAt') {{ $t('common:page.updatedAt', { date: formattedUpdatedAt, interpolation: { escapeValue: false } }) }}
+              time(v-if='updatedAt', :datetime='updatedAt', :title='accessibleUpdatedAt')
+                button.page-updated-history(
+                  v-if='hasReadHistoryPermission && !printView'
+                  type='button'
+                  :disabled='!pageOnlineActionReady'
+                  :title='$t(`common:header.history`)'
+                  @click='pageHistory'
+                ) {{ updatedAtLabel }}
+                template(v-else) {{ updatedAtLabel }}
               span(v-if='updatedAt && hasAuthor', aria-hidden='true') ·
               span.page-document-author(v-if='hasAuthor')
                 | {{ authorAttribution.before }}
@@ -2238,20 +2237,11 @@ export default defineComponent({
         this.readingAdmittedContentKey === this.readingContentKey && this.readingContentNode === this.$refs.container &&
         !this.offlineDisposed && !this.navigationPending && !this.printView && this.selectedPageView === 'article'
     },
-    // Signed-in readers whose account could not load and who have no saved
-    // time zone see the browser zone; name it so the time is not misread.
-    labelUpdatedZone (): boolean {
-      return wikiStore.authRefreshOutcome === 'unavailable' && !this.$helpers.timeZoneKnown()
-    },
-    formattedUpdatedAt (): string {
-      if (!this.updatedAt) return ''
-      const formatted = this.$helpers.formatMoment(this.updatedAt, 'calendar')
-      return this.withUpdatedZone(typeof formatted === 'string' ? formatted : String(formatted ?? ''))
+    updatedAtLabel (): string {
+      return this.$t('common:page.updatedAt', { date: this.formatUpdatedAt('calendar'), interpolation: { escapeValue: false } })
     },
     accessibleUpdatedAt (): string {
-      if (!this.updatedAt) return ''
-      const formatted = this.$helpers.formatMoment(this.updatedAt, 'LLLL')
-      return this.withUpdatedZone(typeof formatted === 'string' ? formatted : String(formatted ?? ''))
+      return this.formatUpdatedAt('LLLL')
     },
     hasAuthor (): boolean {
       return this.lastEditorVisible && Boolean(this.authorName && this.authorName.trim() && this.authorName.toLowerCase() !== 'unknown')
@@ -4304,9 +4294,12 @@ export default defineComponent({
       const name = typeof actorName === 'string' && actorName.trim() ? actorName.trim() : this.approvalActorNames?.get(actorId)
       return name || this.$t('common:page.reviewerById', { id: actorId })
     },
-    withUpdatedZone (time: string): string {
-      if (!time || !this.labelUpdatedZone) return time
-      return this.$t('common:dateTime.withZone', { time, zone: this.$helpers.timeZoneLabel(this.updatedAt ?? undefined), defaultValue: '{{time}} ({{zone}})', interpolation: { escapeValue: false } })
+    formatUpdatedAt (format: 'calendar' | 'LLLL'): string {
+      if (!this.updatedAt) return ''
+      const time = String(this.$helpers.formatMoment(this.updatedAt, format) ?? '')
+      // Name the browser zone when a signed-in reader's account could not load.
+      if (!time || wikiStore.authRefreshOutcome !== 'unavailable' || this.$helpers.timeZoneKnown()) return time
+      return this.$t('common:dateTime.withZone', { time, zone: this.$helpers.timeZoneLabel(this.updatedAt), defaultValue: '{{time}} ({{zone}})', interpolation: { escapeValue: false } })
     },
     approvalTransitionDate (value: string | number): string {
       const formatted = this.$helpers.formatMoment(value, 'calendar')
