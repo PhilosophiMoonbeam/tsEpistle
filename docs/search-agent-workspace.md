@@ -34,6 +34,8 @@ The full-page hero contains factual update/author metadata, labelled **Focus**, 
 
 Default automatic contents placement uses a 224px right rail at 1280px and wider and one collapsed sticky **On this page** control below that breakpoint. Zero/one meaningful heading suppresses the rail, disclosure and picker entirely. The workspace is 256px; desktop honors a saved Left or Right outline placement even while workspace navigation is expanded, keeping section names and scroll-synchronized highlights visible throughout the article. Narrow screens use the compact disclosure without rewriting the saved preference. Fresh reading width is 76ch, while valid saved typography remains intact. The same searchable, non-marquee outline retains its filter, branches, current section and focus across rail, compact disclosure and Focus picker.
 
+The desktop outline host remains mounted while hidden on narrow screens. The same outline can move back from the compact disclosure without losing its target, filter, branches or current section.
+
 The saved reading measure bounds the complete authored article, including notices, disclosures, tables and code, rather than centering only selected prose elements inside a wider canvas. **Full width** remains the explicit opt-out. Compact inline contents does not reserve an empty rail-height panel when its disclosure is collapsed.
 
 Touch hero controls retain a 44px minimum height. Share keeps its accessible name while open; Enter, Space, and arrow keys enter its enabled actions, and Escape restores its trigger without activating a sharing destination. Responsive navigation follows the actual CSS breakpoint, including mobile visual-viewport settling, rather than retaining a temporary zoom-derived width.

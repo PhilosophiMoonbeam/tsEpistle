@@ -262,12 +262,11 @@
       v-container.page-body(fluid)
         v-row
           v-col.page-col-sd(
-            v-if='readerHasSections && !isTocCompact'
-            v-show='!printView'
+            v-show='readerHasSections && !isTocCompact && !printView'
             cols='12'
             :class='tocPosition === `right` ? `page-col-sd--toc-right` : `page-col-sd--toc-left`'
           )
-            //- Teleport caches this target across print's disabled/enabled cycle.
+            //- Keep the Teleport target mounted through responsive and print transitions.
             #page-desktop-rail.page-desktop-rail
 
           v-col.page-col-content(
