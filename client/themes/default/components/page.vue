@@ -146,7 +146,16 @@
             .page-header-summary(v-if='description')
               p.page-description {{description}}
             .page-document-provenance(v-if='updatedAt || hasAuthor')
-              time(v-if='updatedAt', :datetime='updatedAt', :title='accessibleUpdatedAt') {{ $t('common:page.updatedAt', { date: formattedUpdatedAt, interpolation: { escapeValue: false } }) }}
+              button.page-updated-history(
+                v-if='updatedAt && hasReadHistoryPermission && !printView'
+                type='button'
+                :disabled='!pageOnlineActionReady'
+                :title='$t(`common:header.history`)'
+                :aria-label='`${$t(`common:header.history`)}: ${accessibleUpdatedAt}`'
+                @click='pageHistory'
+              )
+                time(:datetime='updatedAt', :title='accessibleUpdatedAt') {{ $t('common:page.updatedAt', { date: formattedUpdatedAt, interpolation: { escapeValue: false } }) }}
+              time(v-else-if='updatedAt', :datetime='updatedAt', :title='accessibleUpdatedAt') {{ $t('common:page.updatedAt', { date: formattedUpdatedAt, interpolation: { escapeValue: false } }) }}
               span(v-if='updatedAt && hasAuthor', aria-hidden='true') ·
               span.page-document-author(v-if='hasAuthor')
                 | {{ authorAttribution.before }}
@@ -4887,6 +4896,31 @@ export default defineComponent({
   font-size: .75rem;
   line-height: 1.4;
 }
+.page-updated-history {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-decoration: underline;
+  text-underline-offset: .15em;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid var(--wiki-focus-color);
+    outline-offset: 2px;
+  }
+
+  &:disabled {
+    text-decoration: none;
+    cursor: default;
+  }
+}
+
 .page-accuracy { display: inline-flex; position: relative; }
 .page-accuracy-pill {
   position: relative;
@@ -5306,14 +5340,18 @@ export default defineComponent({
     margin-block-start: var(--wiki-space-2);
 
     .v-btn {
-      min-width: 44px;
-      min-height: 44px;
+      min-width: 32px;
+      min-height: 32px;
+      height: 32px;
+      padding-block: 0;
       border-color: var(--wiki-surface-border-strong);
       border-radius: var(--wiki-radius-pill);
       text-transform: none;
       letter-spacing: 0;
       color: rgb(var(--v-theme-on-surface));
     }
+
+    .v-btn--icon { width: 32px; }
 
     .v-btn:focus-visible {
       outline: 2px solid var(--wiki-focus-color);
@@ -6055,7 +6093,7 @@ export default defineComponent({
   .page-header-section .page-hero-actions {
     gap: 8px;
     margin-block-start: var(--wiki-space-2);
-    .v-btn { min-width: 44px; min-height: 44px; height: auto; padding-inline: .5rem; font-size: .75rem; }
+    .v-btn { min-width: 32px; min-height: 32px; height: 32px; padding-inline: .5rem; font-size: .75rem; }
   }
   .page-header-section .breadcrumbs-nav .v-btn { min-height: 1.25rem; height: auto; font-size: .6875rem; }
   .page-view-tabs { margin-block-end: var(--wiki-space-1); }
@@ -6690,9 +6728,18 @@ export default defineComponent({
   .page-reading-sections-header .v-btn { min-width: 44px; min-height: 44px; }
 }
 
+@media (pointer: coarse) {
+  .page-header-section .page-hero-actions .v-btn {
+    min-width: 44px;
+    min-height: 44px;
+    height: 44px;
+  }
+  .page-header-section .page-hero-actions .v-btn--icon { width: 44px; }
+  .page-updated-history { min-height: 44px; }
+}
+
 @media (pointer: coarse) and (max-width: 1279px) {
   // Keep real touch targets without restoring the retired above-prose stack.
-  .page-header-section .page-hero-actions .v-btn { min-height: 2.75rem; }
   .page-header-section > .is-page-header { padding-block: var(--wiki-space-4) var(--wiki-space-3) !important; }
   .page-body { padding-block-start: 2px !important; }
   .page-inline-toc { margin-block-end: 2px; }
@@ -6724,8 +6771,8 @@ export default defineComponent({
   .page-header-section .page-hero-actions .page-focus-control[aria-pressed='true'] > .v-btn__content { display: flex; }
 }
 .page-header-section > .is-page-header {
-  width: min(100%, calc(var(--page-reader-copy-max) + 2 * var(--page-reader-inline-gutter)));
-  margin-inline: auto;
+  width: 100%;
+  margin-inline: 0;
 }
 @media (min-width: 1280px) {
   .page-header-section {
@@ -6733,22 +6780,9 @@ export default defineComponent({
     padding-inline: var(--page-reader-inline-gutter) max(var(--wiki-page-gutter), calc(var(--page-return-top-inset) + 4rem));
   }
   .page-header-section > .is-page-header {
-    width: min(100%, var(--page-reader-copy-max));
     padding-inline: 0 !important;
   }
   .wiki-page--reading .page-header-section { padding-inline: var(--page-reader-inline-gutter); }
-  .page-main--with-rail .page-header-section {
-    box-sizing: border-box;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) var(--page-toc-rail-width);
-    column-gap: var(--page-reader-column-gap);
-    padding-inline: var(--page-reader-inline-gutter) max(var(--wiki-page-gutter), calc(var(--page-return-top-inset) + 4rem));
-  }
-  .page-main--with-rail .page-header-section > .is-page-header { grid-column: 1; padding-inline: 0 !important; }
-  .page-main--with-rail:has(.page-col-sd--toc-left) .page-header-section {
-    grid-template-columns: var(--page-toc-rail-width) minmax(0, 1fr);
-  }
-  .page-main--with-rail:has(.page-col-sd--toc-left) .page-header-section > .is-page-header { grid-column: 2; }
 }
 
 @media print {

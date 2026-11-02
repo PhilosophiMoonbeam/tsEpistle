@@ -127,12 +127,27 @@ describe('page reader chrome template', () => {
     }
   })
 
-  it('keeps factual update and author attribution in the hero', async () => {
-    const { document } = await renderTemplate(PAGE, baseState())
-    const provenance = document.querySelector('.page-hero .page-document-provenance')
-    expect(provenance?.querySelector('time')?.getAttribute('datetime')).toBe('2026-01-02T03:04:05.000Z')
-    expect(provenance?.querySelector('time')?.getAttribute('title')).toBe('Friday, January 2, 2026 3:04 AM')
-    expect(provenance?.querySelector('.page-document-author')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('by Ada')
+  it('keeps factual update attribution and exposes History only to an admitted reader', async () => {
+    for (const [hasReadHistoryPermission, pageOnlineActionReady, printView] of [
+      [true, true, false],
+      [true, false, false],
+      [false, true, false],
+      [true, true, true]
+    ]) {
+      const { document } = await renderTemplate(PAGE, baseState({ hasReadHistoryPermission, pageOnlineActionReady, printView }))
+      const provenance = document.querySelector('.page-hero .page-document-provenance')
+      expect(provenance?.querySelectorAll('time')).toHaveLength(1)
+      expect(provenance?.querySelector('time')?.getAttribute('datetime')).toBe('2026-01-02T03:04:05.000Z')
+      expect(provenance?.querySelector('time')?.getAttribute('title')).toBe('Friday, January 2, 2026 3:04 AM')
+      expect(provenance?.querySelector('.page-document-author')?.textContent?.replace(/\s+/g, ' ').trim()).toBe('by Ada')
+      const history = provenance?.querySelector<HTMLButtonElement>('button:has(time)')
+      if (hasReadHistoryPermission && !printView) {
+        expect(history).not.toBeNull()
+        expect(history?.disabled).toBe(!pageOnlineActionReady)
+      } else {
+        expect(history).toBeNull()
+      }
+    }
   })
 
   it('renders an author placeholder in the middle of a translated sentence without moving the name', async () => {
