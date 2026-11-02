@@ -2,7 +2,7 @@ import i18next from 'i18next'
 import { defineComponent, h, onBeforeUnmount, onMounted, ref, type PropType, type SlotsType, type VNode, type VNodeChild } from 'vue'
 import { translate } from '../../modules/localization'
 
-const slotNames = ['name', 'title', 'namingRules', 'refEditsLost', 'authorName', 'date', 'path'] as const
+const slotNames = ['name', 'title', 'refEditsLost', 'authorName', 'date', 'path'] as const
 type RichTextSlotName = typeof slotNames[number]
 type RichTextSlots = { [Name in RichTextSlotName]?: () => VNode[] }
 

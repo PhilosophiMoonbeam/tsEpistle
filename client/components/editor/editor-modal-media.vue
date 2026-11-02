@@ -34,9 +34,6 @@ component(:is='embedded ? `div` : mediaDialogComponent', :style='embedded && isB
                       @keyup.enter='createFolder'
                       ref='folderNameIpt'
                       )
-                    localized-rich-text.text-body-small.text-medium-emphasis.pl-5(path='editor:assets.folderNameNamingRules', tag='div')
-                      template(#namingRules)
-                        a(href='https://docs-beta.requarks.io/guide/assets#naming-restrictions', target='_blank', rel='noopener noreferrer') {{$t('editor:assets.folderNameNamingRulesLink')}}
                   v-card-chin
                     v-spacer
                     v-btn(variant="text", :disabled='newFolderLoading', @click='newFolderDialog = false') {{$t('common:actions.cancel')}}
@@ -469,7 +466,6 @@ import { isRecord } from '../../helpers/type-guards'
 import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
 import { emitEditorInsert } from '../../helpers/editor-insert-events'
 import { isSafeEditorImageSource, isValidEditorImageAlt, normalizeEditorImageDimension, type EditorImageAlignment, type EditorImageStyle } from '../../helpers/editor-image-properties'
-import LocalizedRichText from '../common/localized-rich-text'
 
 const imageInsertionOwner = (): string => JSON.stringify([
   wikiStore.user.authenticated, wikiStore.user.id, wikiStore.offlineIdentityEpoch,
@@ -671,7 +667,6 @@ export default defineComponent({
     'branding-cancelled': () => true
   },
   components: {
-    LocalizedRichText,
     FilePond
   },
   data() {

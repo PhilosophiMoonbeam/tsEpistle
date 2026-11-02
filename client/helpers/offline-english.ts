@@ -153,7 +153,6 @@ export const offlineEnglish = {
     selectTitle: 'Select a Page',
     virtualFolders: 'Virtual Folders',
     folderEmptyWarning: 'This folder is empty.',
-    openVirtualFoldersHelp: 'Open virtual folders help',
     couldNotLoadPage: 'Could not load {{title}}',
     tryLoadingAgain: 'Try loading {{title}} again',
     tryAgain: 'Try again',

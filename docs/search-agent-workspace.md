@@ -146,6 +146,8 @@ Identity invalidation retires selectors and pending metadata; unknown verificati
 
 Zero-query quick actions offer a draft-only question about the current page, permission-gated **Create page**, and **Browse by Tags**. Create opens the existing location selector without writing a page. Only a mounted reader supplies the current folder and page locale; elsewhere it starts at `new-page` with a supported UI locale (base-language fallback, then site locale). The seed is captured when opened so later navigation does not rewrite the selector draft. Current permission, connection and unsaved-work guards still apply.
 
+The location selector and media-folder dialog do not include upstream Requarks help controls or documentation links. Folder selection and folder-name validation remain unchanged. Application-owned theme links point to this project, and the PostgreSQL provider website points to PostgreSQL rather than the upstream fork's vendor.
+
 Initial loading uses a full loading state. Query and scope refreshes retain previous rows and suggestions with their original query/scope context and unavailable actions. A failed refresh leaves those rows readable, clearly marks the failure, and offers retry rather than presenting the error as an empty collection. Fresh zero-results states show a truthful zero count, recovery choices, and one Agent draft action, not competing duplicate Agent buttons.
 
 Online summaries distinguish returned rows, total matches, and bounded-window lower counts. Saved-offline summaries report matching saved pages; the separate hint reports how many saved pages were searched. Truncated downloaded results use a `+` lower-bound match count, not the size of the downloaded corpus as a match count.

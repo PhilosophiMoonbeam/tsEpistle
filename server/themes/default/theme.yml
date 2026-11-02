@@ -1,6 +1,6 @@
 name: Default
 author: requarks.io
-site: https://wiki.requarks.io/
+site: https://github.com/PhilosophiMoonbeam/tsEpistle
 version: 1.0.0
 requirements:
   minimum: '>= 2.0.0'

@@ -49,12 +49,18 @@ const conversionSite = {
   tag: 'DIV'
 }
 const warning = 'Are you sure you want to replace your current version with the latest remote content? Your current edits will be lost.'
+const conflictSite = {
+  file: 'editor/tiptap/conflict.vue',
+  key: 'editor:conflict.infoGeneric',
+  text: `A more recent version of this page was saved by ${unsafeAuthor}, a moment ago.`,
+  strong: unsafeAuthor,
+  date: true
+}
 const sites = [
   { file: 'comments.vue', key: 'common:comments.postingAs', text: `Posting as ${unsafeName}`, strong: unsafeName },
   { file: 'common/page-delete.vue', key: 'common:page.deleteTitle', text: `Are you sure you want to delete page ${unsafeTitle}?`, title: unsafeTitle },
-  { file: 'editor/editor-modal-media.vue', key: 'editor:assets.folderNameNamingRules', text: 'Must follow the asset folder naming rules.', link: true },
   { file: 'editor/editor-modal-conflict.vue', key: 'editor:conflict.overwrite.description', text: warning, strong: 'Your current edits will be lost.' },
-  { file: 'editor/tiptap/conflict.vue', key: 'editor:conflict.infoGeneric', text: `A more recent version of this page was saved by ${unsafeAuthor}, a moment ago.`, strong: unsafeAuthor, date: true },
+  conflictSite,
   { file: 'editor/tiptap/conflict.vue', key: 'editor:conflict.overwrite.description', text: warning, strong: 'Your current edits will be lost.' },
   versionedSourceSite,
   liveSourceSite,
@@ -130,14 +136,6 @@ describe('localized rich text at actual production consumers', () => {
         if (site.strongs) expect([...fixture.host.querySelectorAll('strong')].map(node => node.textContent)).toEqual(site.strongs)
         if (site.dateTitle) expect(fixture.host.querySelector('strong[title]')?.getAttribute('title')).toBe(site.dateTitle)
         if (site.id) expect(fixture.host.querySelector(`#${site.id}`)?.tagName).toBe(site.tag)
-        if (site.link) {
-          const link = fixture.host.querySelector('a')
-          expect(link?.textContent).toBe('naming rules')
-          expect(link?.getAttribute('href')).toBe('https://docs-beta.requarks.io/guide/assets#naming-restrictions')
-          expect(link?.getAttribute('target')).toBe('_blank')
-          expect(link?.getAttribute('rel')?.split(' ')).toContain('noopener')
-          expect(link?.getAttribute('rel')?.split(' ')).toContain('noreferrer')
-        }
         if (site.date) expect(fixture.host.querySelector('span[title]')?.getAttribute('title')).toBe(timestamp)
       } finally {
         fixture.dispose()
@@ -150,7 +148,7 @@ describe('localized rich text at actual production consumers', () => {
     engine.addResourceBundle('fr', 'common', { comments: { postingAs: '{{name}} publie — {{name}}' } }, true, true)
     engine.addResourceBundle('fr', 'editor', { conflict: { infoGeneric: '{{date}} Version enregistrée par {{authorName}} ; auteur : {{authorName}}' } }, true, true)
     const comments = mountSite(sites[0])
-    const conflict = mountSite(sites[4])
+    const conflict = mountSite(conflictSite)
     try {
       await engine.changeLanguage('fr')
       await Vue.nextTick()
@@ -166,7 +164,7 @@ describe('localized rich text at actual production consumers', () => {
       await engine.changeLanguage('en')
       await Vue.nextTick()
       expect(comments.host.textContent).toBe(sites[0].text)
-      expect(conflict.host.textContent).toBe(sites[4].text)
+      expect(conflict.host.textContent).toBe(conflictSite.text)
     } finally {
       comments.dispose()
       conflict.dispose()

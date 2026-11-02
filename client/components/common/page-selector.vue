@@ -28,12 +28,6 @@
         v-col.page-selector__pane.page-selector__tree-pane(cols='12' md='5')
           v-toolbar.page-selector__pane-toolbar(color='surface-variant' density='compact' flat)
             h3.page-selector__folders-label.text-body-medium(:id='foldersId') {{$t('common:pageSelector.virtualFolders')}}
-            v-spacer
-            v-tooltip(location='top')
-              template(v-slot:activator='{ props }')
-                v-btn(v-bind='props' icon rounded='0' href='https://docs.requarks.io/guide/pages#folders' target='_blank' rel='noopener noreferrer' :aria-label='$t(`common:pageSelector.openVirtualFoldersHelp`)')
-                  v-icon mdi-help-box-outline
-              span {{$t('common:pageSelector.virtualFolders')}}
           div.page-selector__scroller(role='region' :aria-labelledby='foldersId' :aria-busy='searchLoading ? `true` : undefined')
             vue-scroll(:ops='scrollStyle')
               .page-selector__folder-errors(
