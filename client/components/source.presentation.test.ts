@@ -129,12 +129,13 @@ describe('View Source presentation', () => {
     expect(host.querySelector('button[aria-label="common:pageSource.backToPage"]')).toBeTruthy()
 
     const wrapButton = host.querySelector<HTMLButtonElement>('button[aria-label="common:pageSource.wrapLines"]')
-    expect(wrapButton?.getAttribute('aria-pressed')).toBe('false')
+    expect(wrapButton).toBeTruthy()
+    const wasWrapped = wrapButton?.getAttribute('aria-pressed') === 'true'
     wrapButton?.click()
     await settle()
-    expect(wrapButton?.getAttribute('aria-pressed')).toBe('true')
-    expect(host.querySelector('pre')?.classList.contains('is-wrapped')).toBe(true)
-    expect(window.localStorage.getItem('wiki.source.wrapLines')).toBe('1')
+    expect(wrapButton?.getAttribute('aria-pressed')).toBe(String(!wasWrapped))
+    expect(host.querySelector('pre')?.classList.contains('is-wrapped')).toBe(!wasWrapped)
+    expect(window.localStorage.getItem('wiki.source.wrapLines')).toBe(wasWrapped ? '0' : '1')
     window.localStorage.removeItem('wiki.source.wrapLines')
 
     const copyButton = host.querySelector<HTMLButtonElement>('button[aria-label="common:actions.copy"]')

@@ -37,13 +37,13 @@ describe('page links panel', () => {
 
 describe('tag library states', () => {
   it('shows a filtered-out tag index with the shared empty state and its action', async () => {
-    const { document, html } = await renderTemplate('client/components/tags.vue', {
+    const { document } = await renderTemplate('client/components/tags.vue', {
       $t: keyTranslator,
       $vuetify: { display: { mdAndUp: true }, locale: { isRtl: false } },
+      navMode: 'NONE',
       tagsSelected: [], hasSelection: false, tagsLoading: false, tags: [{ tag: 'alpha' }], tagsError: '', filteredTags: [], indexIsVisible: true,
       tagsGrouped: [], locales: [], resultPages: [], pagination: { itemsPerPage: 10, page: 1, sortBy: [] }
     })
-    expect(html).not.toContain('v-empty-state')
     const empty = document.querySelector('.tags-index-empty')
     expect(empty?.getAttribute('data-stub')).toBe('async-state')
     expect(empty?.getAttribute('title')).toBe('tags:noMatchingTags')

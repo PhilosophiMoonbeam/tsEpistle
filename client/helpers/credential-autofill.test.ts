@@ -207,7 +207,14 @@ describe('credential autofill protection', () => {
       fieldGroups: [{ title: 'Configuration', hint: '', fields }],
       setSchedule: () => {}, setSecretAction: () => {}, secretValue: () => '', setSecretValue: () => {}, setField: () => {}
     })
-    const { app, host } = mountFields({ setup: () => ({ ...Vue.toRefs(state), ...storageImports }), render: renderStorageFields })
+    const { app, host } = mountFields({
+      setup: () => ({
+        ...Vue.toRefs(state),
+        ...storageImports,
+        st: (key: string, options?: Record<string, unknown>) => translateEnglish(`admin:storage.${key}`, options)
+      }),
+      render: renderStorageFields
+    })
     try {
       expect((nativeControl(host, 'Custom interval (ISO 8601)') as HTMLInputElement).type).toBe('text')
       for (const label of ['Custom interval (ISO 8601)', 'Notes', 'Attempts', 'Username']) {

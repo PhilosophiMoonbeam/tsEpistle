@@ -33,8 +33,7 @@
   }
 
   .v-field-label--floating {
-    padding-inline: 5px;
-    margin-inline: -1px;
+    margin-inline: 0;
     border-radius: 4px;
     background: var(--wiki-field-label-bg, var(--wiki-surface-sunken));
     z-index: 2;

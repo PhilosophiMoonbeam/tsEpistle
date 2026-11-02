@@ -24,7 +24,15 @@ function compileComponent(relativePath: string, id: string): (modules: Record<st
   const filename = fileURLToPath(new URL(relativePath, import.meta.url))
   const { descriptor, errors } = parse(readFileSync(filename, 'utf8'), { filename })
   if (errors.length) throw new Error(`Cannot parse ${relativePath}: ${errors}`)
-  const compiled = compileScript(descriptor, { id, genDefaultAs: 'TestComponent', inlineTemplate: true })
+  const compiled = compileScript(descriptor, {
+    id,
+    genDefaultAs: 'TestComponent',
+    inlineTemplate: true,
+    templateOptions: {
+      preprocessLang: descriptor.template?.lang,
+      preprocessOptions: { doctype: 'html' }
+    }
+  })
   const imports = babelParse(compiled.content, { sourceType: 'module', plugins: ['typescript'] }).program.body.filter(node => node.type === 'ImportDeclaration')
   let script = compiled.content
   for (const declaration of [...imports].reverse()) {
@@ -56,6 +64,7 @@ function compileComponent(relativePath: string, id: string): (modules: Record<st
 const shellComponent = compileComponent('../offline-app.vue', 'offline-date-lifecycle')
 const libraryComponent = compileComponent('../components/pwa/offline-library.vue', 'offline-library-lifecycle')
 const settingsComponent = compileComponent('../components/pwa/offline-settings.vue', 'offline-settings-lifecycle')
+const AdminHero = compileComponent('../components/common/admin-hero.vue', 'offline-settings-hero')({})
 
 const instant = '2026-01-31T12:00:00.000Z'
 const defaults = { timezone: '', dateFormat: '', timeFormat: 'locale' } as const
@@ -515,6 +524,7 @@ async function offlineFixture(options: { privateVault?: boolean; unlocked?: bool
     }
   }
   const modules: Record<string, Record<string, unknown>> = {
+    '../common/admin-hero.vue': { default: AdminHero },
     '../../helpers/offline-storage.ts': {
       OfflineStorageError,
       openOfflineStorage: async () => storage,

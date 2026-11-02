@@ -84,6 +84,7 @@ describe('durable agent task ledger', () => {
       table.uuid('sessionId').notNullable()
       table.integer('ownerId').notNullable()
       table.string('status').notNullable()
+      table.integer('attempts').unsigned().notNullable().defaultTo(0)
       table.string('leaseOwner').nullable()
       table.uuid('leaseToken').nullable()
       table.dateTime('cancelRequestedAt').nullable()
@@ -109,6 +110,7 @@ describe('durable agent task ledger', () => {
       sessionId: 'session-1',
       ownerId: 7,
       status: 'running',
+      attempts: claim.attempts,
       leaseOwner: claim.leaseOwner,
       leaseToken,
       cancelRequestedAt: null,

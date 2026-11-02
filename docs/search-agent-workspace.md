@@ -20,6 +20,8 @@ Cards are article-only, including Focus; Talk, Links and the actual Print compos
 
 Opening Agent from an already-open Search dialog retires the previous Search focus scope before capturing the rendered menu activator. Vuetify's activator slot retains its own ref; restoration targets the actual overflow button.
 
+Shared outlined form fields use Vuetify's native notched focus boundary. The notch owns the 6px clearance on either side of its label; adding padding to the intrinsically sized floating label can clip even short text such as **Email Address**. Solo Search keeps its continuous native boundary. Both variants retain keyboard focus visibility, including forced colors, without a second wrapper outline.
+
 ## Sources in place
 
 Search rows offer Preview. Citation links in Agent answers open the same reader, while modified clicks still support opening the underlying page. The reader includes current revision, update date, a bounded text excerpt, and Open page / Ask about this page. Matching text respects positive search terms, not excluded words or syntax operators. Preview requests cancel on replacement and dismissal; late success, failure, or loading cleanup cannot affect a newer source. Retry retains its focus path. On narrow screens, the reader's actions stack without hiding Open page, Ask, or Close, and reserve the device's bottom safe area. **Ask prepares a draft. Nothing is sent.** Full-page **Focus** is a labeled hero action; **Edit** remains separate and permission-gated. The preview's own focus scope restores focus and leaves the search query, result position, and conversation in place. Unavailable and locked sources have explicit states.

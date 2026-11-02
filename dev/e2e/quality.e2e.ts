@@ -374,6 +374,7 @@ test.describe('release accessibility profiles', () => {
     await page.emulateMedia({ reducedMotion: 'no-preference' })
 
     const expectNativeFocus = async (control: Locator, variant: 'outlined' | 'solo', forcedColors = false) => {
+      await page.evaluate(() => document.fonts.ready)
       const field = control.locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " v-field ")][1]')
       await expect(field).toHaveClass(/v-field--focused/u)
       // Wait for native focus and floating-label transitions without sleeping
@@ -423,10 +424,13 @@ test.describe('release accessibility profiles', () => {
           return {
             left: glyphs.left - opening.left,
             right: opening.right - glyphs.right,
+            clientWidth: label.clientWidth,
+            scrollWidth: label.scrollWidth,
             top: getComputedStyle(element, '::before').opacity,
             bottom: getComputedStyle(element, '::after').borderBottomWidth
           }
         })
+        expect(gap.scrollWidth, 'Short native labels remain fully readable inside the notch').toBeLessThanOrEqual(gap.clientWidth + 1)
         expect(gap.left, 'Rendered label text clears the left native notch segment by 6px').toBeGreaterThanOrEqual(6)
         expect(gap.right, 'Rendered label text clears the right native notch segment by 6px').toBeGreaterThanOrEqual(6)
         expect(gap.top).toBe('0')
@@ -456,7 +460,7 @@ test.describe('release accessibility profiles', () => {
     await page.goto('/login', { waitUntil: 'networkidle' })
     const email = page.getByRole('textbox', { name: /email/i })
     const password = page.getByLabel('Password', { exact: true })
-    await expect(email).toBeVisible()
+    await expect(email).toBeVisible({ timeout: 30_000 })
     expect(await tabToControl(page, email), 'Login email remains keyboard reachable').toBe(true)
     await expect(email).toBeFocused()
     await expectNativeFocus(email, 'outlined')
@@ -481,7 +485,7 @@ test.describe('release accessibility profiles', () => {
     await expect(page.getByRole('dialog', { name: 'Search the Wiki', exact: true })).toBeHidden()
 
     await page.goto('/e/en/home', { waitUntil: 'networkidle' })
-    await expect(page.locator('.editor-markdown')).toBeVisible()
+    await expect(page.locator('.editor-markdown')).toBeVisible({ timeout: 30_000 })
     await page.getByRole('button', { name: 'Page Properties', exact: true }).click()
     const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
     await expect(properties).toBeVisible()

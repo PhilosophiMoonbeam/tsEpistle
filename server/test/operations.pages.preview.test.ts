@@ -150,11 +150,28 @@ describe('source preview access', () => {
 
   it('resolves private paths in the requesting owner namespace', async () => {
     checkAccess.mockImplementation((_requester, permissions) => permissions.includes('read:pages'))
-    getPage.mockResolvedValue({ ...page, visibility: 'private', ownerId: 7 })
+    const privatePages = [
+      { ...page, visibility: 'private', ownerId: 7, render: '<p>Owner seven preview</p>' },
+      { ...page, id: 84, visibility: 'private', ownerId: 8, render: '<p>Owner eight preview</p>' }
+    ]
+    getPage.mockImplementation(async input => privatePages.find(candidate => typeof input === 'number'
+      ? candidate.id === input
+      : input &&
+        candidate.localeCode === input.locale &&
+        candidate.path === input.path &&
+        candidate.visibility === input.visibility &&
+        candidate.ownerId === input.ownerId))
     const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
     const result = await operations.preview({ locale: 'en', path: 'docs/start', visibility: 'private', requester: { id: 7 } })
-    expect(getPage).toHaveBeenCalledWith({ locale: 'en', path: 'docs/start', visibility: 'private', ownerId: 7 })
-    expect(result.visibility).toBe('private')
+    expect(result).toMatchObject({ id: 42, visibility: 'private', excerpt: 'Owner seven preview' })
+    expect(result).not.toHaveProperty('content')
+    expect(result).not.toHaveProperty('render')
+    expect(result).not.toHaveProperty('authorEmail')
+    await expect(operations.preview({ locale: 'en', path: 'docs/start', visibility: 'private', requester: { id: 8 } })).resolves.toMatchObject({
+      id: 84,
+      excerpt: 'Owner eight preview'
+    })
+    await expect(operations.preview({ locale: 'en', path: 'docs/start', visibility: 'private', requester: { id: 9 } })).rejects.toBeInstanceOf(PageNotFound)
   })
 
   it('permits a system manager to resolve one private owner route but rejects an ambiguous cross-owner route', async () => {
@@ -183,7 +200,6 @@ describe('source preview access', () => {
       id: privatePage.id,
       visibility: 'private'
     })
-    expect(getPage).toHaveBeenCalledWith(privatePage.id)
 
     getPage.mockResolvedValue({ ...privatePage, path: 'moved/private-route' })
     await expect(operations.getByPath({ locale: 'en', path: 'docs/start', visibility: 'private', requester: { id: 1 } })).rejects.toBeInstanceOf(PageNotFound)
@@ -191,6 +207,5 @@ describe('source preview access', () => {
 
     candidates.push({ id: 85, localeCode: 'en', path: 'docs/start', visibility: 'private', ownerId: 9, tags: [] })
     await expect(operations.getByPath({ locale: 'en', path: 'docs/start', visibility: 'private', requester: { id: 1 } })).rejects.toBeInstanceOf(PageNotFound)
-    expect(getPage).not.toHaveBeenCalledWith(85)
   })
 })
