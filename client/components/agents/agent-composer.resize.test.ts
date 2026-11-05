@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { unref } from 'vue'
 
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
@@ -152,6 +153,7 @@ const loadComposer = (options: { caretTop?: () => number; mirrorTop?: number } =
     'ref',
     'useId',
     'useTemplateRef',
+    'unref',
     'watch',
     'defineProps',
     'defineEmits',
@@ -190,6 +192,7 @@ const loadComposer = (options: { caretTop?: () => number; mirrorTop?: number } =
     <T>(value: T): Ref<T> => ({ value }),
     testUseId,
     <T>(_key: string): Ref<T | null> => ({ value: null }),
+    unref,
     () => {},
     () => props,
     () =>

@@ -832,7 +832,6 @@ let initialization: Promise<boolean> | null = null
 let componentGeneration = 0
 let retryGeneration = 0
 let promptGeneration = 0
-let actionGeneration = 0
 const isComponentCurrent = (generation: number, ownerId: number): boolean =>
   !disposed && !closingForExpiry && componentGeneration === generation && props.ownerId === ownerId
 const starterReasonId = `${panelIdPrefix}-starter-reason`
@@ -1540,18 +1539,18 @@ const keepConversation = async (): Promise<void> => {
   if (!networkActionAllowed()) return
   const sessionId = thread.value?.session.id
   if (!sessionId || sessionMutationBusy.value || keepingConversation.value) return
-  const generation = actionGeneration
+  const generation = componentGeneration
   const ownerId = props.ownerId
   keepingConversation.value = true
   try {
     const kept = await agents.setSessionRetention(sessionId, 'saved')
-    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation || !kept || thread.value?.session.id !== sessionId) return
+    if (!isComponentCurrent(generation, ownerId) || !kept || thread.value?.session.id !== sessionId) return
     setSessionNotice(hasConversation.value ? t('common:inlineAgentChat.conversationKeptHistory') : t('common:inlineAgentChat.conversationKeptWillAppear'))
   } catch (value) {
-    if (isComponentCurrent(generation, ownerId) && actionGeneration === generation)
+    if (isComponentCurrent(generation, ownerId))
       agents.error = value instanceof Error ? value.message : t('common:inlineAgentChat.conversationCouldNotKept')
   } finally {
-    if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) keepingConversation.value = false
+    if (isComponentCurrent(generation, ownerId)) keepingConversation.value = false
   }
 }
 const mediaReplacementAllowed = (): boolean => {
@@ -1598,12 +1597,11 @@ let pendingLeave: Promise<boolean> | null = null
 const beforeLeave = (): Promise<boolean> => {
   if (pendingLeave) return Promise.resolve(false)
   const generation = componentGeneration
-  const action = actionGeneration
   const ownerId = props.ownerId
   const ownerGeneration = agents.ownerGeneration
   const workspaceVersion = agents.workspaceVersion
   const sessionId = thread.value?.session.id ?? null
-  const current = (): boolean => isComponentCurrent(generation, ownerId) && actionGeneration === action &&
+  const current = (): boolean => isComponentCurrent(generation, ownerId) &&
     agents.ownerGeneration === ownerGeneration && agents.workspaceVersion === workspaceVersion &&
     (thread.value?.session.id ?? null) === sessionId
   const leave = async (): Promise<boolean> => {
@@ -1621,13 +1619,12 @@ const createSession = async (retention: 'saved' | 'temporary'): Promise<void> =>
   if (sessionMutationBusy.value || memoryMutationBusy.value || creatingRetention.value) return
   if (!mediaReplacementAllowed()) return
   const generation = componentGeneration
-  const action = actionGeneration
   const ownerId = props.ownerId
   const workspaceVersion = agents.workspaceVersion
   const ownerGeneration = agents.ownerGeneration
   const sessionId = thread.value?.session.id ?? null
   const isCreateContextCurrent = (): boolean =>
-    isComponentCurrent(generation, ownerId) && actionGeneration === action &&
+    isComponentCurrent(generation, ownerId) &&
     agents.workspaceVersion === workspaceVersion && agents.ownerGeneration === ownerGeneration &&
     (thread.value?.session.id ?? null) === sessionId
   creatingRetention.value = retention
@@ -1639,19 +1636,19 @@ const createSession = async (retention: 'saved' | 'temporary'): Promise<void> =>
     memoryManager.value?.discardUnsavedChanges()
     clearSessionNotice()
     const created = await agents.newSession(retention)
-    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== action) return
+    if (!isComponentCurrent(generation, ownerId)) return
     if (created && thread.value?.session.retention === retention) {
       offlineComposerDraft.value = ''
       await nextTick()
-      if (!isComponentCurrent(generation, ownerId) || actionGeneration !== action) return
+      if (!isComponentCurrent(generation, ownerId)) return
       await composer.value?.focusInput()
     }
   } catch (value) {
-    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== action) return
+    if (!isComponentCurrent(generation, ownerId)) return
     const kind = retention === 'temporary' ? t('common:inlineAgentChat.temporaryConversation') : t('common:inlineAgentChat.newSavedConversation')
     agents.error = value instanceof Error ? value.message : t('common:inlineAgentChat.couldNotCreated', { kind, interpolation: { escapeValue: false } })
   } finally {
-    if (isComponentCurrent(generation, ownerId) && actionGeneration === action) creatingRetention.value = null
+    if (isComponentCurrent(generation, ownerId)) creatingRetention.value = null
   }
 }
 const newTemporarySession = (): Promise<void> => createSession('temporary')
@@ -1826,7 +1823,7 @@ const closeClearUnfiledHistory = (): void => {
 const clearUnfiledHistory = async (): Promise<void> => {
   if (!networkActionAllowed()) return
   if (clearingUnfiledHistory.value || sessionMutationBusy.value) return
-  const generation = actionGeneration
+  const generation = componentGeneration
   const ownerId = props.ownerId
   const originalSessionId = thread.value?.session.id ?? null
   const clearingCurrentSession = thread.value?.session.folderId === null
@@ -1835,9 +1832,9 @@ const clearUnfiledHistory = async (): Promise<void> => {
   clearUnfiledCommitted.value = false
   try {
     if (clearingCurrentSession && !await beforeLeave()) return
-    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
+    if (!isComponentCurrent(generation, ownerId)) return
     await agents.clearUnfiledHistory()
-    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
+    if (!isComponentCurrent(generation, ownerId)) return
     if (clearingCurrentSession && originalSessionId && !thread.value) {
       clearUnfiledCommitted.value = true
       clearUnfiledError.value = error.value
@@ -1847,22 +1844,22 @@ const clearUnfiledHistory = async (): Promise<void> => {
     }
     clearUnfiledHistoryOpen.value = false
   } catch (value) {
-    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
+    if (!isComponentCurrent(generation, ownerId)) return
     const detail = value instanceof Error ? value.message : t('common:inlineAgentChat.tryAgain2')
     clearUnfiledError.value = t('common:inlineAgentChat.recentConversationsCouldNot', { detail, interpolation: { escapeValue: false } })
   } finally {
-    if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) clearingUnfiledHistory.value = false
+    if (isComponentCurrent(generation, ownerId)) clearingUnfiledHistory.value = false
   }
 }
 const recoverClearUnfiledHistory = async (): Promise<void> => {
   if (!networkActionAllowed()) return
   if (clearingUnfiledHistory.value || sessionMutationBusy.value) return
-  const generation = actionGeneration
+  const generation = componentGeneration
   const ownerId = props.ownerId
   clearingUnfiledHistory.value = true
   try {
     const refreshed = await agents.reloadSessions()
-    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
+    if (!isComponentCurrent(generation, ownerId)) return
     if (!refreshed.accepted || !refreshed.current) {
       const detail = refreshed.error instanceof Error ? refreshed.error.message : t('common:inlineAgentChat.historyCouldNotRefreshed')
       throw new Error(detail)
@@ -1870,17 +1867,17 @@ const recoverClearUnfiledHistory = async (): Promise<void> => {
     if (!thread.value) {
       const candidate = agents.sessions.find(session => !session.deletedAt)
       if (!candidate || !await agents.openSession(candidate.id)) throw new Error(t('common:inlineAgentChat.noReplacementConversationAvailable'))
-      if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
+      if (!isComponentCurrent(generation, ownerId)) return
     }
     clearUnfiledHistoryOpen.value = false
     clearUnfiledError.value = ''
     clearUnfiledCommitted.value = false
   } catch (value) {
-    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
+    if (!isComponentCurrent(generation, ownerId)) return
     const detail = value instanceof Error ? value.message : t('common:inlineAgentChat.replacementConversationCouldNot')
     clearUnfiledError.value = t('common:inlineAgentChat.recentConversationsWereCleared2', { detail, interpolation: { escapeValue: false } })
   } finally {
-    if (isComponentCurrent(generation, ownerId) && actionGeneration === generation) clearingUnfiledHistory.value = false
+    if (isComponentCurrent(generation, ownerId)) clearingUnfiledHistory.value = false
   }
 }
 const updateApprovalJump = (container: HTMLElement): void => {
@@ -2034,7 +2031,6 @@ watch(() => props.ownerId, (ownerId, previousOwnerId) => {
   componentGeneration += 1
   retryGeneration += 1
   promptGeneration += 1
-  actionGeneration += 1
   resolveDraftDiscard(false, false)
   connectionRetrying.value = false
   promptSubmissionPending.value = false
@@ -2062,7 +2058,6 @@ watch(currentPage, (page, previous) => {
   componentGeneration += 1
   retryGeneration += 1
   promptGeneration += 1
-  actionGeneration += 1
   resolveDraftDiscard(false, false)
   promptSubmissionPending.value = false
   connectionRetrying.value = false
@@ -2284,7 +2279,6 @@ onBeforeUnmount(() => {
   componentGeneration += 1
   retryGeneration += 1
   promptGeneration += 1
-  actionGeneration += 1
   resolveDraftDiscard(false, false)
   draftDiscardFocusScope?.deactivate({ restoreFocus: false })
   initializationEpoch += 1

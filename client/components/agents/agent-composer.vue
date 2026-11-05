@@ -442,22 +442,10 @@ const mediaSubmission = ref<AgentMediaSubmission>({ attachmentIds: [], generatio
 const mediaBusy = ref(false)
 // Exposed refs unwrap on a component instance, so accept both the raw ref
 // and its unwrapped value depending on how the media composer is mounted.
-const mediaRecording = computed(() => {
-  const recording = mediaComposer.value?.recording as boolean | Ref<boolean> | undefined
-  return typeof recording === 'object' && recording !== null ? Boolean(recording.value) : Boolean(recording)
-})
-const mediaTranscribing = computed(() => {
-  const transcribing = mediaComposer.value?.transcribing as boolean | Ref<boolean> | undefined
-  return typeof transcribing === 'object' && transcribing !== null ? Boolean(transcribing.value) : Boolean(transcribing)
-})
-const mediaSeconds = computed(() => {
-  const seconds = mediaComposer.value?.seconds as number | Ref<number> | undefined
-  return typeof seconds === 'object' && seconds !== null ? seconds.value : (seconds ?? 0)
-})
-const mediaRequesting = computed(() => {
-  const requesting = mediaComposer.value?.requesting as boolean | Ref<boolean> | undefined
-  return typeof requesting === 'object' && requesting !== null ? Boolean(requesting.value) : Boolean(requesting)
-})
+const mediaRecording = computed(() => Boolean(unref(mediaComposer.value?.recording)))
+const mediaTranscribing = computed(() => Boolean(unref(mediaComposer.value?.transcribing)))
+const mediaSeconds = computed(() => unref(mediaComposer.value?.seconds) ?? 0)
+const mediaRequesting = computed(() => Boolean(unref(mediaComposer.value?.requesting)))
 // Generation tools are enabled preferences, not unsent input.
 const hasUnsentMedia = (): boolean => mediaSubmission.value.attachmentIds.length > 0
 const isMediaBusy = (): boolean => mediaBusy.value || mediaRecording.value || mediaTranscribing.value || mediaRequesting.value
@@ -475,9 +463,8 @@ const readDictationDb = (): number => {
  * already speaking so the recording row keeps its listening presentation.
  */
 const mediaSpeechDetected = computed(() => {
-  const detected = mediaComposer.value?.speechDetected as boolean | Ref<boolean> | undefined
-  if (detected === undefined) return true
-  return typeof detected === 'object' && detected !== null ? Boolean(detected.value) : Boolean(detected)
+  const detected = unref(mediaComposer.value?.speechDetected)
+  return detected === undefined || Boolean(detected)
 })
 /** Recording feedback states. Announce state changes, not timer ticks. */
 const dictationStatusLabel = computed(() => {
@@ -1108,6 +1095,15 @@ const resetInput = (): void => {
   const textarea = getTextarea()
   if (textarea) textarea.scrollTop = 0
 }
+const clearAcceptedSubmission = (content?: string): void => {
+  if (draft.value === content) {
+    draft.value = ''
+    void nextTick(resetInput)
+  }
+  mediaComposer.value?.clear()
+  selectedSkillIds.value = []
+  goalMode.value = false
+}
 // Send stays enabled during an active recording: submitting while recording
 // is the stop-and-send flow. It is disabled only while a prior submit is in
 // flight or dictation output is still processing, which prevents duplicates.
@@ -1159,18 +1155,12 @@ const submitDuringRecording = async (): Promise<void> => {
     const materializedSubmittedDraft = draft.value === typedDraft
     if (materializedSubmittedDraft) draft.value = content
     const success = await new Promise<boolean>(resolve => {
-      emit('send', content, invokedSkillVersionIds, mode, (success: boolean) => resolve(success), clickedMedia)
+      emit('send', content, invokedSkillVersionIds, mode, resolve, clickedMedia)
     })
     if (!mounted || props.sessionId !== sessionId || mediaComposer.value !== media) return
     if (success) {
-      // Clear only the submitted composition, not a newer edit.
-      if (materializedSubmittedDraft && draft.value === content) {
-        draft.value = ''
-        void nextTick(resetInput)
-      }
-      mediaComposer.value?.clear()
-      selectedSkillIds.value = []
-      goalMode.value = false
+      // Only a materialized, unchanged submitted composition may retire text.
+      clearAcceptedSubmission(materializedSubmittedDraft ? content : undefined)
     } else {
       // The unchanged submitted draft already includes its transcript. A newer
       // composition keeps the transcript only for its own explicit retry.
@@ -1217,13 +1207,7 @@ const submit = (): void => {
     submissionPending.value = false
     sendFailed.value = !success
     if (success) {
-      if (draft.value === content) {
-        draft.value = ''
-        void nextTick(resetInput)
-      }
-      mediaComposer.value?.clear()
-      selectedSkillIds.value = []
-      goalMode.value = false
+      clearAcceptedSubmission(content)
     } else {
       restoreInputWhenReady = false
       void nextTick(() => {

@@ -1,7 +1,7 @@
 import type { AgentMediaSubmission } from '../helpers/agent-media.ts'
 import type { BrowserFetch } from '../helpers/json-transport.ts'
 import { AgentKnowledgeContextSchema, agentSourceIdentityKey } from '../../shared/agents/knowledge-context.ts'
-import { emptyAgentDraft, projectAgentSourceContext, type AgentDraft } from '../helpers/agent-draft.ts'
+import { agentDraftCompositionKey, emptyAgentDraft, projectAgentDraftComposition, projectAgentSourceContext, type AgentDraft } from '../helpers/agent-draft.ts'
 import {
   clearAgentChatRecent,
   isAgentSessionId,
@@ -72,20 +72,6 @@ type UnresolvedAgentSubmission = {
   readonly draftKey: string
   readonly intentKey: string
 } & ({ readonly endpoint: 'messages'; readonly request: SubmitAgentMessageRequest } | { readonly endpoint: 'goals'; readonly request: CreateAgentGoalRequest })
-
-// Compare composition, not replaceable access/preview metadata or the current
-// route. Navigation must not turn an uncertain POST into a new command.
-const agentDraftCompositionKey = (draft: AgentDraft): string =>
-  JSON.stringify({
-    text: draft.text,
-    mode: draft.mode,
-    skillVersionIds: draft.skillVersionIds,
-    scope: draft.scope,
-    sources: draft.sources.map(({ id, locale, path, title, visibility, sourceRevision }) => ({ id, locale, path, title, visibility, sourceRevision })),
-    pendingSources: draft.pendingSources ?? [],
-    includeCurrentPage: draft.includeCurrentPage,
-    currentPageOverride: draft.currentPageOverride
-  })
 
 export interface AgentMemoryMutationCapture {
   readonly ownerId: number
@@ -834,8 +820,11 @@ export const useAgentsStore = defineStore('agents', {
     isWorkspaceReady(): boolean {
       return this.isWorkspaceMutationReady() && (this.connection === 'idle' || this.connection === 'connected')
     },
-    isSessionContextCurrent(version: number, sessionId: string) {
-      return this.isWorkspaceCurrent(version) && this.thread?.session.id === sessionId
+    isSessionContextCurrent(version: number, sessionId: string, ownerId?: number | null, ownerGeneration?: number): boolean {
+      return (
+        this.isOwnerContextCurrent(version, ownerId === undefined ? this.workspaceOwnerId : ownerId, ownerGeneration ?? this.ownerGeneration) &&
+        this.thread?.session.id === sessionId
+      )
     },
     isSendCompletionCurrent(workspaceVersion: number, sessionId: string, ownerId: number | null, ownerGeneration: number, mutationToken: number) {
       if (this.isWorkspaceCurrent(workspaceVersion)) return this.isSessionMutationOwned(mutationToken)
@@ -1559,9 +1548,9 @@ export const useAgentsStore = defineStore('agents', {
       const sessionId = thread.session.id
       const ownerId = this.workspaceOwnerId
       const ownerGeneration = this.ownerGeneration
-      const draftSnapshot = JSON.parse(JSON.stringify(this.drafts[sessionId] ?? emptyAgentDraft())) as AgentDraft
+      const draftSnapshot = projectAgentDraftComposition(this.drafts[sessionId] ?? emptyAgentDraft())
       const draftRevision = this.draftRevisions[sessionId] ?? 0
-      const draftKey = agentDraftCompositionKey(draftSnapshot)
+      const draftKey = JSON.stringify(draftSnapshot)
       const clickedSkillVersionIds = invokedSkillVersionIds.length > 0 ? [...invokedSkillVersionIds] : undefined
       const clickedMedia = media
         ? {
@@ -1603,11 +1592,7 @@ export const useAgentsStore = defineStore('agents', {
         try {
           if (!submission) {
             const refreshed = await this.refreshThread()
-            if (
-              !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
-              !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
-              !this.isSessionMutationOwned(mutationToken)
-            )
+            if (!this.isSessionContextCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration) || !this.isSessionMutationOwned(mutationToken))
               return false
             if (!refreshed.accepted || !refreshed.current || !this.isWorkspaceReady()) {
               if (refreshed.current) this.error = 'The conversation could not be refreshed. Nothing was sent; retry when ready.'
@@ -1640,15 +1625,9 @@ export const useAgentsStore = defineStore('agents', {
               ...(clickedCurrentPage ? { currentPage: clickedCurrentPage } : {}),
               knowledgeContext: AgentKnowledgeContextSchema.parse({
                 scope: draftSnapshot.scope,
-                sources: draftSnapshot.sources.map(({ id, locale, path, title, visibility, sourceRevision }) => ({
-                  id,
-                  locale,
-                  path,
-                  title,
-                  visibility,
-                  sourceRevision
-                }))
-              })
+                sources: draftSnapshot.sources
+              }),
+              ...(clickedMedia?.generationTools ? { generationTools: clickedMedia.generationTools } : {})
             }
             const command =
               mode === 'goal'
@@ -1657,8 +1636,7 @@ export const useAgentsStore = defineStore('agents', {
                     request: {
                       ...request,
                       goalId: crypto.randomUUID(),
-                      objective: trimmed,
-                      ...(clickedMedia?.generationTools ? { generationTools: clickedMedia.generationTools } : {})
+                      objective: trimmed
                     }
                   }
                 : {
@@ -1667,7 +1645,7 @@ export const useAgentsStore = defineStore('agents', {
                       ...request,
                       content: clickedPresetId === undefined ? trimmed : content,
                       ...(clickedPresetId === undefined ? {} : { presetId: clickedPresetId }),
-                      ...(clickedMedia ? { attachmentIds: clickedMedia.attachmentIds, generationTools: clickedMedia.generationTools } : {})
+                      ...(clickedMedia ? { attachmentIds: clickedMedia.attachmentIds } : {})
                     }
                   }
             submission = markRaw({ ownerId, ownerGeneration, sessionId, draftRevision, draftKey, intentKey, ...command })
@@ -1743,19 +1721,10 @@ export const useAgentsStore = defineStore('agents', {
       this.error = ''
       try {
         await cancelAgentRun(fetchFromWindow, this.csrfToken, run.id)
-        if (
-          !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
-          !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
-          !this.isSessionMutationOwned(mutationToken)
-        )
-          return
+        if (!this.isSessionContextCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration) || !this.isSessionMutationOwned(mutationToken)) return
         await this.refreshCommittedMutation(workspaceVersion, sessionId, 'The run was stopped, but the conversation could not be refreshed.')
       } catch (error) {
-        if (
-          this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
-          this.isSessionContextCurrent(workspaceVersion, sessionId) &&
-          this.isSessionMutationOwned(mutationToken)
-        )
+        if (this.isSessionContextCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration) && this.isSessionMutationOwned(mutationToken))
           this.error = error instanceof Error ? error.message : 'Run could not be stopped.'
       } finally {
         if (this.isSessionMutationOwned(mutationToken) && this.stoppingRunId === run.id) this.stoppingRunId = null
@@ -1777,19 +1746,10 @@ export const useAgentsStore = defineStore('agents', {
       this.error = ''
       try {
         await pauseAgentGoal(fetchFromWindow, this.csrfToken, goal.id, { expectedVersion: goal.version })
-        if (
-          !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
-          !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
-          !this.isSessionMutationOwned(mutationToken)
-        )
-          return
+        if (!this.isSessionContextCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration) || !this.isSessionMutationOwned(mutationToken)) return
         await this.refreshCommittedMutation(workspaceVersion, sessionId, 'The goal was paused, but the conversation could not be refreshed.')
       } catch (error) {
-        if (
-          this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
-          this.isSessionContextCurrent(workspaceVersion, sessionId) &&
-          this.isSessionMutationOwned(mutationToken)
-        )
+        if (this.isSessionContextCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration) && this.isSessionMutationOwned(mutationToken))
           this.error = error instanceof Error ? error.message : 'Goal could not be paused.'
       } finally {
         if (this.isSessionMutationOwned(mutationToken)) this.goalBusy = false
@@ -1815,19 +1775,10 @@ export const useAgentsStore = defineStore('agents', {
           runId: crypto.randomUUID(),
           clientRequestId: crypto.randomUUID()
         })
-        if (
-          !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
-          !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
-          !this.isSessionMutationOwned(mutationToken)
-        )
-          return
+        if (!this.isSessionContextCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration) || !this.isSessionMutationOwned(mutationToken)) return
         await this.refreshCommittedMutation(workspaceVersion, sessionId, 'The goal was resumed, but the conversation could not be refreshed.')
       } catch (error) {
-        if (
-          this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
-          this.isSessionContextCurrent(workspaceVersion, sessionId) &&
-          this.isSessionMutationOwned(mutationToken)
-        )
+        if (this.isSessionContextCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration) && this.isSessionMutationOwned(mutationToken))
           this.error = error instanceof Error ? error.message : 'Goal could not be resumed.'
       } finally {
         if (this.isSessionMutationOwned(mutationToken)) this.goalBusy = false
@@ -1869,12 +1820,7 @@ export const useAgentsStore = defineStore('agents', {
         } catch (error) {
           requestError = error
         }
-        if (
-          !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
-          !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
-          !this.isSessionMutationOwned(mutationToken)
-        )
-          return false
+        if (!this.isSessionContextCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration) || !this.isSessionMutationOwned(mutationToken)) return false
         const refreshed = await this.refreshThread()
         if (!refreshed.accepted || !refreshed.current || !this.isSessionContextCurrent(workspaceVersion, sessionId)) {
           if (refreshed.current && this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) && this.isSessionMutationOwned(mutationToken)) {
@@ -1921,19 +1867,10 @@ export const useAgentsStore = defineStore('agents', {
       this.error = ''
       try {
         await cancelAgentGoal(fetchFromWindow, this.csrfToken, goal.id, { expectedVersion: goal.version })
-        if (
-          !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
-          !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
-          !this.isSessionMutationOwned(mutationToken)
-        )
-          return
+        if (!this.isSessionContextCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration) || !this.isSessionMutationOwned(mutationToken)) return
         await this.refreshCommittedMutation(workspaceVersion, sessionId, 'The goal was cancelled, but the conversation could not be refreshed.')
       } catch (error) {
-        if (
-          this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
-          this.isSessionContextCurrent(workspaceVersion, sessionId) &&
-          this.isSessionMutationOwned(mutationToken)
-        )
+        if (this.isSessionContextCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration) && this.isSessionMutationOwned(mutationToken))
           this.error = error instanceof Error ? error.message : 'Goal could not be cancelled.'
       } finally {
         if (this.isSessionMutationOwned(mutationToken)) this.goalBusy = false
@@ -1968,19 +1905,10 @@ export const useAgentsStore = defineStore('agents', {
           ...(confirmationPath === undefined ? {} : { confirmationPath }),
           ...(decisionNote === undefined ? {} : { decisionNote })
         })
-        if (
-          !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
-          !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
-          !this.isSessionMutationOwned(mutationToken)
-        )
-          return
+        if (!this.isSessionContextCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration) || !this.isSessionMutationOwned(mutationToken)) return
         await this.refreshCommittedMutation(workspaceVersion, sessionId, 'The decision was saved, but the conversation could not be refreshed.')
       } catch (error) {
-        if (
-          this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
-          this.isSessionContextCurrent(workspaceVersion, sessionId) &&
-          this.isSessionMutationOwned(mutationToken)
-        )
+        if (this.isSessionContextCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration) && this.isSessionMutationOwned(mutationToken))
           this.error = error instanceof Error ? error.message : 'Proposal decision failed.'
       } finally {
         if (this.isSessionMutationOwned(mutationToken) && this.decidingApprovalId === approvalId) this.decidingApprovalId = null
@@ -1998,26 +1926,12 @@ export const useAgentsStore = defineStore('agents', {
       if (mutationToken === null) return
       try {
         await updateAgentSkillPreferences(fetchFromWindow, this.csrfToken, { skillIds })
-        if (
-          !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
-          !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
-          !this.isSessionMutationOwned(mutationToken)
-        )
-          return
+        if (!this.isSessionContextCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration) || !this.isSessionMutationOwned(mutationToken)) return
         await this.refreshCommittedMutation(workspaceVersion, sessionId, 'Skill preferences were saved, but the conversation could not be refreshed.')
       } catch (error) {
-        if (
-          !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
-          !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
-          !this.isSessionMutationOwned(mutationToken)
-        )
-          return
+        if (!this.isSessionContextCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration) || !this.isSessionMutationOwned(mutationToken)) return
         await Promise.allSettled([this.refreshThread(), this.reloadSkills()])
-        if (
-          this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
-          this.isSessionContextCurrent(workspaceVersion, sessionId) &&
-          this.isSessionMutationOwned(mutationToken)
-        )
+        if (this.isSessionContextCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration) && this.isSessionMutationOwned(mutationToken))
           this.error = error instanceof Error ? error.message : 'Skill preferences could not be updated.'
       } finally {
         this.endSessionMutation(mutationToken)
@@ -2145,12 +2059,7 @@ export const useAgentsStore = defineStore('agents', {
         try {
           await clearUnfiledAgentHistory(fetchFromWindow, this.csrfToken)
         } catch (error) {
-          if (
-            clearsCurrentSession &&
-            currentSessionId &&
-            this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) &&
-            this.isSessionContextCurrent(workspaceVersion, currentSessionId)
-          )
+          if (clearsCurrentSession && currentSessionId && this.isSessionContextCurrent(workspaceVersion, currentSessionId, ownerId, ownerGeneration))
             this.connectCurrentRun()
           throw error
         }

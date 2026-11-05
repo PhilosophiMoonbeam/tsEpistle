@@ -1387,9 +1387,10 @@ export default defineComponent({
       void this.focusSearchField()
     },
     handleSearchShortcut(event: KeyboardEvent): Promise<boolean> | void {
-      if (this.hideSearch || event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229 || this.searchIsComposing) return
+      if (this.hideSearch || event.defaultPrevented || event.isComposing || event.keyCode === 229 || this.searchIsComposing) return
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
         event.preventDefault()
+        if (event.repeat) return
         const ownedExit = requestSearchAgentExit('search')
         if (ownedExit !== null) return ownedExit
         this.searchMode = 'search'
@@ -1397,11 +1398,13 @@ export default defineComponent({
         return
       }
       if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.key.toLowerCase() !== 'a') return
-      if (!this.canEnterAgent) return
-      event.preventDefault()
       if (this.searchMode === 'ask' && this.searchIsFocused) {
-        return this.searchClose()
+        event.preventDefault()
+        if (!event.repeat) return this.searchClose()
+        return
       }
+      if (!this.canEnterAgent || event.repeat) return
+      event.preventDefault()
       this.searchIsShown = true
       this.searchMode = 'ask'
       void this.focusSearchField()

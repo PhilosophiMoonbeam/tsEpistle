@@ -906,6 +906,7 @@ describe('Unresolved Agent command continuity', () => {
       body: { content, expectedSessionVersion: 1, currentPage: page(2), attachmentIds: [id(701)], invokedSkillVersionIds: [id(700)] }
     })
     expect(typeof original.body.clientRequestId).toBe('string')
+    expect(Object.hasOwn(original.body, 'generationTools')).toBe(false)
     expect(server.acceptedCommandCount).toBe(1)
     server.dropFirstResponse()
     expect(await sending).toBe(false)
@@ -1156,10 +1157,13 @@ describe('Explicit Agent preset admission', () => {
     expect(api.submissions[0]?.body.content).toBe('Summarize the current page.\n\nUse my exact custom instructions.')
     expect(Object.hasOwn(api.submissions[0]!.body, 'presetId')).toBe(false)
     expect(Object.hasOwn(store.thread!.messages[0]!, 'presetId')).toBe(false)
-    expect(await store.send('  Complete this custom goal.  ', [], 'goal', undefined, undefined, { presetId: 'catch-up' })).toBe(true)
+    expect(
+      await store.send('  Complete this custom goal.  ', [], 'goal', { attachmentIds: [], generationTools: ['music'] }, undefined, { presetId: 'catch-up' })
+    ).toBe(true)
     expect(api.submissions).toHaveLength(2)
     expect(api.submissions[1]?.endpoint).toBe('goals')
     expect(api.submissions[1]?.body.objective).toBe('Complete this custom goal.')
+    expect(api.submissions[1]?.body.generationTools).toEqual(['music'])
     expect(Object.hasOwn(api.submissions[1]!.body, 'presetId')).toBe(false)
   })
 

@@ -4,9 +4,10 @@ import * as ts from 'typescript'
 import { JSDOM } from 'jsdom'
 import { activeOwnedOverlayRoots, createModalFocusScope } from './modal-focus-scope.ts'
 import { createSearchHighlighter } from '../../helpers/search-highlight.ts'
+import { registerSearchAgentExit, requestSearchAgentExit } from '../../helpers/search-navigation-events.ts'
 
 const compileSearchMethods = (source, names, dependencies = {}) => {
-  const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)?.[1]
+  const script = source.match(/<script lang=['"]ts['"]>([\s\S]*?)<\/script>/)?.[1]
   if (!script) throw new Error('Search component script was not found.')
 
   const sourceFile = ts.createSourceFile('search-results.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
@@ -769,6 +770,11 @@ const compileSearchOptions = (source, names, section = 'computed', dependencies 
 
 describe('Search panel layout and hand-off', () => {
   const search = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
+  const header = compileSearchMethods(
+    fs.readFileSync(path.join(process.cwd(), 'client/components/common/nav-header.vue'), 'utf8'),
+    ['handleSearchShortcut', 'searchClose'],
+    { requestSearchAgentExit }
+  )
 
   test('starts clamped excerpts at a real match without inventing metadata or stale-query matches', () => {
     const computed = compileSearchOptions(search, ['resultHighlights'], 'computed', { createSearchHighlighter })
@@ -987,6 +993,10 @@ describe('Search panel layout and hand-off', () => {
       )
       const state = {
         ...methods,
+        ...header,
+        canEnterAgent: false,
+        hideSearch: false,
+        searchIsComposing: false,
         searchMode: 'ask',
         searchScope: 'wiki',
         search: 'Retain the ordinary query until leaving',
@@ -1017,25 +1027,45 @@ describe('Search panel layout and hand-off', () => {
       for (const name of ['closeSearch', 'returnToSearch']) {
         state[name] = () => (outcome = methods[name].call(state))
       }
+      const field = dom.window.document.querySelector('textarea')
+      const shortcutEvent = (options = {}) =>
+        new dom.window.KeyboardEvent('keydown', {
+          key: transition === 'escape' ? 'Escape' : transition === 'search-shortcut' ? 'k' : 'a',
+          ctrlKey: transition !== 'escape',
+          shiftKey: transition === 'toggle-shortcut',
+          bubbles: true,
+          cancelable: true,
+          ...options
+        })
       const act = () => {
         if (transition === 'close') return state.closeSearch()
         if (transition === 'return-search') return state.returnToSearch()
         if (transition === 'mode') return state.setSearchMode('search')
         if (transition === 'scope') return state.selectSearchScope('downloaded')
-        const event = new dom.window.KeyboardEvent('keydown', {
-          key: transition === 'escape' ? 'Escape' : transition === 'search-shortcut' ? 'k' : 'a',
-          ctrlKey: transition !== 'escape',
-          shiftKey: transition === 'toggle-shortcut',
-          bubbles: true,
-          cancelable: true
-        })
-        dom.window.document.querySelector('textarea').dispatchEvent(event)
+        const event = shortcutEvent()
+        field.dispatchEvent(event)
         expect(event.defaultPrevented).toBe(true)
         return outcome
       }
       dom.window.document.addEventListener('keydown', event => state.handleSearchKeydown(event), true)
+      dom.window.addEventListener('keydown', event => state.handleSearchShortcut(event))
+      const retireAgentExit = registerSearchAgentExit(intent => {
+        if (!state.isAgentOpen) return null
+        return intent === 'close' ? state.closeSearch() : state.returnToSearch()
+      })
       const escapeScope = transition === 'escape' ? createModalFocusScope({ root: dom.window.document.body, onEscape: () => state.closeSearch() }) : null
       try {
+        field.focus()
+        if (transition.endsWith('shortcut')) {
+          for (const options of [{ repeat: true }, { isComposing: true }, { keyCode: 229 }]) {
+            const event = shortcutEvent(options)
+            field.dispatchEvent(event)
+            expect(event.defaultPrevented).toBe(options.repeat === true)
+            expect(decisions).toHaveLength(0)
+            expect(state.searchMode).toBe('ask')
+            expect(dom.window.document.activeElement).toBe(field)
+          }
+        }
         // The Agent backdrop remains intentionally nondismissive.
         state.handleBackdropClick(new dom.window.MouseEvent('click'))
         expect(decisions).toHaveLength(0)
@@ -1055,6 +1085,7 @@ describe('Search panel layout and hand-off', () => {
         expect(state.searchRestrictPath).toBe(true)
         expect(focusRequests).toBe(0)
         expect(workspaceCloses).toBe(0)
+        expect(dom.window.document.activeElement).toBe(field)
 
         const discarded = act()
         expect(decisions).toHaveLength(2)
@@ -1069,6 +1100,7 @@ describe('Search panel layout and hand-off', () => {
         expect(state.searchScope).toBe(transition === 'scope' ? 'downloaded' : 'wiki')
         expect(focusRequests).toBe(['return-search', 'mode', 'search-shortcut'].includes(transition) ? 1 : 0)
       } finally {
+        retireAgentExit()
         escapeScope?.deactivate({ restoreFocus: false })
         for (const [name, original] of Object.entries(originals)) {
           if (original) Object.defineProperty(globalThis, name, original)

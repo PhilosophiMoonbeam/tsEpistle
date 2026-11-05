@@ -1589,21 +1589,6 @@ export default defineComponent({
       })
     },
     handleSearchKeydown(event: KeyboardEvent): void {
-      if (this.isAgentOpen && !event.defaultPrevented && !event.isComposing && event.keyCode !== 229 && (event.ctrlKey || event.metaKey)) {
-        const searchShortcut = !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k'
-        const closeShortcut = event.shiftKey && event.key.toLowerCase() === 'a'
-        if (searchShortcut || closeShortcut) {
-          // The header handles opening; destructive shortcuts must leave through
-          // the mounted Agent before its local Memory/media state can unmount.
-          event.preventDefault()
-          event.stopImmediatePropagation()
-          if (!event.repeat) {
-            if (searchShortcut) void this.returnToSearch()
-            else void this.closeSearch()
-          }
-          return
-        }
-      }
       if (!this.searchModalFocusScope) {
         this.searchTabEntryPending = event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing
       }

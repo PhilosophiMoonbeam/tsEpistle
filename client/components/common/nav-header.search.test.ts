@@ -321,6 +321,7 @@ describe('header Agent exit ownership', () => {
       const { state, key, document, exited } = fixture(true)
       state.searchMode = 'ask'
       state.searchIsShown = true
+      state.canEnterAgent = false
       state.searchFocusGeneration = 8
       document.getElementById('agent')!.focus()
       const decision = Promise.withResolvers<boolean>()
@@ -353,6 +354,7 @@ describe('header Agent exit ownership', () => {
       const { state, key, document, exited } = fixture(true)
       state.searchMode = 'ask'
       state.searchIsShown = true
+      state.canEnterAgent = false
       state.searchFocusGeneration = 8
       document.getElementById('agent')!.focus()
       let glossaryGuardCalls = 0

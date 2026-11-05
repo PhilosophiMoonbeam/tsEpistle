@@ -86,7 +86,9 @@ const LARGEST_JAVASCRIPT_CHUNK_RAW_LIMIT = 1_565 * KiB
 // their first build measured 13,952.1 KiB. Every other budget remains unchanged.
 // Retain a fixed aggregate ceiling and every initial-load/lazy budget.
 // Reader leading-title deduplication has a further user-approved 2 KiB aggregate allowance.
-const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_956 * KiB
+// MAYA Wiki Agent lifecycle/recovery fixes have a user-approved 4 KiB aggregate allowance;
+// the reduced-owner diagnostic build measured 13,958.8 KiB. Every other budget is unchanged.
+const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_960 * KiB
 
 export function findManifestKey(manifest: Manifest, source: string): string {
   if (manifest[source]) return source
