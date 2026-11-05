@@ -65,6 +65,7 @@ export type AgentExecutionFailureCode =
   | 'AGENT_SPECIALIST_HANDOFF_INVALID'
   | 'INVALID_SUBAGENT_AUTHORITY'
   | 'AGENT_ACTION_CONTINUATION_MISMATCH'
+  | 'RUN_LEASE_LOST'
   | 'UNEXPECTED_PROVIDER_TOOL_CALL'
   | 'PROVIDER_CONTEXT_TOO_LARGE'
   | 'ACTION_SESSION_CLOSE_FAILED'
@@ -181,6 +182,8 @@ const SAFE_REPOSITORY_CODES: Readonly<Record<string, true>> = {
   AGENT_SPECIALIST_HANDOFF_INVALID: true,
   INVALID_SUBAGENT_AUTHORITY: true,
   AGENT_ACTION_CONTINUATION_MISMATCH: true,
+  // Lost host ownership is a conflict, not an upstream provider failure.
+  RUN_LEASE_LOST: true,
   UNEXPECTED_PROVIDER_TOOL_CALL: true
 }
 
@@ -220,14 +223,19 @@ const SAFE_STAGES: Readonly<Record<string, true>> = {
 const SAFE_MESSAGE = 'Agent inference failed'
 const MEDIA_MESSAGES: Readonly<Record<string, string>> = {
   AGENT_HOST_PERSISTENCE_FAILED: 'Agent host could not persist execution metadata. Execution stopped without retrying completed work.',
-  WIKI_VERIFICATION_UNAVAILABLE: 'Wiki factual publication requires an enabled, priced Jev decision provider. Ask an administrator to check the default decision provider and its credential.',
+  WIKI_VERIFICATION_UNAVAILABLE:
+    'Wiki factual publication requires an enabled, priced Jev decision provider. Ask an administrator to check the default decision provider and its credential.',
   WIKI_VERIFICATION_BINDING_INVALID: 'Wiki facts could not be verified against their original source bindings. No factual answer was published.',
   WIKI_VERIFICATION_PLAN_INVALID: 'Wiki factual verification could not be prepared. No factual answer was published. Contact an administrator.',
-  WIKI_VERIFICATION_PRICING_INVALID: 'Wiki verification requires valid configured pricing to bound billing exposure. Ask an administrator to check decision-provider pricing.',
-  WIKI_VERIFICATION_FAILED: 'The Wiki verification service could not complete verification. No factual answer was published. Check decision-provider availability before starting another run.',
-  DECISION_PROVIDER_UNAVAILABLE: 'The required decision provider is unavailable. Ask an administrator to check the enabled default provider and its credential.',
+  WIKI_VERIFICATION_PRICING_INVALID:
+    'Wiki verification requires valid configured pricing to bound billing exposure. Ask an administrator to check decision-provider pricing.',
+  WIKI_VERIFICATION_FAILED:
+    'The Wiki verification service could not complete verification. No factual answer was published. Check decision-provider availability before starting another run.',
+  DECISION_PROVIDER_UNAVAILABLE:
+    'The required decision provider is unavailable. Ask an administrator to check the enabled default provider and its credential.',
   DECISION_PROVIDER_FAILED: 'The decision service could not complete the request. Check decision-provider availability before starting another run.',
-  DECISION_PROVIDER_REVISION_CHANGED: 'The decision-provider configuration changed during the run. Start another run after an administrator checks the current configuration.',
+  DECISION_PROVIDER_REVISION_CHANGED:
+    'The decision-provider configuration changed during the run. Start another run after an administrator checks the current configuration.',
   EXTERNAL_MCP_ACCESS_DENIED: 'External MCP access is no longer available. Check endpoint access before starting another run.',
   EXTERNAL_MCP_NATIVE_TOOLS_REQUIRED: 'External MCP requires a model with native tool calling.',
   EXTERNAL_MCP_TOOL_COLLISION: 'The external MCP tool catalog conflicts with the available tools.',
@@ -305,6 +313,7 @@ const SAFE_STATUS_BY_CODE: Readonly<Record<string, number>> = {
   AGENT_SPECIALIST_HANDOFF_INVALID: 409,
   INVALID_SUBAGENT_AUTHORITY: 409,
   AGENT_ACTION_CONTINUATION_MISMATCH: 409,
+  RUN_LEASE_LOST: 409,
   AGENT_PROVIDER_STATE_CORRUPT: 500,
   INVALID_PROVIDER_REQUEST: 500,
   DISPATCH_RESERVATION_INVALID: 500

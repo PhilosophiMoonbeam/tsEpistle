@@ -1862,27 +1862,37 @@ describe('durable agent repositories', () => {
         const uncertainSnapshot = { ...uncertain }
         await sequence.resizeUndispatched({ tokens: 220, costMicros: 220 })
         heldAfterGrowth = await knex('agentQuotaReservations').where({ runId }).first('reservedTokens', 'reservedCostMicros')
-        expect(sequence.unsettledExposure).toEqual({ tokens: 300, costMicros: 300 })
+        // Resizing grows unused capacity, not the already-dispatched unknown receipt.
+        expect(sequence.unsettledExposure).toEqual({ tokens: uncertain.tokens, costMicros: uncertain.costMicros })
         expect(uncertain).toEqual(uncertainSnapshot)
 
         await sequence.resizeUndispatched({ tokens: 60, costMicros: 60 })
-        expect(sequence.unsettledExposure).toEqual({ tokens: 140, costMicros: 140 })
+        expect(sequence.unsettledExposure).toEqual({ tokens: uncertain.tokens, costMicros: uncertain.costMicros })
         await expect(sequence.reserve({ tokens: 61, costMicros: 61 })).rejects.toMatchObject({ code: 'DISPATCH_RESERVATION_EXCEEDED' })
         await expect(sequence.resizeUndispatched({ tokens: 1_000, costMicros: 1_000 })).rejects.toMatchObject({
           code: 'AGENT_QUOTA_EXHAUSTED',
           status: 429
         })
-        expect(sequence.unsettledExposure).toEqual({ tokens: 140, costMicros: 140 })
+        expect(sequence.unsettledExposure).toEqual({ tokens: uncertain.tokens, costMicros: uncertain.costMicros })
         expect(uncertain).toEqual(uncertainSnapshot)
 
         const settled = await sequence.reserve({ tokens: 60, costMicros: 60 })
         await sequence.reconcile(settled, { inputTokens: 40, outputTokens: 20, totalTokens: 60, costMicros: 60 })
+        await expect(sequence.reconcile(settled, { inputTokens: 40, outputTokens: 20, totalTokens: 60, costMicros: 60 })).rejects.toMatchObject({
+          code: 'DISPATCH_RESERVATION_INVALID'
+        })
         expect(sequence.unsettledExposure).toEqual({ tokens: uncertain.tokens, costMicros: uncertain.costMicros })
         await expect(sequence.resizeUndispatched({ tokens: 900, costMicros: 900 })).rejects.toMatchObject({
           code: 'AGENT_QUOTA_EXHAUSTED',
           status: 429
         })
         expect(sequence.unsettledExposure).toEqual({ tokens: uncertain.tokens, costMicros: uncertain.costMicros })
+        // Close while capacity is still unused: retain the unknown child, never bill the parent.
+        await sequence.resizeUndispatched({ tokens: 40, costMicros: 40 })
+        const unsent = await sequence.reserve({ tokens: 10, costMicros: 10 })
+        await sequence.release(unsent)
+        expect(sequence.unsettledExposure).toEqual({ tokens: uncertain.tokens, costMicros: uncertain.costMicros })
+        expect(request.dispatchBudget.unsettledExposure).toEqual({ tokens: uncertain.tokens, costMicros: uncertain.costMicros })
         await sequence.close()
         expect(sequence.unsettledExposure).toEqual({ tokens: uncertain.tokens, costMicros: uncertain.costMicros })
         expect(request.dispatchBudget.unsettledExposure).toEqual({ tokens: uncertain.tokens, costMicros: uncertain.costMicros })
@@ -1911,6 +1921,12 @@ describe('durable agent repositories', () => {
       status: 'consumed',
       consumedTokens: 140,
       consumedCostMicros: 140
+    })
+    expect(await knex('agentRuns').where({ id: runId }).first('inputTokens', 'outputTokens', 'totalTokens', 'estimatedCostMicros')).toEqual({
+      inputTokens: 40,
+      outputTokens: 20,
+      totalTokens: 60,
+      estimatedCostMicros: 60
     })
     await runtime.shutdown()
   })
@@ -2506,7 +2522,11 @@ describe('durable agent repositories', () => {
       async execute(request, sink) {
         executions += 1
         await sink.text(unacceptedDraft)
-        await request.dispatchBudget?.reserve({ tokens: 20, costMicros: 30 })
+        if (!request.dispatchBudget) throw new Error('dispatch budget missing')
+        // The real provider reconciles its complete receipt before emitting model.turn.
+        // A later request can fail without a receipt; it remains independently exposed.
+        const measured = await request.dispatchBudget.reserve({ tokens: 10, costMicros: 5 })
+        await request.dispatchBudget.reconcile(measured, { inputTokens: 7, outputTokens: 3, totalTokens: 10, costMicros: 5 })
         await sink.event('model.turn', {
           turn: 1,
           outcome: 'answer_rejected',
@@ -2519,6 +2539,7 @@ describe('durable agent repositories', () => {
           contentTruncated: false,
           actionCallIds: []
         })
+        await request.dispatchBudget.reserve({ tokens: 20, costMicros: 30 })
         throw new AgentExecutionFailure('INVALID_PROVIDER_RESPONSE', 'provider_stream', undefined, {
           transportKind: 'gemini-api',
           providerErrorCode: 'protocol_stream_invalid'

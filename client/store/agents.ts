@@ -26,7 +26,9 @@ import {
   type AgentMemoryReceiptDelivery,
   type AgentMemoryTargetCount,
   type AgentPresetId,
-  type AgentThreadState
+  type AgentThreadState,
+  type CreateAgentGoalRequest,
+  type SubmitAgentMessageRequest
 } from '../../shared/agents/contracts.ts'
 import {
   AgentApiError,
@@ -61,6 +63,29 @@ export interface AgentSendOptions {
   /** Display-only identity of the clicked starter; never inferred from its content. */
   readonly presetId?: AgentPresetId
 }
+
+type UnresolvedAgentSubmission = {
+  readonly ownerId: number
+  readonly ownerGeneration: number
+  readonly sessionId: string
+  readonly draftRevision: number
+  readonly draftKey: string
+  readonly intentKey: string
+} & ({ readonly endpoint: 'messages'; readonly request: SubmitAgentMessageRequest } | { readonly endpoint: 'goals'; readonly request: CreateAgentGoalRequest })
+
+// Compare composition, not replaceable access/preview metadata or the current
+// route. Navigation must not turn an uncertain POST into a new command.
+const agentDraftCompositionKey = (draft: AgentDraft): string =>
+  JSON.stringify({
+    text: draft.text,
+    mode: draft.mode,
+    skillVersionIds: draft.skillVersionIds,
+    scope: draft.scope,
+    sources: draft.sources.map(({ id, locale, path, title, visibility, sourceRevision }) => ({ id, locale, path, title, visibility, sourceRevision })),
+    pendingSources: draft.pendingSources ?? [],
+    includeCurrentPage: draft.includeCurrentPage,
+    currentPageOverride: draft.currentPageOverride
+  })
 
 export interface AgentMemoryMutationCapture {
   readonly ownerId: number
@@ -262,6 +287,9 @@ export const useAgentsStore = defineStore('agents', {
     folders: [] as AgentConversationFolderView[],
     thread: null as AgentThreadState | null,
     drafts: {} as Record<string, AgentDraft>,
+    draftRevisions: {} as Record<string, number>,
+    // Memory only: retain uncertain command identities across ordinary Close.
+    unresolvedSubmissions: [] as UnresolvedAgentSubmission[],
     skills: [] as VisibleAgentSkill[],
     skillsLoading: false,
     skillsLoadError: '',
@@ -532,6 +560,8 @@ export const useAgentsStore = defineStore('agents', {
         this.cancelSessionTransition()
         this.thread = null
         this.drafts = {}
+        this.draftRevisions = {}
+        this.unresolvedSubmissions = []
         this.sessions = []
         this.sessionsNextCursor = null
         this.folders = []
@@ -937,6 +967,8 @@ export const useAgentsStore = defineStore('agents', {
       this.workspaceOwnerId = null
       this.thread = null
       this.drafts = {}
+      this.draftRevisions = {}
+      this.unresolvedSubmissions = []
       this.sessions = []
       this.sessionsNextCursor = null
       this.folders = []
@@ -967,6 +999,7 @@ export const useAgentsStore = defineStore('agents', {
         (patch.includeCurrentPage === true && previous.currentPageOverride === null && patch.currentPageOverride === undefined)
       const next = { ...previous, ...patch }
       if (clearPageOverride) delete next.currentPageOverride
+      if (agentDraftCompositionKey(previous) !== agentDraftCompositionKey(next)) this.draftRevisions[sessionId] = (this.draftRevisions[sessionId] ?? 0) + 1
       this.drafts[sessionId] = next
       if (contextChanged && sessionId === this.continuitySessionId) this.persistConversationContext()
     },
@@ -1520,9 +1553,32 @@ export const useAgentsStore = defineStore('agents', {
     ): Promise<boolean> {
       if (!this.isWorkspaceReady() || this.contextTransferController !== null) return false
       const thread = this.thread
+      if (!thread || this.workspaceOwnerId === null) return false
       const trimmed = content.trim()
       const clickedPresetId = mode === 'message' ? options?.presetId : undefined
-      const draftSnapshot = JSON.parse(JSON.stringify(this.drafts[thread?.session.id ?? ''] ?? emptyAgentDraft())) as AgentDraft
+      const sessionId = thread.session.id
+      const ownerId = this.workspaceOwnerId
+      const ownerGeneration = this.ownerGeneration
+      const draftSnapshot = JSON.parse(JSON.stringify(this.drafts[sessionId] ?? emptyAgentDraft())) as AgentDraft
+      const draftRevision = this.draftRevisions[sessionId] ?? 0
+      const draftKey = agentDraftCompositionKey(draftSnapshot)
+      const clickedSkillVersionIds = invokedSkillVersionIds.length > 0 ? [...invokedSkillVersionIds] : undefined
+      const clickedMedia = media
+        ? {
+            attachmentIds: [...media.attachmentIds],
+            ...(media.generationTools ? { generationTools: [...media.generationTools] } : {})
+          }
+        : undefined
+      const intentKey = JSON.stringify({ content, mode, invokedSkillVersionIds: clickedSkillVersionIds, media: clickedMedia, presetId: clickedPresetId })
+      let submission = this.unresolvedSubmissions.find(
+        candidate =>
+          candidate.ownerId === ownerId &&
+          candidate.ownerGeneration === ownerGeneration &&
+          candidate.sessionId === sessionId &&
+          candidate.draftRevision === draftRevision &&
+          candidate.draftKey === draftKey &&
+          candidate.intentKey === intentKey
+      )
       const currentPage = draftSnapshot.includeCurrentPage
         ? draftSnapshot.currentPageOverride === undefined
           ? (this.contextPage ?? this.launchPage)
@@ -1530,17 +1586,12 @@ export const useAgentsStore = defineStore('agents', {
         : null
       const clickedCurrentPage = currentPage ? { ...currentPage } : null
       if (
-        !thread ||
         (!trimmed && !media?.attachmentIds.length) ||
         this.sending ||
-        thread.session.currentRun?.canCancel ||
-        (thread.goal && ['active', 'paused', 'blocked'].includes(thread.goal.status))
+        (!submission && (thread.session.currentRun?.canCancel || (thread.goal && ['active', 'paused', 'blocked'].includes(thread.goal.status))))
       )
         return false
       const workspaceVersion = this.workspaceVersion
-      const sessionId = thread.session.id
-      const ownerId = this.workspaceOwnerId
-      const ownerGeneration = this.ownerGeneration
       const capturedPins = readAdmissionPins(thread.session.profileResolutionToken)
       const capturedSessionVersion = thread.session.version
       const capturedExecutionMode = thread.session.executionMode
@@ -1549,89 +1600,115 @@ export const useAgentsStore = defineStore('agents', {
       this.sending = true
       this.error = ''
       try {
-        const clickedSkillVersionIds = invokedSkillVersionIds.length > 0 ? [...invokedSkillVersionIds] : undefined
-        const clickedMedia = media
-          ? {
-              attachmentIds: [...media.attachmentIds],
-              ...(media.generationTools ? { generationTools: [...media.generationTools] } : {})
-            }
-          : undefined
         try {
-          const refreshed = await this.refreshThread()
-          if (
-            !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
-            !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
-            !this.isSessionMutationOwned(mutationToken)
-          )
-            return false
-          if (!refreshed.accepted || !refreshed.current || !this.isWorkspaceReady()) {
-            if (refreshed.current) this.error = 'The conversation could not be refreshed. Nothing was sent; retry when ready.'
-            return false
+          if (!submission) {
+            const refreshed = await this.refreshThread()
+            if (
+              !this.isOwnerContextCurrent(workspaceVersion, ownerId, ownerGeneration) ||
+              !this.isSessionContextCurrent(workspaceVersion, sessionId) ||
+              !this.isSessionMutationOwned(mutationToken)
+            )
+              return false
+            if (!refreshed.accepted || !refreshed.current || !this.isWorkspaceReady()) {
+              if (refreshed.current) this.error = 'The conversation could not be refreshed. Nothing was sent; retry when ready.'
+              return false
+            }
+            const freshThread = this.thread
+            if (!freshThread || freshThread.session.id !== sessionId) return false
+            if (freshThread.session.currentRun?.canCancel || (freshThread.goal && ['active', 'paused', 'blocked'].includes(freshThread.goal.status))) {
+              this.connectCurrentRun()
+              return false
+            }
+            const freshPins = readAdmissionPins(freshThread.session.profileResolutionToken)
+            if (
+              !sameAdmissionPins(capturedPins, freshPins) ||
+              freshPins?.ownerId !== ownerId ||
+              freshPins?.sessionId !== sessionId ||
+              freshPins?.sessionVersion !== freshThread.session.version ||
+              freshThread.session.version !== capturedSessionVersion ||
+              freshThread.session.executionMode !== capturedExecutionMode ||
+              freshPins?.executionMode !== freshThread.session.executionMode
+            ) {
+              this.error = 'Agent settings changed. Review the conversation before sending again. Nothing was sent.'
+              return false
+            }
+            const request = {
+              clientRequestId: crypto.randomUUID(),
+              expectedSessionVersion: freshThread.session.version,
+              profileResolutionToken: freshThread.session.profileResolutionToken,
+              ...(clickedSkillVersionIds ? { invokedSkillVersionIds: clickedSkillVersionIds } : {}),
+              ...(clickedCurrentPage ? { currentPage: clickedCurrentPage } : {}),
+              knowledgeContext: AgentKnowledgeContextSchema.parse({
+                scope: draftSnapshot.scope,
+                sources: draftSnapshot.sources.map(({ id, locale, path, title, visibility, sourceRevision }) => ({
+                  id,
+                  locale,
+                  path,
+                  title,
+                  visibility,
+                  sourceRevision
+                }))
+              })
+            }
+            const command =
+              mode === 'goal'
+                ? {
+                    endpoint: 'goals' as const,
+                    request: {
+                      ...request,
+                      goalId: crypto.randomUUID(),
+                      objective: trimmed,
+                      ...(clickedMedia?.generationTools ? { generationTools: clickedMedia.generationTools } : {})
+                    }
+                  }
+                : {
+                    endpoint: 'messages' as const,
+                    request: {
+                      ...request,
+                      content: clickedPresetId === undefined ? trimmed : content,
+                      ...(clickedPresetId === undefined ? {} : { presetId: clickedPresetId }),
+                      ...(clickedMedia ? { attachmentIds: clickedMedia.attachmentIds, generationTools: clickedMedia.generationTools } : {})
+                    }
+                  }
+            submission = markRaw({ ownerId, ownerGeneration, sessionId, draftRevision, draftKey, intentKey, ...command })
+            this.unresolvedSubmissions.push(submission)
           }
-          const freshThread = this.thread
-          if (!freshThread || freshThread.session.id !== sessionId) return false
-          if (freshThread.session.currentRun?.canCancel || (freshThread.goal && ['active', 'paused', 'blocked'].includes(freshThread.goal.status))) {
-            this.connectCurrentRun()
-            return false
-          }
-          const freshPins = readAdmissionPins(freshThread.session.profileResolutionToken)
-          if (
-            !sameAdmissionPins(capturedPins, freshPins) ||
-            freshPins?.ownerId !== ownerId ||
-            freshPins?.sessionId !== sessionId ||
-            freshPins?.sessionVersion !== freshThread.session.version ||
-            freshThread.session.version !== capturedSessionVersion ||
-            freshThread.session.executionMode !== capturedExecutionMode ||
-            freshPins?.executionMode !== freshThread.session.executionMode
-          ) {
-            this.error = 'Agent settings changed. Review the conversation before sending again. Nothing was sent.'
-            return false
-          }
-          const request = {
-            clientRequestId: crypto.randomUUID(),
-            expectedSessionVersion: freshThread.session.version,
-            profileResolutionToken: freshThread.session.profileResolutionToken,
-            ...(clickedSkillVersionIds ? { invokedSkillVersionIds: clickedSkillVersionIds } : {}),
-            ...(clickedCurrentPage ? { currentPage: clickedCurrentPage } : {}),
-            knowledgeContext: AgentKnowledgeContextSchema.parse({
-              scope: draftSnapshot.scope,
-              sources: draftSnapshot.sources.map(({ id, locale, path, title, visibility, sourceRevision }) => ({
-                id,
-                locale,
-                path,
-                title,
-                visibility,
-                sourceRevision
-              }))
-            })
-          }
-          if (mode === 'goal') {
-            await createAgentGoal(fetchFromWindow, this.csrfToken, sessionId, {
-              ...request,
-              goalId: crypto.randomUUID(),
-              objective: trimmed,
-              ...(clickedMedia?.generationTools ? { generationTools: clickedMedia.generationTools } : {})
-            })
-          } else {
-            await submitAgentMessage(fetchFromWindow, this.csrfToken, sessionId, {
-              ...request,
-              content: clickedPresetId === undefined ? trimmed : content,
-              ...(clickedPresetId === undefined ? {} : { presetId: clickedPresetId }),
-              ...(clickedMedia ? { attachmentIds: clickedMedia.attachmentIds, generationTools: clickedMedia.generationTools } : {})
-            })
-          }
+          // Only an explicit send can replay this exact endpoint and envelope.
+          // A terminal run or refreshed admission token does not resolve a lost response.
+          if (submission.endpoint === 'goals') await createAgentGoal(fetchFromWindow, this.csrfToken, submission.sessionId, submission.request)
+          else await submitAgentMessage(fetchFromWindow, this.csrfToken, submission.sessionId, submission.request)
         } catch (error) {
+          const rejectedRequestId = submission?.request.clientRequestId
+          if (this.workspaceOwnerId === ownerId && this.ownerGeneration === ownerGeneration && error instanceof AgentApiError) {
+            if (error.status === 401) this.destroyWorkspace()
+            else if (error.status >= 400 && error.status < 500 && rejectedRequestId)
+              this.unresolvedSubmissions = this.unresolvedSubmissions.filter(candidate => candidate.request.clientRequestId !== rejectedRequestId)
+          }
           if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.error = error instanceof Error ? error.message : 'Message could not be sent.'
           return false
         }
+        const acceptedSubmission = submission
         const completionCurrent = this.isSendCompletionCurrent(workspaceVersion, sessionId, ownerId, ownerGeneration, mutationToken)
-        if (
-          completionCurrent &&
-          this.drafts[sessionId]?.text.trim() === trimmed &&
-          this.drafts[sessionId]?.mode === draftSnapshot.mode &&
-          JSON.stringify(this.drafts[sessionId]?.skillVersionIds) === JSON.stringify(draftSnapshot.skillVersionIds)
-        )
-          this.updateDraft(sessionId, { text: '', mode: 'message', skillVersionIds: [] })
+        // Retiring the accepted original composition is independent of whether
+        // this workspace may still refresh or release its mounted media input.
+        if (this.workspaceOwnerId === ownerId && this.ownerGeneration === ownerGeneration) {
+          this.unresolvedSubmissions = this.unresolvedSubmissions.filter(
+            candidate => candidate.request.clientRequestId !== acceptedSubmission.request.clientRequestId
+          )
+          const currentDraft = this.drafts[sessionId]
+          const acceptedContent = acceptedSubmission.endpoint === 'goals' ? acceptedSubmission.request.objective : acceptedSubmission.request.content
+          const preserveContentBytes = acceptedSubmission.endpoint === 'messages' && acceptedSubmission.request.presetId !== undefined
+          // Retirement must belong to the dispatched content, not a newer draft
+          // captured while dictation was finishing. Custom sends trim outer
+          // whitespace; exact revision/composition still protects later edits.
+          if (
+            currentDraft &&
+            (preserveContentBytes ? currentDraft.text : currentDraft.text.trim()) === acceptedContent &&
+            (this.draftRevisions[sessionId] ?? 0) === acceptedSubmission.draftRevision &&
+            agentDraftCompositionKey(currentDraft) === acceptedSubmission.draftKey
+          )
+            this.updateDraft(sessionId, { text: '', mode: 'message', skillVersionIds: [] })
+        }
         // Admission is complete before the follow-up view refresh. Let the
         // current composer release accepted input without treating it as unsent.
         if (completionCurrent) onAccepted?.()

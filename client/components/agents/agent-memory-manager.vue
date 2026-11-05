@@ -296,7 +296,17 @@ watch([pendingSection, loading, loaded, open], async ([target, busy, , visible],
   pendingSection.value = null
   sectionContext = null
 }, { flush: 'post' })
-defineExpose({ focusSection })
+const hasUnsavedChanges = (): boolean => {
+  const selected = editing.value
+  if (!selected) return false
+  if (!selected.id) return draftContent.value.length > 0
+  const original = findMemoryEntry(memories.value, selected.id)
+  return !original || original.content !== draftContent.value || original.target !== draftTarget.value
+}
+const discardUnsavedChanges = (): void => {
+  if (!actionBusy.value) cancelEdit()
+}
+defineExpose({ focusSection, hasUnsavedChanges, discardUnsavedChanges })
 
 const targetLimit = computed(() => memories.value[draftTarget.value].limit)
 const memoryCount = computed(() => memories.value.user.entries.length + memories.value.agent.entries.length)

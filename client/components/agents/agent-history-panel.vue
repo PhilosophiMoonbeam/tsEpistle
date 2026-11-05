@@ -420,7 +420,7 @@ const sessionEditorTitleId = `${historyId}-session-editor-title`
 const deleteTitleId = `${historyId}-delete-title`
 const removeFolderTitleId = `${historyId}-remove-folder-title`
 // biome-ignore lint/correctness/noVueDuplicateKeys: Script-setup prop aliases and the normalized computed binding are not duplicate Options API keys.
-const props = defineProps<{ active: boolean; headingId: string; descriptionId: string; networkBlocked?: boolean; compactHeader?: boolean; contentId?: string }>()
+const props = defineProps<{ active: boolean; headingId: string; descriptionId: string; networkBlocked?: boolean; compactHeader?: boolean; contentId?: string; beforeSessionChange?: () => Promise<boolean> }>()
 const emit = defineEmits<{ close: []; clear: [] }>()
 const { headingId, descriptionId } = props
 const agents = useAgentsStore()
@@ -907,6 +907,8 @@ const openSession = async (sessionId: string): Promise<void> => {
   localError.value = ''
   updatePendingSet(openingSessionIds, sessionId, true)
   try {
+    if (props.beforeSessionChange && !await props.beforeSessionChange()) return
+    if (!isOperationCurrent(identity) || sessionMutationBusy.value) return
     await agents.openSession(sessionId)
   } catch (value) {
     if (isOperationCurrent(identity)) localError.value = message(value, t('common:agentHistoryPanel.conversationCouldNotOpened'))

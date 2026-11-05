@@ -504,7 +504,7 @@ import {
   onPageMove,
   onPageSource
 } from '../../helpers/page-action-events'
-import { emitSearchEnter, emitSearchExit, emitSearchMove, onSearchFocus, offSearchFocus, registerSearchQuickCreate } from '../../helpers/search-navigation-events'
+import { emitSearchEnter, emitSearchExit, emitSearchMove, onSearchFocus, offSearchFocus, registerSearchQuickCreate, requestSearchAgentExit } from '../../helpers/search-navigation-events'
 import { resolveUserPicture } from '../../helpers/user-picture.ts'
 import type { UserPicture } from '../../helpers/user-picture.ts'
 import * as pwa from '../../helpers/pwa.ts'
@@ -1055,7 +1055,28 @@ export default defineComponent({
       this.setReadingChromeHidden(true)
     },
     openSearchQuickCreate(): boolean {
-      if (!this.canQuickCreate || this.beforeSearchExit?.() === false) return false
+      if (!this.canQuickCreate) return false
+      const generation = this.headerActionGeneration
+      const ownerId = this.notificationOwnerId
+      const ownedExit = requestSearchAgentExit('close')
+      if (ownedExit !== null) {
+        void ownedExit.then(accepted => {
+          if (
+            !accepted || generation !== this.headerActionGeneration ||
+            ownerId !== this.notificationOwnerId || !this.canQuickCreate
+          ) return
+          this.finishSearchQuickCreate()
+        })
+        return true
+      }
+      if (this.beforeSearchExit?.() === false) return false
+      emitSearchExit(false)
+      this.searchIsFocused = false
+      this.searchMode = 'search'
+      this.finishSearchQuickCreate()
+      return true
+    },
+    finishSearchQuickCreate(): void {
       // Only a mounted reader can supply folder context; other app roots may
       // retain old page metadata. Snapshot the seed so selector drafts stay put.
       const reader = this.readerPageActions
@@ -1068,12 +1089,8 @@ export default defineComponent({
         locale: reader?.page.locale || supportedLocales.find(locale => locale === uiLocale) ||
           supportedLocales.find(locale => locale === uiLocale.split('-')[0]) || siteConfig.lang
       }
-      emitSearchExit(false)
-      this.searchIsFocused = false
-      this.searchMode = 'search'
       this.revealReadingChrome()
       this.newPageModal = true
-      return true
     },
     invalidateNotificationSession(): void {
       this.siteNotifications.reset()
@@ -1309,7 +1326,9 @@ export default defineComponent({
     searchFocus () {
       this.searchIsFocused = true
     },
-    searchClose () {
+    searchClose (): Promise<boolean> | void {
+      const ownedExit = requestSearchAgentExit('close')
+      if (ownedExit !== null) return ownedExit
       if (this.beforeSearchExit?.() === false) return
       this.searchFocusGeneration += 1
       this.searchIsComposing = false
@@ -1346,12 +1365,13 @@ export default defineComponent({
         root.querySelector<HTMLInputElement>('input')?.focus({ preventScroll: true })
       }
     },
-    searchToggle () {
-      if (this.searchIsShown) this.searchClose()
-      else void this.focusSearchField()
+    searchToggle (): Promise<boolean> | void {
+      if (this.searchIsShown) return this.searchClose()
+      void this.focusSearchField()
     },
     async openAgent(): Promise<void> {
       if (!this.canEnterAgent || !this.onlineActionReady) return
+      if (this.searchMode === 'ask' && this.searchIsFocused) return this.focusSearchField()
       if (this.beforeSearchExit?.() === false) return
       this.revealReadingChrome()
       // Retire Search's scope before Agent captures the persistent direct opener.
@@ -1366,10 +1386,12 @@ export default defineComponent({
       this.searchMode = 'ask'
       void this.focusSearchField()
     },
-    handleSearchShortcut(event: KeyboardEvent): void {
+    handleSearchShortcut(event: KeyboardEvent): Promise<boolean> | void {
       if (this.hideSearch || event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229 || this.searchIsComposing) return
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
         event.preventDefault()
+        const ownedExit = requestSearchAgentExit('search')
+        if (ownedExit !== null) return ownedExit
         this.searchMode = 'search'
         void this.focusSearchField()
         return
@@ -1378,8 +1400,7 @@ export default defineComponent({
       if (!this.canEnterAgent) return
       event.preventDefault()
       if (this.searchMode === 'ask' && this.searchIsFocused) {
-        this.searchClose()
-        return
+        return this.searchClose()
       }
       this.searchIsShown = true
       this.searchMode = 'ask'

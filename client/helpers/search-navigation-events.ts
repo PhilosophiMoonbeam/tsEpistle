@@ -21,6 +21,23 @@ export type SearchQuickCreateBridge = {
   open: () => boolean
 }
 
+export type SearchAgentExitIntent = 'close' | 'search'
+/** Null leaves the intent to the caller; a promise owns it even when Stay resolves false. */
+export type SearchAgentExitBridge = (intent: SearchAgentExitIntent) => Promise<boolean> | null
+
+let searchAgentExit: SearchAgentExitBridge | null = null
+
+export function registerSearchAgentExit(bridge: SearchAgentExitBridge): () => void {
+  searchAgentExit = bridge
+  return () => {
+    if (searchAgentExit === bridge) searchAgentExit = null
+  }
+}
+
+export function requestSearchAgentExit(intent: SearchAgentExitIntent): Promise<boolean> | null {
+  return searchAgentExit?.(intent) ?? null
+}
+
 const searchQuickCreate = shallowRef<SearchQuickCreateBridge | null>(null)
 
 export function registerSearchQuickCreate(bridge: SearchQuickCreateBridge): () => void {

@@ -49,6 +49,7 @@
         :heading-id="historyHeadingId"
         :description-id="historyDescriptionId"
         :network-blocked="connectionBlocked"
+        :before-session-change="beforeLeave"
         @close="closeHistory"
         @clear="openClearUnfiledHistory"
       />
@@ -602,7 +603,7 @@
         <v-btn
           color="primary"
           variant="flat"
-          :disabled="sessionMutationBusy || connectionBlocked || !workspaceReady"
+          :disabled="memoryMutationBusy || sessionMutationBusy"
           @click="resolveDraftDiscard(true)"
         >{{ $t('common:agentWorkspace.discardDraftConfirm') }}</v-btn>
       </v-card-actions>
@@ -720,7 +721,7 @@ const transcript = useTemplateRef<HTMLElement>('transcript')
 const conversationDock = useTemplateRef<HTMLElement>('conversationDock')
 const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void>; setDraft: (value: string) => Promise<void>; editImage: (media: AgentMediaView) => Promise<void>; reattachMedia: (media: AgentMediaView) => Promise<boolean>; hasUnsentMedia: () => boolean; hasPendingSubmission: () => boolean; isMediaBusy: () => boolean; isInputComposing: () => boolean }>('composer')
 const contextPicker = useTemplateRef<{ openSources: (opener: HTMLElement) => void }>('contextPicker')
-const memoryManager = useTemplateRef<{ focusSection: (target: 'user' | 'agent') => void }>('memoryManager')
+const memoryManager = useTemplateRef<{ focusSection: (target: 'user' | 'agent') => void; hasUnsavedChanges: () => boolean; discardUnsavedChanges: () => void }>('memoryManager')
 type ComponentRoot = { $el?: unknown }
 type ActivatorOverlay = { activatorEl?: HTMLElement }
 type MenuOverlay = ActivatorOverlay & { contentEl?: HTMLElement }
@@ -751,6 +752,7 @@ const discardDraftOpen = ref(false)
 let draftDiscardResolver: ((discard: boolean) => void) | null = null
 let draftDiscardFocusScope: ModalFocusScope | null = null
 let restoreDiscardDraftFocus = false
+let discardDraftRestoreTarget: HTMLElement | null = null
 const clearingUnfiledHistory = ref(false)
 const clearUnfiledError = ref('')
 const clearUnfiledCommitted = ref(false)
@@ -1566,6 +1568,7 @@ const promptPreparationAllowed = (): boolean => {
   return mediaReplacementAllowed()
 }
 const hasDisposableDraft = (): boolean => {
+  if (memoryManager.value?.hasUnsavedChanges() || composer.value?.hasUnsentMedia()) return true
   const current = thread.value
   if (!current || current.messages.length > 0 || current.session.currentRun || current.goal || current.session.folderId) return false
   const draft = activeDraft.value
@@ -1575,7 +1578,7 @@ const hasDisposableDraft = (): boolean => {
   )
 }
 const resolveDraftDiscard = (discard: boolean, restoreFocus = true): void => {
-  if (discard && (sessionMutationBusy.value || !networkActionAllowed() || !mediaReplacementAllowed())) return
+  if (discard && (memoryMutationBusy.value || sessionMutationBusy.value || !mediaReplacementAllowed())) return
   const resolve = draftDiscardResolver
   draftDiscardResolver = null
   restoreDiscardDraftFocus = !discard && restoreFocus
@@ -1583,14 +1586,39 @@ const resolveDraftDiscard = (discard: boolean, restoreFocus = true): void => {
   resolve?.(discard)
 }
 const confirmDraftDiscard = (): Promise<boolean> => new Promise(resolve => {
+  if (draftDiscardResolver) { resolve(false); return }
+  const activeElement = document.activeElement
+  discardDraftRestoreTarget = activeElement instanceof HTMLElement && activeElement.closest('.agent-memory') ? activeElement : null
   panelMenuOpen.value = false
   restoreDiscardDraftFocus = false
   draftDiscardResolver = resolve
   discardDraftOpen.value = true
 })
+let pendingLeave: Promise<boolean> | null = null
+const beforeLeave = (): Promise<boolean> => {
+  if (pendingLeave) return Promise.resolve(false)
+  const generation = componentGeneration
+  const action = actionGeneration
+  const ownerId = props.ownerId
+  const ownerGeneration = agents.ownerGeneration
+  const workspaceVersion = agents.workspaceVersion
+  const sessionId = thread.value?.session.id ?? null
+  const current = (): boolean => isComponentCurrent(generation, ownerId) && actionGeneration === action &&
+    agents.ownerGeneration === ownerGeneration && agents.workspaceVersion === workspaceVersion &&
+    (thread.value?.session.id ?? null) === sessionId
+  const leave = async (): Promise<boolean> => {
+    if (memoryMutationBusy.value || sessionMutationBusy.value || !promptPreparationAllowed()) return false
+    if ((memoryManager.value?.hasUnsavedChanges() || composer.value?.hasUnsentMedia()) && !await confirmDraftDiscard()) return false
+    if (!current() || memoryMutationBusy.value || sessionMutationBusy.value || !promptPreparationAllowed()) return false
+    memoryManager.value?.discardUnsavedChanges()
+    return true
+  }
+  pendingLeave = leave().finally(() => { pendingLeave = null })
+  return pendingLeave
+}
 const createSession = async (retention: 'saved' | 'temporary'): Promise<void> => {
   if (!networkActionAllowed()) return
-  if (sessionMutationBusy.value || creatingRetention.value) return
+  if (sessionMutationBusy.value || memoryMutationBusy.value || creatingRetention.value) return
   if (!mediaReplacementAllowed()) return
   const generation = componentGeneration
   const action = actionGeneration
@@ -1605,9 +1633,10 @@ const createSession = async (retention: 'saved' | 'temporary'): Promise<void> =>
   creatingRetention.value = retention
   try {
     if (hasDisposableDraft() && !await confirmDraftDiscard()) return
-    if (!isCreateContextCurrent() || sessionMutationBusy.value || !networkActionAllowed() || !mediaReplacementAllowed()) return
+    if (!isCreateContextCurrent() || memoryMutationBusy.value || sessionMutationBusy.value || !networkActionAllowed() || !mediaReplacementAllowed()) return
     const initialized = await ensureInitialized()
-    if (!isCreateContextCurrent() || !initialized || sessionMutationBusy.value || !networkActionAllowed() || !mediaReplacementAllowed()) return
+    if (!isCreateContextCurrent() || !initialized || memoryMutationBusy.value || sessionMutationBusy.value || !networkActionAllowed() || !mediaReplacementAllowed()) return
+    memoryManager.value?.discardUnsavedChanges()
     clearSessionNotice()
     const created = await agents.newSession(retention)
     if (!isComponentCurrent(generation, ownerId) || actionGeneration !== action) return
@@ -1696,8 +1725,8 @@ const updateMemoryOpen = (open: boolean): void => {
   } else closeMemory()
 }
 const historyToggleBlocked = computed(() => panelMode.value !== 'wide' && memoryMutationBusy.value && memoryOpen.value && !historyOpen.value)
-const requestClose = (): void => {
-  if (memoryMutationBusy.value) return
+const requestClose = async (): Promise<void> => {
+  if (!await beforeLeave()) return
   emit('close')
 }
 const toggleHistory = (): void => {
@@ -1805,6 +1834,8 @@ const clearUnfiledHistory = async (): Promise<void> => {
   clearUnfiledError.value = ''
   clearUnfiledCommitted.value = false
   try {
+    if (clearingCurrentSession && !await beforeLeave()) return
+    if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
     await agents.clearUnfiledHistory()
     if (!isComponentCurrent(generation, ownerId) || actionGeneration !== generation) return
     if (clearingCurrentSession && originalSessionId && !thread.value) {
@@ -2043,7 +2074,7 @@ watch(currentPage, (page, previous) => {
 const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
   const storeOwnerId = (agents as unknown as { workspaceOwnerId?: number | null }).workspaceOwnerId
   if (disposed || (storeOwnerId != null && storeOwnerId !== props.ownerId)) return
-  if (!(activeDraft.value.text || offlineComposerDraft.value || composer.value?.hasUnsentMedia() || composer.value?.hasPendingSubmission() || composer.value?.isMediaBusy())) return
+  if (!(memoryManager.value?.hasUnsavedChanges() || activeDraft.value.text || offlineComposerDraft.value || composer.value?.hasUnsentMedia() || composer.value?.hasPendingSubmission() || composer.value?.isMediaBusy())) return
   event.preventDefault()
   event.returnValue = ''
 }
@@ -2084,7 +2115,7 @@ watch(discardDraftOpen, async (open, _previous, onCleanup) => {
   draftDiscardFocusScope?.deactivate({ restoreFocus: false })
   draftDiscardFocusScope = createModalFocusScope({
     root,
-    restoreTarget: () => inlineAgentRoot.value?.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea') ?? null,
+    restoreTarget: () => discardDraftRestoreTarget?.isConnected ? discardDraftRestoreTarget : inlineAgentRoot.value?.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea') ?? null,
     additionalRoots: () => {
       // The native scrim owns backdrop dismissal; do not inert it with the background.
       const scrim = root.closest('.v-overlay')?.querySelector<HTMLElement>(':scope > .v-overlay__scrim')
@@ -2275,7 +2306,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', handleComposerWake)
   agents.closeWorkspace()
 })
-defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scrollToLatest })
+defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scrollToLatest, beforeLeave })
 </script>
 
 <style scoped lang="scss">

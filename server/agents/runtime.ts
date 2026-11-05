@@ -64,8 +64,10 @@ import {
   normalizeAgentMediaBindings,
   persistAgentRunQuotaSettlementIntent,
   readAgentApprovalContinuation,
+  recoverAgentRunInTransaction,
   terminalizeAgentRun
 } from './coordinator.ts'
+import { readAgentDispatchAccounting, type AgentDispatchAccountingRecord } from './dispatch-accounting.ts'
 import {
   type AgentGoalLimits,
   type AgentGoalRecord,
@@ -221,6 +223,7 @@ export interface AgentDispatchBudget {
   reconcile(reservation: AgentDispatchBudgetReservation, actual: AgentDispatchUsage): Promise<void>
   release(reservation: AgentDispatchBudgetReservation): Promise<void>
   consumeTool(): Promise<void>
+  /** Unknown dispatched usage only; unused admission/sequence capacity is not billable exposure. */
   readonly unsettledExposure: AgentDispatchExposure
 }
 
@@ -233,6 +236,9 @@ export interface AgentDispatchBudgetSequence extends AgentDispatchBudget {
 
 class AgentRunDispatchBudget implements AgentDispatchBudget {
   readonly #knex: Knex
+  readonly #claim: AgentRunClaim
+  readonly #capacity = new Set<number>()
+  #journalStarted: boolean
   readonly #runId: string
   readonly #ownerId: number
   readonly #providerProfileVersionId: string
@@ -240,7 +246,7 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
   readonly #authorize: (() => Promise<void>) | undefined
   #limits: AgentQuotaLimits | undefined
   #expiresAt: Date | undefined
-  readonly #active = new Map<number, AgentQuotaRequest>()
+  readonly #active = new Map<number, AgentQuotaRequest & { readonly dispatchId?: string }>()
   #consumedInputTokens = 0
   #consumedOutputTokens = 0
   #maximumTokens: number | undefined
@@ -259,9 +265,12 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
     maximumToolCalls?: number,
     initialUsage: Readonly<AgentUsageTotals> = { inputTokens: 0, outputTokens: 0, totalTokens: 0, costMicros: 0 },
     authorize?: () => Promise<void>,
-    initialExposure: AgentDispatchExposure = { tokens: 0, costMicros: 0 }
+    initialExposure: AgentDispatchExposure = { tokens: 0, costMicros: 0 },
+    journalStarted = false
   ) {
     this.#knex = knex
+    this.#claim = claim
+    this.#journalStarted = journalStarted
     this.#runId = claim.id
     this.#ownerId = claim.ownerId
     this.#providerProfileVersionId = claim.providerProfileVersionId
@@ -279,6 +288,76 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
         costMicros: nonNegativeUsage(initialExposure.costMicros, 'Recorded unknown dispatch cost')
       })
     }
+  }
+  static async restore(
+    knex: Knex,
+    claim: AgentRunClaim,
+    maximumTokens: number | undefined,
+    maximumToolCalls: number | undefined,
+    initialUsage: Readonly<AgentUsageTotals>,
+    authorize: (() => Promise<void>) | undefined,
+    initialExposure: AgentDispatchExposure
+  ): Promise<AgentRunDispatchBudget> {
+    const recorded = await readAgentDispatchAccounting(knex, claim.id)
+    return new AgentRunDispatchBudget(
+      knex,
+      claim,
+      maximumTokens,
+      maximumToolCalls,
+      recorded?.usage ?? initialUsage,
+      authorize,
+      recorded?.exposure ?? initialExposure,
+      recorded !== null
+    )
+  }
+
+  async #persist(record: AgentDispatchAccountingRecord): Promise<void> {
+    const claim = this.#claim
+    await this.#knex.transaction(async transaction => {
+      const now = new Date()
+      const query = transaction('agentRuns')
+        .where({ id: claim.id, ownerId: claim.ownerId, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
+        .whereIn('status', ['running', 'awaiting_approval'])
+        .forUpdate()
+      if (record.operation === 'reserved') query.whereNull('cancelRequestedAt')
+      const run = await query.first('eventSequence')
+      if (!run) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost while recording dispatch accounting', 409)
+      const quota = await transaction('agentQuotaReservations')
+        .where({ runId: claim.id, ownerId: claim.ownerId })
+        .first('status', 'reconciledAt', 'consumedTokens', 'consumedCostMicros')
+      if (!quota || quota.status !== 'reserved' || quota.reconciledAt !== null || Number(quota.consumedTokens) !== 0 || Number(quota.consumedCostMicros) !== 0)
+        throw new AgentQuotaSettlementError('Agent dispatch accounting cannot change a pending or settled reservation')
+      const data = canonicalJson(record)
+      const sequence = Number(run.eventSequence) + 1
+      await transaction('agentEvents').insert({
+        id: randomUUID(),
+        runId: claim.id,
+        sequence,
+        type: 'dispatch.accounting',
+        attempt: claim.attempts,
+        schemaVersion: 1,
+        data,
+        dataSha256: sha256(data),
+        createdAt: now
+      })
+      const changed = await transaction('agentRuns')
+        .where({ id: claim.id, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken, eventSequence: run.eventSequence })
+        .update({ eventSequence: sequence, updatedAt: now })
+      if (changed !== 1) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent dispatch accounting event fence changed', 409)
+    })
+  }
+
+  async #persistReservation(exposure: AgentQuotaRequest): Promise<string> {
+    const dispatchId = randomUUID()
+    await this.#persist({
+      version: 1,
+      operation: 'reserved',
+      dispatchId,
+      exposure,
+      ...(this.#journalStarted ? {} : { baseline: { usage: this.consumed, exposure: this.unsettledExposure } })
+    })
+    this.#journalStarted = true
+    return dispatchId
   }
   setMaximumTokens(maximumTokens: number): void {
     if (!Number.isSafeInteger(maximumTokens) || maximumTokens < 0)
@@ -324,7 +403,7 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
     }
   }
   async reserveSequence(maximum: AgentQuotaRequest): Promise<AgentDispatchBudgetSequence> {
-    const parent = await this.reserve(maximum)
+    const parent = await this.#reserve(maximum, false)
     let closed = false
     const children = new Set<number>()
     const budget = this
@@ -338,9 +417,10 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
         const costMicros = nonNegativeUsage(requested.costMicros, 'Dispatch cost exposure')
         if (tokens > remaining.tokens || costMicros > remaining.costMicros)
           throw new AgentRepositoryError('DISPATCH_RESERVATION_EXCEEDED', 'Provider dispatch exceeds its sequence reservation', 502)
+        const dispatchId = await this.#persistReservation({ tokens, costMicros })
         this.#active.set(parent.id, { tokens: remaining.tokens - tokens, costMicros: remaining.costMicros - costMicros })
         const child = { id: this.#nextId++, tokens, costMicros }
-        this.#active.set(child.id, { tokens, costMicros })
+        this.#active.set(child.id, { tokens, costMicros, dispatchId })
         children.add(child.id)
         return child
       })
@@ -401,11 +481,6 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
       get unsettledExposure() {
         let tokens = 0
         let costMicros = 0
-        const remaining = budget.#active.get(parent.id)
-        if (remaining) {
-          tokens = safeUsageSum(tokens, remaining.tokens, 'Sequence token exposure')
-          costMicros = safeUsageSum(costMicros, remaining.costMicros, 'Sequence cost exposure')
-        }
         for (const id of children) {
           const exposure = budget.#active.get(id)
           if (!exposure) continue
@@ -419,11 +494,16 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
         closed = true
         await budget.#exclusive(async () => {
           if (!budget.#active.delete(parent.id)) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch sequence is not active', 500)
+          budget.#capacity.delete(parent.id)
         })
       }
     }
   }
   async reserve(maximum: AgentQuotaRequest): Promise<AgentDispatchBudgetReservation> {
+    return this.#reserve(maximum, true)
+  }
+
+  async #reserve(maximum: AgentQuotaRequest, dispatched: boolean): Promise<AgentDispatchBudgetReservation> {
     return this.#exclusive(async () => {
       await this.#authorize?.()
       await this.#initialize()
@@ -451,7 +531,9 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
         this.#heldCostMicros = Math.max(this.#heldCostMicros, target.costMicros)
       }
       const reservation = { id: this.#nextId++, tokens, costMicros }
-      this.#active.set(reservation.id, { tokens, costMicros })
+      const dispatchId = dispatched ? await this.#persistReservation({ tokens, costMicros }) : undefined
+      this.#active.set(reservation.id, { tokens, costMicros, ...(dispatchId === undefined ? {} : { dispatchId }) })
+      if (!dispatched) this.#capacity.add(reservation.id)
       return reservation
     })
   }
@@ -459,7 +541,7 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
   async reconcile(reservation: AgentDispatchBudgetReservation, actual: AgentDispatchUsage): Promise<void> {
     await this.#exclusive(async () => {
       const held = this.#active.get(reservation.id)
-      if (!held) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch reservation is not active', 500)
+      if (!held?.dispatchId) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch reservation is not active', 500)
       const inputTokens = nonNegativeUsage(actual.inputTokens, 'Dispatch input token usage')
       const outputTokens = nonNegativeUsage(actual.outputTokens, 'Dispatch output token usage')
       const totalTokens = nonNegativeUsage(actual.totalTokens, 'Dispatch total token usage')
@@ -469,27 +551,23 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
       const consumedCostAfter = safeUsageSum(this.#consumedCostMicros, costMicros, 'Consumed dispatch cost')
       const exceedsGoal = this.#maximumTokens !== undefined && consumedTokensAfter > this.#maximumTokens
       const exceedsReservation = totalTokens > held.tokens || costMicros > held.costMicros
-      if (exceedsGoal || exceedsReservation) {
-        this.#active.delete(reservation.id)
-        this.#consumedInputTokens = safeUsageSum(this.#consumedInputTokens, inputTokens, 'Consumed dispatch input tokens')
-        this.#consumedOutputTokens = safeUsageSum(this.#consumedOutputTokens, outputTokens, 'Consumed dispatch output tokens')
-        this.#consumedTotalTokens = consumedTokensAfter
-        this.#consumedCostMicros = consumedCostAfter
-        if (exceedsGoal) throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Agent goal token budget was exhausted', 409)
-        throw new AgentRepositoryError('DISPATCH_RESERVATION_EXCEEDED', 'Provider usage exceeded its dispatch reservation', 502)
-      }
+      await this.#persist({ version: 1, operation: 'reconciled', dispatchId: held.dispatchId, usage: { inputTokens, outputTokens, totalTokens, costMicros } })
       this.#active.delete(reservation.id)
       this.#consumedInputTokens = safeUsageSum(this.#consumedInputTokens, inputTokens, 'Consumed dispatch input tokens')
       this.#consumedOutputTokens = safeUsageSum(this.#consumedOutputTokens, outputTokens, 'Consumed dispatch output tokens')
       this.#consumedTotalTokens = consumedTokensAfter
       this.#consumedCostMicros = consumedCostAfter
+      if (exceedsGoal) throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Agent goal token budget was exhausted', 409)
+      if (exceedsReservation) throw new AgentRepositoryError('DISPATCH_RESERVATION_EXCEEDED', 'Provider usage exceeded its dispatch reservation', 502)
     })
   }
 
   async release(reservation: AgentDispatchBudgetReservation): Promise<void> {
     await this.#exclusive(async () => {
-      if (!this.#active.delete(reservation.id))
-        throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch reservation is not active', 500)
+      const held = this.#active.get(reservation.id)
+      if (!held?.dispatchId) throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Provider dispatch reservation is not active', 500)
+      await this.#persist({ version: 1, operation: 'released', dispatchId: held.dispatchId })
+      this.#active.delete(reservation.id)
     })
   }
   async consumeTool(): Promise<void> {
@@ -499,6 +577,9 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
       }
       this.#consumedToolCalls += 1
     })
+  }
+  get journaled(): boolean {
+    return this.#journalStarted
   }
 
   get consumed(): AgentUsageTotals {
@@ -512,7 +593,8 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
   get unsettledExposure(): AgentDispatchExposure {
     let tokens = 0
     let costMicros = 0
-    for (const exposure of this.#active.values()) {
+    for (const [id, exposure] of this.#active) {
+      if (this.#capacity.has(id)) continue
       tokens = safeUsageSum(tokens, exposure.tokens, 'Unsettled dispatch token exposure')
       costMicros = safeUsageSum(costMicros, exposure.costMicros, 'Unsettled dispatch cost exposure')
     }
@@ -1799,6 +1881,8 @@ export class AgentProductRuntime {
         throw new AgentRepositoryError('AGENT_RUN_CONTEXT_CORRUPT', 'Admitted media bindings changed before dispatch.', 500)
       if (claim.goalId !== null) {
         const goal = await getOwnedAgentGoal(transaction, claim.ownerId, claim.goalId, true)
+        if (goal.status !== 'active' || goal.continuationCount !== claim.goalContinuation)
+          throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent goal is no longer current before dispatch', 409)
         if (new Date(goal.deadlineAt).valueOf() <= Date.now()) throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal deadline was reached', 409)
       }
       let current: AgentResolvedAdmission
@@ -2492,6 +2576,26 @@ export class AgentProductRuntime {
     return { sessionVersion, groupIds }
   }
 
+  async #assertReplayPrincipal(transaction: Knex.Transaction, ownerId: number, groupIds: readonly number[]): Promise<void> {
+    const owner = await transaction('users').where({ id: ownerId }).first('isActive', 'authVersion')
+    const groups = await transaction('groups').whereIn('id', groupIds).select('permissions')
+    const permissions = groups.flatMap((group: { permissions: unknown }) => {
+      const value = typeof group.permissions === 'string' ? JSON.parse(group.permissions) : group.permissions
+      return Array.isArray(value) ? value : []
+    })
+    if (
+      !owner ||
+      (owner.isActive !== true && owner.isActive !== 1) ||
+      ownerId === 2 ||
+      owner.authVersion === null ||
+      owner.authVersion === undefined ||
+      !Number.isSafeInteger(Number(owner.authVersion)) ||
+      Number(owner.authVersion) < 0 ||
+      (!permissions.includes('use:agents') && !permissions.includes('manage:system'))
+    )
+      throw new AgentRepositoryError('AGENT_ACCESS_REVOKED', 'Current account cannot use Wiki Agents', 403)
+  }
+
   async #skillVersionIds(
     transaction: Knex.Transaction,
     ownerId: number,
@@ -2650,38 +2754,21 @@ export class AgentProductRuntime {
     return agentProviderMediaInputMimeTypes(transportKind, agentProviderMediaInputs(transportKind, parsed.data))
   }
 
-  async #admissionMediaBindings(
-    transaction: Knex.Transaction,
-    input: Pick<SubmitAgentMessageInput, 'ownerId' | 'sessionId' | 'clientRequestId'>
-  ): Promise<AgentMediaBindings> {
-    const prior = await transaction('agentRuns')
-      .where({ ownerId: input.ownerId, sessionId: input.sessionId, clientRequestId: input.clientRequestId })
-      .first('id', 'mediaRequest')
-    if (!prior) return listAgentMediaBindings(transaction, input.ownerId)
-    const mediaRequest = prior.mediaRequest ? { kind: AgentMediaKindSchema.parse(JSON.parse(prior.mediaRequest).kind) } : undefined
-    return this.#revalidateQueuedMediaBindings(transaction, input.ownerId, prior.id, mediaRequest)
-  }
-
   async #resolveSubmissionCapabilities(
     transaction: Knex.Transaction,
     resolved: AgentResolvedAdmission,
-    input: Pick<SubmitAgentMessageInput, 'ownerId' | 'sessionId' | 'clientRequestId' | 'responseMode' | 'attachmentIds' | 'transcription'>,
+    input: Pick<SubmitAgentMessageInput, 'ownerId' | 'sessionId' | 'responseMode' | 'attachmentIds' | 'transcription'>,
     generationTools: readonly AgentGenerationTool[] | undefined,
     mediaBindings: AgentMediaBindings
   ): Promise<AgentResolvedAdmission> {
     if (input.transcription && input.attachmentIds?.length !== 1) throw new AgentRepositoryError('INVALID_AGENT_MEDIA', 'Choose one audio recording.', 400)
     if (!input.attachmentIds?.length) return resolved
-    const prior = await transaction('agentRuns')
-      .where({ ownerId: input.ownerId, sessionId: input.sessionId, clientRequestId: input.clientRequestId })
-      .first('userMessageId')
     const files = (await transaction('agentMedia')
       .where({ ownerId: input.ownerId, sessionId: input.sessionId, kind: 'attachment' })
       .whereIn('id', input.attachmentIds)
       .whereNull('detachedAt')
-      .andWhere(query => {
-        query.where(unbound => unbound.whereNull('messageId').andWhere('expiresAt', '>', new Date()))
-        if (prior) query.orWhere({ messageId: prior.userMessageId })
-      })
+      .whereNull('messageId')
+      .andWhere('expiresAt', '>', new Date())
       .select('mimeType')) as { mimeType: string }[]
     if (files.length !== input.attachmentIds.length)
       throw new AgentRepositoryError('AGENT_MEDIA_UNAVAILABLE', 'An attachment is no longer available. Attach it again.', 409)
@@ -2719,6 +2806,24 @@ export class AgentProductRuntime {
   }
 
   async submit(input: SubmitAgentMessageInput): Promise<{ readonly run: AgentRunRecord; readonly replayed: boolean }> {
+    // Capture the client body before attachment-only prompts are synthesized.
+    // Mutable admission credentials/version and resolved authority are not body identity.
+    const generationTools = normalizeAgentGenerationTools(input.generationTools)
+    const clientPayloadSha256 = sha256(
+      canonicalJson({
+        version: 1,
+        operation: 'message',
+        content: input.content,
+        ...(input.presetId === undefined ? {} : { presetId: input.presetId }),
+        currentPage: input.currentPage ?? null,
+        ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext }),
+        attachmentIds: input.attachmentIds ?? [],
+        responseMode: input.responseMode ?? 'text',
+        transcription: input.transcription ?? false,
+        ...(generationTools === undefined ? {} : { generationTools }),
+        invokedSkillVersionIds: input.invokedSkillVersionIds ?? []
+      })
+    )
     if (!input.content.trim() && input.attachmentIds?.length)
       input = {
         ...input,
@@ -2727,24 +2832,31 @@ export class AgentProductRuntime {
             ? `Create ${input.responseMode === 'music' ? 'music' : `a${input.responseMode === 'image' ? 'n' : ''} ${input.responseMode}`} using these attachments.`
             : 'Use the attached files.'
       }
-    const generationTools = normalizeAgentGenerationTools(input.generationTools)
     const now = new Date()
     return this.#knex.transaction(async transaction => {
       await acquireAgentCoordinatorAdvisoryLocks(transaction, [input.ownerId])
-      const context = await this.#lockAdmissionContext(transaction, input.ownerId, input.sessionId, input.expectedSessionVersion)
+      const context = await this.#lockAdmissionContext(transaction, input.ownerId, input.sessionId)
+      const recovered = await recoverAgentRunInTransaction(transaction, { ...input, clientPayloadSha256 })
+      if (recovered) {
+        await this.#assertReplayPrincipal(transaction, input.ownerId, context.groupIds)
+        return { run: recovered, replayed: true }
+      }
+      if (context.sessionVersion !== input.expectedSessionVersion)
+        throw new AgentRepositoryError('SESSION_VERSION_CHANGED', 'Agent session changed concurrently', 409)
       let resolved = await this.#resolver.resolve(transaction, {
         ownerId: input.ownerId,
         sessionId: input.sessionId,
         profileResolutionToken: input.profileResolutionToken
       })
       this.#assertResolvedAdmission(resolved)
-      const mediaBindings = await this.#admissionMediaBindings(transaction, input)
+      const mediaBindings = await listAgentMediaBindings(transaction, input.ownerId)
       resolved = await this.#resolveSubmissionCapabilities(transaction, resolved, input, generationTools, mediaBindings)
       const skillVersionIds = await this.#skillVersionIds(transaction, input.ownerId, context.groupIds, input.invokedSkillVersionIds ?? [])
       return admitAgentRunInTransaction(transaction, {
         ownerId: input.ownerId,
         sessionId: input.sessionId,
         clientRequestId: input.clientRequestId,
+        clientPayloadSha256,
         expectedSessionVersion: context.sessionVersion,
         content: input.content,
         ...(input.presetId === undefined ? {} : { presetId: input.presetId }),
@@ -2769,17 +2881,38 @@ export class AgentProductRuntime {
   async createGoal(input: CreateAgentGoalInput): Promise<{ readonly goal: AgentGoalRecord; readonly run: AgentRunRecord; readonly replayed: boolean }> {
     if (!this.#goals.enabled) throw new AgentRepositoryError('AGENT_GOALS_DISABLED', 'Durable goals are disabled', 404)
     const generationTools = normalizeAgentGenerationTools(input.generationTools)
+    const clientPayloadSha256 = sha256(
+      canonicalJson({
+        version: 1,
+        operation: 'goal',
+        goalId: input.goalId,
+        objective: input.objective,
+        currentPage: input.currentPage ?? null,
+        ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext }),
+        ...(generationTools === undefined ? {} : { generationTools }),
+        invokedSkillVersionIds: input.invokedSkillVersionIds ?? []
+      })
+    )
     const now = new Date()
     const created = await this.#knex.transaction(async transaction => {
       await acquireAgentCoordinatorAdvisoryLocks(transaction, [input.ownerId])
-      const context = await this.#lockAdmissionContext(transaction, input.ownerId, input.sessionId, input.expectedSessionVersion)
+      const context = await this.#lockAdmissionContext(transaction, input.ownerId, input.sessionId)
+      const recovered = await recoverAgentRunInTransaction(transaction, { ...input, clientPayloadSha256 })
+      if (recovered) {
+        await this.#assertReplayPrincipal(transaction, input.ownerId, context.groupIds)
+        if (recovered.goalId !== input.goalId)
+          throw new AgentRepositoryError('RUN_IDEMPOTENCY_MISMATCH', 'Client request ID was reused with different input', 409)
+        return { goal: await getOwnedAgentGoal(transaction, input.ownerId, recovered.goalId), run: recovered, replayed: true }
+      }
+      if (context.sessionVersion !== input.expectedSessionVersion)
+        throw new AgentRepositoryError('SESSION_VERSION_CHANGED', 'Agent session changed concurrently', 409)
       let resolved = await this.#resolver.resolve(transaction, {
         ownerId: input.ownerId,
         sessionId: input.sessionId,
         profileResolutionToken: input.profileResolutionToken
       })
       this.#assertResolvedAdmission(resolved)
-      const mediaBindings = await this.#admissionMediaBindings(transaction, input)
+      const mediaBindings = await listAgentMediaBindings(transaction, input.ownerId)
       resolved = await this.#resolveSubmissionCapabilities(transaction, resolved, input, generationTools, mediaBindings)
       const skillVersionIds = await this.#skillVersionIds(transaction, input.ownerId, context.groupIds, input.invokedSkillVersionIds ?? [])
       const goal = await insertAgentGoal(transaction, {
@@ -2794,6 +2927,7 @@ export class AgentProductRuntime {
         ownerId: input.ownerId,
         sessionId: input.sessionId,
         clientRequestId: input.clientRequestId,
+        clientPayloadSha256,
         expectedSessionVersion: context.sessionVersion,
         content: goal.objective,
         mediaBindings,
@@ -2881,8 +3015,6 @@ export class AgentProductRuntime {
       .whereIn('status', ['running', 'awaiting_approval'])
       .update({ eventSequence: sequence, updatedAt: now })
     if (changed !== 1) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run event fence changed concurrently', 409)
-    if (transaction.client.config.client === 'pg' || transaction.client.config.client === 'postgresql')
-      await transaction.raw("SELECT pg_notify('wiki_agent_events', ?)", [claim.id])
   }
 
   async #appendPresentationEvent(
@@ -3720,7 +3852,7 @@ export class AgentProductRuntime {
       const startingGoalToolCalls = goal === null ? undefined : goal.maxToolCalls - (startingGoalUsage?.toolCalls ?? 0)
       if (startingGoalToolCalls !== undefined && startingGoalToolCalls <= 0)
         throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal action budget was exhausted', 409)
-      dispatchBudget = new AgentRunDispatchBudget(
+      dispatchBudget = await AgentRunDispatchBudget.restore(
         this.#knex,
         claim,
         startingGoalTokens,
@@ -3790,7 +3922,7 @@ export class AgentProductRuntime {
         }
         const routedRecord = await this.#routingRecord(claim)
         routingExposureForSettlement = this.#routingExposure(routedRecord?.decision ?? null)
-        dispatchBudget = new AgentRunDispatchBudget(
+        dispatchBudget = await AgentRunDispatchBudget.restore(
           this.#knex,
           claim,
           goal === null ? undefined : goal.maxTokens - (startingGoalUsage?.tokens ?? 0),
@@ -4306,15 +4438,13 @@ export class AgentProductRuntime {
       )
       const costMicros = safeUsageSum(safeUsageSum(orchestrationUsage.costMicros, modelUsage.costMicros, 'Cost'), titleUsage.costMicros, 'Cost')
       assertAgentTokenUsage(inputTokens, outputTokens, totalTokens)
-      const dispatchedUsage = dispatchBudget?.consumed
-      const measuredInputTokens = Math.max(inputTokens, dispatchedUsage?.inputTokens ?? 0)
-      const measuredOutputTokens = Math.max(outputTokens, dispatchedUsage?.outputTokens ?? 0)
-      const measuredTotalTokens = Math.max(
-        totalTokens,
-        dispatchedUsage?.totalTokens ?? 0,
-        safeUsageSum(measuredInputTokens, measuredOutputTokens, 'Measured directional tokens')
-      )
-      const measuredCostMicros = Math.max(costMicros, dispatchedUsage?.costMicros ?? 0)
+      const dispatchedUsage = dispatchBudget.consumed
+      const measuredInputTokens = dispatchBudget.journaled ? dispatchedUsage.inputTokens : Math.max(inputTokens, dispatchedUsage.inputTokens)
+      const measuredOutputTokens = dispatchBudget.journaled ? dispatchedUsage.outputTokens : Math.max(outputTokens, dispatchedUsage.outputTokens)
+      const measuredTotalTokens = dispatchBudget.journaled
+        ? dispatchedUsage.totalTokens
+        : Math.max(totalTokens, dispatchedUsage.totalTokens, safeUsageSum(measuredInputTokens, measuredOutputTokens, 'Measured directional tokens'))
+      const measuredCostMicros = dispatchBudget.journaled ? dispatchedUsage.costMicros : Math.max(costMicros, dispatchedUsage.costMicros)
       assertAgentTokenUsage(measuredInputTokens, measuredOutputTokens, measuredTotalTokens)
       const unsettledExposure = dispatchBudget?.unsettledExposure ?? { tokens: 0, costMicros: 0 }
       const consumedTokens = safeUsageSum(measuredTotalTokens, unsettledExposure.tokens, 'Total provider tokens')
@@ -4559,8 +4689,10 @@ export class AgentProductRuntime {
             )
           }
           const dispatchedUsage = dispatchBudget?.consumed
+          const journal = await readAgentDispatchAccounting(this.#knex, claim.id)
           const settledUsage =
-            dispatchedUsage === undefined
+            journal?.usage ??
+            (dispatchedUsage === undefined
               ? persistedUsage
               : (() => {
                   const inputTokens = Math.max(persistedUsage.inputTokens, dispatchedUsage.inputTokens)
@@ -4575,9 +4707,9 @@ export class AgentProductRuntime {
                     ),
                     costMicros: Math.max(persistedUsage.costMicros, dispatchedUsage.costMicros)
                   }
-                })()
+                })())
           assertAgentTokenUsage(settledUsage.inputTokens, settledUsage.outputTokens, settledUsage.totalTokens)
-          const unsettledExposure = dispatchBudget?.unsettledExposure ?? routingExposureForSettlement
+          const unsettledExposure = journal?.exposure ?? dispatchBudget?.unsettledExposure ?? routingExposureForSettlement
           const consumedTokens = safeUsageSum(settledUsage.totalTokens, unsettledExposure.tokens, 'Total provider tokens')
           const consumedCostMicros = safeUsageSum(settledUsage.costMicros, unsettledExposure.costMicros, 'Total provider cost')
           const unsettledEventData: { unsettledExposure?: { tokens: number; costMicros: number } } =
@@ -5489,19 +5621,26 @@ export class AgentProductRuntime {
   }
 
   async cancel(ownerId: number, runId: string): Promise<AgentRunRecord> {
-    const run = await getOwnedAgentRun(this.#knex, ownerId, runId)
-    if (run.goalId) {
-      const goal = await getOwnedAgentGoal(this.#knex, ownerId, run.goalId)
-      if (goal.status === 'active' || goal.status === 'paused' || goal.status === 'blocked') {
-        await updateGoalStatus(this.#knex, {
-          ownerId,
-          goalId: goal.id,
-          expectedVersion: goal.version,
-          from: [goal.status],
-          to: 'cancelled'
-        })
+    const addressed = await this.#knex.transaction(async transaction => {
+      await acquireAgentCoordinatorAdvisoryLocks(transaction, [ownerId])
+      await transaction('agentRuns').where({ id: runId, ownerId }).forUpdate().first('id')
+      const run = await getOwnedAgentRun(transaction, ownerId, runId)
+      if (isTerminalAgentRunStatus(run.status)) return run
+      if (run.goalId) {
+        const goal = await getOwnedAgentGoal(transaction, ownerId, run.goalId, true)
+        if (goal.continuationCount === run.goalContinuation && (goal.status === 'active' || goal.status === 'paused' || goal.status === 'blocked')) {
+          await updateGoalStatus(transaction, {
+            ownerId,
+            goalId: goal.id,
+            expectedVersion: goal.version,
+            from: [goal.status],
+            to: 'cancelled'
+          })
+        }
       }
-    }
+      return run
+    })
+    if (isTerminalAgentRunStatus(addressed.status)) return addressed
     return this.#coordinator.cancel(ownerId, runId)
   }
 

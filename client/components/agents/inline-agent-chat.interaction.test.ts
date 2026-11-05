@@ -102,6 +102,8 @@ const threadComponent = (await import('./agent-thread.vue')).default
 const goalStatusComponent = (await import('./agent-goal-status.vue')).default
 // History also imports SFC children, so it must load after the test SFC plugin above.
 const historyPanelComponent = (await import('./agent-history-panel.vue')).default
+// Memory imports SFC children and therefore must load after the test SFC plugin.
+const memoryManagerComponent = (await import('./agent-memory-manager.vue')).default
 const borderBeamPath = path.join(process.cwd(), 'client/components/common/control-border-beam.vue')
 const borderBeamComponent = (await import(borderBeamPath)).default
 const testPwaState = Vue.reactive({ connectionState: 'online' as 'online' | 'offline' | 'server-unavailable' })
@@ -462,6 +464,7 @@ const loadGoalLockState = (
   const connectionProbe = vi.fn(async () => true)
   const bindingNames = Array.from(setupScript.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
   const emitted: unknown[][] = []
+  const emittedListeners: Array<(event: unknown[]) => void> = []
   const pendingStartersFrames: Array<{ callback: (now: number) => void }> = []
   const clearedStartersFrameIds: number[] = []
   const evaluate = new Function(
@@ -497,6 +500,7 @@ const loadGoalLockState = (
         () =>
         (...event: unknown[]) => {
           emitted.push(event)
+          for (const listener of emittedListeners) listener(event)
         },
       defineProps: () => props,
       useAgentsStore: () => realStore ?? agentCalls,
@@ -526,6 +530,7 @@ const loadGoalLockState = (
   stateCleanups.push(dispose)
   return {
     ...state,
+    emittedListeners,
     agentCalls: realStore ? (realStore as unknown as LockState['agentCalls']) : agentCalls,
     componentProps: props,
     connectionProbe,
@@ -871,6 +876,8 @@ const realWorkspace = (retention: 'saved' | 'temporary' = 'saved', page: TestPag
     const method = init?.method ?? 'GET'
     requests.push({ method, path })
     const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : {}
+    if (path === '/_api/agents/memories' && method === 'GET')
+      return Response.json({ user: { entries: [], characters: 0, limit: 1375 }, agent: { entries: [], characters: 0, limit: 2200 } })
     if (path === '/_api/pages/recent' && method === 'GET') return Response.json([])
     if (path === '/_api/pages/preview') {
       const response = sourceResponses.get(Number(url.searchParams.get('id')))
@@ -1035,6 +1042,8 @@ const mountInlineAgent = (
     readonly pinia?: Pinia
     readonly realGoal?: boolean
     readonly mediaComponent?: Component
+    readonly realMemory?: boolean
+    readonly closeUnmounts?: boolean
   } = {}
 ): MountedInlineAgent => {
   installBrowserSurface()
@@ -1053,6 +1062,18 @@ const mountInlineAgent = (
   const componentStub = Vue.defineComponent({
     inheritAttrs: false,
     setup(_props, { attrs }) {
+      return () => Vue.h('div', attrs)
+    }
+  })
+  const memoryManagerStub = Vue.defineComponent({
+    inheritAttrs: false,
+    setup(_props, { attrs, expose }) {
+      // These isolated cases have no Memory editor; retain the real ref contract.
+      expose({
+        focusSection: () => undefined,
+        hasUnsavedChanges: () => false,
+        discardUnsavedChanges: () => undefined
+      })
       return () => Vue.h('div', attrs)
     }
   })
@@ -1124,12 +1145,24 @@ const mountInlineAgent = (
       return context
     }
   })
-  const app = Vue.createApp(inlineHarness, Object.fromEntries(Object.entries(lockState.componentProps).filter(([name]) => inlinePropNames.includes(name))))
+  const workspaceVisible = Vue.ref(true)
+  const parent = Vue.defineComponent({
+    setup: () => () =>
+      workspaceVisible.value
+        ? Vue.h(inlineHarness, Object.fromEntries(Object.entries(lockState.componentProps).filter(([name]) => inlinePropNames.includes(name))))
+        : null
+  })
+  if (options.closeUnmounts) {
+    ;(lockState.emittedListeners as Array<(event: unknown[]) => void>).push(event => {
+      if (event[0] === 'close') workspaceVisible.value = false
+    })
+  }
+  const app = Vue.createApp(parent)
   if (options.pinia) app.use(options.pinia)
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
   app.config.globalProperties.$t = translateEnglish
-  for (const name of ['AgentMcpApproval', 'AgentMemoryManager', 'AgentPersonalSkills', 'AgentPersonalMcp', 'WikiSourcePreview'])
-    app.component(name, componentStub)
+  for (const name of ['AgentMcpApproval', 'AgentPersonalSkills', 'AgentPersonalMcp', 'WikiSourcePreview']) app.component(name, componentStub)
+  app.component('AgentMemoryManager', options.realMemory ? memoryManagerComponent : memoryManagerStub)
   app.component('AgentThread', options.realThread ? threadComponent : componentStub)
   app.component('AgentGoalStatus', options.realGoal ? goalStatusComponent : componentStub)
   app.component(
@@ -1165,6 +1198,126 @@ const mountInlineAgent = (
   mountedApps.push(unmount)
   return { activator, composerFocused, historyOpen, memoryOpen, root, transcriptFollowing, unmount }
 }
+
+describe('Wiki Agent workspace unsaved-state transitions', () => {
+  const dialogAction = (state: LockState, key: string): HTMLButtonElement => {
+    const card = document.getElementById(state.discardDraftTitleId as string)?.closest('.v-card')
+    const action = Array.from(card?.querySelectorAll<HTMLButtonElement>('button') ?? []).find(button => button.textContent?.trim() === translateEnglish(key))
+    if (!action) throw new Error(`Unsaved-state dialog action missing: ${key}`)
+    return action
+  }
+  for (const transition of ['new-chat', 'history', 'workspace-close'] as const) {
+    for (const unsaved of ['personal-detail', 'uploaded-file'] as const) {
+      it(`preserves ${unsaved} on Stay and discards only owned staged state on ${transition} in a populated conversation`, async () => {
+        const initialThread = reviewThread(undefined)
+        const initial = {
+          ...initialThread,
+          session: {
+            ...initialThread.session,
+            mediaCapabilities: resolvedMediaCapabilities({
+              attachments: true,
+              imageGeneration: false,
+              videoGeneration: false,
+              musicGeneration: false,
+              transcription: false
+            })
+          }
+        }
+        const workspace = realWorkspace('saved', null, initial)
+        const nextThread = threadFixture('00000000-0000-4000-8000-000000000004')
+        const next = { ...nextThread, session: { ...nextThread.session, title: 'Another saved conversation' } }
+        workspace.additionalThreads.set(next.session.id, next)
+        workspace.creations.push({ retention: 'saved', thread: next })
+        const state = workspace.state()
+        const mounted = mountInlineAgent(state, {
+          realMemory: true,
+          realHistory: true,
+          pinia: workspace.pinia,
+          closeUnmounts: true,
+          viewportWidth: 1760
+        })
+        await settle()
+        const exactText = '  Personal detail: 日本語\nKeep whitespace exactly.  '
+        if (unsaved === 'personal-detail') {
+          mounted.root.querySelector<HTMLButtonElement>('.inline-agent__memory-toggle')!.click()
+          await settle()
+          const add = Array.from(mounted.root.querySelectorAll<HTMLButtonElement>('.agent-memory__accent-action')).find(button =>
+            button.textContent?.includes('Add detail')
+          )
+          if (!add) throw new Error('Loaded Personal detail add action missing')
+          add.click()
+          await settle()
+          const editor = mounted.root.querySelector<HTMLTextAreaElement>('.agent-memory textarea')
+          if (!editor) throw new Error('Personal detail editor missing')
+          editor.value = exactText
+          editor.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+          await settle()
+          // v-show hides the panel without destroying the editor.
+          state.closeMemory()
+          await settle()
+          state.toggleMemory()
+          await settle()
+          expect(mounted.root.querySelector<HTMLTextAreaElement>('.agent-memory textarea')?.value).toBe(exactText)
+        } else {
+          const input = mounted.root.querySelector<HTMLInputElement>('input[type="file"]')!
+          Object.defineProperty(input, 'files', {
+            configurable: true,
+            value: [new File(['%PDF-1.4\nowned\n%%EOF'], 'owned-draft.pdf', { type: 'application/pdf' })]
+          })
+          input.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+          await settle()
+          expect(mounted.root.querySelector('.agent-composer__media-attachments')?.textContent).toContain('owned-draft.pdf')
+        }
+        const act = async () => {
+          if (transition === 'new-chat') mounted.root.querySelector<HTMLButtonElement>('[aria-label="New chat"]')!.click()
+          else if (transition === 'workspace-close') mounted.root.querySelector<HTMLButtonElement>('.inline-agent__close-action')!.click()
+          else {
+            mounted.root.querySelector<HTMLButtonElement>('.inline-agent__history-toggle')!.click()
+            await settle()
+            const target = Array.from(mounted.root.querySelectorAll<HTMLElement>('.v-list-item')).find(element =>
+              element.textContent?.includes(next.session.title)
+            )
+            if (!target) throw new Error('Real History conversation target missing')
+            target.click()
+          }
+          await settle()
+        }
+        const before = [...workspace.requests]
+        await act()
+        expect(state.discardDraftOpen.value).toBe(true)
+        dialogAction(state, 'common:actions.cancel').click()
+        await settle()
+        expect(mounted.root.isConnected).toBe(true)
+        expect(workspace.store.thread?.session.id).toBe(sessionId)
+        if (unsaved === 'personal-detail') expect(mounted.root.querySelector<HTMLTextAreaElement>('.agent-memory textarea')?.value).toBe(exactText)
+        else expect(mounted.root.querySelector('.agent-composer__media-attachments')?.textContent).toContain('owned-draft.pdf')
+        expect(workspace.requests.filter(request => request.method !== 'GET')).toEqual(before.filter(request => request.method !== 'GET'))
+        if (transition === 'workspace-close' && unsaved === 'personal-detail') {
+          // Discarding local Memory is not a network mutation.
+          testPwaState.connectionState = 'offline'
+          await settle()
+        }
+        await act()
+        expect(state.discardDraftOpen.value).toBe(true)
+        if (transition === 'workspace-close') {
+          await act()
+          expect(state.discardDraftOpen.value).toBe(true)
+        }
+        dialogAction(state, 'common:agentWorkspace.discardDraftConfirm').click()
+        await settle()
+        if (transition === 'workspace-close') {
+          expect(mounted.root.isConnected).toBe(false)
+          expect(state.emitted.filter(event => event[0] === 'close')).toHaveLength(1)
+        } else expect(workspace.store.thread?.session.id).toBe(next.session.id)
+        expect(workspace.requests.some(request => request.path.includes('/memories') && request.method !== 'GET')).toBe(false)
+        expect(workspace.requests.filter(request => request.method === 'DELETE')).toEqual(
+          unsaved === 'uploaded-file' ? [{ method: 'DELETE', path: '/_api/agents/media/00000000-0000-4000-8000-000000000050' }] : []
+        )
+        expect(workspace.requests.some(request => request.path.endsWith('/messages'))).toBe(false)
+      })
+    }
+  }
+})
 
 const unloadPrevented = (): boolean => {
   const event = new browserWindow.Event('beforeunload', { cancelable: true })
@@ -2277,11 +2430,7 @@ describe('Inline Agent workspace actions', () => {
     })
     finishTranscript('What changed in the release?')
     await settle()
-    // Neither text, attachments, nor ongoing recording/transcription can
-    // incidentally trigger the guard in this pre-admission gap.
     expect(mounted.root.querySelector('.agent-composer__dictation')).toBeNull()
-    expect(mounted.root.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('')
-    expect(workspace.store.drafts[sessionId] ?? emptyAgentDraft()).toEqual(emptyAgentDraft())
     expect(workspace.messageInputs).toHaveLength(0)
     expect(workspace.store.sending).toBe(true)
     expect(unloadPrevented()).toBe(true)
@@ -2969,9 +3118,11 @@ describe('Inline Agent workspace actions', () => {
     class RunEventSource {
       readonly listeners: Record<string, Array<(event: MessageEvent) => void>> = {}
       readonly close = vi.fn()
-      constructor(readonly url: string) { streams.push(this) }
+      constructor(readonly url: string) {
+        streams.push(this)
+      }
       addEventListener(type: string, listener: EventListener): void {
-        (this.listeners[type] ??= []).push(listener as (event: MessageEvent) => void)
+        ;(this.listeners[type] ??= []).push(listener as (event: MessageEvent) => void)
       }
       emit(type: string, lastEventId: string, data: unknown): void {
         const event = new MessageEvent(type, { lastEventId, data: JSON.stringify(data) })
@@ -2985,11 +3136,19 @@ describe('Inline Agent workspace actions', () => {
       else Reflect.deleteProperty(globalThis, 'EventSource')
     })
     const published = { ...threadFixture() }
-    published.messages = [{
-      id: '00000000-0000-4000-8000-000000000060', runId: null, ordinal: 0,
-      role: 'assistant', status: 'complete', content: 'Earlier completed response',
-      citations: [], createdAt: timestamp, updatedAt: timestamp
-    }]
+    published.messages = [
+      {
+        id: '00000000-0000-4000-8000-000000000060',
+        runId: null,
+        ordinal: 0,
+        role: 'assistant',
+        status: 'complete',
+        content: 'Earlier completed response',
+        citations: [],
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }
+    ]
     const workspace = realWorkspace('saved', null, published)
     const state = workspace.state()
     const mounted = mountInlineAgent(state, { realThread: true, pinia: workspace.pinia })
@@ -3022,22 +3181,46 @@ describe('Inline Agent workspace actions', () => {
     expect(transcript.scrollTop).toBe(700)
     expect(state.transcriptFollowing.value).toBe(false)
     const run: NonNullable<AgentThreadState['session']['currentRun']> = {
-      id: '00000000-0000-4000-8000-000000000020', sessionId, status: 'running',
-      attempt: 1, eventSequence: 1, canCancel: true, createdAt: timestamp,
-      startedAt: timestamp, completedAt: null, errorCode: null, errorMessage: null
+      id: '00000000-0000-4000-8000-000000000020',
+      sessionId,
+      status: 'running',
+      attempt: 1,
+      eventSequence: 1,
+      canCancel: true,
+      createdAt: timestamp,
+      startedAt: timestamp,
+      completedAt: null,
+      errorCode: null,
+      errorMessage: null
     }
     // Publish through the same HTTP projection and EventSource boundary as a
     // normal send; the real store owns admission callbacks and connection state.
     published.session = { ...published.session, version: 2, profileResolutionToken: profileResolutionToken(sessionId, 2), currentRun: run }
-    published.messages = [...published.messages, {
-      id: '00000000-0000-4000-8000-000000000021', runId: null, ordinal: 1,
-      role: 'user', status: 'complete', content: String(workspace.messageInputs[0]?.content),
-      citations: [], createdAt: timestamp, updatedAt: timestamp
-    }, {
-      id: '00000000-0000-4000-8000-000000000022', runId: run.id, ordinal: 2,
-      role: 'assistant', status: 'streaming', content: 'Preparing the newest answer',
-      citations: [], createdAt: timestamp, updatedAt: timestamp
-    }]
+    published.messages = [
+      ...published.messages,
+      {
+        id: '00000000-0000-4000-8000-000000000021',
+        runId: null,
+        ordinal: 1,
+        role: 'user',
+        status: 'complete',
+        content: String(workspace.messageInputs[0]?.content),
+        citations: [],
+        createdAt: timestamp,
+        updatedAt: timestamp
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000022',
+        runId: run.id,
+        ordinal: 2,
+        role: 'assistant',
+        status: 'streaming',
+        content: 'Preparing the newest answer',
+        citations: [],
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }
+    ]
     admission.resolve(Response.json({ run, replayed: false }))
     await vi.waitFor(() => expect(streams).toHaveLength(1))
     expect(workspace.store.connection).toBe('connecting')
@@ -3050,11 +3233,22 @@ describe('Inline Agent workspace actions', () => {
     await settle()
     expect(workspace.store.connection).toBe('connected')
     published.session = { ...published.session, currentRun: { ...run, status: 'succeeded', eventSequence: 4, canCancel: false, completedAt: timestamp } }
-    published.messages = published.messages.map(message => message.id === '00000000-0000-4000-8000-000000000022'
-      ? { ...message, status: 'complete', content: 'The final checkpoint belongs to the newest response.' }
-      : message)
+    published.messages = published.messages.map(message =>
+      message.id === '00000000-0000-4000-8000-000000000022'
+        ? { ...message, status: 'complete', content: 'The final checkpoint belongs to the newest response.' }
+        : message
+    )
     height = 2600
-    streams[0]!.emit('run.completed', '4', { id: `${run.id}:4`, runId: run.id, sequence: 4, type: 'run.completed', attempt: 1, schemaVersion: 1, data: { runId: run.id }, createdAt: timestamp })
+    streams[0]!.emit('run.completed', '4', {
+      id: `${run.id}:4`,
+      runId: run.id,
+      sequence: 4,
+      type: 'run.completed',
+      attempt: 1,
+      schemaVersion: 1,
+      data: { runId: run.id },
+      createdAt: timestamp
+    })
     expect(workspace.store.connection).toBe('reconnecting')
     await vi.waitFor(() => expect(workspace.store.connection).toBe('idle'))
     expect(mounted.root.querySelectorAll('.agent-message--assistant')[1]?.textContent).toContain('The final checkpoint')
@@ -3939,6 +4133,7 @@ describe('Inline Agent header actions', () => {
     ;(lockState.memoryMutationBusy as ValueRef<boolean>).value = false
     await settle()
     close?.click()
+    await settle()
     expect(lockState.emitted).toEqual([['close']])
   })
 

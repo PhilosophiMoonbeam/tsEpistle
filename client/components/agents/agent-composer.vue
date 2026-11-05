@@ -1137,7 +1137,10 @@ const submitDuringRecording = async (): Promise<void> => {
   const sessionId = props.sessionId
   const invokedSkillVersionIds = [...selectedSkillIds.value]
   const mode = goalMode.value ? 'goal' : 'message'
-  const clickedMedia = { attachmentIds: [...mediaSubmission.value.attachmentIds], generationTools: [...(mediaSubmission.value.generationTools ?? [])] }
+  const clickedMedia = {
+    attachmentIds: [...mediaSubmission.value.attachmentIds],
+    generationTools: mediaSubmission.value.generationTools ? [...mediaSubmission.value.generationTools] : undefined
+  }
   submissionPending.value = true
   try {
     media.stopRecording()
@@ -1151,14 +1154,17 @@ const submitDuringRecording = async (): Promise<void> => {
       return
     }
     const content = [typedDraft.trim(), transcript].filter(Boolean).join(' ')
+    // Publish the retry composition before send captures its draft revision,
+    // but never replace edits made while transcription was pending.
+    const materializedSubmittedDraft = draft.value === typedDraft
+    if (materializedSubmittedDraft) draft.value = content
     const success = await new Promise<boolean>(resolve => {
       emit('send', content, invokedSkillVersionIds, mode, (success: boolean) => resolve(success), clickedMedia)
     })
     if (!mounted || props.sessionId !== sessionId || mediaComposer.value !== media) return
     if (success) {
-      // Mirror the plain-send success path: the submitted draft is gone.
-      // The draft holds only the typed part, so compare against that.
-      if (draft.value === typedDraft || draft.value === content) {
+      // Clear only the submitted composition, not a newer edit.
+      if (materializedSubmittedDraft && draft.value === content) {
         draft.value = ''
         void nextTick(resetInput)
       }
@@ -1166,9 +1172,10 @@ const submitDuringRecording = async (): Promise<void> => {
       selectedSkillIds.value = []
       goalMode.value = false
     } else {
-      // Keep dictated text available for an explicit retry, including when the
-      // request outcome was uncertain. Never submit it again automatically.
-      draft.value = draft.value === typedDraft ? content : [draft.value.trim(), transcript].filter(Boolean).join(' ')
+      // The unchanged submitted draft already includes its transcript. A newer
+      // composition keeps the transcript only for its own explicit retry.
+      if (!materializedSubmittedDraft)
+        draft.value = [draft.value.trim(), transcript].filter(Boolean).join(' ')
       sendFailed.value = true
     }
   } finally {

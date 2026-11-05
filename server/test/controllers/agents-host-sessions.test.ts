@@ -2137,7 +2137,7 @@ describe('ordinary-origin agent session API', () => {
       const otherMode = responseMode === 'image' ? 'text' : 'image'
       await expect(runtime.submit({ ...input, attachmentIds: [], responseMode: otherMode })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
       await expect(runtime.submit({ ...input, responseMode: otherMode })).rejects.toMatchObject({
-        code: responseMode === 'image' ? 'RUN_IDEMPOTENCY_MISMATCH' : 'INVALID_AGENT_MEDIA'
+        code: 'RUN_IDEMPOTENCY_MISMATCH'
       })
       expect(normalizeAccountingRow(await db('agentRuns').where({ sessionId }).count({ count: '*' }).first())).toMatchObject({ count: 1 })
       expect((await db('agentMedia').where({ id: media.id }).first()).runId).toBe(admitted.run.id)
@@ -2154,6 +2154,62 @@ describe('ordinary-origin agent session API', () => {
       expect((await fetch(`${baseUrl}/_api/agents/media/${media.id}/content`, { headers: { cookie } })).status).toBe(404)
     }
   )
+  it('recovers attachment status from original ordered client input even after media detachment', async () => {
+    await enableTestMedia()
+    const sessionId = randomUUID()
+    await insertAccountingSession(sessionId)
+    const files = []
+    for (const filename of ['first.pdf', 'second.pdf'])
+      files.push(await storeAgentMedia(db, { ownerId: 7, sessionId, payload: attachmentPdf(), mimeType: 'application/pdf', filename }))
+    const input = {
+      ownerId: 7,
+      sessionId,
+      expectedSessionVersion: 1,
+      profileResolutionToken: 'test',
+      clientRequestId: randomUUID(),
+      content: '',
+      attachmentIds: files.map(file => file.id)
+    }
+    const admitted = await runtime.submit(input)
+    expect((await db('agentMessages').where({ id: admitted.run.userMessageId }).first('content')).content).toBe('Use the attached files.')
+    await expect(runtime.submit({ ...input, attachmentIds: [...input.attachmentIds].reverse() })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
+    // The synthesized provider prompt is not the raw original client payload.
+    await expect(runtime.submit({ ...input, content: 'Use the attached files.' })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
+    await db('agentMedia').whereIn('id', input.attachmentIds).update({ detachedAt: new Date() })
+    const storedRun = await db('agentRuns').where({ id: admitted.run.id }).first()
+    const messages = await db('agentMessages').where({ sessionId }).orderBy('ordinal')
+    const reservation = await db('agentQuotaReservations').where({ runId: admitted.run.id }).first()
+    const media = await db('agentMedia').whereIn('id', input.attachmentIds).orderBy('id')
+    const events = await db('agentEvents').where({ runId: admitted.run.id })
+    // Recovery returns the persisted projection, not the driver's original insert shape.
+    expect(await runtime.submit(input)).toMatchObject({
+      replayed: true,
+      run: {
+        id: admitted.run.id,
+        ownerId: input.ownerId,
+        sessionId,
+        clientRequestId: input.clientRequestId,
+        clientRequestSha256: admitted.run.clientRequestSha256,
+        userMessageId: admitted.run.userMessageId,
+        assistantMessageId: admitted.run.assistantMessageId,
+        providerProfileVersionId: admitted.run.providerProfileVersionId,
+        status: 'queued',
+        attempts: 0,
+        eventSequence: 1,
+        cancelRequestedAt: null
+      }
+    })
+    await expect(runtime.submit({ ...input, clientRequestId: randomUUID() })).rejects.toMatchObject({ code: 'AGENT_MEDIA_UNAVAILABLE' })
+    expect(await db('agentRuns').where({ sessionId }).pluck('id')).toEqual([admitted.run.id])
+    expect(await db('agentMessages').where({ sessionId }).orderBy('ordinal').pluck('id')).toEqual([admitted.run.userMessageId, admitted.run.assistantMessageId])
+    expect(await db('agentEvents').where({ runId: admitted.run.id })).toEqual(events)
+    expect(await db('agentQuotaReservations').where({ ownerId: 7 }).pluck('runId')).toEqual([admitted.run.id])
+    expect(await db('agentRuns').where({ id: admitted.run.id }).first()).toEqual(storedRun)
+    expect(await db('agentMessages').where({ sessionId }).orderBy('ordinal')).toEqual(messages)
+    expect(await db('agentQuotaReservations').where({ runId: admitted.run.id }).first()).toEqual(reservation)
+    expect(await db('agentMedia').whereIn('id', input.attachmentIds).orderBy('id')).toEqual(media)
+    expect(engineRunId).toBeUndefined()
+  })
   it('includes a PDF above 40 MiB in the admitted runtime prompt as a lazy source without loading its payload', async () => {
     await enableTestMedia()
     const sessionId = randomUUID()
@@ -4077,6 +4133,7 @@ describe('ordinary-origin agent session API', () => {
         goalId,
         ownerId: 7,
         sessionId,
+        expectedSessionVersion: 1,
         profileResolutionToken: 'context-limit-test',
         clientRequestId: '00000000-0000-4000-8000-000000000083',
         objective: 'Summarize every requested source without repeating exhausted work.'

@@ -4,7 +4,7 @@ import createKnex, { type Knex } from 'knex'
 import sharp from 'sharp'
 import type { AgentMediaBindings, AgentMediaProviderConfig } from '../../../shared/agents/media-providers.ts'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
-import { AgentProductRuntime } from '../../agents/runtime.ts'
+import { AgentProductRuntime, type SubmitAgentMessageInput } from '../../agents/runtime.ts'
 import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
 import { DecisionProviderFailure } from '../../agents/decision-providers.ts'
 import { AgentRepositoryError, appendAgentMessage } from '../../agents/repository.ts'
@@ -45,6 +45,197 @@ describe('admitted automatic conversation routing', () => {
   afterEach(async () => {
     await f?.runtime.shutdown()
     await db.destroy()
+  })
+
+  it('compares the original client body before any renewed admission or mutable authority resolution', async () => {
+    const sessionId = await f.session()
+    const input: SubmitAgentMessageInput = {
+      ownerId: 7,
+      sessionId,
+      clientRequestId: randomUUID(),
+      expectedSessionVersion: 1,
+      profileResolutionToken: await f.registry.issueResolutionToken(7, sessionId),
+      content: 'Write a short greeting',
+      presetId: 'page-summary',
+      currentPage: { id: 42, locale: 'en', path: 'home', observedUpdatedAt: '2026-08-17T00:00:00.000Z' },
+      knowledgeContext: { scope: { kind: 'all' }, sources: [] }
+    }
+    const admitted = await f.runtime.submit(input)
+    // The caller may refresh credentials/version, not change its submitted body.
+    const retry = { ...input, expectedSessionVersion: 999, profileResolutionToken: 'expired-or-renewed-token' }
+    expect(await f.runtime.submit(retry)).toMatchObject({ replayed: true, run: { id: admitted.run.id } })
+    const changes: readonly Partial<SubmitAgentMessageInput>[] = [
+      { content: `${input.content} ` },
+      { presetId: 'catch-up' },
+      { presetId: undefined },
+      { currentPage: undefined },
+      { currentPage: { ...input.currentPage, observedUpdatedAt: '2026-08-18T00:00:00.000Z' } },
+      { knowledgeContext: { scope: { kind: 'locale', locale: 'en' }, sources: [] } },
+      { knowledgeContext: undefined },
+      { attachmentIds: [randomUUID()] },
+      { responseMode: 'image' },
+      { generationTools: [] },
+      { invokedSkillVersionIds: [randomUUID()] },
+      { transcription: true }
+    ]
+    for (const change of changes) await expect(f.runtime.submit({ ...retry, ...change })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
+    expect(await db('agentRuns').where({ sessionId }).pluck('id')).toEqual([admitted.run.id])
+    expect(await db('agentMessages').where({ sessionId }).orderBy('ordinal').pluck('id')).toEqual([admitted.run.userMessageId, admitted.run.assistantMessageId])
+    expect(await db('agentQuotaReservations').where({ ownerId: 7 }).pluck('runId')).toEqual([admitted.run.id])
+    expect(await db('agentEvents').where({ runId: admitted.run.id }).pluck('type')).toEqual(['run.queued'])
+    expect(f.classifications()).toBe(0)
+    expect(f.requests).toHaveLength(0)
+  })
+
+  it('recovers an owned run after its provider authority is removed, without granting a fresh send', async () => {
+    const sessionId = await f.session()
+    const input = {
+      ownerId: 7,
+      sessionId,
+      clientRequestId: randomUUID(),
+      expectedSessionVersion: 1,
+      profileResolutionToken: await f.registry.issueResolutionToken(7, sessionId),
+      content: 'Write a short greeting'
+    }
+    const admitted = await f.runtime.submit(input)
+    expect(await f.runtime.runOnce()).toBe(true)
+    const completed = await db('agentRuns').where({ id: admitted.run.id }).first()
+    expect(completed).toMatchObject({ status: 'succeeded', providerProfileVersionId: f.alternate.versionId })
+    const saved = await db('agentSessions').where({ id: sessionId }).first('version')
+    await f.registry.setEnabled(f.current.profileId, false, 1, f.current.versionId)
+    await f.registry.setEnabled(f.alternate.profileId, false, 1, f.alternate.versionId)
+    await expect(
+      f.runtime.submit({
+        ...input,
+        clientRequestId: randomUUID(),
+        expectedSessionVersion: Number(saved.version)
+      })
+    ).rejects.toMatchObject({ code: 'PROFILE_RESOLUTION_CHANGED' })
+    expect(await f.runtime.submit(input)).toMatchObject({
+      replayed: true,
+      run: { id: admitted.run.id, status: 'succeeded', providerProfileVersionId: f.alternate.versionId }
+    })
+    expect(await db('agentRuns').where({ id: admitted.run.id }).first()).toEqual(completed)
+    expect(f.requests).toHaveLength(1)
+    expect(f.classifications()).toBe(1)
+    expect(await db('agentQuotaReservations').where({ ownerId: 7 }).pluck('runId')).toEqual([admitted.run.id])
+  })
+
+  it.each(['inactive principal', 'revoked permission', 'deleted session', 'changed owner'] as const)(
+    'refreshes the current replay ownership guard for %s',
+    async guard => {
+      const sessionId = await f.session()
+      const input = {
+        ownerId: 7,
+        sessionId,
+        clientRequestId: randomUUID(),
+        expectedSessionVersion: 1,
+        profileResolutionToken: await f.registry.issueResolutionToken(7, sessionId),
+        content: 'Write a short greeting'
+      }
+      const admitted = await f.runtime.submit(input)
+      if (guard === 'inactive principal') await db('users').where({ id: 7 }).update({ isActive: false })
+      if (guard === 'revoked permission') await db('groups').where({ id: 1 }).update({ permissions: '[]' })
+      if (guard === 'deleted session') await db('agentSessions').where({ id: sessionId }).update({ deletedAt: new Date() })
+      if (guard === 'changed owner') await db('agentSessions').where({ id: sessionId }).update({ ownerId: 8 })
+      await expect(f.runtime.submit(input)).rejects.toMatchObject({
+        code: guard === 'inactive principal' || guard === 'revoked permission' ? 'AGENT_ACCESS_REVOKED' : 'AGENT_RESOURCE_NOT_FOUND'
+      })
+      expect(await db('agentRuns').where({ sessionId }).pluck('id')).toEqual([admitted.run.id])
+      expect(f.requests).toHaveLength(0)
+    }
+  )
+
+  it('leaves historical runs without client body proof unchanged instead of inventing replay equality', async () => {
+    const sessionId = await f.session()
+    const input = {
+      ownerId: 7,
+      sessionId,
+      clientRequestId: randomUUID(),
+      expectedSessionVersion: 1,
+      profileResolutionToken: await f.registry.issueResolutionToken(7, sessionId),
+      content: 'Write a short greeting'
+    }
+    const admitted = await f.runtime.submit(input)
+    const event = await db('agentEvents').where({ runId: admitted.run.id, type: 'run.queued' }).first('id', 'data')
+    const historical = JSON.parse(event.data)
+    delete historical.clientRequestIdentity
+    const data = JSON.stringify(historical)
+    await db('agentEvents')
+      .where({ id: event.id })
+      .update({ data, dataSha256: createHash('sha256').update(data).digest('hex') })
+    const before = {
+      run: await db('agentRuns').where({ id: admitted.run.id }).first(),
+      events: await db('agentEvents').where({ runId: admitted.run.id }),
+      messages: await db('agentMessages').where({ sessionId }).orderBy('ordinal'),
+      quota: await db('agentQuotaReservations').where({ runId: admitted.run.id }).first()
+    }
+    await expect(f.runtime.submit(input)).rejects.toMatchObject({ code: 'RUN_REPLAY_UNAVAILABLE' })
+    await expect(f.runtime.submit({ ...input, content: 'A different request' })).rejects.toMatchObject({ code: 'RUN_REPLAY_UNAVAILABLE' })
+    expect({
+      run: await db('agentRuns').where({ id: admitted.run.id }).first(),
+      events: await db('agentEvents').where({ runId: admitted.run.id }),
+      messages: await db('agentMessages').where({ sessionId }).orderBy('ordinal'),
+      quota: await db('agentQuotaReservations').where({ runId: admitted.run.id }).first()
+    }).toEqual(before)
+  })
+
+  it('recovers goal creation from the original client body without reinserting a goal or resolving a new model', async () => {
+    const sessionId = await f.session()
+    const input = {
+      ownerId: 7,
+      sessionId,
+      goalId: randomUUID(),
+      clientRequestId: randomUUID(),
+      expectedSessionVersion: 1,
+      profileResolutionToken: await f.registry.issueResolutionToken(7, sessionId),
+      objective: 'Write a short greeting'
+    }
+    const created = await f.runtime.createGoal(input)
+    await db('agentSessions').where({ id: sessionId }).update({ title: 'Renamed after goal admission', version: 2 })
+    expect(await f.runtime.createGoal({ ...input, profileResolutionToken: 'renewed-token' })).toMatchObject({
+      goal: { id: created.goal.id, status: 'active' },
+      run: { id: created.run.id, goalContinuation: 0 },
+      replayed: true
+    })
+    await expect(f.runtime.createGoal({ ...input, objective: 'Write a different greeting' })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
+    await expect(f.runtime.createGoal({ ...input, goalId: randomUUID() })).rejects.toMatchObject({ code: 'RUN_IDEMPOTENCY_MISMATCH' })
+    expect(await db('agentGoals').where({ sessionId }).pluck('id')).toEqual([created.goal.id])
+    expect(await db('agentRuns').where({ sessionId }).pluck('id')).toEqual([created.run.id])
+    expect(await db('agentQuotaReservations').where({ ownerId: 7 }).pluck('runId')).toEqual([created.run.id])
+    expect(f.requests).toHaveLength(0)
+  })
+
+  it.each(['paused', 'superseded'] as const)('fences root dispatch when its goal becomes %s without a run cancellation flag', async state => {
+    const sessionId = await f.session()
+    const created = await f.runtime.createGoal({
+      ownerId: 7,
+      sessionId,
+      goalId: randomUUID(),
+      clientRequestId: randomUUID(),
+      expectedSessionVersion: 1,
+      profileResolutionToken: await f.registry.issueResolutionToken(7, sessionId),
+      objective: 'Write a short greeting'
+    })
+    let dispatchFailure: unknown
+    f.beforeInference(async () => {
+      await db('agentGoals')
+        .where({ id: created.goal.id })
+        .update(state === 'paused' ? { status: 'paused' } : { continuationCount: 1 })
+      expect((await db('agentRuns').where({ id: created.run.id }).first('cancelRequestedAt')).cancelRequestedAt).toBeNull()
+    })
+    const execute = f.engine.execute
+    f.engine.execute = async (request, sink) => {
+      try {
+        return await execute(request, sink)
+      } catch (error) {
+        dispatchFailure = error
+        throw error
+      }
+    }
+    expect(await f.runtime.runOnce()).toBe(true)
+    expect(dispatchFailure).toMatchObject({ code: 'RUN_LEASE_LOST' })
+    expect(f.requests).toHaveLength(0)
   })
 
   it('routes the real admitted prompt and rebinds claimed profile/settings while preserving session preference', async () => {
@@ -1127,11 +1318,14 @@ describe('admitted automatic conversation routing', () => {
       }
       const admitted = await f.submit(await f.session())
       await f.runtime.runOnce()
-      const replacement = new AgentProductRuntime(db, f.registry, f.engine, { memorySigningSecret: 'agent-memory-test-signing-secret', router: f.router,
-      workerId: `routing-replacement-${randomUUID()}`,
-      globalConcurrency: 1,
-      perUserConcurrency: 1,
-      orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: false } })
+      const replacement = new AgentProductRuntime(db, f.registry, f.engine, {
+        memorySigningSecret: 'agent-memory-test-signing-secret',
+        router: f.router,
+        workerId: `routing-replacement-${randomUUID()}`,
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: false }
+      })
       try {
         await replacement.runOnce()
       } finally {
@@ -1200,10 +1394,13 @@ describe('admitted automatic conversation routing', () => {
     let stopping: Promise<void> | undefined
     const historical = admissionKind.startsWith('historical')
     const activeRuntime = historical
-      ? new AgentProductRuntime(db, f.registry, f.engine, { memorySigningSecret: 'agent-memory-test-signing-secret', workerId: 'historical-approval-run',
-      globalConcurrency: 1,
-      perUserConcurrency: 1,
-      orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: false } })
+      ? new AgentProductRuntime(db, f.registry, f.engine, {
+          memorySigningSecret: 'agent-memory-test-signing-secret',
+          workerId: 'historical-approval-run',
+          globalConcurrency: 1,
+          perUserConcurrency: 1,
+          orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: false }
+        })
       : f.runtime
     f.engine.execute = async (request, sink) => {
       await execute(request, sink)
@@ -1353,11 +1550,14 @@ describe('admitted automatic conversation routing', () => {
       }
       return execute(request, sink)
     }
-    const resumed = new AgentProductRuntime(db, f.registry, f.engine, { memorySigningSecret: 'agent-memory-test-signing-secret', router: f.router,
-    workerId: 'approval-routing-resume',
-    globalConcurrency: 1,
-    perUserConcurrency: 1,
-    orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: false } })
+    const resumed = new AgentProductRuntime(db, f.registry, f.engine, {
+      memorySigningSecret: 'agent-memory-test-signing-secret',
+      router: f.router,
+      workerId: 'approval-routing-resume',
+      globalConcurrency: 1,
+      perUserConcurrency: 1,
+      orchestration: { ...DEFAULT_AGENT_ORCHESTRATION_LIMITS, enabled: false }
+    })
     try {
       await resumed.runOnce()
     } finally {

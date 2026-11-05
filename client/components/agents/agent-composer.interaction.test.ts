@@ -1,4 +1,6 @@
 import type { BrowserFetch } from '../../helpers/json-transport.ts'
+import { clearAgentChatRecent } from '../../helpers/agent-chat-continuity.ts'
+import type { AgentThreadState } from '../../../shared/agents/contracts.ts'
 import fs from 'node:fs'
 import path from 'node:path'
 import { setImmediate as yieldEventLoop } from 'node:timers/promises'
@@ -91,6 +93,9 @@ resetBody()
 
 // These test-only imports must wait for the browser globals above; Vuetify snapshots them during module evaluation.
 const Vue = await import('vue')
+// These imports share Vue's browser-runtime loading boundary above.
+const { createPinia, setActivePinia } = await import('pinia')
+const { useAgentsStore } = await import('../../store/agents.ts')
 const { createVuetify } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')
 const vuetifyDirectives = await import('vuetify/directives')
@@ -473,6 +478,9 @@ interface MountedComposerOptions {
   readonly canStop?: boolean
   readonly statusLabel?: string
   readonly statusTone?: 'ready' | 'error' | 'busy'
+  readonly sessionId?: string
+  readonly onDraftChange?: (sessionId: string, text: string) => void
+  readonly onSend?: (message: SentMessage) => void
   readonly initialDraft?: string
   readonly initialMode?: 'message' | 'goal'
   readonly skillsEnabled?: boolean
@@ -524,6 +532,7 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
     invocationLimit: 3,
     statusLabel: options.statusLabel ?? 'Ready',
     statusTone: options.statusTone ?? 'ready',
+    sessionId: options.sessionId,
     initialDraft: options.initialDraft ?? 'draft',
     initialMode: options.initialMode,
     initialSkillVersionIds: undefined,
@@ -575,9 +584,17 @@ const mountComposer = (options: MountedComposerOptions = {}): MountedComposer =>
       Vue.h(composerComponent, {
         ...componentProps,
         ref: publicRef,
-        onSend: (content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void) => {
+        onDraftChange: options.onDraftChange,
+        onSend: (
+          content: string,
+          invokedSkillVersionIds: readonly string[],
+          mode: 'message' | 'goal',
+          completion: (success: boolean) => void,
+          media: SentMessage['media']
+        ) => {
           sentMessages.push({ content, invokedSkillVersionIds, mode })
-          completion?.(true)
+          if (options.onSend) options.onSend({ content, invokedSkillVersionIds, mode, complete: completion, media })
+          else completion(true)
         }
       })
   })
@@ -1519,6 +1536,197 @@ describe('Agent composer dictation controls', () => {
     expect(sentRecorder[0]?.content).toBe('typed words voice words')
     // A successful dictation send clears the submitted draft like a plain send.
     expect((mounted.root.querySelector('.agent-composer__input textarea') as HTMLTextAreaElement | null)?.value ?? '').not.toContain('typed words')
+  })
+
+  it.each(['lost response retry', 'newer transcription edit'] as const)('preserves dictated command ownership across %s', async scenario => {
+    class FakeEventSource {
+      readonly listeners: Record<string, EventListener[]> = {}
+      readonly close = vi.fn()
+      constructor(readonly url: string) {}
+      addEventListener(type: string, listener: EventListener) {
+        const listeners = (this.listeners[type] ??= [])
+        listeners.push(listener)
+      }
+    }
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const sessionId = realSessionId
+    const ownerId = 1
+    const admissionToken = (version: number): string =>
+      `dictation.${btoa(
+        JSON.stringify({
+          v: 1,
+          kid: 'dictation',
+          ownerId,
+          sessionId,
+          sessionVersion: version,
+          profileId: '00000000-0000-4000-8000-000000000090',
+          profileVersionId: '00000000-0000-4000-8000-000000000091',
+          profileVersion: 1,
+          profilePolicyVersion: 1,
+          defaultGeneration: 1,
+          executionMode: 'agent',
+          exp: 4_000_000_000
+        })
+      )
+        .replace(/\+/gu, '-')
+        .replace(/\//gu, '_')
+        .replace(/=+$/u, '')}.fixture-signature`
+    let snapshot: AgentThreadState = {
+      memoryContext: {
+        ownerId,
+        sessionId,
+        frozen: { snapshotId: null, user: { state: 'unknown' }, agent: { state: 'unknown' } },
+        latestSaved: { user: { state: 'unknown' }, agent: { state: 'unknown' } },
+        nextSession: { user: 'unknown', agent: 'unknown' }
+      },
+      session: {
+        id: sessionId,
+        title: '',
+        retention: 'saved',
+        folderId: null,
+        status: 'active',
+        executionMode: 'agent',
+        version: 1,
+        providerProfileId: null,
+        profileResolutionToken: admissionToken(1),
+        mediaCapabilities: null,
+        skills: [],
+        currentRun: null,
+        createdAt: '2026-09-18T00:00:00Z',
+        updatedAt: '2026-09-18T00:00:00Z',
+        lastActivityAt: '2026-09-18T00:00:00Z',
+        expiresAt: null
+      },
+      routingDecisions: [],
+      specialistInvocations: [],
+      messages: [],
+      tools: [],
+      tasks: [],
+      goal: null,
+      proposals: [],
+      artifacts: [],
+      suggestions: [],
+      historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false }
+    }
+    const submissions: Array<Record<string, unknown>> = []
+    const acceptedCommands = new Map<string, { payload: string; run: NonNullable<AgentThreadState['session']['currentRun']> }>()
+    const accepted = Promise.withResolvers<void>()
+    const lostResponse = Promise.withResolvers<Response>()
+    const completed: Promise<boolean>[] = []
+    const storageWrites = vi.spyOn(Storage.prototype, 'setItem')
+    const fetcher = vi.spyOn(browserWindow, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url === '/_api/agents/sessions') return Response.json(method === 'POST' ? snapshot : { sessions: [], nextCursor: null })
+      if (url === '/_api/agents/conversation-folders') return Response.json({ folders: [] })
+      if (url === '/_api/agents/skills') return Response.json({ skills: [] })
+      if (url === `/_api/agents/sessions/${sessionId}`) return Response.json(snapshot)
+      if (url !== `/_api/agents/sessions/${sessionId}/messages` || method !== 'POST') throw new Error(`Unexpected ${method} ${url}`)
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      submissions.push(body)
+      const key = String(body.clientRequestId)
+      const payload = JSON.stringify(body)
+      const previous = acceptedCommands.get(key)
+      if (previous)
+        return previous.payload === payload
+          ? Response.json({ run: previous.run, replayed: true }, { status: 202 })
+          : Response.json({ message: 'Original envelope changed' }, { status: 409 })
+      const run: NonNullable<AgentThreadState['session']['currentRun']> = {
+        id: '00000000-0000-4000-8000-000000000095',
+        sessionId,
+        status: 'queued',
+        attempt: 0,
+        eventSequence: 1,
+        canCancel: true,
+        createdAt: '2026-09-18T00:00:00Z',
+        startedAt: null,
+        completedAt: null,
+        errorCode: null,
+        errorMessage: null
+      }
+      acceptedCommands.set(key, { payload, run })
+      snapshot = { ...snapshot, session: { ...snapshot.session, currentRun: run } }
+      if (acceptedCommands.size === 1) {
+        accepted.resolve()
+        return lostResponse.promise
+      }
+      return Response.json({ run, replayed: false }, { status: 202 })
+    })
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    clearAgentChatRecent()
+    try {
+      expect(await store.initialize('csrf', { ownerId, routeSync: false, currentPage: null })).toBe(true)
+      store.setDraft(sessionId, 'typed words')
+      const transcript = Promise.withResolvers<string | null>()
+      setDictationTranscriptHook(() => transcript.promise)
+      const mounted = mountComposer({
+        sessionId,
+        initialDraft: 'typed words',
+        mediaCapabilities: { transcription: true },
+        onDraftChange: (id, text) => store.setDraft(id, text),
+        onSend: message => {
+          const sending = store.send(message.content.trim(), message.invokedSkillVersionIds, message.mode, message.media)
+          completed.push(sending)
+          void sending.then(message.complete)
+        }
+      })
+      mounted.root.querySelector<HTMLButtonElement>('.agent-composer__mic')?.click()
+      await Vue.nextTick()
+      mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')?.click()
+      await Vue.nextTick()
+      const newerDraft = 'typed words and a newer thought'
+      if (scenario === 'newer transcription edit') {
+        const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
+        if (!textarea) throw new Error('Editable transcription draft did not render')
+        textarea.value = newerDraft
+        textarea.dispatchEvent(new browserWindow.Event('input', { bubbles: true }))
+        await Vue.nextTick()
+      }
+      transcript.resolve('voice words')
+      await accepted.promise
+      const original = structuredClone(submissions[0]!)
+      expect(original.content).toBe('typed words voice words')
+      if (scenario === 'newer transcription edit') {
+        const command = acceptedCommands.values().next().value!
+        lostResponse.resolve(Response.json({ run: command.run, replayed: false }, { status: 202 }))
+        expect(await completed[0]).toBe(true)
+        await settleAsync()
+        expect(store.drafts[sessionId]?.text).toBe(newerDraft)
+        expect(mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')?.value).toBe(newerDraft)
+        expect(submissions).toHaveLength(1)
+        expect(acceptedCommands.size).toBe(1)
+        return
+      }
+      lostResponse.reject(new TypeError('Response lost after server acceptance'))
+      expect(await completed[0]).toBe(false)
+      await settleAsync()
+      expect(store.drafts[sessionId]?.text).toBe('typed words voice words')
+      const command = acceptedCommands.values().next().value!
+      command.run = { ...command.run, status: 'succeeded', canCancel: false, eventSequence: 2, completedAt: '2026-09-18T00:00:01Z' }
+      snapshot = { ...snapshot, session: { ...snapshot.session, version: 2, profileResolutionToken: admissionToken(2), currentRun: command.run } }
+      expect((await store.refreshThread()).accepted).toBe(true)
+      await settleAsync()
+      expect(submissions).toHaveLength(1)
+      const retry = mounted.root.querySelector<HTMLButtonElement>('.agent-composer__submit')
+      const retryLabel = retry?.textContent
+      retry?.click()
+      await settleAsync()
+      expect(await completed[1]).toBe(true)
+      expect(submissions).toHaveLength(2)
+      expect(acceptedCommands.size).toBe(1)
+      expect(submissions[1]).toEqual(original)
+      expect(retryLabel).toContain('Retry')
+      expect(JSON.stringify(storageWrites.mock.calls)).not.toContain('typed words')
+      expect(JSON.stringify(storageWrites.mock.calls)).not.toContain('voice words')
+      expect(store.drafts[sessionId]?.text).toBe('')
+    } finally {
+      store.closeWorkspace()
+      fetcher.mockRestore()
+      storageWrites.mockRestore()
+      vi.unstubAllGlobals()
+      clearAgentChatRecent()
+    }
   })
 
   it('preserves edits made while a send-during-recording transcription waits and fails', async () => {

@@ -130,7 +130,8 @@ import {
   type WikiSynthesisInputMedia,
   type WikiSynthesisRead,
   wikiSynthesisSourceRef,
-  renderWikiSynthesisAnswer
+  renderWikiSynthesisAnswer,
+  validateWikiSynthesisShape
 } from './wiki-synthesis.ts'
 import { WIKI_SYNTHESIS_CALIBRATION } from './wiki-synthesis-calibration.ts'
 import { assessWikiVerificationResults, buildWikiVerificationPlan } from './wiki-verification.ts'
@@ -3551,6 +3552,7 @@ interface NativeDraft {
   readonly content: string
   readonly contentByteLimit: number
   readonly trustedObservations: ReadonlySet<string>
+  readonly operationObservations: ReadonlySet<string>
   /** Canonical claims supported by globally well-formed source-local Jev results. */
   readonly semanticSupport?: ReadonlySet<string>
 }
@@ -5884,6 +5886,7 @@ export class AxAgentEngine implements AgentEngine {
         const definition = ACTION_CATALOG[name]
         actionSession = {
           authoritySha256: base.authoritySha256,
+          actionAuthoritySha256: name => base.actionAuthoritySha256(name),
           functions: [
             ...base.functions,
             {
@@ -6123,7 +6126,7 @@ export class AxAgentEngine implements AgentEngine {
       if (actionSession === null || !actionSession.functions.some(action => action.name === checkpoint.actionName)) {
         throw new AgentRepositoryError('ACTION_NOT_OFFERED', 'Continued action is no longer authorized', 403)
       }
-      if (actionSession.authoritySha256 !== checkpoint.authoritySha256) {
+      if (actionSession.actionAuthoritySha256(checkpoint.actionName) !== checkpoint.authoritySha256) {
         throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_MISMATCH', 'Continued action authority no longer matches its approval checkpoint', 409)
       }
       const output = await withInvokingAgentRunLease(request.signal, request.run, () =>
@@ -6279,7 +6282,14 @@ export class AxAgentEngine implements AgentEngine {
       authorizeSourceInputs: AgentSourceAuthorizer | undefined
     }
     try {
-      preparedMedia = await this.#prepareMediaPrompt(request, chatPrompt, provider, preliminaryExposure.serializedRequestBytes, maxOutputTokens, authorizeEvidence)
+      preparedMedia = await this.#prepareMediaPrompt(
+        request,
+        chatPrompt,
+        provider,
+        preliminaryExposure.serializedRequestBytes,
+        maxOutputTokens,
+        authorizeEvidence
+      )
     } catch (error) {
       throw classifyAgentExecutionFailure(error, 'setup')
     }
@@ -6593,8 +6603,11 @@ export class AxAgentEngine implements AgentEngine {
       if (accumulator.finishReason === 'error') invalidProviderResponse('Provider terminated its response with an error')
       if (accumulator.finishReason === 'content_filter') invalidProviderResponse('Provider filtered its response')
       const memorySection = request.memoryContextDelivered === undefined ? null : frozenMemorySection(request)
-      if (memorySection !== null && dispatchReservation !== undefined &&
-        preparedMedia.chatPrompt.some(message => message.role === 'system' && message.content.includes(memorySection))) {
+      if (
+        memorySection !== null &&
+        dispatchReservation !== undefined &&
+        preparedMedia.chatPrompt.some(message => message.role === 'system' && message.content.includes(memorySection))
+      ) {
         try {
           await request.memoryContextDelivered!(String(dispatchReservation.id))
         } catch (error) {
@@ -6665,7 +6678,9 @@ export class AxAgentEngine implements AgentEngine {
       readonly externalContext: readonly ChatPromptMessage[]
       readonly sourceIndexes: readonly number[]
       readonly requestFacets: readonly string[]
+      readonly explicitContentFacets: boolean
       readonly observations: readonly string[]
+      readonly operationObservations: readonly string[]
       readonly repairFeedback: string
       readonly coverage: Parameters<typeof assessDraft>[2]
       readonly assessableContent: (content: string) => string
@@ -6789,15 +6804,18 @@ export class AxAgentEngine implements AgentEngine {
           readLiterals,
           content,
           contentByteLimit: deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes,
-          trustedObservations: new Set(input.observations)
+          trustedObservations: new Set(input.observations),
+          operationObservations: new Set(input.operationObservations)
         }
         if (
           answer.claims.length === 0 &&
           (answer.attachmentClaims?.length ?? 0) === 0 &&
-          answer.observations.length === 0 &&
+          (answer.observations.length === 0 ||
+            (input.explicitContentFacets && !answer.observations.some(line => input.operationObservations.includes(line)))) &&
           answer.unresolvedFacets.length !== input.requestFacets.length
         ) {
-          rejection = 'An inability must disclose every unresolved requested facet.'
+          rejection =
+            'Without content claims or an exact trusted operation receipt, disclose every explicit source or recent request facet as unresolved. An observation-free inability must disclose every requested facet.'
           return rejection
         }
         if (requiredOutcomeLines.some(line => !answer.observations.includes(line))) {
@@ -7339,6 +7357,7 @@ export class AxAgentEngine implements AgentEngine {
       const unavailableInternalResponses = new WeakSet<object>()
       const sourceIndependentControlResponses = new WeakSet<object>()
       const trackedOperationReceipts = new WeakSet<object>()
+      const trackedReceiptMessages = new WeakSet<object>()
       const trackedApplicationReceipts = new Map<object, unknown>()
       const authorizedApplicationReceipts = new WeakSet<object>()
       const retainedProposalDecisionLines = new Set<string>()
@@ -7361,6 +7380,7 @@ export class AxAgentEngine implements AgentEngine {
         actionCallId: string
       ): void => {
         const capability = ACTION_CATALOG[actionName].capability
+        if (capability.outputKinds.includes('operation-receipt')) trackedReceiptMessages.add(message)
         // These are strict presenter-produced operation acknowledgements, not
         // page snapshots. Any Wiki-derived inputs remain tracked separately.
         if (
@@ -7392,6 +7412,12 @@ export class AxAgentEngine implements AgentEngine {
         ...new Set([
           ...retainedProposalDecisionLines,
           ...[...trackedApplicationReceipts.keys()].flatMap(message => trackedAttributedMessages.get(message)?.slice(0, 2) ?? [])
+        ])
+      ]
+      const operationObservationLines = (messages: readonly ChatPromptMessage[]): readonly string[] => [
+        ...new Set([
+          ...retainedProposalOutcomeLines(),
+          ...messages.flatMap(message => (trackedReceiptMessages.has(message) ? (trackedAttributedMessages.get(message) ?? []) : []))
         ])
       ]
       const genericUnavailableResult = {
@@ -7606,6 +7632,9 @@ export class AxAgentEngine implements AgentEngine {
         scope: request.knowledgeContext?.scope ?? { kind: 'all' as const },
         selectedPageIds: request.knowledgeContext?.scope.kind === 'selected' ? request.knowledgeContext.sources.map(source => source.id) : [],
         requestFacets: undefined as readonly RootRequestFacet[] | undefined,
+        // Model-declared source/recent facets are content obligations. The host's
+        // whole-request fallback may instead describe an operation-only request.
+        explicitContentFacets: false,
         recentWindows: new Map<number, RecentEvidenceCoverage>(),
         observedRecentEvidence: false,
         // Only explicit user phrasing identifies a temporal target; navigation
@@ -8184,6 +8213,7 @@ export class AxAgentEngine implements AgentEngine {
           trackedApplicationReceipts.set(redacted.message, redacted.receipt)
           trackedAttributedMessages.set(redacted.message, redacted.lines)
           if (trackedOperationReceipts.has(message)) trackedOperationReceipts.add(redacted.message)
+          if (trackedReceiptMessages.has(message)) trackedReceiptMessages.add(redacted.message)
           const sources = trackedAssistantSourceInputs.get(message)
           if (sources !== undefined) trackedAssistantSourceInputs.set(redacted.message, sources)
           invalidated = true
@@ -8217,11 +8247,7 @@ export class AxAgentEngine implements AgentEngine {
       const isWikiSourceProjection = (message: ChatPromptMessage): boolean => {
         const response = trackedInternalResponses.get(message)
         const capability = response === undefined ? undefined : ACTION_CATALOG[response.actionName]?.capability
-        return (
-          capability === undefined ||
-          capability.providerPresentationFamily === 'unclassified' ||
-          capability.providerPresentationFamily.startsWith('wiki.')
-        )
+        return capability === undefined || capability.providerPresentationFamily === 'unclassified' || capability.providerPresentationFamily.startsWith('wiki.')
       }
       const providerSourceInputs = (messages: readonly ChatPromptMessage[]): readonly ChatPromptMessage[] => {
         const sources = new Set<ChatPromptMessage>()
@@ -8300,7 +8326,11 @@ export class AxAgentEngine implements AgentEngine {
             }
             for (const source of sources) {
               if (!(await validateInternal(source)))
-                throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Native assistant state contains source context that cannot be freshly authorized', 409)
+                throw new AgentRepositoryError(
+                  'AGENT_EVIDENCE_INVALID',
+                  'Native assistant state contains source context that cannot be freshly authorized',
+                  409
+                )
             }
           }
         }
@@ -8314,8 +8344,7 @@ export class AxAgentEngine implements AgentEngine {
         for (const message of retained) {
           if (
             (message.role !== 'function' || message.protocolResult?.protocol.kind === 'mcp') &&
-            (!collection ||
-              (!trackedEvidenceMessages.has(message) && !trackedInternalResponses.has(message) && !trackedApplicationReceipts.has(message)))
+            (!collection || (!trackedEvidenceMessages.has(message) && !trackedInternalResponses.has(message) && !trackedApplicationReceipts.has(message)))
           ) {
             admitted.push(message)
           } else if (await validateInternal(message)) {
@@ -8683,9 +8712,7 @@ export class AxAgentEngine implements AgentEngine {
             const before = contextState()
             const previousSummary = window.scope === 'history' ? historySummary : activeSummary
             const summarySources =
-              previousSummary === null
-                ? window.messages
-                : [(window.scope === 'history' ? before.conversation : before.active)[0]!, ...window.messages]
+              previousSummary === null ? window.messages : [(window.scope === 'history' ? before.conversation : before.active)[0]!, ...window.messages]
             const compactionContext = await prepareProviderSourceContext(summarySources, true)
             if (compactionContext.messages.some((message, index) => message !== summarySources[index]))
               throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Compaction source context is no longer authorized', 409)
@@ -8889,23 +8916,51 @@ export class AxAgentEngine implements AgentEngine {
           tools: 'action',
           evidence: 'evidence-validation'
         } as const
+        await request.authorizeDispatch?.()
+        await requireFreshApplicationReceipts()
+        // A rejected answer cannot undo an applied operation. Publish only its
+        // fresh host receipt, never any claim or recommendation from the draft.
+        const appliedObservations = [
+          ...new Set([...trackedApplicationReceipts.keys()].flatMap(message => trackedAttributedMessages.get(message) ?? []))
+        ].filter(line => validateWikiSynthesisShape({ claims: [], observations: [line], unresolvedFacets: [] }) === true)
+        const appliedContent =
+          appliedObservations.length === 0
+            ? ''
+            : renderWikiSynthesisAnswer({
+                claims: [],
+                observations: appliedObservations,
+                unresolvedFacets: []
+              })
         const content =
+          (appliedContent.length === 0 ? '' : `${appliedContent}\n\n`) +
           `I couldn't complete a source-verified answer before the ${descriptions[reason]} allowance ended. ` +
           'This does not establish that the requested information is absent. Review recorded action and proposal results before retrying; an action may already have completed.' +
           partialCoverageDisclosure(executedOmittedCount(), notExecutedActionCallIds.size) +
-          evidenceConflictDisclosure(evidenceConflictIds.size > 0)
+          evidenceConflictDisclosure(evidenceConflictIds.size > 0) +
+          (appliedContent.length === 0
+            ? ''
+            : requestEvidenceDisclosure(contextPlan.requestFacets, contextPlan.requestFacets?.map((_facet, index) => index) ?? [], true))
         const authoritySha256 = actionSession?.authoritySha256
         if (request.purpose !== 'subagent' && actionSession && this.#actions?.saveSnapshot)
           await this.#actions.saveSnapshot(request, await actionSession.snapshot(request.signal))
         const closeFailure = finalizeActionSession()
         if (closeFailure) throw closeFailure
-        await presentAcceptedContent(content, sink)
+        await presentAcceptedContent(
+          content,
+          sink,
+          appliedContent.length === 0
+            ? undefined
+            : async () => {
+                await request.authorizeDispatch?.()
+                await requireFreshApplicationReceipts()
+              }
+        )
         return {
           inputTokens,
           outputTokens,
           totalTokens,
           costMicros,
-          executionLimit: { reason, publication: 'inability' },
+          executionLimit: { reason, publication: appliedContent.length === 0 ? 'inability' : 'partial' },
           ...(authoritySha256 === null || authoritySha256 === undefined ? {} : { authoritySha256 }),
           ...(omittedActionCallIds.size === 0
             ? {}
@@ -9192,7 +9247,9 @@ export class AxAgentEngine implements AgentEngine {
                 externalContext: externalSynthesis.messages,
                 sourceIndexes,
                 requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [],
+                explicitContentFacets: contextPlan.explicitContentFacets,
                 observations,
+                operationObservations: operationObservationLines(bounded.chatPrompt),
                 repairFeedback,
                 coverage: {
                   ...coverage,
@@ -9254,7 +9311,10 @@ export class AxAgentEngine implements AgentEngine {
         } finally {
           if (sequence !== finalizationSequence) await sequence?.close()
         }
-        if (turn === 0 && result.rootRequestPlan !== undefined) contextPlan.requestFacets = result.rootRequestPlan
+        if (turn === 0 && result.rootRequestPlan !== undefined) {
+          contextPlan.requestFacets = result.rootRequestPlan
+          contextPlan.explicitContentFacets = true
+        }
         if (result.rootMetadataPresent) rootMetadataStripped = true
         recordProviderDelivery(dispatchEvidence)
         inputTokens = safeUsageAddition(inputTokens, result.inputTokens, 'Aggregate input token usage')
@@ -9489,9 +9549,11 @@ export class AxAgentEngine implements AgentEngine {
                 assessment = { ...assessment, valid: false, issues: [...assessment.issues, ...semantic.issues] }
                 result = { ...result, rootRejectedDraft: canonicalJson(nativeDraft.answer) }
               }
+              const operationObservations = nativeDraft.answer.observations.filter(line => nativeDraft.operationObservations.has(line))
+              const requiresOperationCoverage = contextPlan.explicitContentFacets && !nativeDraft.allRequestFacetsUnresolved && operationObservations.length > 0
               if (
                 (semantic.valid || selectedRecentPartial) &&
-                (nativeDraft.answer.claims.length > 0 || (nativeDraft.answer.attachmentClaims?.length ?? 0) > 0)
+                (nativeDraft.answer.claims.length > 0 || (nativeDraft.answer.attachmentClaims?.length ?? 0) > 0 || requiresOperationCoverage)
               ) {
                 const conversationContext = wikiConversationContext(conversation)
                 const coverageInput = encodeWikiCoverageInput({
@@ -9499,6 +9561,7 @@ export class AxAgentEngine implements AgentEngine {
                   ...(conversationContext === undefined ? {} : { conversationContext }),
                   requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [contextPlan.intent],
                   unresolvedFacets: nativeDraft.answer.unresolvedFacets,
+                  ...(operationObservations.length === 0 ? {} : { observations: operationObservations }),
                   ...(nativeDraft.inputMediaSources === undefined ? {} : { inputMediaSources: nativeDraft.inputMediaSources }),
                   ...(nativeDraft.answer.attachmentClaims === undefined ? {} : { attachmentClaims: nativeDraft.answer.attachmentClaims }),
                   reads: [...nativeDraft.readSources.values()].map(source => {
@@ -9525,6 +9588,7 @@ export class AxAgentEngine implements AgentEngine {
                     await authorizeDraftSources()
                     await requireFreshWikiVerificationEvidence(evidence)
                     await requireFreshRegisteredEvidence(coverageEvidence)
+                    await requireFreshApplicationReceipts()
                   },
                   finalizationSequence
                 )
@@ -9994,6 +10058,7 @@ export class AxAgentEngine implements AgentEngine {
                   externalContext: externalSynthesis.messages,
                   sourceIndexes,
                   requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? (contextPlan.intent.length > 0 ? [contextPlan.intent] : []),
+                  explicitContentFacets: contextPlan.explicitContentFacets,
                   observations: [
                     ...retainedProposalOutcomeLines(),
                     ...activePrompt.flatMap(message => [
@@ -10001,6 +10066,7 @@ export class AxAgentEngine implements AgentEngine {
                       ...[...(trackedBrowserMessages.get(message)?.quotedUnits ?? [])].map(unit => `${trackedBrowserMessages.get(message)!.prefix}${unit}`)
                     ])
                   ],
+                  operationObservations: operationObservationLines(activePrompt),
                   repairFeedback,
                   coverage: { ...coverage, partialCoverage: { omittedCount: executedOmittedCount(), notExecutedCount: notExecutedActionCallIds.size } },
                   assessableContent: content => content,
@@ -10544,6 +10610,14 @@ export class AxAgentEngine implements AgentEngine {
                 : null
             if (discoveryNotice !== null && projectedOutput !== null) projectedOutput.coverageNotice = discoveryNotice
             const candidate = providerResultChatMessage(mode, call.id, call.providerName, providerOutput)
+            const completedStatus = trustedActionStatusLines(providerOutput)
+            if (completedStatus.length > 0 && (resolved.name === 'pages.applyProposal' || isAppliedPageProposalResult(resolved.name, output))) {
+              // Completion is durable even when this projection cannot enter
+              // provider context. Keep its canonical receipt and safe presenter
+              // lines on the candidate, never on the capacity placeholder.
+              trackedAttributedMessages.set(candidate, completedStatus)
+              rememberProposalOutcome(candidate, resolved.name, input, output, mode, call.id, call.providerName, actionCallId)
+            }
             const prospectiveTurn = activeDiscovery.previewNextTurn()
             const prospectiveTools = providerTools(activeActionSession, mode, prospectiveTurn)
             if (prospectiveTools === null) throw new AgentRepositoryError('ACTION_NOT_OFFERED', 'Provider tools are unavailable', 403)
@@ -10582,14 +10656,16 @@ export class AxAgentEngine implements AgentEngine {
               omittedActionCallIds.add(actionCallId)
               contextLimitedThisTurn = true
             }
-            const deliveredMessage = providerResultMessage(activePrompt, mode, call.id, call.providerName, deliveredOutput)
+            const deliveredMessage =
+              delivered && deliveredOutput === providerOutput ? candidate : providerResultChatMessage(mode, call.id, call.providerName, deliveredOutput)
+            activePrompt.push(deliveredMessage)
             if (delivered)
               trackedInternalResponses.set(deliveredMessage, { actionName: resolved.name, input, output, callId: call.id, providerName: call.providerName })
             else unavailableInternalResponses.add(deliveredMessage)
-            const deliveredStatus = delivered ? trustedActionStatusLines(deliveredOutput) : []
+            const deliveredStatus = delivered ? (deliveredOutput === providerOutput ? completedStatus : trustedActionStatusLines(deliveredOutput)) : []
             const attributedLines = delivered ? [...deliveredStatus, ...(discoveryNotice === null ? [] : [discoveryNotice])] : []
             if (attributedLines.length > 0) trackedAttributedMessages.set(deliveredMessage, attributedLines)
-            if (deliveredStatus.length > 0)
+            if (deliveredStatus.length > 0 && !trackedApplicationReceipts.has(deliveredMessage))
               rememberProposalOutcome(deliveredMessage, resolved.name, input, output, mode, call.id, call.providerName, actionCallId)
             const deliveredBrowser = delivered ? trustedBrowserAttribution(deliveredOutput) : null
             if (deliveredBrowser !== null) trackedBrowserMessages.set(deliveredMessage, deliveredBrowser)
@@ -10690,8 +10766,7 @@ export class AxAgentEngine implements AgentEngine {
           // A committed mutation and its truthful canonical completion are not
           // undone by a failed metadata write. Stop at the host boundary, never
           // feed a fake action failure back into the provider's retry loop.
-          if (completedMemoryOutput !== undefined)
-            await recordMemorySave(request, actionCallId, resolved.name, input, completedMemoryOutput)
+          if (completedMemoryOutput !== undefined) await recordMemorySave(request, actionCallId, resolved.name, input, completedMemoryOutput)
         }
         for (let index = toolBatchStart + 1; index < activePrompt.length; index++) {
           const message = activePrompt[index]!
@@ -10739,10 +10814,12 @@ export class AxAgentEngine implements AgentEngine {
                 externalContext: externalSynthesis.messages,
                 sourceIndexes,
                 requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? (contextPlan.intent.length > 0 ? [contextPlan.intent] : []),
+                explicitContentFacets: contextPlan.explicitContentFacets,
                 observations: [
                   ...attributedLines,
                   ...browserAttributions.flatMap(observation => [...observation.quotedUnits].map(unit => `${observation.prefix}${unit}`))
                 ],
+                operationObservations: operationObservationLines(activePrompt),
                 repairFeedback,
                 coverage: { ...coverage, partialCoverage: { omittedCount: executedOmittedCount(), notExecutedCount: notExecutedActionCallIds.size } },
                 assessableContent: content => assessableActionStatusContent(content, attributedLines, browserAttributions),

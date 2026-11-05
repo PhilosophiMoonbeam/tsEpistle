@@ -23,6 +23,8 @@ export interface AxHarnessFunction {
 
 export interface AxActionSession {
   readonly authoritySha256: string | null
+  /** Exact authority for a currently offered action; absent actions have no authority. */
+  actionAuthoritySha256(name: AgentActionName): string | null
   /** Exact reusable authority, excluding the root run's ephemeral request identity. */
   readonly specialistAuthoritySha256?: string
   readonly functions: readonly AxHarnessFunction[]
@@ -149,6 +151,7 @@ export class AxSessionHarness {
     }
     return {
       authoritySha256: null,
+      actionAuthoritySha256: name => offered.get(name)?.authority.authoritySha256 ?? null,
       functions,
       invoke: async (name, input, signal, actionCallId) => {
         assertOpen()

@@ -254,23 +254,28 @@ describe('Agent memory draft retention and input methods', () => {
       user: { ...view.user, entries: [{ ...memoryEntry, content: 'Updated elsewhere', version: 4 }] }
     }
     const getAgentMemories = vi.fn().mockResolvedValueOnce(view).mockResolvedValue(refreshedView)
-    const { manager } = loadManager(view, { getAgentMemories })
+    const { manager, createAgentMemory, updateAgentMemory, removeAgentMemory, clearAgentMemories } = loadManager(view, { getAgentMemories })
     await Promise.resolve()
     await Promise.resolve()
     manager.beginEdit(memoryEntry)
-    manager.draftContent.value = 'My unsaved revision'
+    const exactDraft = '  My unsaved revision\n日本語 — preserve spacing.  '
+    manager.draftContent.value = exactDraft
     await manager.load()
     manager.requestClose()
     expect(manager.open.value).toBe(false)
-    expect(manager.draftContent.value).toBe('My unsaved revision')
+    expect(manager.draftContent.value).toBe(exactDraft)
     expect(manager.draftConflict.value?.latest?.version).toBe(4)
 
     manager.open.value = true
     await Promise.resolve()
     await Promise.resolve()
     expect(manager.editing.value).toEqual({ id: memoryEntry.id, version: memoryEntry.version })
-    expect(manager.draftContent.value).toBe('My unsaved revision')
+    expect(manager.draftContent.value).toBe(exactDraft)
     expect(manager.draftConflict.value?.kind).toBe('changed')
+    expect(createAgentMemory).not.toHaveBeenCalled()
+    expect(updateAgentMemory).not.toHaveBeenCalled()
+    expect(removeAgentMemory).not.toHaveBeenCalled()
+    expect(clearAgentMemories).not.toHaveBeenCalled()
   })
 
   it.each(['ctrlKey', 'metaKey'])('does not save or intercept %s+Enter while an input method is composing', async modifier => {
@@ -296,7 +301,6 @@ describe('Agent memory draft retention and input methods', () => {
     expect(manager.editing.value).toBeNull()
   })
 })
-
 
 describe('Agent memory manager destructive dialog lifetime', () => {
   it('backgrounds an in-flight remove while its mounted manager retains ownership', async () => {
@@ -500,12 +504,23 @@ describe('Agent manual memory receipt forwarding', () => {
     manager.draftContent.value = 'Explicitly saved note'
     const completion = manager.save()
     expect(createAgentMemory.mock.calls[0][2]).toEqual({
-      target: 'agent', content: 'Explicitly saved note', context: { sessionId: capture.sessionId }
+      target: 'agent',
+      content: 'Explicitly saved note',
+      context: { sessionId: capture.sessionId }
     })
     expect(agents.consumeManualMemoryReceipt).not.toHaveBeenCalled()
     const receipt = {
-      schemaVersion: 1, origin: 'manual', ownerId: 1, sessionId: capture.sessionId,
-      runId: null, attempt: null, snapshotId: null, entryId: 'entry-new', entryVersion: 1, operation: 'add', changed: true,
+      schemaVersion: 1,
+      origin: 'manual',
+      ownerId: 1,
+      sessionId: capture.sessionId,
+      runId: null,
+      attempt: null,
+      snapshotId: null,
+      entryId: 'entry-new',
+      entryVersion: 1,
+      operation: 'add',
+      changed: true,
       targets: [{ target: 'agent', characters: 21, limit: 2200, snapshotId: 'a'.repeat(64) }]
     }
     if (outcome === 'switched') current = false
@@ -523,9 +538,17 @@ describe('Agent manual memory receipt forwarding', () => {
 
   it('correlates an optimistic replacement response without treating a list refresh as its receipt', async () => {
     const receipt = {
-      schemaVersion: 1, origin: 'manual', ownerId: 1, sessionId: 'session-current',
-      runId: null, attempt: null, snapshotId: null, entryId: memoryEntry.id, entryVersion: memoryEntry.version + 1,
-      operation: 'replace', changed: true,
+      schemaVersion: 1,
+      origin: 'manual',
+      ownerId: 1,
+      sessionId: 'session-current',
+      runId: null,
+      attempt: null,
+      snapshotId: null,
+      entryId: memoryEntry.id,
+      entryVersion: memoryEntry.version + 1,
+      operation: 'replace',
+      changed: true,
       targets: [
         { target: 'user', characters: 0, limit: 1375, snapshotId: 'b'.repeat(64) },
         { target: 'agent', characters: 24, limit: 2200, snapshotId: 'c'.repeat(64) }
@@ -539,13 +562,24 @@ describe('Agent manual memory receipt forwarding', () => {
     manager.draftTarget.value = 'agent'
     manager.draftContent.value = 'Updated project context'
     await manager.save()
-    expect(updateAgentMemory.mock.calls[0].slice(2)).toEqual([memoryEntry.id, {
-      expectedVersion: memoryEntry.version, target: 'agent', content: 'Updated project context', context: { sessionId: 'session-current' }
-    }])
+    expect(updateAgentMemory.mock.calls[0].slice(2)).toEqual([
+      memoryEntry.id,
+      {
+        expectedVersion: memoryEntry.version,
+        target: 'agent',
+        content: 'Updated project context',
+        context: { sessionId: 'session-current' }
+      }
+    ])
     expect(agents.consumeManualMemoryReceipt).toHaveBeenCalledTimes(1)
-    expect(agents.consumeManualMemoryReceipt.mock.calls[0].slice(1)).toEqual([receipt, {
-      entryId: memoryEntry.id, entryVersion: memoryEntry.version + 1, target: 'agent'
-    }])
+    expect(agents.consumeManualMemoryReceipt.mock.calls[0].slice(1)).toEqual([
+      receipt,
+      {
+        entryId: memoryEntry.id,
+        entryVersion: memoryEntry.version + 1,
+        target: 'agent'
+      }
+    ])
   })
 
   it.each(['remove', 'clear'])('invalidates saved metadata without forwarding a reward for %s', async operation => {

@@ -441,7 +441,7 @@ const mountPrivateExpirySearch = async (source, options = {}) => {
       props: ['disabled', 'source'],
       setup: props => () => Vue.h('button', { class: 'fixture-cited-copy', disabled: props.disabled }, 'Copy')
     }),
-    createAsyncComponent: () => Vue.defineComponent({ render: () => null }),
+    createAsyncComponent: () => options.agentComponent ?? Vue.defineComponent({ render: () => null }),
     wikiStore: store,
     siteConfig: { agentsEnabled: options.online === true },
     pwaState: connection,
@@ -623,6 +623,57 @@ const mountWorkingSearch = async (source, options = {}) => {
 describe('zero-query Search consumer', () => {
   const source = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
 
+  test.each(['close', 'search'])('owns the Header %s intent through Stay and Discard, then unregisters on unmount', async intent => {
+    const choices = []
+    const agentComponent = Vue.defineComponent({
+      setup(_props, { expose }) {
+        expose({
+          beforeLeave: () => new Promise(resolve => choices.push(resolve)),
+          focusComposer: async () => undefined,
+          focusConversation: async () => undefined,
+          preparePrompt: async () => undefined,
+          sendPrompt: async () => false
+        })
+        return () => Vue.h('section', { class: 'fixture-agent' }, Vue.h('textarea'))
+      }
+    })
+    const harness = await mountWorkingSearch(source, { agentComponent })
+    try {
+      expect(searchNavigation.requestSearchAgentExit(intent)).toBeNull()
+      harness.instance.openAsk()
+      await Vue.nextTick()
+      expect(harness.container.querySelector('.fixture-agent')).not.toBeNull()
+      const stayed = searchNavigation.requestSearchAgentExit(intent)
+      expect(stayed).not.toBeNull()
+      expect(choices).toHaveLength(1)
+      expect(harness.store.site.searchMode).toBe('ask')
+      choices[0](false)
+      expect(await stayed).toBe(false)
+      expect(harness.store.site.searchMode).toBe('ask')
+      expect(harness.store.site.searchIsFocused).toBe(true)
+      expect(harness.container.querySelector('.fixture-agent')).not.toBeNull()
+
+      const discarded = searchNavigation.requestSearchAgentExit(intent)
+      expect(discarded).not.toBeNull()
+      expect(choices).toHaveLength(2)
+      expect(harness.store.site.searchMode).toBe('ask')
+      choices[1](true)
+      expect(await discarded).toBe(true)
+      await Vue.nextTick()
+      expect(choices).toHaveLength(2)
+      expect(harness.store.site.searchMode).toBe('search')
+      expect(harness.store.site.searchIsFocused).toBe(intent === 'search')
+      expect(harness.container.querySelector('.fixture-agent')).toBeNull()
+
+      harness.instance.openAsk()
+      await Vue.nextTick()
+      expect(harness.container.querySelector('.fixture-agent')).not.toBeNull()
+    } finally {
+      harness.restore()
+    }
+    expect(searchNavigation.requestSearchAgentExit(intent)).toBeNull()
+  })
+
   test('connects the header combobox to deduplicated working rows and quick actions, then enters the selected private page', async () => {
     const destinations = []
     const harness = await mountWorkingSearch(source, { navigate: href => destinations.push(href) })
@@ -714,6 +765,7 @@ describe('zero-query Search consumer', () => {
       }
       const click = new browserWindow.MouseEvent('click', { bubbles: true, cancelable: true })
       link.dispatchEvent(click)
+      await Vue.nextTick()
       expect(click.defaultPrevented).toBe(true)
       expect(destinations).toHaveLength(1)
       assertIdentity(destinations[0])
@@ -1150,15 +1202,16 @@ describe('inline Ask mode contract', () => {
     }
   })
 
-  test('retains an authorized active Agent offline without admitting new work, and tears down on an owner change', () => {
+  test('retains an authorized active Agent offline without admitting new work, and tears down on an owner change', async () => {
     const dependencies = {
       wikiStore: { user: { permissions: ['use:agents'] } },
       siteConfig: { agentsEnabled: true }
     }
     const computed = compileSearchMethods(search, null, dependencies, 'computed')
     const watch = compileSearchMethods(search, ['offlineSearchActive', 'agentOwnerId'], dependencies, 'watch')
-    const methods = compileSearchMethods(search, ['selectSearchScope'], dependencies)
+    const methods = compileSearchMethods(search, ['selectSearchScope', 'allowAgentLeave'], dependencies)
     const state = {
+      ...methods,
       authAuthorityReady: true,
       serverCapabilitiesAvailable: true,
       searchMode: 'ask',
@@ -1195,7 +1248,7 @@ describe('inline Ask mode contract', () => {
     expect(state.isAgentOpen).toBe(false)
 
     state.searchMode = 'ask'
-    methods.selectSearchScope.call(state, 'downloaded')
+    await methods.selectSearchScope.call(state, 'downloaded')
     expect(state.searchMode).toBe('search')
     expect(state.isAgentOpen).toBe(false)
     dependencies.wikiStore.user.permissions = []

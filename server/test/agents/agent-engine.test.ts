@@ -327,10 +327,7 @@ const questionProposalAction: AxHarnessFunction = {
   capability: ACTION_CATALOG['pages.prepareCreate'].capability
 }
 
-const ownedReadFixture = (
-  read: (name: string, input: unknown) => unknown | Promise<unknown>,
-  authoritativeOutputs?: readonly unknown[]
-) => {
+const ownedReadFixture = (read: (name: string, input: unknown) => unknown | Promise<unknown>, authoritativeOutputs?: readonly unknown[]) => {
   const authoritativeSnapshots = authoritativeOutputs?.map(output => canonicalJson(output))
   const observations: { readonly name: string; readonly input: string; readonly output: unknown; readonly snapshot: string }[] = []
   const invoke = vi.fn(async (name: string, input: unknown) => {
@@ -412,7 +409,10 @@ const questionFixture = (
     if (!binding.success || !receipt.success || receipt.data.proposalId !== binding.data.proposalId) return
     const originalInput = canonicalJson(input)
     ownedObservations.set(`pages.applyProposal:${originalInput}`, {
-      name: 'pages.applyProposal', input: originalInput, output, snapshot: canonicalJson(output)
+      name: 'pages.applyProposal',
+      input: originalInput,
+      output,
+      snapshot: canonicalJson(output)
     })
   }
   if (providerOptions.validateObservation === undefined && requestOptions.recoveredAction?.actionName === 'pages.applyProposal') {
@@ -422,9 +422,10 @@ const questionFixture = (
     const output = await invokeAction(name as QuestionActionName, input)
     if (providerOptions.validateObservation === undefined && typeof output === 'object' && output !== null && !Array.isArray(output) && !('error' in output)) {
       const source = output as Record<string, unknown>
-      const argumentsRecord = typeof input === 'object' && input !== null && !Array.isArray(input) ? input as Record<string, unknown> : {}
+      const argumentsRecord = typeof input === 'object' && input !== null && !Array.isArray(input) ? (input as Record<string, unknown>) : {}
       const supported =
-        ((name === 'pages.get' || name === 'pages.getVersion') && typeof source.content === 'string' &&
+        ((name === 'pages.get' || name === 'pages.getVersion') &&
+          typeof source.content === 'string' &&
           source.id === (name === 'pages.get' ? argumentsRecord.id : argumentsRecord.pageId) &&
           (name !== 'pages.getVersion' || source.versionId === argumentsRecord.versionId)) ||
         (name === 'pages.getOkf' && typeof source.document === 'string' && source.pageId === argumentsRecord.id) ||
@@ -446,16 +447,18 @@ const questionFixture = (
     }
     return output
   })
-  const validateObservation = providerOptions.validateObservation ?? (async (actionName: AgentActionName, output: unknown, signal: AbortSignal, originalInput?: unknown) => {
-    if (signal.aborted) return false
-    const snapshot = canonicalJson(output)
-    const boundInput = originalInput === undefined ? undefined : canonicalJson(originalInput)
-    for (const observation of ownedObservations.values()) {
-      if (observation.name !== actionName || (boundInput !== undefined && observation.input !== boundInput)) continue
-      if (snapshot === observation.snapshot && canonicalJson(observation.output) === observation.snapshot) return true
-    }
-    return false
-  })
+  const validateObservation =
+    providerOptions.validateObservation ??
+    (async (actionName: AgentActionName, output: unknown, signal: AbortSignal, originalInput?: unknown) => {
+      if (signal.aborted) return false
+      const snapshot = canonicalJson(output)
+      const boundInput = originalInput === undefined ? undefined : canonicalJson(originalInput)
+      for (const observation of ownedObservations.values()) {
+        if (observation.name !== actionName || (boundInput !== undefined && observation.input !== boundInput)) continue
+        if (snapshot === observation.snapshot && canonicalJson(observation.output) === observation.snapshot) return true
+      }
+      return false
+    })
   const close = vi.fn()
   const actions: AgentActionSessionProvider = {
     open: async () => ({
@@ -1668,21 +1671,26 @@ describe('Ax agent engine', () => {
         expect(fixture.providerCalls).toHaveLength(truncated ? 4 : 3)
         if (truncated) {
           expect(JSON.stringify(fixture.providerCalls[2]?.chatPrompt)).toContain('collection_not_finished')
-          const currentRead = questionRecord(fixture.event.mock.calls.filter(
-            ([type, data]) => type === 'tool.completed' && questionRecord(data).actionName === 'pages.get'
-          ).at(-1)?.[1])
+          const currentRead = questionRecord(
+            fixture.event.mock.calls.filter(([type, data]) => type === 'tool.completed' && questionRecord(data).actionName === 'pages.get').at(-1)?.[1]
+          )
           if (mode === 'native') expect(currentRead.actionCallId).toBe('follow-up-full-read')
           expect(currentRead).not.toHaveProperty('contextExclusion')
           expect(questionRecord(JSON.parse(String(currentRead.result)))).toMatchObject({
-            id: 42, sourceRevision: '1', content: page.content, citation: page.citation
+            id: 42,
+            sourceRevision: '1',
+            content: page.content,
+            citation: page.citation
           })
-          expect(fixture.event.mock.calls.some(
-            ([type, data]) => type === 'tool.started' && questionRecord(data).actionName === 'pages.get' &&
-              questionRecord(data).actionCallId === currentRead.actionCallId
-          )).toBe(true)
-          expect(fixture.providerCalls.flatMap(synthesisReadsFromRequest)).toEqual(expect.arrayContaining([
-            expect.objectContaining({ evidenceId: 'page:42:revision:1', complete: true, readText: page.content })
-          ]))
+          expect(
+            fixture.event.mock.calls.some(
+              ([type, data]) =>
+                type === 'tool.started' && questionRecord(data).actionName === 'pages.get' && questionRecord(data).actionCallId === currentRead.actionCallId
+            )
+          ).toBe(true)
+          expect(fixture.providerCalls.flatMap(synthesisReadsFromRequest)).toEqual(
+            expect.arrayContaining([expect.objectContaining({ evidenceId: 'page:42:revision:1', complete: true, readText: page.content })])
+          )
         }
         expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(fact)
         expect(result.citations).toEqual(expectedReadCitations([expect.objectContaining({ evidenceId: 'page:42:revision:1' })]))
@@ -1925,12 +1933,14 @@ describe('Ax agent engine', () => {
     const fixture = typedRootFixture(
       input => {
         const source = synthesisSourcesFromRequest(input)[0]!
-        return typedFixtureReceipt(synthesisFixtureAnswer(input, {
-          claims: [
-            { ...source, statement: `## Production\n\n${production}` },
-            { ...source, statement: `### Staging\n\n${staging}` }
-          ]
-        }))
+        return typedFixtureReceipt(
+          synthesisFixtureAnswer(input, {
+            claims: [
+              { ...source, statement: `## Production\n\n${production}` },
+              { ...source, statement: `### Staging\n\n${staging}` }
+            ]
+          })
+        )
       },
       false,
       undefined,
@@ -1945,7 +1955,8 @@ describe('Ax agent engine', () => {
     const container = document.createElement('div')
     container.innerHTML = renderSafeMarkdown(published)
     expect([...container.querySelectorAll('h2, h3')].map(heading => [heading.tagName, heading.textContent])).toEqual([
-      ['H2', 'Production'], ['H3', 'Staging']
+      ['H2', 'Production'],
+      ['H3', 'Staging']
     ])
     const paragraphs = [...container.querySelectorAll('p')].map(paragraph => paragraph.textContent)
     expect(paragraphs).toContain(production)
@@ -1957,9 +1968,7 @@ describe('Ax agent engine', () => {
     expect(fixture.invoke).toHaveBeenCalledOnce()
     expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
     expect(result.totalTokens).toBe(fixture.settled.reduce((sum, usage) => sum + usage.totalTokens, 0))
-    const turns = fixture.event.mock.calls
-      .filter(([type]) => type === 'model.turn')
-      .map(([, data]) => questionRecord(data))
+    const turns = fixture.event.mock.calls.filter(([type]) => type === 'model.turn').map(([, data]) => questionRecord(data))
     expect(turns.filter(turn => turn.outcome === 'answer_rejected')).toEqual([])
     expect(turns.filter(turn => turn.verification !== undefined && questionRecord(turn.verification).phase === 'coverage_audit')).toHaveLength(1)
   })
@@ -2306,9 +2315,7 @@ describe('Ax agent engine', () => {
         expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toContainEqual(
           expect.objectContaining({
             accepted: false,
-            claims: [
-              expect.objectContaining({ titleAssertion: true, authoritativeTitle: title, integritySupported: true, supported: false })
-            ]
+            claims: [expect.objectContaining({ titleAssertion: true, authoritativeTitle: title, integritySupported: true, supported: false })]
           })
         )
     }
@@ -2600,45 +2607,92 @@ describe('Ax agent engine', () => {
     'reports frozen context only after successful provider work (%s)',
     async mode => {
       const order: string[] = []
-      const delivered = vi.fn(async (_deliveryId: string) => { order.push('included') })
-      const reconcile = vi.fn(async () => { order.push('settled') })
+      const delivered = vi.fn(async (_deliveryId: string) => {
+        order.push('included')
+      })
+      const reconcile = vi.fn(async () => {
+        order.push('settled')
+      })
       const taskId = '00000000-0000-4000-8000-000000000081'
       const childPacket = {
-        taskId, outcome: 'blocked', claims: [], conflicts: [],
-        unanswered: ['No source-reading tools are available for this task.'], recommendedFollowups: []
+        taskId,
+        outcome: 'blocked',
+        claims: [],
+        conflicts: [],
+        unanswered: ['No source-reading tools are available for this task.'],
+        recommendedFollowups: []
       }
-      const text = vi.fn(async (_delta: string) => { if (mode === 'later-failure') throw new Error('later publication failed') })
+      const text = vi.fn(async (_delta: string) => {
+        if (mode === 'later-failure') throw new Error('later publication failed')
+      })
       const chat = vi.fn(async (): Promise<AxChatResponse | ReadableStream<AxChatResponse>> => {
         if (mode === 'failed-request') throw new Error('provider request failed')
-        if (mode === 'failed-stream') return new ReadableStream({ start(controller) { controller.error(new Error('provider stream disconnected')) } })
-        return { results: [{ index: 0, content: mode === 'subagent' ? JSON.stringify(childPacket) : 'Validated answer.' }],
-          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 3, totalTokens: 10 } } }
+        if (mode === 'failed-stream')
+          return new ReadableStream({
+            start(controller) {
+              controller.error(new Error('provider stream disconnected'))
+            }
+          })
+        return {
+          results: [{ index: 0, content: mode === 'subagent' ? JSON.stringify(childPacket) : 'Validated answer.' }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 3, totalTokens: 10 } }
+        }
       })
       const factory = {
         create: async () => ({
           service: rootFixtureService(chat),
-          capabilities: { streaming: true, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema',
-            usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 },
-          transportKind: 'openai-responses', model: 'gpt-test', capabilityRevision: 'cap-1', pricingRevision: 'price-1', pricing
+          capabilities: {
+            streaming: true,
+            toolCalling: 'native',
+            parallelToolCalls: true,
+            structuredOutput: 'native-json-schema',
+            usage: 'terminal',
+            cancellation: true,
+            maxContextTokens: 100_000,
+            maxOutputTokens: 4_000
+          },
+          transportKind: 'openai-responses',
+          model: 'gpt-test',
+          capabilityRevision: 'cap-1',
+          pricingRevision: 'price-1',
+          pricing
         })
       } as unknown as AgentProviderFactory
       const input = request(new AbortController().signal)
-      const execution = new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
-        ...input, run: { ...input.run, executionMode: mode === 'subagent' ? 'agent' : 'generation-only' }, purpose: mode === 'subagent' ? 'subagent' : 'root',
-        ...(mode === 'subagent' ? {
-          task: { id: taskId, kind: 'source_scout' as const, title: 'Read sources', question: 'What do the sources say?', sourceScope: [], requiredEvidenceCount: 1 },
-          subagentRunId: '00000000-0000-4000-8000-000000000082', actionAllowlist: []
-        } : {}),
-        ...(mode === 'empty' ? { memory: { user: [], agent: [] } } : {}),
-        memoryContextDelivered: delivered,
-        dispatchBudget: {
-          reserve: async maximum => ({ id: 17, ...maximum }), reconcile, release: async () => {}, consumeTool: async () => {},
-          unsettledExposure: { tokens: 0, costMicros: 0 }
+      const execution = new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+        {
+          ...input,
+          run: { ...input.run, executionMode: mode === 'subagent' ? 'agent' : 'generation-only' },
+          purpose: mode === 'subagent' ? 'subagent' : 'root',
+          ...(mode === 'subagent'
+            ? {
+                task: {
+                  id: taskId,
+                  kind: 'source_scout' as const,
+                  title: 'Read sources',
+                  question: 'What do the sources say?',
+                  sourceScope: [],
+                  requiredEvidenceCount: 1
+                },
+                subagentRunId: '00000000-0000-4000-8000-000000000082',
+                actionAllowlist: []
+              }
+            : {}),
+          ...(mode === 'empty' ? { memory: { user: [], agent: [] } } : {}),
+          memoryContextDelivered: delivered,
+          dispatchBudget: {
+            reserve: async maximum => ({ id: 17, ...maximum }),
+            reconcile,
+            release: async () => {},
+            consumeTool: async () => {},
+            unsettledExposure: { tokens: 0, costMicros: 0 }
+          }
+        },
+        {
+          text,
+          event: async () => {}
         }
-      }, {
-        text,
-        event: async () => {}
-      })
+      )
       if (mode === 'failed-request' || mode === 'failed-stream' || mode === 'later-failure') await expect(execution).rejects.toThrow()
       else await execution
       expect(chat).toHaveBeenCalledOnce()
@@ -2655,19 +2709,42 @@ describe('Ax agent engine', () => {
   )
 
   it.each(['native', 'prompt'] as const)('halts after a committed %s memory save if host receipt persistence fails', async mode => {
-    const committed = { changed: true, message: 'Memory saved for new conversations.', target: 'user', entries: ['Prefers concise answers.'], characters: 24, limit: 1375 }
-    const memorySaved = vi.fn(async () => { throw new Error('INSERT private SQL bindings and memory text') })
-    const fixture = questionFixture(mode, [{
-      calls: [{ id: 'committed-memory', name: 'memory.manage', arguments: { action: 'add', target: 'user', content: 'Prefers concise answers.' } }]
-    }], () => committed, [questionMemoryAction], {}, { memorySaved })
+    const committed = {
+      changed: true,
+      message: 'Memory saved for new conversations.',
+      target: 'user',
+      entries: ['Prefers concise answers.'],
+      characters: 24,
+      limit: 1375
+    }
+    const memorySaved = vi.fn(async () => {
+      throw new Error('INSERT private SQL bindings and memory text')
+    })
+    const fixture = questionFixture(
+      mode,
+      [
+        {
+          calls: [{ id: 'committed-memory', name: 'memory.manage', arguments: { action: 'add', target: 'user', content: 'Prefers concise answers.' } }]
+        }
+      ],
+      () => committed,
+      [questionMemoryAction],
+      {},
+      { memorySaved }
+    )
     const reconcile = vi.fn(async () => {})
     const release = vi.fn(async () => {})
     const execution = fixture.execute('Remember my preference for concise answers.', undefined, {
-      reserve: async maximum => ({ id: 1, ...maximum }), reconcile, release, consumeTool: async () => {},
+      reserve: async maximum => ({ id: 1, ...maximum }),
+      reconcile,
+      release,
+      consumeTool: async () => {},
       unsettledExposure: { tokens: 0, costMicros: 0 }
     })
     await expect(execution).rejects.toMatchObject({
-      code: 'AGENT_HOST_PERSISTENCE_FAILED', stage: 'host_persistence', status: 500,
+      code: 'AGENT_HOST_PERSISTENCE_FAILED',
+      stage: 'host_persistence',
+      status: 500,
       message: 'Agent host could not persist execution metadata. Execution stopped without retrying completed work.'
     })
     expect(fixture.invoke).toHaveBeenCalledOnce()
@@ -2821,8 +2898,7 @@ describe('Ax agent engine', () => {
           }
         ],
         invoke,
-        validateObservation: async (name, output, signal) =>
-          !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
+        validateObservation: async (name, output, signal) => !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
         snapshot: async () => ({}),
         close
       })
@@ -2915,6 +2991,7 @@ describe('Ax agent engine', () => {
         invoke: async () => ({}),
         snapshot: async () => ({}),
         close,
+        actionAuthoritySha256: () => null,
         authoritySha256: null
       })
     }
@@ -3093,8 +3170,7 @@ describe('Ax agent engine', () => {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke,
-        validateObservation: async (name, output, signal) =>
-          !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
+        validateObservation: async (name, output, signal) => !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
         snapshot: async () => ({}),
         close: vi.fn()
       })
@@ -4307,8 +4383,7 @@ describe('Ax agent engine', () => {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke,
-        validateObservation: async (name, output, signal) =>
-          !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
+        validateObservation: async (name, output, signal) => !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
         snapshot: async () => ({}),
         close: vi.fn()
       })
@@ -4421,8 +4496,7 @@ describe('Ax agent engine', () => {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke,
-        validateObservation: async (name, output, signal) =>
-          !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
+        validateObservation: async (name, output, signal) => !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
         snapshot: async () => ({}),
         close: vi.fn()
       })
@@ -4519,8 +4593,7 @@ describe('Ax agent engine', () => {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke,
-        validateObservation: async (name, output, signal) =>
-          !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
+        validateObservation: async (name, output, signal) => !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
         snapshot: async () => ({}),
         close: vi.fn()
       })
@@ -4741,8 +4814,7 @@ describe('Ax agent engine', () => {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke,
-        validateObservation: async (name, output, signal) =>
-          !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
+        validateObservation: async (name, output, signal) => !signal.aborted && name === 'pages.get' && canonicalJson(output) === pageSnapshot,
         snapshot: async () => ({}),
         close: vi.fn()
       })
@@ -5287,6 +5359,142 @@ describe('Ax agent engine', () => {
           expect.objectContaining({ accepted: false }),
           expect.objectContaining({ accepted: true })
         ])
+      }
+    )
+
+    it('retains the fresh applied receipt and unresolved source and recent facets after coverage repairs are exhausted', async () => {
+      const missingFact = 'Report the current incident owner.'
+      const recentRequest = 'Recap the most recently updated Wiki pages.'
+      const mixedRequest = `${userRequest} ${missingFact} ${recentRequest}`
+      const facets = [
+        { start: 0, end: userRequest.length, quote: userRequest, coverage: 'source' },
+        { start: mixedRequest.indexOf(missingFact), end: mixedRequest.indexOf(missingFact) + missingFact.length, quote: missingFact, coverage: 'source' },
+        { start: mixedRequest.indexOf(recentRequest), end: mixedRequest.length, quote: recentRequest, coverage: 'recent-window' }
+      ]
+      const coverage = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+        const audit = input.chatPrompt.flatMap(message => (typeof message.content === 'string' ? [message.content] : [])).join('\n')
+        for (const line of observations) expect(audit).toContain(JSON.stringify(line).slice(1, -1))
+        expect(audit).toContain(missingFact)
+        expect(audit).toContain(recentRequest)
+        return {
+          results: [
+            {
+              index: 0,
+              content: JSON.stringify({
+                verdict: 'not_established',
+                feedback: 'Only the operation is established. Preserve the incident owner and recent recap as unresolved.'
+              }),
+              finishReason: 'stop'
+            }
+          ]
+        }
+      })
+      const draft = {
+        answer: (input: Readonly<AxChatRequest>) => synthesisFixtureAnswer(input, { claims: [], observations, unresolvedFacets: [] })
+      }
+      const fixture = questionFixture(
+        'native',
+        [
+          {
+            ...(acquisition[0] as Extract<QuestionStep, { readonly calls: readonly QuestionCall[] }>),
+            metadata: `<wiki-request-plan>${JSON.stringify({ facets })}</wiki-request-plan>`
+          },
+          ...acquisition.slice(1),
+          draft,
+          draft
+        ],
+        invoke,
+        [questionProposalAction],
+        { coverage },
+        { currentPage: null, priorActivity: [] }
+      )
+      const result = await fixture.execute(mixedRequest)
+      expect(coverage).toHaveBeenCalledTimes(2)
+      expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
+      expect(result.citations).toBeUndefined()
+      const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
+      for (const line of observations) expect(published).toContain(line)
+      expect(published).toContain(missingFact.replace('.', '\\.'))
+      expect(published).toContain(recentRequest.replace('.', '\\.'))
+      expect(published).not.toContain('The current incident owner is Taylor.')
+      expect(fixture.invoke.mock.calls.filter(([name]) => name === 'pages.prepareCreate')).toHaveLength(1)
+    })
+
+    it.each(['native', 'prompt'] as const)(
+      'retains the actual applied receipt when the final action completion is omitted for context capacity on %s',
+      async mode => {
+        const missingFact = 'Report the current incident owner.'
+        const mixedRequest = `${userRequest} ${missingFact}`
+        const facets = [
+          { start: 0, end: userRequest.length, quote: userRequest, coverage: 'source' },
+          { start: mixedRequest.indexOf(missingFact), end: mixedRequest.length, quote: missingFact, coverage: 'source' }
+        ]
+        // A large, valid model-authored action input fits the action contract,
+        // but its completed batch cannot admit even the bounded receipt.
+        const largeContent = `${proposalInput.content}${'Synthetic approved content.\n'.repeat(2_000)}`
+        const appliedPages = new Map<string, string>()
+        const unsupportedFact = 'The current incident owner is Taylor.'
+        const unsupportedRecommendation = 'Disable incident review before retrying.'
+        const rejectedDraft = {
+          answer: (input: Readonly<AxChatRequest>) =>
+            synthesisFixtureAnswer(input, {
+              claims: [{ evidenceId: 'page:134:revision:1', statement: unsupportedFact }],
+              observations,
+              recommendations: unsupportedRecommendation,
+              unresolvedFacets: []
+            })
+        }
+        const fixture = questionFixture(
+          mode,
+          [
+            {
+              metadata: `<wiki-request-plan>${JSON.stringify({ facets })}</wiki-request-plan>`,
+              calls: [{ id: 'enable-authoring', name: 'wiki_enable_tools', arguments: { category: 'authoring' } }]
+            },
+            { calls: [{ id: 'prepare-page', name: 'pages.prepareCreate', arguments: { ...proposalInput, content: largeContent } }] },
+            rejectedDraft,
+            rejectedDraft
+          ],
+          async (name, input) => {
+            if (name !== 'pages.prepareCreate') throw new Error(`Unexpected capacity regression action ${name}`)
+            const prepared = ACTION_CATALOG['pages.prepareCreate'].input.parse(input)
+            appliedPages.set(prepared.path, prepared.content)
+            return proposal
+          },
+          [questionProposalAction],
+          { maxContextTokens: 65_536, maxOutputTokens: 8_192 },
+          { currentPage: null, priorActivity: [] }
+        )
+        const execution = await fixture.execute(mixedRequest, { maxTurns: 4, maxToolCalls: 2, maxOutputTokens: 8_192 }).then(
+          result => ({ result }),
+          error => ({ error })
+        )
+        expect(appliedPages.get(proposalInput.path)).toBe(largeContent)
+        expect(fixture.invoke).toHaveBeenCalledOnce()
+        const completion = fixture.event.mock.calls
+          .filter(([type, data]) => type === 'tool.completed' && questionRecord(data).actionName === 'pages.prepareCreate')
+          .map(([, data]) => questionRecord(data))
+        expect(completion).toEqual([
+          expect.objectContaining({
+            result: JSON.stringify(proposal),
+            contextExclusion: { status: 'omitted', reason: 'tool_result_capacity' }
+          })
+        ])
+        if ('error' in execution) throw execution.error
+        const result = execution.result
+        expect(result.contextLimit).toEqual({
+          reason: 'tool_result_capacity',
+          omittedActionCallIds: [completion[0]!.actionCallId]
+        })
+        expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
+        expect(result.citations).toBeUndefined()
+        const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
+        for (const line of observations) expect(published).toContain(line)
+        expect(published).toContain(missingFact.replace('.', '\\.'))
+        expect(published).toContain('Search for duplicates')
+        expect(published).not.toContain(unsupportedFact)
+        expect(published).not.toContain(unsupportedRecommendation)
+        expect(published).not.toContain('Synthetic approved content.')
       }
     )
 
@@ -7028,7 +7236,8 @@ describe('Ax agent engine', () => {
     const close = vi.fn()
     let actionAuthoritySha256 = 'c'.repeat(64)
     const open = vi.fn(async () => ({
-      authoritySha256: actionAuthoritySha256,
+      authoritySha256: 'a'.repeat(64),
+      actionAuthoritySha256: (name: string) => (name === 'pages.prepareCreate' ? actionAuthoritySha256 : null),
       functions: [
         {
           name: 'pages.prepareCreate',
@@ -7194,6 +7403,7 @@ describe('Ax agent engine', () => {
       invoke,
       snapshot: async () => ({}),
       close: vi.fn(),
+      actionAuthoritySha256: () => null,
       authoritySha256: null
     }))
     const actions = { open } as unknown as AgentActionSessionProvider
@@ -7865,6 +8075,7 @@ describe('Ax agent engine', () => {
         invoke,
         snapshot: async () => ({}),
         close: vi.fn(),
+        actionAuthoritySha256: () => null,
         authoritySha256: null
       })
     }
@@ -7979,6 +8190,7 @@ describe('Ax agent engine', () => {
           invoke,
           snapshot: async () => ({}),
           close: vi.fn(),
+          actionAuthoritySha256: () => null,
           authoritySha256: null
         })
       }
@@ -8108,6 +8320,7 @@ describe('Ax agent engine', () => {
         validateObservation,
         snapshot: async () => ({}),
         close: vi.fn(),
+        actionAuthoritySha256: () => null,
         authoritySha256: null
       })
     }
@@ -8235,10 +8448,10 @@ describe('Ax agent engine', () => {
       open: async () => ({
         functions,
         invoke,
-        validateObservation: async (actionName, output, signal) =>
-          !signal.aborted && actionName === 'pages.get' && canonicalJson(output) === pageSnapshot,
+        validateObservation: async (actionName, output, signal) => !signal.aborted && actionName === 'pages.get' && canonicalJson(output) === pageSnapshot,
         snapshot: async () => ({}),
         close: vi.fn(),
+        actionAuthoritySha256: () => null,
         authoritySha256: 'd'.repeat(64)
       })
     }
@@ -8397,6 +8610,7 @@ describe('Ax agent engine', () => {
         validateObservation,
         snapshot: async () => ({}),
         close: vi.fn(),
+        actionAuthoritySha256: () => null,
         authoritySha256: null
       })
     }
@@ -8543,6 +8757,7 @@ describe('Ax agent engine', () => {
         validateObservation,
         snapshot: async () => ({}),
         close: vi.fn(),
+        actionAuthoritySha256: () => null,
         authoritySha256: null
       })
     }
@@ -8650,6 +8865,7 @@ describe('Ax agent engine', () => {
           invoke,
           snapshot: async () => ({}),
           close: vi.fn(),
+          actionAuthoritySha256: () => null,
           authoritySha256: null,
           validateObservation: scenario.validateObservation ?? validateObservation
         })
@@ -9442,7 +9658,14 @@ describe('Independent Agent media execution', () => {
       createMediaBinding: async () => ({ config, transport: { generate } })
     } as unknown as AgentProviderFactory
     const actions: AgentActionSessionProvider = {
-      open: async () => ({ authoritySha256: null, functions: [], invoke: async () => null, snapshot: async () => ({}), close: () => {} })
+      open: async () => ({
+        authoritySha256: null,
+        actionAuthoritySha256: () => null,
+        functions: [],
+        invoke: async () => null,
+        snapshot: async () => ({}),
+        close: () => {}
+      })
     }
     const output = sink()
     await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
@@ -9541,6 +9764,7 @@ describe('Independent Agent media execution', () => {
       const actions: AgentActionSessionProvider = {
         open: async () => ({
           authoritySha256: null,
+          actionAuthoritySha256: () => null,
           functions: [],
           ...(restriction === 'synthesis' ? { allowedActions: [] } : {}),
           invoke: async () => null,
@@ -9665,7 +9889,14 @@ describe('Independent Agent media execution', () => {
         })
       } as unknown as AgentProviderFactory
       const actions: AgentActionSessionProvider = {
-        open: async () => ({ authoritySha256: null, functions: [], invoke: async () => null, snapshot: async () => ({}), close: () => {} })
+        open: async () => ({
+          authoritySha256: null,
+          actionAuthoritySha256: () => null,
+          functions: [],
+          invoke: async () => null,
+          snapshot: async () => ({}),
+          close: () => {}
+        })
       }
       await new AxAgentEngine(factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
         {

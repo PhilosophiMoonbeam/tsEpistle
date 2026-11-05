@@ -640,9 +640,6 @@ export const appendAgentEvent = async (knex: Knex, input: AppendAgentEventInput)
       })
       .update({ eventSequence: sequence, updatedAt: now })
     if (changed !== 1) return conflict('AGENT_EVENT_SEQUENCE_CHANGED', 'Agent event sequence changed concurrently')
-    if (transaction.client.config.client === 'pg' || transaction.client.config.client === 'postgresql') {
-      await transaction.raw("SELECT pg_notify('wiki_agent_events', ?)", [input.runId])
-    }
     return eventRecord(row)
   })
 }

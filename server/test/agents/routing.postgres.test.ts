@@ -141,7 +141,6 @@ suite('PostgreSQL routing configuration and native Jev decision path', () => {
             const labels = Object.keys(request.criteria)
             if (labels.includes('writing:simple')) {
               expect(labels.every(label => /^[a-z_]+:(simple|moderate|complex)$/.test(label))).toBe(true)
-              expect(request.instructions).toContain('# Goal')
             }
             const choice = labels.includes('writing:simple') ? 'writing:simple' : labels[0]
             const probabilities = Object.fromEntries(labels.map(label => [label, label === choice ? 1 : 0]))

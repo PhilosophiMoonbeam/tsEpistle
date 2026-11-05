@@ -126,7 +126,16 @@ describe('clearable search recovery', () => {
     }
     const methods = compileSearchMethods(
       source,
-      ['closeSearch', 'handleBackdropClick', 'finishSearchFocus', 'deactivateModalLayers', 'deactivateAgentModal', 'resolveInlineAgentWaiters'],
+      [
+        'closeSearch',
+        'allowAgentLeave',
+        'finishCloseSearch',
+        'handleBackdropClick',
+        'finishSearchFocus',
+        'deactivateModalLayers',
+        'deactivateAgentModal',
+        'resolveInlineAgentWaiters'
+      ],
       {
         useAgentsStore: () => ({
           closeWorkspace: () => {
@@ -168,11 +177,17 @@ describe('clearable search recovery', () => {
     try {
       const root = dom.window.document.querySelector('#search')
       const close = root.querySelector('#close')
-      close.addEventListener('click', () => state.closeSearch())
+      let closeOutcome
+      close.addEventListener('click', () => {
+        closeOutcome = state.closeSearch()
+      })
       root.addEventListener('click', event => state.handleBackdropClick(event))
+      const closeSearch = state.closeSearch
+      state.closeSearch = () => (closeOutcome = closeSearch.call(state))
       close.focus()
       if (dismissal === 'Close search') close.click()
       else root.click()
+      expect(await closeOutcome).toBe(true)
       expect(state.searchIsFocused).toBe(false)
       expect(state).toMatchObject({
         search: 'unfamiliar task words',
@@ -406,6 +421,8 @@ describe('Ask modal accessibility contract', () => {
         'activateAgentModal',
         'activateSearchModal',
         'closeSearch',
+        'allowAgentLeave',
+        'finishCloseSearch',
         'finishSearchFocus',
         'deactivateModalLayers',
         'deactivateAgentModal',
@@ -437,6 +454,7 @@ describe('Ask modal accessibility contract', () => {
     const nestedOverlay = fixtureDocument.createElement('div')
     const nestedOverlayControl = fixtureDocument.createElement('button')
     let state
+    let closeOutcome
 
     root.tabIndex = -1
     nestedOverlay.className = 'v-overlay--active'
@@ -498,12 +516,18 @@ describe('Ask modal accessibility contract', () => {
       for (const name of [
         'activateSearchModal',
         'closeSearch',
+        'allowAgentLeave',
+        'finishCloseSearch',
         'finishSearchFocus',
         'deactivateModalLayers',
         'deactivateAgentModal',
         'resolveInlineAgentWaiters'
       ]) {
-        state[name] = (...args) => methods[name].call(state, ...args)
+        state[name] = (...args) => {
+          const outcome = methods[name].call(state, ...args)
+          if (name === 'closeSearch') closeOutcome = outcome
+          return outcome
+        }
       }
       fixtureDocument.addEventListener('keydown', methods.handleSearchKeydown.bind(state), true)
       fixtureDocument.addEventListener('focus', methods.captureSearchRestoreTarget.bind(state), true)
@@ -527,6 +551,7 @@ describe('Ask modal accessibility contract', () => {
       nestedOverlay.classList.remove('v-overlay--active')
       const agentEscape = new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
       agentComposer.dispatchEvent(agentEscape)
+      expect(await closeOutcome).toBe(true)
       expect(agentEscape.defaultPrevented).toBe(true)
       expect(state.isAgentOpen).toBe(false)
       expect(state.searchIsFocused).toBe(false)
@@ -547,6 +572,7 @@ describe('Ask modal accessibility contract', () => {
       agentComposer.focus()
       const searchEscape = new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
       agentComposer.dispatchEvent(searchEscape)
+      expect(await closeOutcome).toBe(true)
       expect(searchEscape.defaultPrevented).toBe(true)
       expect(state.searchIsFocused).toBe(false)
       expect(state.search).toBe('search again')
@@ -561,6 +587,7 @@ describe('Ask modal accessibility contract', () => {
       headerSearch.focus()
       methods.activateSearchModal.call(state, pageOpener)
       headerSearch.dispatchEvent(new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      expect(await closeOutcome).toBe(true)
       expect(state.searchIsFocused).toBe(false)
       expect(state.search).toBe('directly focused search')
       expect(state.searchModalFocusScope).toBeNull()
@@ -576,6 +603,7 @@ describe('Ask modal accessibility contract', () => {
       headerSearch.focus()
       methods.activateSearchModal.call(state, pageOpener)
       headerSearch.dispatchEvent(new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      expect(await closeOutcome).toBe(true)
       expect(state.searchIsFocused).toBe(false)
       expect(fixtureDocument.activeElement).toBe(pageOpener)
 
@@ -585,6 +613,7 @@ describe('Ask modal accessibility contract', () => {
       headerSearch.focus()
       methods.activateSearchModal.call(state, pageOpener)
       headerSearch.dispatchEvent(new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      expect(await closeOutcome).toBe(true)
       expect(state.searchIsFocused).toBe(false)
       expect(fixtureDocument.activeElement).toBe(pageOpener)
 
@@ -598,6 +627,7 @@ describe('Ask modal accessibility contract', () => {
       await methods.activateAgentModal.call(state)
       agentComposer.focus()
       agentComposer.dispatchEvent(new fixtureWindow.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      expect(await closeOutcome).toBe(true)
       expect(state.searchIsFocused).toBe(false)
       expect(state.isAgentOpen).toBe(false)
       expect(fixtureDocument.activeElement).toBe(mobileAgentOpener)
@@ -727,7 +757,9 @@ const compileSearchOptions = (source, names, section = 'computed', dependencies 
   }
   visit(sourceFile)
   const selected = new Set(names)
-  const declarations = computed.properties.filter(node => ts.isMethodDeclaration(node) && selected.has(node.name.getText(sourceFile)))
+  const declarations = computed.properties.filter(
+    node => (ts.isMethodDeclaration(node) || ts.isPropertyAssignment(node)) && selected.has(node.name.getText(sourceFile))
+  )
   if (declarations.length !== selected.size) throw new Error('A requested search computed property was not found.')
   const compiled = ts.transpileModule(`const computed = ({${declarations.map(node => node.getText(sourceFile)).join(',')}})`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }
@@ -811,12 +843,13 @@ describe('Search panel layout and hand-off', () => {
 
   test('Agent search button returns to the page search and focuses the header field', async () => {
     let focusRequests = 0
-    const methods = compileSearchMethods(search, ['returnToSearch'], {
+    const methods = compileSearchMethods(search, ['returnToSearch', 'allowAgentLeave'], {
       emitSearchFocus: () => {
         focusRequests += 1
       }
     })
     const state = {
+      ...methods,
       searchMode: 'ask',
       searchIsFocused: true,
       canAsk: true,
@@ -832,7 +865,7 @@ describe('Search panel layout and hand-off', () => {
       deactivateAgentModal() {},
       $nextTick: () => Promise.resolve()
     }
-    await methods.returnToSearch.call(state)
+    expect(await methods.returnToSearch.call(state)).toBe(true)
     expect(state.searchMode).toBe('search')
     expect(state.searchIsFocused).toBe(true)
     expect(state.pendingAskRestoreTarget).toBeNull()
@@ -852,7 +885,197 @@ describe('Search panel layout and hand-off', () => {
         return this.canAsk && this.searchMode === 'ask'
       }
     })
-    await methods.returnToSearch.call(superseded)
+    expect(await methods.returnToSearch.call(superseded)).toBe(false)
     expect(focusRequests).toBe(1)
   })
+
+  test.each(['stay', 'discard', 'owner-change', 'superseded', 'glossary-closed'])(
+    'guards the reader-owned glossary opening through %s without hiding the Agent early',
+    async decision => {
+      const methods = compileSearchMethods(search, ['allowAgentLeave', 'selectSearchScope'])
+      const watchers = compileSearchOptions(search, ['glossaryOpened'], 'watch')
+      const navigated = []
+      let resolveLeave
+      let leaveRequests = 0
+      const glossary = {
+        key: 'owner:2:page:17:en',
+        opened: false,
+        navigate(term) {
+          navigated.push(term)
+          this.opened = term !== null
+          return true
+        }
+      }
+      const state = {
+        ...methods,
+        glossary,
+        searchMode: 'ask',
+        searchScope: 'wiki',
+        searchIsFocused: true,
+        agentOwnerId: 2,
+        directPromptHandoffId: 1,
+        get isAgentOpen() {
+          return this.searchMode === 'ask'
+        },
+        get glossaryOpened() {
+          return this.glossary.opened
+        },
+        inlineAgent: {
+          beforeLeave: () => {
+            leaveRequests += 1
+            return new Promise(resolve => {
+              resolveLeave = resolve
+            })
+          }
+        }
+      }
+      await state.selectSearchScope('glossary')
+      expect(navigated).toEqual([''])
+      expect(leaveRequests).toBe(0)
+      const opened = watchers.glossaryOpened.handler.call(state, true)
+      expect(leaveRequests).toBe(1)
+      expect(state.searchMode).toBe('ask')
+      expect(state.searchScope).toBe('wiki')
+      if (decision === 'owner-change') state.agentOwnerId += 1
+      if (decision === 'superseded') state.directPromptHandoffId += 1
+      if (decision === 'glossary-closed') glossary.opened = false
+      resolveLeave(decision !== 'stay')
+      await opened
+      expect(leaveRequests).toBe(1)
+      expect(state.searchMode).toBe(decision === 'discard' ? 'search' : 'ask')
+      expect(state.searchScope).toBe(decision === 'discard' ? 'glossary' : 'wiki')
+      expect(state.searchIsFocused).toBe(true)
+      expect(navigated).toEqual(decision === 'stay' ? ['', null] : [''])
+      expect(glossary.opened).toBe(decision !== 'stay' && decision !== 'glossary-closed')
+    }
+  )
+
+  test.each(['close', 'return-search', 'mode', 'scope', 'escape', 'search-shortcut', 'toggle-shortcut'])(
+    'waits for the mounted Agent decision before %s changes the consumer',
+    async transition => {
+      const dom = new JSDOM('<!doctype html><body><textarea></textarea></body>', { url: 'https://wiki.test/en/current' })
+      const originals = Object.fromEntries(
+        ['document', 'window', 'Element', 'HTMLElement'].map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)])
+      )
+      for (const name of Object.keys(originals)) Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: dom.window[name] })
+      const decisions = []
+      let workspaceCloses = 0
+      let focusRequests = 0
+      let outcome
+      const methods = compileSearchMethods(
+        search,
+        [
+          'allowAgentLeave',
+          'closeSearch',
+          'finishCloseSearch',
+          'returnToSearch',
+          'setSearchMode',
+          'selectSearchScope',
+          'handleSearchKeydown',
+          'handleBackdropClick'
+        ],
+        {
+          useAgentsStore: () => ({
+            closeWorkspace: () => {
+              workspaceCloses += 1
+            }
+          }),
+          emitSearchFocus: () => {
+            focusRequests += 1
+          }
+        }
+      )
+      const state = {
+        ...methods,
+        searchMode: 'ask',
+        searchScope: 'wiki',
+        search: 'Retain the ordinary query until leaving',
+        searchIsFocused: true,
+        agentOwnerId: 2,
+        inlineAgent: { beforeLeave: () => new Promise(resolve => decisions.push(resolve)) },
+        directPromptHandoffId: 3,
+        searchRequestId: 0,
+        searchTimer: null,
+        searchAbortController: null,
+        moreAbortController: null,
+        searchInputOpenedByTab: false,
+        agentResumeSessionId: null,
+        pendingAskRestoreTarget: null,
+        searchRestrictLocale: true,
+        searchRestrictPath: true,
+        previewSelector: null,
+        get isAgentOpen() {
+          return this.searchMode === 'ask'
+        },
+        isSearchControl: () => false,
+        finishSearchFocus() {},
+        deactivateAgentModal() {},
+        resolveInlineAgentWaiters() {},
+        captureAgentExcursion() {},
+        $nextTick: () => Promise.resolve()
+      }
+      for (const name of ['closeSearch', 'returnToSearch']) {
+        state[name] = () => (outcome = methods[name].call(state))
+      }
+      const act = () => {
+        if (transition === 'close') return state.closeSearch()
+        if (transition === 'return-search') return state.returnToSearch()
+        if (transition === 'mode') return state.setSearchMode('search')
+        if (transition === 'scope') return state.selectSearchScope('downloaded')
+        const event = new dom.window.KeyboardEvent('keydown', {
+          key: transition === 'escape' ? 'Escape' : transition === 'search-shortcut' ? 'k' : 'a',
+          ctrlKey: transition !== 'escape',
+          shiftKey: transition === 'toggle-shortcut',
+          bubbles: true,
+          cancelable: true
+        })
+        dom.window.document.querySelector('textarea').dispatchEvent(event)
+        expect(event.defaultPrevented).toBe(true)
+        return outcome
+      }
+      dom.window.document.addEventListener('keydown', event => state.handleSearchKeydown(event), true)
+      const escapeScope = transition === 'escape' ? createModalFocusScope({ root: dom.window.document.body, onEscape: () => state.closeSearch() }) : null
+      try {
+        // The Agent backdrop remains intentionally nondismissive.
+        state.handleBackdropClick(new dom.window.MouseEvent('click'))
+        expect(decisions).toHaveLength(0)
+        const stayed = act()
+        expect(decisions).toHaveLength(1)
+        expect(state.searchMode).toBe('ask')
+        expect(state.searchScope).toBe('wiki')
+        expect(workspaceCloses).toBe(0)
+        decisions[0](false)
+        await stayed
+        expect(state.searchMode).toBe('ask')
+        expect(state.searchIsFocused).toBe(true)
+        expect(state.searchScope).toBe('wiki')
+        expect(state.directPromptHandoffId).toBe(3)
+        expect(state.search).toBe('Retain the ordinary query until leaving')
+        expect(state.searchRestrictLocale).toBe(true)
+        expect(state.searchRestrictPath).toBe(true)
+        expect(focusRequests).toBe(0)
+        expect(workspaceCloses).toBe(0)
+
+        const discarded = act()
+        expect(decisions).toHaveLength(2)
+        expect(state.searchMode).toBe('ask')
+        decisions[1](true)
+        await discarded
+        expect(decisions).toHaveLength(2)
+        expect(state.searchMode).toBe('search')
+        const closes = ['close', 'escape', 'toggle-shortcut'].includes(transition)
+        expect(state.searchIsFocused).toBe(!closes)
+        expect(workspaceCloses).toBe(closes ? 1 : 0)
+        expect(state.searchScope).toBe(transition === 'scope' ? 'downloaded' : 'wiki')
+        expect(focusRequests).toBe(['return-search', 'mode', 'search-shortcut'].includes(transition) ? 1 : 0)
+      } finally {
+        escapeScope?.deactivate({ restoreFocus: false })
+        for (const [name, original] of Object.entries(originals)) {
+          if (original) Object.defineProperty(globalThis, name, original)
+          else delete globalThis[name]
+        }
+        dom.window.close()
+      }
+    }
+  )
 })

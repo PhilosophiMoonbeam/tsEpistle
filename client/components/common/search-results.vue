@@ -28,7 +28,7 @@
         :page-updated-at='agentPageUpdatedAt'
         :page-title='agentPageTitle'
         @return-search='returnToSearch'
-        @close='closeSearch'
+        @close='closeApprovedAgent'
       )
       WikiSourcePreview(
         v-if='previewSelector'
@@ -376,7 +376,7 @@ import type { WikiSource, WikiSourceSelector } from '../../../shared/wiki-source
 import type { GlossarySearchContext } from '../../helpers/glossary-search.ts'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
-import { emitSearchFocus, canSearchQuickCreate, requestSearchQuickCreate, onSearchEnter, onSearchExit, onSearchMove, offSearchEnter, offSearchExit, offSearchMove } from '../../helpers/search-navigation-events'
+import { emitSearchFocus, canSearchQuickCreate, requestSearchQuickCreate, registerSearchAgentExit, onSearchEnter, onSearchExit, onSearchMove, offSearchEnter, offSearchExit, offSearchMove } from '../../helpers/search-navigation-events'
 import { useAgentsStore } from '../../store/agents.ts'
 import { isAgentSessionId } from '../../helpers/agent-chat-continuity.ts'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api'
@@ -484,6 +484,7 @@ type InlineAgentChatRef = {
   sendPrompt: (prompt: string) => Promise<boolean>
   preparePrompt: (prompt: string, source?: WikiSource, scope?: AgentSearchScope) => Promise<void>
   focusConversation: () => Promise<void>
+  beforeLeave: () => Promise<boolean>
 }
 
 const emptySearchResponse = (): SearchResponse => ({
@@ -556,6 +557,7 @@ export default defineComponent({
       agentOpeningPage: null as AgentCurrentPageHint | null,
       agentOpeningPageCaptured: false,
       offlineStorageChangesUnsubscribe: null as (() => void) | null,
+      agentExitUnsubscribe: null as (() => void) | null,
       searchAbortController: null as AbortController | null
     }
   },
@@ -903,8 +905,22 @@ export default defineComponent({
     },
     glossaryOpened: {
       immediate: true,
-      handler(open: boolean) {
+      async handler(open: boolean) {
         if (open) {
+          if (this.isAgentOpen) {
+            const agent = this.inlineAgent
+            const owner = this.agentOwnerId
+            const glossaryKey = this.glossary?.key
+            const handoffId = this.directPromptHandoffId
+            const allowed = await this.allowAgentLeave()
+            if (this.inlineAgent !== agent || this.agentOwnerId !== owner || this.glossary?.key !== glossaryKey ||
+              this.directPromptHandoffId !== handoffId || !this.isAgentOpen || !this.glossaryOpened) return
+            if (!allowed) {
+              this.glossary?.navigate(null)
+              return
+            }
+          }
+          if (!this.glossaryOpened) return
           if (!this.searchIsFocused) this.searchRestoreTarget = this.activeModalOpener()
           this.searchScope = 'glossary'
           this.searchMode = 'search'
@@ -1039,6 +1055,10 @@ export default defineComponent({
     onSearchMove(this.handleSearchMove)
     onSearchEnter(this.handleSearchEnter)
     onSearchExit(this.handleSearchExit)
+    this.agentExitUnsubscribe = registerSearchAgentExit(intent => {
+      if (!this.isAgentOpen) return null
+      return intent === 'close' ? this.closeSearch() : this.returnToSearch()
+    })
     void this.$nextTick(this.syncSearchInputA11y)
     // Capture before the header's focus handler opens the reactive modal.
     // Native browsers can flush that update before dispatching focusin.
@@ -1049,6 +1069,8 @@ export default defineComponent({
     this.offlineStorageChangesUnsubscribe = subscribeOfflineStorageChanges(this.handleOfflineStorageChange)
   },
   beforeUnmount() {
+    this.agentExitUnsubscribe?.()
+    this.agentExitUnsubscribe = null
     this.offlineStorageChangesUnsubscribe?.()
     this.offlineStorageChangesUnsubscribe = null
     this.searchRequestId += 1
@@ -1403,9 +1425,9 @@ export default defineComponent({
         ...activeOwnedOverlayRoots('.glossary-owned-overlay')
       ]
     },
-    setSearchMode(mode: 'search' | 'ask'): void {
+    async setSearchMode(mode: 'search' | 'ask'): Promise<void> {
       if (mode === 'ask') this.openAsk()
-      else this.searchMode = 'search'
+      else await this.returnToSearch()
     },
     captureAgentExcursion(): void {
       // The store owns the same-page, eight-hour closed-chat resume window; a search
@@ -1471,7 +1493,10 @@ export default defineComponent({
       this.searchRestrictPath = !this.searchRestrictPath
     },
     /** Agent search button: leave the Agent for the page it opened over, then open search with the field focused. */
-    async returnToSearch(): Promise<void> {
+    async returnToSearch(): Promise<boolean> {
+      const owner = this.agentOwnerId
+      const handoffId = this.directPromptHandoffId
+      if (!await this.allowAgentLeave() || this.agentOwnerId !== owner || this.directPromptHandoffId !== handoffId) return false
       this.captureAgentExcursion()
       this.pendingAskRestoreTarget = null
       const returnId = ++this.directPromptHandoffId
@@ -1479,14 +1504,21 @@ export default defineComponent({
       this.searchMode = 'search'
       this.searchIsFocused = true
       await this.$nextTick()
-      if (returnId !== this.directPromptHandoffId || this.isAgentOpen || !this.searchIsFocused) return
+      if (this.agentOwnerId !== owner || returnId !== this.directPromptHandoffId || this.isAgentOpen || !this.searchIsFocused) return false
       this.deactivateAgentModal(false)
       await this.$nextTick()
-      if (returnId !== this.directPromptHandoffId || this.isAgentOpen || !this.searchIsFocused) return
+      if (this.agentOwnerId !== owner || returnId !== this.directPromptHandoffId || this.isAgentOpen || !this.searchIsFocused) return false
       emitSearchFocus()
+      return this.agentOwnerId === owner && returnId === this.directPromptHandoffId && !this.isAgentOpen && this.searchIsFocused
     },
-    selectSearchScope(scope: SearchScope): void {
+    async selectSearchScope(scope: SearchScope): Promise<void> {
       if (scope === this.searchScope) return
+      if (scope === 'glossary' && this.isAgentOpen) {
+        // Opening the reader-owned glossary is committed by its guarded watcher.
+        this.glossary?.navigate('')
+        return
+      }
+      if (this.isAgentOpen && !await this.allowAgentLeave()) return
       if (scope === 'glossary') {
         if (!this.glossary?.navigate('')) return
       } else if (this.glossaryOpened && !this.glossary!.navigate(null)) return
@@ -1557,6 +1589,21 @@ export default defineComponent({
       })
     },
     handleSearchKeydown(event: KeyboardEvent): void {
+      if (this.isAgentOpen && !event.defaultPrevented && !event.isComposing && event.keyCode !== 229 && (event.ctrlKey || event.metaKey)) {
+        const searchShortcut = !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k'
+        const closeShortcut = event.shiftKey && event.key.toLowerCase() === 'a'
+        if (searchShortcut || closeShortcut) {
+          // The header handles opening; destructive shortcuts must leave through
+          // the mounted Agent before its local Memory/media state can unmount.
+          event.preventDefault()
+          event.stopImmediatePropagation()
+          if (!event.repeat) {
+            if (searchShortcut) void this.returnToSearch()
+            else void this.closeSearch()
+          }
+          return
+        }
+      }
       if (!this.searchModalFocusScope) {
         this.searchTabEntryPending = event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing
       }
@@ -1653,8 +1700,23 @@ export default defineComponent({
         this.directPromptHandoffPending = false
       }
     },
-    closeSearch(): void {
-      if (this.glossaryOpened && !this.glossary!.navigate(null)) return
+    async allowAgentLeave(): Promise<boolean> {
+      const agent = this.inlineAgent
+      if (!this.isAgentOpen || !agent) return true
+      const owner = this.agentOwnerId
+      return await agent.beforeLeave() && this.inlineAgent === agent && this.agentOwnerId === owner && this.isAgentOpen
+    },
+    closeApprovedAgent(): void {
+      this.finishCloseSearch()
+    },
+    async closeSearch(): Promise<boolean> {
+      const owner = this.agentOwnerId
+      const handoffId = this.directPromptHandoffId
+      if (!await this.allowAgentLeave() || this.agentOwnerId !== owner || this.directPromptHandoffId !== handoffId) return false
+      return this.finishCloseSearch()
+    },
+    finishCloseSearch(): boolean {
+      if (this.glossaryOpened && !this.glossary!.navigate(null)) return false
       if (this.searchScope === 'glossary') this.searchScope = 'wiki'
       const closingAgent = this.searchMode === 'ask'
       const shouldCloseAgentWorkspace = this.isAgentOpen || Boolean(this.agentResumeSessionId)
@@ -1689,11 +1751,12 @@ export default defineComponent({
       const url = new URL(window.location.href)
       url.searchParams.delete('agentApproval')
       window.history.replaceState(window.history.state, '', url)
+      return !this.isAgentOpen && !this.searchIsFocused
     },
     async browseCurrentView(): Promise<void> {
       // Stay in this mounted view: its search response and the store's query remain
       // in memory, without putting the query in a URL or persistent storage.
-      this.closeSearch()
+      await this.closeSearch()
       await this.$nextTick()
       if (this.searchIsFocused || this.isAgentOpen) return
       const visible = (element: HTMLElement): boolean =>

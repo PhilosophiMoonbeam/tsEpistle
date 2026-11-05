@@ -1,17 +1,26 @@
+import { createHash } from 'node:crypto'
 import type { AxChatRequest } from '@ax-llm/ax'
 import createKnex, { type Knex } from 'knex'
 import { AGENT_FEATURE_FLAG_KEYS, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
 import type { SpecialistProviderBinding } from '../../../shared/agents/specialists.ts'
-import { type ActionAdmissionSnapshot, ActionKernel } from '../../agents/actions/kernel.ts'
+import { type ActionAdmissionSnapshot, type ActionHandlerContext, ActionKernel } from '../../agents/actions/kernel.ts'
+import { type AgentApprovalContinuationCheckpoint, type AgentRunLeaseIdentity, invokingAgentRunLease } from '../../agents/coordinator.ts'
 import { KernelActionSessionProvider } from '../../agents/providers/action-sessions.ts'
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/providers/factory.ts'
 import { preserveGeminiContinuation } from '../../agents/providers/gemini.ts'
 import { encodeWikiSynthesisAnswer, type WikiSynthesisAnswer } from '../../agents/providers/wiki-synthesis.ts'
 import type { AgentEngineRequest, AgentEngineResult, AgentEngineSink } from '../../agents/runtime.ts'
+import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { geminiFixtureService } from './gemini-fixture.ts'
-import { fixtureDecisionProviders, fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisSourcesFromRequest } from './synthesis-fixture.ts'
+import {
+  fixtureDecisionProviders,
+  fullAxFixtureService,
+  synthesisFixtureAnswer,
+  synthesisInputFromRequest,
+  synthesisSourcesFromRequest
+} from './synthesis-fixture.ts'
 
 const rootRunId = '00000000-0000-4000-8000-000000000001'
 const followupRunId = '00000000-0000-4000-8000-000000000011'
@@ -198,19 +207,22 @@ describe('native specialist engine contexts', () => {
     })
     const factory = {
       create: async () => ({
-        service: fullAxFixtureService(async (request, options) => {
-          const synthesisInput = synthesisInputFromRequest(request)
-          if (synthesisInput !== undefined) synthesisRequests.push(request)
-          const response = await native.chat(request, options)
-          if (response instanceof ReadableStream) return response
-          return {
-            ...response,
-            results: response.results.map(result => ({
-              ...result,
-              ...(result.content === undefined || synthesisInput === undefined ? {} : { content: synthesisFixtureAnswer(request, result.content) })
-            }))
-          }
-        }, { model: binding.model }),
+        service: fullAxFixtureService(
+          async (request, options) => {
+            const synthesisInput = synthesisInputFromRequest(request)
+            if (synthesisInput !== undefined) synthesisRequests.push(request)
+            const response = await native.chat(request, options)
+            if (response instanceof ReadableStream) return response
+            return {
+              ...response,
+              results: response.results.map(result => ({
+                ...result,
+                ...(result.content === undefined || synthesisInput === undefined ? {} : { content: synthesisFixtureAnswer(request, result.content) })
+              }))
+            }
+          },
+          { model: binding.model }
+        ),
         capabilities: {
           streaming: false,
           toolCalling: 'native',
@@ -259,6 +271,7 @@ describe('native specialist engine contexts', () => {
             saveSnapshot: (request, snapshot) => actions.saveSnapshot(request, snapshot)
           }
     return {
+      factory,
       engine: new AxAgentEngine(factory, sessions, undefined, { decisionProviders: fixtureDecisionProviders }),
       nativeRequests,
       synthesisRequests,
@@ -487,12 +500,14 @@ describe('native specialist engine contexts', () => {
     completedState(childResult)
     await knex('agentRuns').where({ id: followupRunId }).update({ runtimeStateCiphertext: null })
     const staleAnswer: WikiSynthesisAnswer = {
-      claims: [{
-        evidenceId,
-        sourceRevision: '3',
-        unitId: 'unbound-specialist-report-unit',
-        statement: 'Publication must wait until a reviewer has approved it.'
-      }],
+      claims: [
+        {
+          evidenceId,
+          sourceRevision: '3',
+          unitId: 'unbound-specialist-report-unit',
+          statement: 'Publication must wait until a reviewer has approved it.'
+        }
+      ],
       unresolvedFacets: [],
       observations: [],
       recommendations: ''
@@ -534,5 +549,198 @@ describe('native specialist engine contexts', () => {
     expect(publishedText(output)).not.toContain(staleAnswer.claims[0]!.statement)
     expect(root.read).not.toHaveBeenCalled()
     expect(publishedText(output)).not.toContain('[[cite:')
+  })
+  describe('approval continuation action authority', () => {
+    const approvalFixture = async () => {
+      const {
+        specialist: _specialist,
+        subagentRunId: _subagentRunId,
+        actionAllowlist: _allowlist,
+        ...base
+      } = specialistRequest([{ role: 'user', content: 'Finish creating my approved page.' }])
+      const initial: AgentEngineRequest = { ...base, purpose: 'root' }
+      const resumed: AgentEngineRequest = {
+        ...initial,
+        run: { ...initial.run, leaseOwner: 'reclaimed-worker', leaseToken: '00000000-0000-4000-8000-000000000012' }
+      }
+      await knex('agentRuns').where({ id: resumed.run.id }).update({
+        leaseOwner: resumed.run.leaseOwner,
+        leaseToken: resumed.run.leaseToken,
+        runtimeStateCiphertext: null
+      })
+      const actionInput = {
+        path: 'approved-page',
+        locale: 'en',
+        title: 'Approved page',
+        description: '',
+        content: '# Approved page',
+        contentType: 'markdown',
+        isPublished: true,
+        tags: []
+      }
+      const proposal = {
+        proposalId: '00000000-0000-4000-8000-000000000090',
+        approvalId: '00000000-0000-4000-8000-000000000091',
+        actionName: 'pages.prepareCreate',
+        status: 'applied',
+        inputHash: 'b'.repeat(64),
+        diffHash: null,
+        summary: 'Create en/approved-page',
+        expiresAt: '2099-01-01T00:00:00.000Z'
+      }
+      let liveAdmission: ActionAdmissionSnapshot = {
+        ...admission(),
+        permissions: ['use:agents', 'read:pages', 'write:pages'],
+        allowedActions: ['pages.get', 'pages.prepareCreate']
+      }
+      const leases: (AgentRunLeaseIdentity | null)[] = []
+      const prepare = vi.fn(async (_input: unknown, context: ActionHandlerContext) => {
+        leases.push(invokingAgentRunLease(context.signal))
+        return proposal
+      })
+      const read = vi.fn(async () => page)
+      const kernel = new ActionKernel()
+      kernel.register('pages.get', read)
+      kernel.register('pages.prepareCreate', prepare)
+      const offeredActions = () =>
+        kernel.offer(
+          {
+            kind: 'user',
+            userId: resumed.run.ownerId,
+            ownershipUserId: resumed.run.ownerId,
+            principal: { id: resumed.run.ownerId }
+          },
+          liveAdmission,
+          resumed.run.id
+        )
+      const matchingAction = offeredActions().find(action => action.definition.descriptor.name === 'pages.prepareCreate')!
+      expect(matchingAction).toBeDefined()
+      const checkpointBody: Omit<AgentApprovalContinuationCheckpoint, 'checkpointSha256'> = {
+        version: 1,
+        runId: resumed.run.id,
+        ownerId: resumed.run.ownerId,
+        attempt: resumed.run.attempts,
+        actionCallId: 'approved-page-call',
+        actionName: matchingAction.definition.descriptor.name,
+        actionInput,
+        actionInputSha256: createHash('sha256').update(canonicalJson(actionInput)).digest('hex'),
+        proposalId: proposal.proposalId,
+        approvalId: proposal.approvalId,
+        proposalInputHash: proposal.inputHash,
+        authorityVersion: matchingAction.authority.version,
+        // Page-proposal suspension records the invoked action's authority,
+        // not a digest of every action offered by its surrounding session.
+        authoritySha256: matchingAction.authority.authoritySha256
+      }
+      const checkpoint: AgentApprovalContinuationCheckpoint = {
+        ...checkpointBody,
+        checkpointSha256: createHash('sha256').update(canonicalJson(checkpointBody)).digest('hex')
+      }
+      const actions = new KernelActionSessionProvider({
+        knex,
+        kernel,
+        resolveAdmission: async () => liveAdmission,
+        refreshAdmission: async () => liveAdmission
+      })
+      const session = await actions.open(resumed)
+      expect(session).not.toBeNull()
+      try {
+        expect(session!.functions.map(action => action.name).sort()).toEqual(['pages.get', 'pages.prepareCreate'])
+        expect(session!.authoritySha256).toMatch(/^[a-f0-9]{64}$/u)
+        expect(session!.authoritySha256).not.toBe(checkpoint.authoritySha256)
+        expect(session!.actionAuthoritySha256(checkpoint.actionName)).toBe(checkpoint.authoritySha256)
+        expect(session!.actionAuthoritySha256('pages.prepareUpdate')).toBeNull()
+        expect(offeredActions().find(action => action.definition.descriptor.name === checkpoint.actionName)?.authority).toEqual(matchingAction.authority)
+      } finally {
+        session?.close()
+      }
+      const report = 'Wiki proposal status: applied.'
+      const provider = fixture([
+        [{ functionCall: { id: 'finish-approved-page', name: 'wiki_finish_collection', args: {} } }],
+        answer(JSON.stringify({ claims: [], unresolvedFacets: [], observations: [report], recommendations: '' }))
+      ])
+      const open = vi.spyOn(actions, 'open')
+      return {
+        engine: new AxAgentEngine(provider.factory, actions, undefined, { decisionProviders: fixtureDecisionProviders }),
+        initial,
+        resumed,
+        checkpoint,
+        matchingAction,
+        prepare,
+        read,
+        leases,
+        open,
+        nativeRequests: provider.nativeRequests,
+        report,
+        changeAuthority: () => {
+          liveAdmission = { ...liveAdmission, groupIds: [99] }
+          return offeredActions().find(action => action.definition.descriptor.name === checkpoint.actionName)
+        }
+      }
+    }
+
+    it('resumes the exact offered action once under unchanged authority and rejects a changed matching action authority', async () => {
+      const approval = await approvalFixture()
+      const output = sink()
+      const result = await approval.engine.resumeAction(approval.resumed, approval.checkpoint, output)
+
+      expect(result.executionLimit).toBeUndefined()
+      expect(result.outputLimited).toBeUndefined()
+      expect(publishedText(output)).toContain(approval.report)
+      expect(approval.prepare).toHaveBeenCalledOnce()
+      expect(approval.read).not.toHaveBeenCalled()
+      const [input, context] = approval.prepare.mock.calls[0]!
+      expect(input).toEqual(approval.checkpoint.actionInput)
+      expect(context.authority).toEqual(approval.matchingAction.authority)
+      expect(context.actionCallId).toBe(approval.checkpoint.actionCallId)
+      expect(approval.leases).toEqual([
+        {
+          id: approval.resumed.run.id,
+          ownerId: approval.resumed.run.ownerId,
+          attempts: approval.resumed.run.attempts,
+          leaseOwner: approval.resumed.run.leaseOwner,
+          leaseToken: approval.resumed.run.leaseToken
+        }
+      ])
+      expect(invokingAgentRunLease(approval.resumed.signal)).toBeNull()
+      const dispatches = approval.nativeRequests.length
+      const changed = approval.changeAuthority()
+      expect(changed).toBeDefined()
+      expect(changed!.authority.authoritySha256).not.toBe(approval.checkpoint.authoritySha256)
+      await expect(approval.engine.resumeAction(approval.resumed, approval.checkpoint, sink())).rejects.toMatchObject({
+        code: 'AGENT_ACTION_CONTINUATION_MISMATCH',
+        status: 409
+      })
+      expect(approval.prepare).toHaveBeenCalledOnce()
+      expect(approval.nativeRequests).toHaveLength(dispatches)
+    })
+
+    it.each(['owner', 'lease owner', 'lease token'] as const)('rejects a mismatched %s before the continued handler or provider can run', async mismatch => {
+      const approval = await approvalFixture()
+      const run =
+        mismatch === 'owner'
+          ? { ...approval.resumed.run, ownerId: approval.resumed.run.ownerId + 1 }
+          : mismatch === 'lease owner'
+            ? { ...approval.resumed.run, leaseOwner: approval.initial.run.leaseOwner }
+            : { ...approval.resumed.run, leaseToken: approval.initial.run.leaseToken }
+      await expect(approval.engine.resumeAction({ ...approval.resumed, run }, approval.checkpoint, sink())).rejects.toMatchObject({
+        code: mismatch === 'owner' ? 'AGENT_ACTION_CONTINUATION_MISMATCH' : 'RUN_LEASE_LOST',
+        status: 409,
+        ...(mismatch === 'owner' ? {} : { stage: 'setup' })
+      })
+      expect(approval.open).toHaveBeenCalledTimes(mismatch === 'owner' ? 0 : 1)
+      if (mismatch !== 'owner') {
+        // Prove the session's durable lease fence rejected this request, not
+        // an unrelated continuation or authority check in the engine.
+        await expect(approval.open.mock.results[0]!.value).rejects.toMatchObject({
+          code: 'RUN_LEASE_LOST',
+          status: 409
+        })
+      }
+      expect(approval.prepare).not.toHaveBeenCalled()
+      expect(approval.read).not.toHaveBeenCalled()
+      expect(approval.nativeRequests).toHaveLength(0)
+      expect(invokingAgentRunLease(approval.resumed.signal)).toBeNull()
+    })
   })
 })

@@ -32,14 +32,14 @@ const previewSource = (n: number): WikiSourcePreview => ({
 })
 let fixtureOwnerId = 1
 // Fixture envelope only: these client tests do not exercise server signature verification.
-const admissionToken = (sessionId: string, ownerId: number): string => {
+const admissionToken = (sessionId: string, ownerId: number, sessionVersion = 1): string => {
   const kid = 'continuity-test'
   const payload = {
     v: 1,
     kid,
     ownerId,
     sessionId,
-    sessionVersion: 1,
+    sessionVersion,
     profileId: id(900),
     profileVersionId: id(901),
     profileVersion: 1,
@@ -94,7 +94,20 @@ const createStore = () => {
   stores.push(store)
   return store
 }
+type Submission = { readonly sessionId: string; readonly endpoint: string; readonly body: Record<string, unknown> }
+// Match the polling fixture's transport boundary: subscription stays real, but
+// these command-continuity cases do not deliver stream frames.
+class FakeEventSource {
+  readonly listeners: Record<string, EventListener[]> = {}
+  readonly close = vi.fn()
+  constructor(readonly url: string) {}
+  addEventListener(type: string, listener: EventListener) {
+    const listeners = (this.listeners[type] ??= [])
+    listeners.push(listener)
+  }
+}
 const fixture = () => {
+  vi.stubGlobal('EventSource', FakeEventSource)
   let created = 0
   let createStatus = 201
   const readStatus = new Map<string, number>()
@@ -102,8 +115,9 @@ const fixture = () => {
   let preview: ((n: number) => Promise<Response>) | undefined
   let sessionList: (() => Promise<Response>) | undefined
   let threadRead: ((n: number) => Promise<Response>) | undefined
+  let submissionPost: ((submission: Submission) => Promise<Response>) | undefined
   const messages = new Map<number, AgentThreadState['messages']>()
-  const submissions: Array<{ readonly sessionId: string; readonly endpoint: string; readonly body: Record<string, unknown> }> = []
+  const submissions: Submission[] = []
   const fetchHost: { fetch: BrowserFetch } = window
   const fetcher = vi.spyOn(fetchHost, 'fetch').mockImplementation(async (input, init) => {
     const path = String(input)
@@ -130,7 +144,9 @@ const fixture = () => {
         const sessionId = path.split('/')[4]!
         const endpoint = path.split('/')[5]!
         const body = JSON.parse(String(init?.body)) as Record<string, unknown>
-        submissions.push({ sessionId, endpoint, body })
+        const submission = { sessionId, endpoint, body }
+        submissions.push(submission)
+        if (submissionPost) return submissionPost(submission)
         const run = {
           id: id(950),
           sessionId,
@@ -220,6 +236,122 @@ const fixture = () => {
     },
     deferThreadRead: (value: typeof threadRead) => {
       threadRead = value
+    },
+    deferSubmission: (value: typeof submissionPost) => {
+      submissionPost = value
+    }
+  }
+}
+type AdmissionFixture = {
+  readonly deferThreadRead: (read: (n: number) => Promise<Response>) => void
+  readonly deferSubmission: (post: (submission: Submission) => Promise<Response>) => void
+}
+const idempotentMessageBoundary = (api: AdmissionFixture) => {
+  type AcceptedCommand = { readonly payload: string; run: NonNullable<AgentThreadState['session']['currentRun']> }
+  const commands = new Map<string, AcceptedCommand>()
+  const snapshots = new Map<string, AgentThreadState>()
+  const accepted = Promise.withResolvers<void>()
+  const firstResponse = Promise.withResolvers<Response>()
+  let first: AcceptedCommand | undefined
+  // This boundary models server acceptance/replay only, not client retry or draft retirement.
+  // A persisted replay proof retains the raw payload but excludes replaceable admission authority.
+  const stablePayload = (body: Submission['body']): string => {
+    const payload = { ...body }
+    delete payload.expectedSessionVersion
+    delete payload.profileResolutionToken
+    return JSON.stringify(payload)
+  }
+  api.deferThreadRead(n => {
+    const snapshot = snapshots.get(id(n))
+    return Promise.resolve(Response.json(snapshot?.memoryContext.ownerId === fixtureOwnerId ? snapshot : thread(n)))
+  })
+  api.deferSubmission(async ({ sessionId, endpoint, body }) => {
+    if (endpoint !== 'messages') throw new Error(`Unexpected command endpoint ${endpoint}`)
+    const key = `${fixtureOwnerId}:${sessionId}:${String(body.clientRequestId)}`
+    const payload = stablePayload(body)
+    const previous = commands.get(key)
+    if (previous)
+      return previous.payload === payload
+        ? Response.json({ run: previous.run, replayed: true }, { status: 202 })
+        : Response.json({ error: 'RUN_REPLAY_CONFLICT', message: 'The original command payload changed.' }, { status: 409 })
+    const run: AcceptedCommand['run'] = {
+      id: id(950 + commands.size),
+      sessionId,
+      status: 'queued',
+      attempt: 0,
+      eventSequence: 1,
+      canCancel: true,
+      createdAt: '2026-09-18T00:00:00Z',
+      startedAt: null,
+      completedAt: null,
+      errorCode: null,
+      errorMessage: null
+    }
+    const command = { payload, run }
+    commands.set(key, command)
+    const current = snapshots.get(sessionId) ?? thread(Number(sessionId.slice(-12)))
+    snapshots.set(sessionId, {
+      ...current,
+      session: { ...current.session, currentRun: run },
+      messages: [
+        ...current.messages,
+        {
+          id: id(1_500 + commands.size),
+          runId: run.id,
+          ordinal: current.messages.length + 1,
+          role: 'user',
+          status: 'complete',
+          content: String(body.content),
+          citations: [],
+          createdAt: run.createdAt,
+          updatedAt: run.createdAt,
+          ...(body.presetId === undefined ? {} : { presetId: body.presetId as AgentPresetId })
+        }
+      ]
+    })
+    if (!first) {
+      first = command
+      accepted.resolve()
+      return firstResponse.promise
+    }
+    return Response.json({ run, replayed: false }, { status: 202 })
+  })
+  return {
+    get acceptedCommandCount() {
+      return commands.size
+    },
+    waitForAcceptance: (sending: Promise<boolean>) =>
+      Promise.race([
+        accepted.promise,
+        sending.then(() => {
+          throw new Error('Send settled before the server accepted its POST')
+        })
+      ]),
+    completeFirst: () => {
+      if (!first) throw new Error('No accepted command to complete')
+      first.run = {
+        ...first.run,
+        status: 'succeeded',
+        canCancel: false,
+        eventSequence: 2,
+        startedAt: first.run.createdAt,
+        completedAt: '2026-09-18T00:00:01Z'
+      }
+      const snapshot = snapshots.get(first.run.sessionId)!
+      snapshots.set(first.run.sessionId, {
+        ...snapshot,
+        session: {
+          ...snapshot.session,
+          version: 2,
+          profileResolutionToken: admissionToken(snapshot.session.id, snapshot.memoryContext.ownerId, 2),
+          currentRun: first.run
+        }
+      })
+    },
+    dropFirstResponse: () => firstResponse.reject(new TypeError('Response lost after command acceptance')),
+    deliverFirstResponse: () => {
+      if (!first) throw new Error('No accepted command to acknowledge')
+      firstResponse.resolve(Response.json({ run: first.run, replayed: false }, { status: 202 }))
     }
   }
 }
@@ -231,6 +363,7 @@ afterEach(() => {
   fixtureOwnerId = 1
   for (const store of stores.splice(0)) store.closeWorkspace()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   clearAgentChatRecent()
 })
 
@@ -750,6 +883,212 @@ describe('Automatic conversation source context', () => {
     store.updateDraft(id(1), { currentPageOverride: null, includeCurrentPage: false })
     expect(store.sourceContext?.currentPage).toMatchObject({ included: false, origin: 'historical', hint: null })
   })
+})
+
+describe('Unresolved Agent command continuity', () => {
+  it('retries an accepted message after a lost response and terminal run using its original identity and envelope', async () => {
+    const api = fixture()
+    const server = idempotentMessageBoundary(api)
+    const storageWrites = vi.spyOn(Storage.prototype, 'setItem')
+    const store = createStore()
+    expect(await initialize(store, page(2))).toBe(true)
+    const content = 'Private unresolved command: summarize the selected source.'
+    const skills = [id(700)]
+    const media = { attachmentIds: [id(701)] }
+    store.updateDraft(id(1), { text: content, scope: { kind: 'selected' }, sources: [source(9)], skillVersionIds: skills })
+    const onAccepted = vi.fn()
+    const sending = store.send(content, skills, 'message', media, onAccepted)
+    await server.waitForAcceptance(sending)
+    const original = structuredClone(api.submissions[0]!)
+    expect(original).toMatchObject({
+      sessionId: id(1),
+      endpoint: 'messages',
+      body: { content, expectedSessionVersion: 1, currentPage: page(2), attachmentIds: [id(701)], invokedSkillVersionIds: [id(700)] }
+    })
+    expect(typeof original.body.clientRequestId).toBe('string')
+    expect(server.acceptedCommandCount).toBe(1)
+    server.dropFirstResponse()
+    expect(await sending).toBe(false)
+    expect(onAccepted).not.toHaveBeenCalled()
+    expect(store.drafts[id(1)]?.text).toBe(content)
+
+    server.completeFirst()
+    store.setCurrentPage(page(3))
+    expect((await store.refreshThread()).accepted).toBe(true)
+    expect(store.thread?.session.currentRun).toMatchObject({ status: 'succeeded', canCancel: false })
+    expect(store.thread?.goal).toBeNull()
+    expect(store.thread?.tools).toEqual([])
+    expect(store.thread?.tasks).toEqual([])
+    expect(store.isWorkspaceReady()).toBe(true)
+    expect(store.thread?.session.version).toBe(2)
+    expect(store.thread?.session.profileResolutionToken).not.toBe(original.body.profileResolutionToken)
+    expect(api.submissions).toHaveLength(1)
+
+    // The composer labels this second explicit send as Retry; a terminal run is not proof of nonacceptance.
+    const retried = await store.send(content, skills, 'message', media, onAccepted)
+    expect(JSON.stringify(storageWrites.mock.calls)).not.toContain(content)
+    expect(api.submissions).toHaveLength(2)
+    expect(server.acceptedCommandCount).toBe(1)
+    expect(api.submissions[1]).toEqual(original)
+    expect(retried).toBe(true)
+    expect(store.thread?.messages.filter(message => message.role === 'user')).toHaveLength(1)
+    expect(store.drafts[id(1)]?.text).toBe('')
+    expect(onAccepted).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['text', 'restored text', 'source', 'skills', 'media', 'owner'] as const)(
+    'does not reuse an unresolved command for a genuine %s intent change',
+    async change => {
+      const api = fixture()
+      const server = idempotentMessageBoundary(api)
+      const store = createStore()
+      expect(await initialize(store, page(2))).toBe(true)
+      const content = 'typed words voice words'
+      const skills = [id(700)]
+      const media = { attachmentIds: [id(701)] }
+      store.updateDraft(id(1), { text: content, sources: [source(9)], skillVersionIds: skills })
+      const sending = store.send(content, skills, 'message', media)
+      await server.waitForAcceptance(sending)
+      const original = structuredClone(api.submissions[0]!)
+      server.dropFirstResponse()
+      expect(await sending).toBe(false)
+      server.completeFirst()
+      expect((await store.refreshThread()).accepted).toBe(true)
+      if (change === 'owner') {
+        expect(await initialize(store, page(2), 2)).toBe(true)
+        store.updateDraft(store.thread!.session.id, { text: content, sources: [source(9)], skillVersionIds: skills })
+      } else if (change === 'text') store.setDraft(id(1), `${content} `)
+      else if (change === 'restored text') {
+        store.setDraft(id(1), `${content} edited`)
+        store.setDraft(id(1), content)
+      } else if (change === 'source') store.updateDraft(id(1), { sources: [source(10)] })
+      else if (change === 'skills') store.updateDraft(id(1), { skillVersionIds: [id(702)] })
+      expect(
+        await store.send(
+          store.drafts[store.thread!.session.id]!.text,
+          change === 'skills' ? [id(702)] : skills,
+          'message',
+          change === 'media' ? { attachmentIds: [id(703)] } : media
+        )
+      ).toBe(true)
+      expect(api.submissions).toHaveLength(2)
+      expect(server.acceptedCommandCount).toBe(2)
+      expect(api.submissions[1]!.body.clientRequestId).not.toBe(original.body.clientRequestId)
+    }
+  )
+
+  it.each(['before Close', 'after Close'] as const)('retires the unchanged raw draft when its trimmed send succeeds %s', async timing => {
+    const api = fixture()
+    const server = idempotentMessageBoundary(api)
+    const store = createStore()
+    expect(await initialize(store)).toBe(true)
+    const rawDraft = '  Accepted before the workspace closed \n'
+    const content = rawDraft.trim()
+    store.setDraft(id(1), rawDraft)
+    const onAccepted = vi.fn()
+    const sending = store.send(content, [], 'message', undefined, onAccepted)
+    await server.waitForAcceptance(sending)
+    expect(store.drafts[id(1)]?.text).toBe(rawDraft)
+    if (timing === 'after Close') store.closeWorkspace()
+    server.completeFirst()
+    server.deliverFirstResponse()
+    expect(await sending).toBe(true)
+    if (timing === 'before Close') store.closeWorkspace()
+    expect(store.drafts[id(1)]?.text).toBe('')
+    expect(store.workspaceDisposed).toBe(true)
+    expect(onAccepted).toHaveBeenCalledTimes(timing === 'before Close' ? 1 : 0)
+    expect(api.submissions).toHaveLength(1)
+    expect(server.acceptedCommandCount).toBe(1)
+    expect(await initialize(store, page(3))).toBe(true)
+    expect(store.thread?.session.id).toBe(id(1))
+    expect(store.drafts[id(1)]?.text).toBe('')
+    expect(api.submissions).toHaveLength(1)
+  })
+
+  it.each(['text bytes', 'source context'] as const)('preserves a newer %s edit when the old accepted POST settles after close and reopen', async edit => {
+    const api = fixture()
+    const server = idempotentMessageBoundary(api)
+    const store = createStore()
+    expect(await initialize(store, page(2))).toBe(true)
+    const content = 'Keep this composition'
+    store.updateDraft(id(1), { text: content, scope: { kind: 'selected' }, sources: [source(9)], includeCurrentPage: true })
+    const sending = store.send(content)
+    await server.waitForAcceptance(sending)
+    store.closeWorkspace()
+    server.completeFirst()
+    expect(await initialize(store, page(3))).toBe(true)
+    const newerText = edit === 'text bytes' ? `  ${content}  ` : content
+    if (edit === 'text bytes') store.setDraft(id(1), newerText)
+    else store.updateDraft(id(1), { scope: { kind: 'all' }, sources: [source(10)], includeCurrentPage: false })
+    server.deliverFirstResponse()
+    expect(await sending).toBe(true)
+    expect(store.drafts[id(1)]?.text).toBe(newerText)
+    expect(store.drafts[id(1)]?.sources.map(item => item.id)).toEqual([edit === 'source context' ? 10 : 9])
+    expect(store.drafts[id(1)]?.includeCurrentPage).toBe(edit === 'text bytes')
+    expect(api.submissions).toHaveLength(1)
+    expect(server.acceptedCommandCount).toBe(1)
+  })
+
+  it('retires only the original matching draft when a different conversation is selected before the late success', async () => {
+    const api = fixture()
+    const server = idempotentMessageBoundary(api)
+    const store = createStore()
+    expect(await initialize(store)).toBe(true)
+    const content = 'The same text in two independent conversations'
+    store.setDraft(id(1), content)
+    const sending = store.send(content)
+    await server.waitForAcceptance(sending)
+    store.closeWorkspace()
+    server.completeFirst()
+    expect(await initialize(store, page(3), 1, id(40))).toBe(true)
+    store.setDraft(id(40), content)
+    server.deliverFirstResponse()
+    expect(await sending).toBe(true)
+    expect(store.drafts[id(1)]?.text).toBe('')
+    expect(store.drafts[id(40)]?.text).toBe(content)
+    expect(store.thread?.session.id).toBe(id(40))
+    expect(store.thread?.messages).toEqual([])
+    expect(api.submissions).toHaveLength(1)
+    expect(server.acceptedCommandCount).toBe(1)
+  })
+
+  it.each(['owner change', 'logout and return'] as const)(
+    'does not retire or replay another identity generation after %s during an accepted POST',
+    async boundary => {
+      const api = fixture()
+      const server = idempotentMessageBoundary(api)
+      const store = createStore()
+      expect(await initialize(store)).toBe(true)
+      const content = 'An identical draft is not an identity proof'
+      store.setDraft(id(1), content)
+      const onAccepted = vi.fn()
+      const sending = store.send(content, [], 'message', undefined, onAccepted)
+      await server.waitForAcceptance(sending)
+      store.closeWorkspace()
+      server.completeFirst()
+      if (boundary === 'owner change') expect(await initialize(store, page(3), 2)).toBe(true)
+      else {
+        store.destroyWorkspace()
+        expect(await initialize(store, page(3), 1, id(1))).toBe(true)
+      }
+      const currentSessionId = store.thread!.session.id
+      const currentOwnerId = store.workspaceOwnerId
+      store.setDraft(currentSessionId, content)
+      server.deliverFirstResponse()
+      expect(await sending).toBe(true)
+      expect(store.workspaceOwnerId).toBe(currentOwnerId)
+      expect(store.thread?.session.id).toBe(currentSessionId)
+      expect(store.drafts[currentSessionId]?.text).toBe(content)
+      if (boundary === 'owner change') {
+        expect(store.workspaceOwnerId).toBe(2)
+        expect(store.drafts[id(1)]).toBeUndefined()
+        expect(store.thread?.messages).toEqual([])
+      } else expect(currentSessionId).toBe(id(1))
+      expect(onAccepted).not.toHaveBeenCalled()
+      expect(api.submissions).toHaveLength(1)
+      expect(server.acceptedCommandCount).toBe(1)
+    }
+  )
 })
 
 describe('Explicit Agent preset admission', () => {

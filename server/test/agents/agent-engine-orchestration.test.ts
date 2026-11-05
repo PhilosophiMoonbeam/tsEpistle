@@ -1,5 +1,6 @@
 import { axGlobals, type AxAIServiceOptions, type AxChatRequest, type AxChatResponse } from '@ax-llm/ax'
 import { ProxyTracerProvider } from '@opentelemetry/api'
+import { AGENT_TOOL_NAMES } from '../../../shared/agents/contracts.ts'
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import { renderSafeMarkdown } from '../../../client/helpers/safe-markdown.ts'
 import { AgentChildBudgetReservations, type AgentOrchestrationLimits } from '../../agents/orchestration.ts'
@@ -20,7 +21,17 @@ import type {
 } from '../../agents/runtime.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 
-import { fixtureDecisionProviders, rejectFixtureStatements, fullAxFixtureService, synthesisFixtureAnswer, synthesisInputFromRequest, synthesisReadsFromRequest, synthesisSourcesFromRequest, type SynthesisFixtureAnswer } from './synthesis-fixture.ts'
+import {
+  fixtureDecisionProviders,
+  rejectFixtureStatements,
+  fullAxFixtureService,
+  synthesisFixtureAnswer,
+  synthesisInputFromRequest,
+  synthesisReadsFromRequest,
+  synthesisSourcesFromRequest,
+  synthesisObservationsFromRequest,
+  type SynthesisFixtureAnswer
+} from './synthesis-fixture.ts'
 const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
 const visibleWikiText = (content: string): string => {
@@ -89,17 +100,20 @@ const factoryFor = (
 ): AgentProviderFactory =>
   ({
     create: async () => ({
-      service: fullAxFixtureService(async (request, chatOptions) => {
-        const response = await chat(request, chatOptions)
-        if (response instanceof ReadableStream) return response
-        return {
-          ...response,
-          results: response.results.map(result => ({
-            ...result,
-            ...(result.content === undefined ? {} : { content: synthesisFixtureAnswer(request, result.content) })
-          }))
-        }
-      }, { model: 'gpt-test', streaming: options.streaming ?? false, ...(options.coverage === undefined ? {} : { coverage: options.coverage }) }),
+      service: fullAxFixtureService(
+        async (request, chatOptions) => {
+          const response = await chat(request, chatOptions)
+          if (response instanceof ReadableStream) return response
+          return {
+            ...response,
+            results: response.results.map(result => ({
+              ...result,
+              ...(result.content === undefined ? {} : { content: synthesisFixtureAnswer(request, result.content) })
+            }))
+          }
+        },
+        { model: 'gpt-test', streaming: options.streaming ?? false, ...(options.coverage === undefined ? {} : { coverage: options.coverage }) }
+      ),
       capabilities: {
         streaming: options.streaming ?? false,
         toolCalling: 'native',
@@ -125,20 +139,27 @@ const finishCollectionResponse = {
 const offersCollectionFinish = (request: Readonly<AxChatRequest<unknown>>): boolean =>
   request.functions?.some(fn => fn.name === 'wiki_finish_collection') ?? false
 
-const readinessFixtureReceipt = async (
-  choice: 'answerable' | 'collect' | 'not_established',
-  probability = 1,
-  confidence = 1
-): Promise<DecisionBatchResult> => {
+const readinessFixtureReceipt = async (choice: 'answerable' | 'collect' | 'not_established', probability = 1, confidence = 1): Promise<DecisionBatchResult> => {
   const runtime = await fixtureDecisionProviders.selectRuntime()
   return {
-    providerId: runtime.id, providerRevision: runtime.revision, model: runtime.config.model,
-    answers: { context_readiness: { choice, confidence,
-      probabilities: { answerable: choice === 'answerable' ? probability : 0,
-        collect: choice === 'collect' ? 1 : 0,
-        not_established: choice === 'not_established' ? 1 : choice === 'answerable' ? 1 - probability : 0 } } },
+    providerId: runtime.id,
+    providerRevision: runtime.revision,
+    model: runtime.config.model,
+    answers: {
+      context_readiness: {
+        choice,
+        confidence,
+        probabilities: {
+          answerable: choice === 'answerable' ? probability : 0,
+          collect: choice === 'collect' ? 1 : 0,
+          not_established: choice === 'not_established' ? 1 : choice === 'answerable' ? 1 - probability : 0
+        }
+      }
+    },
     usage: { inputTokens: 7, outputTokens: 2, totalTokens: 9, totalTokensSource: 'derived' },
-    latencyMs: 0, estimatedCost: null, estimatedCostMicros: 0
+    latencyMs: 0,
+    estimatedCost: null,
+    estimatedCostMicros: 0
   }
 }
 const pageEvidenceActions = (
@@ -286,8 +307,13 @@ describe('Ax orchestration stages', () => {
         followupFact
       ].join('\n\n')
       const page = {
-        id: 42, locale: 'en', path: 'suppliers', title: 'Supplier operations',
-        contentType: 'markdown', sourceRevision: '1', content,
+        id: 42,
+        locale: 'en',
+        path: 'suppliers',
+        title: 'Supplier operations',
+        contentType: 'markdown',
+        sourceRevision: '1',
+        content,
         citation: { evidenceId, label: 'Supplier operations', href: '/en/suppliers' },
         citationSections: []
       }
@@ -305,29 +331,66 @@ describe('Ax orchestration stages', () => {
           synthesisRequests.push(input)
           const fact = followup ? followupFact : firstFact
           const source = synthesisSourcesFromRequest(input).find(unit => unit.text.includes(fact))
-          return { results: [{ index: 0, content: synthesisFixtureAnswer(input, {
-            claims: source === undefined ? [] : [{ ...source, statement: fact }],
-            unresolvedFacets: source === undefined ? [0] : []
-          }) }] }
+          return {
+            results: [
+              {
+                index: 0,
+                content: synthesisFixtureAnswer(input, {
+                  claims: source === undefined ? [] : [{ ...source, statement: fact }],
+                  unresolvedFacets: source === undefined ? [0] : []
+                })
+              }
+            ]
+          }
         }
-        if (requestedRead || followup && authority !== 'fresh') return finishCollectionResponse
+        if (requestedRead || (followup && authority !== 'fresh')) return finishCollectionResponse
         requestedRead = true
-        return { results: [{ index: 0, functionCalls: [{
-          id: followup ? 'followup-page-read' : 'initial-page-read', type: 'function',
-          function: { name: 'wiki_get_page', params: { id: 42 } }
-        }] }] }
+        return {
+          results: [
+            {
+              index: 0,
+              functionCalls: [
+                {
+                  id: followup ? 'followup-page-read' : 'initial-page-read',
+                  type: 'function',
+                  function: { name: 'wiki_get_page', params: { id: 42 } }
+                }
+              ]
+            }
+          ]
+        }
       })
       const invoke = vi.fn(async () => page)
-      const validateObservation = vi.fn(async (action: string, output: unknown) =>
-        action === 'pages.get' && typeof output === 'object' && output !== null &&
-        'sourceRevision' in output && output.sourceRevision === currentRevision &&
-        'id' in output && output.id === allowedPageId && readable && unexpired &&
-        'content' in output && output.content === currentContent)
+      const validateObservation = vi.fn(
+        async (action: string, output: unknown) =>
+          action === 'pages.get' &&
+          typeof output === 'object' &&
+          output !== null &&
+          'sourceRevision' in output &&
+          output.sourceRevision === currentRevision &&
+          'id' in output &&
+          output.id === allowedPageId &&
+          readable &&
+          unexpired &&
+          'content' in output &&
+          output.content === currentContent
+      )
       const actions: AgentActionSessionProvider = {
         open: async () => ({
-          functions: [{ name: 'pages.get', title: 'Read page', description: 'Read authorized page',
-            parameters: { type: 'object', properties: { id: { type: 'number' } } }, risk: 'read', group: 'core' }],
-          invoke, validateObservation, snapshot: async () => ({}), close: () => undefined
+          functions: [
+            {
+              name: 'pages.get',
+              title: 'Read page',
+              description: 'Read authorized page',
+              parameters: { type: 'object', properties: { id: { type: 'number' } } },
+              risk: 'read',
+              group: 'core'
+            }
+          ],
+          invoke,
+          validateObservation,
+          snapshot: async () => ({}),
+          close: () => undefined
         })
       }
       const readinessRequests: DecisionBatchRequest[] = []
@@ -350,19 +413,32 @@ describe('Ax orchestration stages', () => {
       }
       const engine = new AxAgentEngine(factoryFor(chat), actions, undefined, { decisionProviders: decisions })
       const initialText = vi.fn(async (_delta: string) => {})
-      await engine.execute({
-        ...baseRequest(new AbortController().signal), memory: { user: [], agent: [] }, currentPage: null,
-        messages: [{ role: 'user', content: 'What does Falcon dispatch require?' }]
-      }, {
-        text: initialText,
-        event: async (type, data) => {
-          if (type !== 'tool.completed' || typeof data !== 'object' || data === null ||
-            !('actionName' in data) || data.actionName !== 'pages.get' ||
-            !('actionCallId' in data) || typeof data.actionCallId !== 'string' ||
-            !('result' in data) || typeof data.result !== 'string') return
-          retained.read = { actionCallId: data.actionCallId, actionName: 'pages.get', output: JSON.parse(data.result) }
+      await engine.execute(
+        {
+          ...baseRequest(new AbortController().signal),
+          memory: { user: [], agent: [] },
+          currentPage: null,
+          messages: [{ role: 'user', content: 'What does Falcon dispatch require?' }]
+        },
+        {
+          text: initialText,
+          event: async (type, data) => {
+            if (
+              type !== 'tool.completed' ||
+              typeof data !== 'object' ||
+              data === null ||
+              !('actionName' in data) ||
+              data.actionName !== 'pages.get' ||
+              !('actionCallId' in data) ||
+              typeof data.actionCallId !== 'string' ||
+              !('result' in data) ||
+              typeof data.result !== 'string'
+            )
+              return
+            retained.read = { actionCallId: data.actionCallId, actionName: 'pages.get', output: JSON.parse(data.result) }
+          }
         }
-      })
+      )
       expect(visibleWikiText(initialText.mock.calls.flat().join(''))).toContain(firstFact)
       expect(invoke).toHaveBeenCalledTimes(1)
       readinessRequests.length = 0
@@ -378,15 +454,20 @@ describe('Ax orchestration stages', () => {
       if (authority === 'revoked') readable = false
       if (authority === 'outside scope') allowedPageId = 43
       const followupText = vi.fn(async (_delta: string) => {})
-      const result = await engine.execute({
-        ...baseRequest(new AbortController().signal), memory: { user: [], agent: [] }, currentPage: null,
-        messages: [
-          { role: 'user', content: 'What does Falcon dispatch require?' },
-          { role: 'assistant', content: `${firstFact} [[cite:${evidenceId}]]` },
-          { role: 'user', content: 'And when does Cedar warehouse close on Fridays?' }
-        ],
-        retainedPageReads: [retainedRead]
-      }, { text: followupText, event: async () => {} })
+      const result = await engine.execute(
+        {
+          ...baseRequest(new AbortController().signal),
+          memory: { user: [], agent: [] },
+          currentPage: null,
+          messages: [
+            { role: 'user', content: 'What does Falcon dispatch require?' },
+            { role: 'assistant', content: `${firstFact} [[cite:${evidenceId}]]` },
+            { role: 'user', content: 'And when does Cedar warehouse close on Fridays?' }
+          ],
+          retainedPageReads: [retainedRead]
+        },
+        { text: followupText, event: async () => {} }
+      )
       // The native readiness optimization never creates another physical read.
       expect(invoke).toHaveBeenCalledTimes(1)
       expect(validateObservation).toHaveBeenCalledWith('pages.get', page, expect.any(AbortSignal))
@@ -410,7 +491,10 @@ describe('Ax orchestration stages', () => {
         expect(state.conversationContext).not.toContain(state.userRequest)
         expect(state.evidence).toHaveLength(1)
         expect(state.evidence[0]).toMatchObject({ evidenceId, sourceRevision: '1' })
-        expect(unpackWikiReadTexts({ texts: state.readTexts, sources: state.evidence.flatMap(read => [read.source, read.authorText]) })).toEqual([content, content])
+        expect(unpackWikiReadTexts({ texts: state.readTexts, sources: state.evidence.flatMap(read => [read.source, read.authorText]) })).toEqual([
+          content,
+          content
+        ])
         expect(supportReadIds).toContain(state.evidence[0]!.readId)
       } else {
         expect(published).not.toContain(followupFact)
@@ -434,25 +518,51 @@ describe('Ax orchestration stages', () => {
     const fact = 'Falcon dispatch requires a signed manifest.'
     const content = `# Supplier operations\n\n${fact}${mode === 'native capacity' ? `\n\n${'x'.repeat(130_000)}` : ''}`
     const page = {
-      id: 42, locale: 'en', path: 'suppliers', title: 'Supplier operations',
-      contentType: 'markdown', sourceRevision: '1', content,
+      id: 42,
+      locale: 'en',
+      path: 'suppliers',
+      title: 'Supplier operations',
+      contentType: 'markdown',
+      sourceRevision: '1',
+      content,
       citation: { evidenceId: 'page:42:revision:1', label: 'Supplier operations', href: '/en/suppliers' },
       citationSections: []
     }
     const companion = {
-      ...page, id: 43, path: 'warehouse', title: 'Warehouse rules', content: '# Warehouse rules\n\nInspection precedes entry.',
+      ...page,
+      id: 43,
+      path: 'warehouse',
+      title: 'Warehouse rules',
+      content: '# Warehouse rules\n\nInspection precedes entry.',
       citation: { evidenceId: 'page:43:revision:1', label: 'Warehouse rules', href: '/en/warehouse' }
     }
     const collectionPage = {
-      ...companion, id: 44, path: 'receiving', title: 'Receiving', content: '# Receiving\n\nThe receiving desk checks incoming deliveries.',
+      ...companion,
+      id: 44,
+      path: 'receiving',
+      title: 'Receiving',
+      content: '# Receiving\n\nThe receiving desk checks incoming deliveries.',
       citation: { evidenceId: 'page:44:revision:1', label: 'Receiving', href: '/en/receiving' }
     }
-    const collectionRead = options.collectionRead === 'truncated recent'
-      ? { kind: 'recent-page-evidence', requestedLimit: 1, exhausted: true, pages: [{
-          ...collectionPage, content: '# Receiving\n\nThe receiving desk', updatedAt: '2026-09-20T09:00:00.000Z',
-          contentTruncated: true, sourceContentCharacters: collectionPage.content.length
-        }] }
-      : options.collectionRead === 'new complete read' ? collectionPage : page
+    const collectionRead =
+      options.collectionRead === 'truncated recent'
+        ? {
+            kind: 'recent-page-evidence',
+            requestedLimit: 1,
+            exhausted: true,
+            pages: [
+              {
+                ...collectionPage,
+                content: '# Receiving\n\nThe receiving desk',
+                updatedAt: '2026-09-20T09:00:00.000Z',
+                contentTruncated: true,
+                sourceContentCharacters: collectionPage.content.length
+              }
+            ]
+          }
+        : options.collectionRead === 'new complete read'
+          ? collectionPage
+          : page
     let providerRevision = 1
     let sourceAuthorized = true
     const nativeRequests: DecisionBatchRequest[] = []
@@ -468,8 +578,7 @@ describe('Ax orchestration stages', () => {
     budget.reserve = async maximum => {
       if (maximum.tokens === 64_000 && mode === 'admission denied')
         throw new AgentRepositoryError('AGENT_QUOTA_EXHAUSTED', 'The optional native exposure cannot be admitted', 429)
-      if (maximum.tokens === 64_000 && mode === 'undersized admission')
-        return reserve({ ...maximum, tokens: maximum.tokens - 1 })
+      if (maximum.tokens === 64_000 && mode === 'undersized admission') return reserve({ ...maximum, tokens: maximum.tokens - 1 })
       const reservation = await reserve(maximum)
       if (maximum.tokens === 64_000 && mode === 'native source fence') sourceAuthorized = false
       if (maximum.tokens === 64_000 && mode === 'native provider fence') providerRevision++
@@ -485,8 +594,11 @@ describe('Ax orchestration stages', () => {
       ...fixtureDecisionProviders,
       async selectRuntime() {
         const runtime = await fixtureDecisionProviders.selectRuntime()
-        return { ...runtime, revision: providerRevision, config: { ...runtime.config,
-          pricing: { ...runtime.config.pricing!, inputPerMillion: 1, outputPerMillion: 1, perRequest: 0.25 } } }
+        return {
+          ...runtime,
+          revision: providerRevision,
+          config: { ...runtime.config, pricing: { ...runtime.config.pricing!, inputPerMillion: 1, outputPerMillion: 1, perRequest: 0.25 } }
+        }
       },
       async decideBatch(input, options) {
         if (!Object.hasOwn(input.questions, 'context_readiness')) {
@@ -499,17 +611,14 @@ describe('Ax orchestration stages', () => {
         await options?.onPreDispatch?.()
         options?.onRequestDispatched?.()
         paidReadiness.push(input)
-        if (mode === 'paid timeout')
-          throw new AgentRepositoryError('DECISION_TIMEOUT', 'A dispatched readiness call timed out', 503)
+        if (mode === 'paid timeout') throw new AgentRepositoryError('DECISION_TIMEOUT', 'A dispatched readiness call timed out', 503)
         const result = await readinessFixtureReceipt(
           ['missing', 'new topic', 'linked lookup', 'action', 'exhaustive'].includes(mode) ? 'collect' : 'answerable',
           mode === 'uncertain probability' ? 0.8 : 1,
           mode === 'uncertain confidence' ? 0.8 : 1
         )
-        if (mode === 'unmeasured usage')
-          return { ...result, usage: { ...result.usage, inputTokens: Number.NaN }, estimatedCostMicros: null }
-        if (mode === 'malformed judgment')
-          throw new DecisionProviderFailure('INVALID_DECISION_RESPONSE', await decisions.selectRuntime(), result.usage, 1)
+        if (mode === 'unmeasured usage') return { ...result, usage: { ...result.usage, inputTokens: Number.NaN }, estimatedCostMicros: null }
+        if (mode === 'malformed judgment') throw new DecisionProviderFailure('INVALID_DECISION_RESPONSE', await decisions.selectRuntime(), result.usage, 1)
         return { ...result, estimatedCostMicros: 250_009 }
       }
     }
@@ -517,64 +626,130 @@ describe('Ax orchestration stages', () => {
       if (synthesisInputFromRequest(input) !== undefined) {
         synthesized.push(input)
         const sources = synthesisSourcesFromRequest(input)
-        return { results: [{ index: 0, content: synthesisFixtureAnswer(input, ['answerable', 'provider changed after semantic', 'coverage token overrun'].includes(mode) ? {
-          claims: [{ ...sources.find(source => source.evidenceId === page.citation.evidenceId)!, statement: fact }]
-        } : { claims: [], unresolvedFacets: [0] }) }] }
+        return {
+          results: [
+            {
+              index: 0,
+              content: synthesisFixtureAnswer(
+                input,
+                ['answerable', 'provider changed after semantic', 'coverage token overrun'].includes(mode)
+                  ? {
+                      claims: [{ ...sources.find(source => source.evidenceId === page.citation.evidenceId)!, statement: fact }]
+                    }
+                  : { claims: [], unresolvedFacets: [0] }
+              )
+            }
+          ]
+        }
       }
       collected.push(input)
-      if (options.collectionRead && collected.length === 1) return {
-        results: [{ index: 0, functionCalls: [{ id: 'read-collection-source', type: 'function', function: options.collectionRead === 'truncated recent'
-          ? { name: 'wiki_list_recent_pages', params: { limit: 1 } }
-          : { name: 'wiki_get_page', params: { id: collectionPage.id } } }] }]
-      }
-      if (options.cold && collected.length === 1) return {
-        results: [{ index: 0, functionCalls: [{ id: 'read-falcon', type: 'function', function: { name: 'wiki_get_page', params: { id: 42 } } }] }]
-      }
+      if (options.collectionRead && collected.length === 1)
+        return {
+          results: [
+            {
+              index: 0,
+              functionCalls: [
+                {
+                  id: 'read-collection-source',
+                  type: 'function',
+                  function:
+                    options.collectionRead === 'truncated recent'
+                      ? { name: 'wiki_list_recent_pages', params: { limit: 1 } }
+                      : { name: 'wiki_get_page', params: { id: collectionPage.id } }
+                }
+              ]
+            }
+          ]
+        }
+      if (options.cold && collected.length === 1)
+        return {
+          results: [{ index: 0, functionCalls: [{ id: 'read-falcon', type: 'function', function: { name: 'wiki_get_page', params: { id: 42 } } }] }]
+        }
       return finishCollectionResponse
     })
-    const coverage = vi.fn(async (): Promise<AxChatResponse> => ({
-      results: [{ index: 0, content: JSON.stringify({ verdict: 'complete', feedback: '' }), finishReason: 'stop' }],
-      modelUsage: { ai: 'test', model: 'gpt-test', tokens: {
-        promptTokens: (options.coverageTokens ?? 10) - 3, completionTokens: 3, totalTokens: options.coverageTokens ?? 10
-      } }
-    }))
+    const coverage = vi.fn(
+      async (): Promise<AxChatResponse> => ({
+        results: [{ index: 0, content: JSON.stringify({ verdict: 'complete', feedback: '' }), finishReason: 'stop' }],
+        modelUsage: {
+          ai: 'test',
+          model: 'gpt-test',
+          tokens: {
+            promptTokens: (options.coverageTokens ?? 10) - 3,
+            completionTokens: 3,
+            totalTokens: options.coverageTokens ?? 10
+          }
+        }
+      })
+    )
     const text = vi.fn(async (_delta: string) => {})
     const event = vi.fn(async (type: string, data: unknown) => {
-      if (type !== 'model.turn' || data === null || typeof data !== 'object' || !('verification' in data) ||
-        data.verification === null || typeof data.verification !== 'object' || !('phase' in data.verification)) return
+      if (
+        type !== 'model.turn' ||
+        data === null ||
+        typeof data !== 'object' ||
+        !('verification' in data) ||
+        data.verification === null ||
+        typeof data.verification !== 'object' ||
+        !('phase' in data.verification)
+      )
+        return
       if (data.verification.phase === 'semantic' && mode === 'provider changed after semantic') providerRevision++
       if (data.verification.phase !== 'context_readiness') return
       if (mode === 'source changed before synthesis') sourceAuthorized = false
       if (mode === 'provider changed before synthesis') providerRevision++
     })
-    const retainedActions = pageEvidenceActions(async (_name, output) => sourceAuthorized &&
-      [page, companion, collectionRead].some(source => JSON.stringify(source) === JSON.stringify(output)))
+    const retainedActions = pageEvidenceActions(
+      async (_name, output) => sourceAuthorized && [page, companion, collectionRead].some(source => JSON.stringify(source) === JSON.stringify(output))
+    )
     const read = vi.fn(async () => collectionRead)
     const actions: AgentActionSessionProvider = {
       ...retainedActions,
       open: async (...args) => {
         const session = await retainedActions.open(...args)
-        return { ...session, invoke: read, functions: options.collectionRead === 'truncated recent' ? [...session.functions, {
-          name: 'pages.listRecent' as const, title: 'Read recent pages', description: 'Read recent page excerpts',
-          parameters: { type: 'object', properties: { limit: { type: 'integer' } } }, risk: 'read' as const
-        }] : session.functions }
+        return {
+          ...session,
+          invoke: read,
+          functions:
+            options.collectionRead === 'truncated recent'
+              ? [
+                  ...session.functions,
+                  {
+                    name: 'pages.listRecent' as const,
+                    title: 'Read recent pages',
+                    description: 'Read recent page excerpts',
+                    parameters: { type: 'object', properties: { limit: { type: 'integer' } } },
+                    risk: 'read' as const
+                  }
+                ]
+              : session.functions
+        }
       }
     }
     const engine = new AxAgentEngine(factoryFor(chat, { maxContextTokens: 1_000_000, coverage }), actions, undefined, { decisionProviders: decisions })
-    const execute = () => engine.execute({
-      ...baseRequest(new AbortController().signal), memory: { user: [], agent: [] }, currentPage: null,
-      messages: options.cold ? [{ role: 'user', content: userRequest }] : [
-        { role: 'user', content: 'What does Falcon dispatch require?' },
-        { role: 'assistant', content: 'The previous response discussed Falcon dispatch.' },
-        { role: 'user', content: userRequest }
-      ],
-      retainedPageReads: options.cold ? [] : [
-        { actionCallId: 'original-falcon-read', actionName: 'pages.get', output: page },
-        { actionCallId: 'original-warehouse-read', actionName: 'pages.get', output: companion }
-      ],
-      ...(options.dispatchBudget === false ? {} : { dispatchBudget: budget }),
-      limits: { maxTurns: 5, maxTokens: options.maxTokens ?? (mode === 'run allowance' ? 60_000 : 2_000_000) }
-    }, { text, event })
+    const execute = () =>
+      engine.execute(
+        {
+          ...baseRequest(new AbortController().signal),
+          memory: { user: [], agent: [] },
+          currentPage: null,
+          messages: options.cold
+            ? [{ role: 'user', content: userRequest }]
+            : [
+                { role: 'user', content: 'What does Falcon dispatch require?' },
+                { role: 'assistant', content: 'The previous response discussed Falcon dispatch.' },
+                { role: 'user', content: userRequest }
+              ],
+          retainedPageReads: options.cold
+            ? []
+            : [
+                { actionCallId: 'original-falcon-read', actionName: 'pages.get', output: page },
+                { actionCallId: 'original-warehouse-read', actionName: 'pages.get', output: companion }
+              ],
+          ...(options.dispatchBudget === false ? {} : { dispatchBudget: budget }),
+          limits: { maxTurns: 5, maxTokens: options.maxTokens ?? (mode === 'run allowance' ? 60_000 : 2_000_000) }
+        },
+        { text, event }
+      )
     return { execute, text, event, coverage, read, nativeRequests, paidReadiness, collected, synthesized, budget, reserveSequence, release, content, companion }
   }
 
@@ -587,9 +762,19 @@ describe('Ax orchestration stages', () => {
     expect(fixture.synthesized[0]?.functions?.some(fn => fn.name !== '__axOutput') ?? false).toBe(false)
     expect(synthesisReadsFromRequest(fixture.synthesized[0]!).map(read => read.readText)).toEqual([fixture.content, fixture.companion.content])
     expect(result.citations).toContainEqual(expect.objectContaining({ evidenceId: 'page:42:revision:1' }))
-    expect(fixture.event.mock.calls.filter(([type, data]) => type === 'model.turn' && typeof data === 'object' && data !== null &&
-      'verification' in data && typeof data.verification === 'object' && data.verification !== null &&
-      'phase' in data.verification && data.verification.phase === 'semantic').length).toBeGreaterThan(0)
+    expect(
+      fixture.event.mock.calls.filter(
+        ([type, data]) =>
+          type === 'model.turn' &&
+          typeof data === 'object' &&
+          data !== null &&
+          'verification' in data &&
+          typeof data.verification === 'object' &&
+          data.verification !== null &&
+          'phase' in data.verification &&
+          data.verification.phase === 'semantic'
+      ).length
+    ).toBeGreaterThan(0)
     expect(fixture.budget.consumedTokens).toBe(result.totalTokens)
     expect(fixture.budget.consumedCostMicros).toBe(result.costMicros)
     expect(fixture.budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
@@ -615,8 +800,7 @@ describe('Ax orchestration stages', () => {
       const result = await fixture.execute()
       expect(fixture.read).toHaveBeenCalledOnce()
       expect(fixture.collected).toHaveLength(2)
-      if (collectionRead === 'truncated recent')
-        expect(new Set(fixture.paidReadiness.map(request => JSON.stringify(request))).size).toBe(1)
+      if (collectionRead === 'truncated recent') expect(new Set(fixture.paidReadiness.map(request => JSON.stringify(request))).size).toBe(1)
       expect(fixture.paidReadiness).toHaveLength(collectionRead === 'truncated recent' ? 1 : 2)
       if (collectionRead === 'new complete read') {
         const state = JSON.parse(fixture.paidReadiness[1]!.state as string) as { evidence: { evidenceId: string }[] }
@@ -658,7 +842,8 @@ describe('Ax orchestration stages', () => {
   })
 
   it.each(['native capacity', 'run allowance', 'admission denied', 'undersized admission', 'native pre-admission denied'])(
-    'falls back to ordinary collection without paying readiness after %s', async mode => {
+    'falls back to ordinary collection without paying readiness after %s',
+    async mode => {
       const fixture = warmReadinessFixture(mode)
       await fixture.execute()
       expect(fixture.paidReadiness).toHaveLength(0)
@@ -666,13 +851,13 @@ describe('Ax orchestration stages', () => {
       expect(offersCollectionFinish(fixture.collected[0]!)).toBe(true)
       expect(fixture.budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
       expect(fixture.reserveSequence).toHaveBeenCalledOnce()
-      if (mode === 'native pre-admission denied')
-        expect(fixture.release).toHaveBeenCalledWith(expect.objectContaining({ tokens: 64_000 }))
+      if (mode === 'native pre-admission denied') expect(fixture.release).toHaveBeenCalledWith(expect.objectContaining({ tokens: 64_000 }))
     }
   )
 
   it.each(['native source fence', 'native provider fence', 'source changed before synthesis', 'provider changed before synthesis'])(
-    'fails closed without paying for stale synthesis at the warm %s', async mode => {
+    'fails closed without paying for stale synthesis at the warm %s',
+    async mode => {
       const fixture = warmReadinessFixture(mode)
       await expect(fixture.execute()).rejects.toMatchObject({ code: mode.includes('provider') ? 'WIKI_VERIFICATION_FAILED' : 'AGENT_EVIDENCE_INVALID' })
       expect(fixture.collected).toHaveLength(0)
@@ -680,8 +865,7 @@ describe('Ax orchestration stages', () => {
       expect(fixture.text).not.toHaveBeenCalled()
       expect(fixture.paidReadiness).toHaveLength(mode.startsWith('native') ? 0 : 1)
       expect(fixture.budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
-      if (mode.startsWith('native'))
-        expect(fixture.release).toHaveBeenCalledWith(expect.objectContaining({ tokens: 64_000 }))
+      if (mode.startsWith('native')) expect(fixture.release).toHaveBeenCalledWith(expect.objectContaining({ tokens: 64_000 }))
     }
   )
 
@@ -690,9 +874,13 @@ describe('Ax orchestration stages', () => {
     await expect(fixture.execute()).rejects.toMatchObject({ code: 'WIKI_VERIFICATION_FAILED' })
     expect(fixture.paidReadiness).toHaveLength(1)
     expect(fixture.synthesized).toHaveLength(1)
-    expect(fixture.event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({
-      outcome: 'verification_completed', verification: expect.objectContaining({ phase: 'semantic' })
-    })])
+    expect(fixture.event.mock.calls).toContainEqual([
+      'model.turn',
+      expect.objectContaining({
+        outcome: 'verification_completed',
+        verification: expect.objectContaining({ phase: 'semantic' })
+      })
+    ])
     expect(fixture.coverage).not.toHaveBeenCalled()
     expect(fixture.text).not.toHaveBeenCalled()
     expect(fixture.event.mock.calls).not.toContainEqual(['model.turn', expect.objectContaining({ outcome: 'answer_accepted' })])
@@ -702,26 +890,38 @@ describe('Ax orchestration stages', () => {
   it('retains the measured coverage receipt but blocks factual publication when aggregate tokens exceed the run limit without a dispatch budget', async () => {
     const maxTokens = 2_000_000
     const fixture = warmReadinessFixture('coverage token overrun', 'What does it require?', {
-      dispatchBudget: false, maxTokens, coverageTokens: maxTokens
+      dispatchBudget: false,
+      maxTokens,
+      coverageTokens: maxTokens
     })
     await expect(fixture.execute()).rejects.toMatchObject({ code: 'AGENT_TOKEN_BUDGET_LIMITED' })
     expect(fixture.synthesized).toHaveLength(1)
     expect(fixture.coverage).toHaveBeenCalledOnce()
-    expect(fixture.event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({
-      outcome: 'verification_completed',
-      inputTokens: maxTokens - 3, outputTokens: 3, totalTokens: maxTokens,
-      verification: expect.objectContaining({ phase: 'coverage_audit', verdict: 'complete' })
-    })])
-    expect(fixture.event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({
-      totalTokens: 9, verification: expect.objectContaining({ phase: 'context_readiness' })
-    })])
+    expect(fixture.event.mock.calls).toContainEqual([
+      'model.turn',
+      expect.objectContaining({
+        outcome: 'verification_completed',
+        inputTokens: maxTokens - 3,
+        outputTokens: 3,
+        totalTokens: maxTokens,
+        verification: expect.objectContaining({ phase: 'coverage_audit', verdict: 'complete' })
+      })
+    ])
+    expect(fixture.event.mock.calls).toContainEqual([
+      'model.turn',
+      expect.objectContaining({
+        totalTokens: 9,
+        verification: expect.objectContaining({ phase: 'context_readiness' })
+      })
+    ])
     expect(fixture.text).not.toHaveBeenCalled()
     expect(fixture.event.mock.calls).not.toContainEqual(['model.turn', expect.objectContaining({ outcome: 'answer_accepted' })])
     expect(fixture.reserveSequence).not.toHaveBeenCalled()
   })
 
   it.each(['paid timeout', 'unmeasured usage', 'settlement failed'])(
-    'retains conservative readiness exposure and does not resume collection after %s', async mode => {
+    'retains conservative readiness exposure and does not resume collection after %s',
+    async mode => {
       const fixture = warmReadinessFixture(mode)
       await expect(fixture.execute()).rejects.toThrow()
       expect(fixture.paidReadiness).toHaveLength(1)
@@ -731,16 +931,23 @@ describe('Ax orchestration stages', () => {
       expect(fixture.budget.unsettledExposure.tokens).toBe(64_000)
       expect(fixture.release).not.toHaveBeenCalled()
       if (mode !== 'settlement failed')
-        expect(fixture.event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({
-          usageSource: 'unmeasured-exposure', unknownExposure: { tokens: 64_000, costMicros: 314_000 }
-        })])
+        expect(fixture.event.mock.calls).toContainEqual([
+          'model.turn',
+          expect.objectContaining({
+            usageSource: 'unmeasured-exposure',
+            unknownExposure: { tokens: 64_000, costMicros: 314_000 }
+          })
+        ])
     }
   )
 
   it('uses the same bounded root output exposure for preflight and actual generation on large provider profiles', async () => {
-    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => ({
-      results: [{ index: 0, content: synthesisFixtureAnswer(input, { claims: [], unresolvedFacets: [0] }) }]
-    }) satisfies AxChatResponse)
+    const chat = vi.fn(
+      async (input: Readonly<AxChatRequest<unknown>>) =>
+        ({
+          results: [{ index: 0, content: synthesisFixtureAnswer(input, { claims: [], unresolvedFacets: [0] }) }]
+        }) satisfies AxChatResponse
+    )
     const engine = new AxAgentEngine(factoryFor(chat, { maxOutputTokens: 32_768 }), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
     const request = baseRequest(new AbortController().signal)
     const preflight = await engine.preflight(request)
@@ -762,11 +969,16 @@ describe('Ax orchestration stages', () => {
       body: 'request body secret',
       headers: 'authorization secret'
     })
-    const requestError = await new AxAgentEngine(factoryFor(
-      vi.fn(async () => {
-        throw wrappedRequest
-      })
-    ), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
+    const requestError = await new AxAgentEngine(
+      factoryFor(
+        vi.fn(async () => {
+          throw wrappedRequest
+        })
+      ),
+      undefined,
+      undefined,
+      { decisionProviders: fixtureDecisionProviders }
+    )
       .execute(baseRequest(new AbortController().signal), { text: async () => {}, event: async () => {} })
       .catch(error => error)
     expect(requestError).toBeInstanceOf(AgentExecutionFailure)
@@ -789,7 +1001,12 @@ describe('Ax orchestration stages', () => {
         controller.error(streamFailure)
       }
     })
-    const streamError = await new AxAgentEngine(factoryFor(async () => stream), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
+    const streamError = await new AxAgentEngine(
+      factoryFor(async () => stream),
+      undefined,
+      undefined,
+      { decisionProviders: fixtureDecisionProviders }
+    )
       .execute(baseRequest(new AbortController().signal), { text: async () => {}, event: async () => {} })
       .catch(error => error)
     expect(streamError).toMatchObject({ code: 'PROVIDER_UNAVAILABLE', stage: 'provider_stream', providerStatus: 503 })
@@ -799,7 +1016,12 @@ describe('Ax orchestration stages', () => {
     const malformedResponse = {
       results: [{ index: 0, functionCalls: [{ id: '', type: 'function', function: { name: 'wiki_get_page', params: '{}' } }] }]
     } satisfies AxChatResponse
-    const responseError = await new AxAgentEngine(factoryFor(async () => malformedResponse), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
+    const responseError = await new AxAgentEngine(
+      factoryFor(async () => malformedResponse),
+      undefined,
+      undefined,
+      { decisionProviders: fixtureDecisionProviders }
+    )
       .execute(baseRequest(new AbortController().signal), { text: async () => {}, event: async () => {} })
       .catch(error => error)
     expect(responseError).toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response', message: 'Agent inference failed' })
@@ -833,7 +1055,9 @@ describe('Ax orchestration stages', () => {
       }
     })
     const chat = vi.fn(async () => stream)
-    const execution = new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream' }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+    const execution = new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream' }), undefined, undefined, {
+      decisionProviders: fixtureDecisionProviders
+    }).execute(
       {
         ...baseRequest(new AbortController().signal),
         purpose: 'planner',
@@ -886,7 +1110,9 @@ describe('Ax orchestration stages', () => {
       }
     })
     const chat = vi.fn(async () => stream)
-    const error = await new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream' }), undefined, undefined, { decisionProviders: fixtureDecisionProviders })
+    const error = await new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream' }), undefined, undefined, {
+      decisionProviders: fixtureDecisionProviders
+    })
       .execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
       .catch(failure => failure)
 
@@ -948,7 +1174,9 @@ describe('Ax orchestration stages', () => {
       })
     }
     const event = vi.fn(async () => {})
-    const result = await new AxAgentEngine(factoryFor(chat, { maxOutputTokens: 1_000 }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+    const result = await new AxAgentEngine(factoryFor(chat, { maxOutputTokens: 1_000 }), actions, undefined, {
+      decisionProviders: fixtureDecisionProviders
+    }).execute(
       {
         ...baseRequest(new AbortController().signal),
         limits: { maxTurns: 4, maxToolCalls: 11, maxOutputTokens: 100 }
@@ -976,7 +1204,9 @@ describe('Ax orchestration stages', () => {
     )
     const open = vi.fn()
     const text = vi.fn(async () => {})
-    const engine = new AxAgentEngine(factoryFor(chat), { open } as unknown as AgentActionSessionProvider, undefined, { decisionProviders: fixtureDecisionProviders })
+    const engine = new AxAgentEngine(factoryFor(chat), { open } as unknown as AgentActionSessionProvider, undefined, {
+      decisionProviders: fixtureDecisionProviders
+    })
 
     expect(
       await engine.execute(
@@ -1065,7 +1295,10 @@ describe('Ax orchestration stages', () => {
     }
     const text = vi.fn(async () => {})
 
-    const result = await new AxAgentEngine(factoryFor(chat), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(request, { text, event: async () => {} })
+    const result = await new AxAgentEngine(factoryFor(chat), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(request, {
+      text,
+      event: async () => {}
+    })
 
     expect(invoke).toHaveBeenCalledWith(
       'pages.get',
@@ -1200,18 +1433,23 @@ describe('Ax orchestration stages', () => {
   })
 
   it('dispatches only the covered action when the root tool budget is one', async () => {
-    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => ({
-      results: [synthesisInputFromRequest(input) === undefined
-        ? {
-            index: 0,
-            functionCalls: [
-              { id: 'first', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } },
-              { id: 'second', type: 'function', function: { name: 'wiki_get_page', params: '{"id":2}' } }
-            ]
-          }
-        : { index: 0, content: synthesisFixtureAnswer(input, { claims: [], unresolvedFacets: [0] }) }],
-      modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
-    }) satisfies AxChatResponse)
+    const chat = vi.fn(
+      async (input: Readonly<AxChatRequest<unknown>>) =>
+        ({
+          results: [
+            synthesisInputFromRequest(input) === undefined
+              ? {
+                  index: 0,
+                  functionCalls: [
+                    { id: 'first', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } },
+                    { id: 'second', type: 'function', function: { name: 'wiki_get_page', params: '{"id":2}' } }
+                  ]
+                }
+              : { index: 0, content: synthesisFixtureAnswer(input, { claims: [], unresolvedFacets: [0] }) }
+          ],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+        }) satisfies AxChatResponse
+    )
     const invoke = vi.fn(async () => ({ id: 1, title: 'Alpha', content: 'Alpha' }))
     const actions: AgentActionSessionProvider = {
       open: async () => ({
@@ -1238,16 +1476,22 @@ describe('Ax orchestration stages', () => {
   it('settles rejected tool-free synthesis after a read without another action or an unverified publication', async () => {
     const budget = new PublicationBudgetLedger(120_000)
     const unsupported = 'The second page confirms an unsupported conclusion.'
-    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => ({
-      results: [
-        synthesisInputFromRequest(input) === undefined
-          ? { index: 0, functionCalls: [{ id: 'first-read', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }
-          : { index: 0, content: synthesisFixtureAnswer(input, {
-              claims: [{ evidenceId: 'page:1:revision:rev-1', statement: unsupported }]
-            }) }
-      ],
-      modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
-    }) satisfies AxChatResponse)
+    const chat = vi.fn(
+      async (input: Readonly<AxChatRequest<unknown>>) =>
+        ({
+          results: [
+            synthesisInputFromRequest(input) === undefined
+              ? { index: 0, functionCalls: [{ id: 'first-read', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }
+              : {
+                  index: 0,
+                  content: synthesisFixtureAnswer(input, {
+                    claims: [{ evidenceId: 'page:1:revision:rev-1', statement: unsupported }]
+                  })
+                }
+          ],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+        }) satisfies AxChatResponse
+    )
     const invoke = vi.fn(async () => ({
       id: 1,
       locale: 'en',
@@ -1293,9 +1537,11 @@ describe('Ax orchestration stages', () => {
     expect(budget.allocatedTokens).toBe(budget.returnedTokens + budget.consumedTokens)
     expect(text.mock.calls.map(([delta]) => delta).join('')).not.toContain(unsupported)
     expect(event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({ outcome: 'answer_rejected', turn: 2, totalTokens: 2 })])
-    expect(event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({ purpose: 'verification', outcome: 'verification_completed', totalTokens: 0 })])
+    expect(event.mock.calls).toContainEqual([
+      'model.turn',
+      expect.objectContaining({ purpose: 'verification', outcome: 'verification_completed', totalTokens: 0 })
+    ])
   })
-
 
   it('never publishes an uncited source premise smuggled through recommendations after a Wiki page was read', async () => {
     let turn = 0
@@ -1306,10 +1552,13 @@ describe('Ax orchestration stages', () => {
           results: [
             ++turn === 1
               ? { index: 0, functionCalls: [{ id: 'read-alpha', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }
-              : { index: 0, content: synthesisFixtureAnswer(input, {
-                  claims: [{ evidenceId: 'page:1:revision:rev-1', statement: 'Alpha requires review.' }],
-                  recommendations: draft
-                }) }
+              : {
+                  index: 0,
+                  content: synthesisFixtureAnswer(input, {
+                    claims: [{ evidenceId: 'page:1:revision:rev-1', statement: 'Alpha requires review.' }],
+                    recommendations: draft
+                  })
+                }
           ]
         }) satisfies AxChatResponse
     )
@@ -1379,7 +1628,9 @@ describe('Ax orchestration stages', () => {
         modelUsage: { ai: 'test', model: 'gpt-test', tokens }
       } satisfies AxChatResponse
     }
-    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, {
+      decisionProviders: fixtureDecisionProviders
+    }).execute(
       {
         ...baseRequest(new AbortController().signal),
         limits: { maxTurns: 3, maxToolCalls: 2, maxOutputTokens: 128 },
@@ -1420,18 +1671,18 @@ describe('Ax orchestration stages', () => {
   })
 
   it('does not dispatch actions from the final available model turn', async () => {
-    const chat = vi.fn(
-      async (input: Readonly<AxChatRequest<unknown>>) => {
-        expect(synthesisInputFromRequest(input)).toBeDefined()
-        return {
-          results: [{
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      expect(synthesisInputFromRequest(input)).toBeDefined()
+      return {
+        results: [
+          {
             index: 0,
             functionCalls: [{ id: 'too-late', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }]
-          }],
-          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
-        } satisfies AxChatResponse
-      }
-    )
+          }
+        ],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+      } satisfies AxChatResponse
+    })
     const invoke = vi.fn(async () => ({ id: 1, title: 'Alpha', content: 'Alpha' }))
     const actions: AgentActionSessionProvider = {
       open: async () => ({
@@ -1566,7 +1817,10 @@ describe('Ax orchestration stages', () => {
     const text = vi.fn(async () => {})
     const validateObservation = vi.fn(async () => true)
 
-    await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(validateObservation), undefined, { decisionProviders: fixtureDecisionProviders }).execute(request, { text, event })
+    await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(validateObservation), undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+      request,
+      { text, event }
+    )
 
     expect(event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({ inputTokens: 1, outputTokens: 1, totalTokens: 2 })])
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
@@ -1580,15 +1834,206 @@ describe('Ax orchestration stages', () => {
     expect(published).toContain('[[cite:page:2:revision:rev-2]]')
   })
 
+  describe('receipt-only synthesis source obligations', () => {
+    const preference = 'Prefer concise answers.'
+    const operation = 'Remember that I prefer concise answers.'
+    const sourceQuestion = 'Explain Alpha publication requirements.'
+    const recentQuestion = 'Recap the most recently updated Wiki pages.'
+    const receiptLine = 'Memory operation changed user memory.'
+
+    const receiptFixture = async (mode: 'operation-only' | 'source' | 'source-and-recent', disclose: boolean) => {
+      const userRequest = [operation, ...(mode === 'operation-only' ? [] : [sourceQuestion]), ...(mode === 'source-and-recent' ? [recentQuestion] : [])].join(
+        ' '
+      )
+      const facets =
+        mode === 'operation-only'
+          ? []
+          : [
+              {
+                start: userRequest.indexOf(sourceQuestion),
+                end: userRequest.indexOf(sourceQuestion) + sourceQuestion.length,
+                quote: sourceQuestion,
+                coverage: 'source'
+              },
+              ...(mode === 'source-and-recent'
+                ? [
+                    {
+                      start: userRequest.indexOf(recentQuestion),
+                      end: userRequest.indexOf(recentQuestion) + recentQuestion.length,
+                      quote: recentQuestion,
+                      coverage: 'recent-window'
+                    }
+                  ]
+                : [])
+            ]
+      const input = { action: 'add', target: 'user', content: preference }
+      const output = {
+        changed: true,
+        message: 'Saved preference.',
+        target: 'user',
+        entries: [preference],
+        characters: preference.length,
+        limit: 2_200
+      }
+      const invoke = vi.fn(async () => output)
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: [
+            {
+              name: 'memory.manage',
+              title: 'Manage personal memory',
+              description: 'Save a durable user preference',
+              parameters: { type: 'object', properties: {} },
+              risk: 'reversible-write'
+            }
+          ],
+          invoke,
+          snapshot: async () => ({}),
+          close: () => {},
+          authoritySha256: null
+        })
+      }
+      const drafts: {
+        readonly claims: readonly []
+        readonly attachmentClaims: readonly []
+        readonly observations: readonly string[]
+        readonly unresolvedFacets: readonly number[]
+      }[] = []
+      const chat = vi.fn(async (request: Readonly<AxChatRequest<unknown>>): Promise<AxChatResponse> => {
+        if (synthesisInputFromRequest(request) === undefined) {
+          const tool = request.functions?.find(fn => fn.name === AGENT_TOOL_NAMES['memory.manage'])
+          if (tool === undefined) throw new Error('The memory operation must be available to the collector')
+          return {
+            results: [
+              {
+                index: 0,
+                ...(facets.length === 0 ? {} : { content: `<wiki-request-plan>${JSON.stringify({ facets })}</wiki-request-plan>` }),
+                functionCalls: [{ id: 'save-preference', type: 'function', function: { name: tool.name, params: JSON.stringify(input) } }]
+              }
+            ]
+          }
+        }
+        // The genuine engine must have projected and delivered the canonical
+        // memory result; do not inject a pre-admitted observation into the run.
+        const observations = synthesisObservationsFromRequest(request)
+        expect(observations).toEqual([receiptLine])
+        expect(synthesisSourcesFromRequest(request)).toEqual([])
+        const draft = {
+          claims: [] as const,
+          attachmentClaims: [] as const,
+          observations: [receiptLine],
+          unresolvedFacets: disclose ? facets.map((_facet, index) => index) : []
+        }
+        drafts.push(draft)
+        return { results: [{ index: 0, content: JSON.stringify(draft), finishReason: 'stop' }] }
+      })
+      const coverage = vi.fn(async (request: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+        // An exact receipt establishes the memory operation, not either
+        // independently requested content facet. Exercise the existing audit.
+        expect(mode).not.toBe('operation-only')
+        expect(disclose).toBe(false)
+        const prompt = JSON.stringify(request.chatPrompt)
+        expect(prompt).toContain(receiptLine)
+        expect(prompt).toContain(sourceQuestion)
+        if (mode === 'source-and-recent') expect(prompt).toContain(recentQuestion)
+        return {
+          results: [
+            {
+              index: 0,
+              content: JSON.stringify({
+                verdict: 'not_established',
+                feedback: 'The requested Wiki facts have no content claims and must remain unresolved; the receipt covers only the memory operation.'
+              }),
+              finishReason: 'stop'
+            }
+          ]
+        }
+      })
+      const text = vi.fn(async (_delta: string) => {})
+      const event = vi.fn(async (_type: string, _data: unknown) => {})
+      const result = await new AxAgentEngine(factoryFor(chat, { coverage }), actions, undefined, {
+        decisionProviders: fixtureDecisionProviders
+      }).execute(
+        {
+          ...baseRequest(new AbortController().signal),
+          memory: { user: [], agent: [] },
+          messages: [{ role: 'user', content: userRequest }],
+          limits: { maxTurns: 3, maxToolCalls: 1, maxOutputTokens: 512 }
+        },
+        { text, event }
+      )
+      expect(invoke).toHaveBeenCalledOnce()
+      expect(invoke).toHaveBeenCalledWith('memory.manage', input, expect.any(AbortSignal), 'save-preference')
+      expect(drafts.length).toBeGreaterThan(0)
+      expect(event.mock.calls.filter(([type]) => type === 'tool.completed')).toHaveLength(1)
+      expect(event.mock.calls.filter(([type]) => type === 'tool.failed')).toEqual([])
+      expect(coverage).toHaveBeenCalledTimes(mode !== 'operation-only' && !disclose ? drafts.length : 0)
+      expect(result.citations).toBeUndefined()
+      return { result, drafts, published: visibleWikiText(text.mock.calls.map(([delta]) => delta).join('')).trim() }
+    }
+
+    it.each(['source', 'source-and-recent'] as const)('does not let a delivered receipt hide an unanswered explicit %s obligation', async mode => {
+      const { result, drafts, published } = await receiptFixture(mode, false)
+      for (const draft of drafts)
+        expect(draft).toEqual({
+          claims: [],
+          attachmentClaims: [],
+          observations: [receiptLine],
+          unresolvedFacets: []
+        })
+      // A host may reject/repair this draft or conservatively qualify it, but
+      // neither the operation receipt nor a generic recent-window notice answers
+      // the independently declared source question.
+      expect(result.executionLimit?.reason).toBe('evidence')
+      expect(published).not.toBe(receiptLine)
+      if (published.includes(receiptLine)) {
+        expect(published).toContain(sourceQuestion)
+        expect(published).toMatch(/not established|unverified|unresolved|not verified|not supported/iu)
+      } else {
+        expect(published).toMatch(/couldn't complete a source-verified answer|cannot establish|unable/iu)
+      }
+    })
+
+    it('accepts the trusted receipt for an operation-only request without declaring its fallback source facet unresolved', async () => {
+      const { result, published } = await receiptFixture('operation-only', false)
+      expect(result.executionLimit).toBeUndefined()
+      expect(published).toBe(receiptLine)
+    })
+
+    it('retains the trusted receipt and explicit limitations for a truthfully unresolved mixed source and recent request', async () => {
+      const { result, drafts, published } = await receiptFixture('source-and-recent', true)
+      expect(drafts).toHaveLength(1)
+      expect(drafts[0]?.unresolvedFacets).toEqual([0, 1])
+      expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
+      expect(published).toContain(receiptLine)
+      expect(published).toContain(sourceQuestion)
+      expect(published).toContain(recentQuestion)
+      expect(published).toMatch(/not established/iu)
+    })
+  })
+
   it('discloses an unresolved comparison side when the first and only turn publishes sourced partial findings', async () => {
-    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => ({
-      results: [{ index: 0, content: synthesisFixtureAnswer(input, {
-        claims: [{ evidenceId: 'page:1:revision:rev-1', statement: 'Alpha requires review.' }],
-        unresolvedFacets: [0]
-      }) }]
-    }) satisfies AxChatResponse)
+    const chat = vi.fn(
+      async (input: Readonly<AxChatRequest<unknown>>) =>
+        ({
+          results: [
+            {
+              index: 0,
+              content: synthesisFixtureAnswer(input, {
+                claims: [{ evidenceId: 'page:1:revision:rev-1', statement: 'Alpha requires review.' }],
+                unresolvedFacets: [0]
+              })
+            }
+          ]
+        }) satisfies AxChatResponse
+    )
     const text = vi.fn(async () => {})
-    const result = await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(async () => true), undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+    const result = await new AxAgentEngine(
+      factoryFor(chat),
+      pageEvidenceActions(async () => true),
+      undefined,
+      { decisionProviders: fixtureDecisionProviders }
+    ).execute(
       {
         ...baseRequest(new AbortController().signal),
         messages: [{ role: 'user', content: 'Compare the publication requirements of Alpha and Beta.' }],
@@ -1596,23 +2041,25 @@ describe('Ax orchestration stages', () => {
         research: {
           packets: [],
           incompleteTasks: [],
-          evidenceSeeds: [{
-            taskId: '00000000-0000-4000-8000-000000000021',
-            subagentRunId: '00000000-0000-4000-8000-000000000031',
-            actionCallId: 'alpha-read',
-            actionName: 'pages.get',
-            output: {
-              id: 1,
-              locale: 'en',
-              path: 'alpha',
-              title: 'Alpha',
-              contentType: 'markdown',
-              sourceRevision: 'rev-1',
-              content: 'Alpha requires review.',
-              citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
-              citationSections: []
+          evidenceSeeds: [
+            {
+              taskId: '00000000-0000-4000-8000-000000000021',
+              subagentRunId: '00000000-0000-4000-8000-000000000031',
+              actionCallId: 'alpha-read',
+              actionName: 'pages.get',
+              output: {
+                id: 1,
+                locale: 'en',
+                path: 'alpha',
+                title: 'Alpha',
+                contentType: 'markdown',
+                sourceRevision: 'rev-1',
+                content: 'Alpha requires review.',
+                citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
+                citationSections: []
+              }
             }
-          }]
+          ]
         }
       },
       { text, event: async () => {} }
@@ -1661,9 +2108,12 @@ describe('Ax orchestration stages', () => {
         'table header': 'Name | Contact code\n--- | ---\nMaya Quinn | 555-0100 x42',
         'reference definition': '- Name: Maya Quinn\n  - Email: [maya@example.test][maya]'
       }
-      const record = delivery === 'missing' ? missingDependency[_dependency]! :
-        template.replace('{{padding}}', delivery === 'padded' ? ` <!--${'presentational padding '.repeat(700)}-->` : '')
-          .replace('{{title}}', delivery === 'padded' ? 'presentational padding '.repeat(700) : 'Contact')
+      const record =
+        delivery === 'missing'
+          ? missingDependency[_dependency]!
+          : template
+              .replace('{{padding}}', delivery === 'padded' ? ` <!--${'presentational padding '.repeat(700)}-->` : '')
+              .replace('{{title}}', delivery === 'padded' ? 'presentational padding '.repeat(700) : 'Contact')
       const content = `# Contacts\n\n${independentFact}\n\n${record}\n\n${'Neutral office background. '.repeat(900)}`
       const evidence = {
         id: 1,
@@ -1683,17 +2133,29 @@ describe('Ax orchestration stages', () => {
         if (offersCollectionFinish(input)) return finishCollectionResponse
         const statement = ++turn === 1 ? fact : independentFact
         const sources = synthesisSourcesFromRequest(input)
-        const source = sources.find(unit => unit.evidenceId === citation && (turn === 1 ? unit.text.includes('Maya Quinn') : unit.text.includes(independentFact)))
+        const source = sources.find(
+          unit => unit.evidenceId === citation && (turn === 1 ? unit.text.includes('Maya Quinn') : unit.text.includes(independentFact))
+        )
         return {
-          results: [{ index: 0, content: synthesisFixtureAnswer(input, {
-            claims: [{ evidenceId: citation, sourceRevision: 'rev-1', sourceRef: source?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement }],
-            unresolvedFacets: turn > 1 ? [0] : []
-          }) }]
+          results: [
+            {
+              index: 0,
+              content: synthesisFixtureAnswer(input, {
+                claims: [{ evidenceId: citation, sourceRevision: 'rev-1', sourceRef: source?.sourceRef ?? 'sAAAAAAAAAAAAAAAA', statement }],
+                unresolvedFacets: turn > 1 ? [0] : []
+              })
+            }
+          ]
         } satisfies AxChatResponse
       })
-      const result = await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(async () => true), undefined, {
-        decisionProviders: delivery === 'missing' ? rejectFixtureStatements([fact]) : fixtureDecisionProviders
-      }).execute(
+      const result = await new AxAgentEngine(
+        factoryFor(chat),
+        pageEvidenceActions(async () => true),
+        undefined,
+        {
+          decisionProviders: delivery === 'missing' ? rejectFixtureStatements([fact]) : fixtureDecisionProviders
+        }
+      ).execute(
         {
           ...baseRequest(new AbortController().signal),
           messages: [{ role: 'user', content: `Contact office lookup: what does the contact record establish about ${fact}?` }],
@@ -1716,9 +2178,7 @@ describe('Ax orchestration stages', () => {
       )
       const published = text.mock.calls.map(([delta]) => delta).join('')
       if (complete) {
-        expect(synthesisReadsFromRequest(chat.mock.calls.at(-1)![0])).toEqual([
-          expect.objectContaining({ readText: content, complete: true })
-        ])
+        expect(synthesisReadsFromRequest(chat.mock.calls.at(-1)![0])).toEqual([expect.objectContaining({ readText: content, complete: true })])
         expect(visibleWikiText(published)).toBe(visibleWikiText(answer))
         expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
         expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(-1)?.[1]).toMatchObject({ accepted: true })
@@ -1750,13 +2210,23 @@ describe('Ax orchestration stages', () => {
       const source = sources.find(read => read.evidenceId === citation && read.text.includes(unseenFact))
       if (source === undefined) throw new Error('The complete canonical child read must remain selectable')
       return {
-        results: [{ index: 0, content: synthesisFixtureAnswer(input, {
-          claims: [{ ...source, statement }],
-          unresolvedFacets: turn > 1 ? [0] : []
-        }) }]
+        results: [
+          {
+            index: 0,
+            content: synthesisFixtureAnswer(input, {
+              claims: [{ ...source, statement }],
+              unresolvedFacets: turn > 1 ? [0] : []
+            })
+          }
+        ]
       } satisfies AxChatResponse
     })
-    const result = await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(async () => true), undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+    const result = await new AxAgentEngine(
+      factoryFor(chat),
+      pageEvidenceActions(async () => true),
+      undefined,
+      { decisionProviders: fixtureDecisionProviders }
+    ).execute(
       {
         ...baseRequest(new AbortController().signal),
         currentPage: { id: 42, locale: 'en', path: 'contacts' },
@@ -1833,7 +2303,10 @@ describe('Ax orchestration stages', () => {
       }
     }
 
-    const response = await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(), undefined, { decisionProviders: fixtureDecisionProviders }).execute(request, { text, event: async () => {} })
+    const response = await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(), undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+      request,
+      { text, event: async () => {} }
+    )
     expect(response).toMatchObject({ executionLimit: { reason: 'evidence', publication: 'inability' } })
     expect(calls[0]?.chatPrompt.some(message => message.role === 'user' && message.content === 'Alpha requires review.')).toBe(false)
     expect(text.mock.calls.map(([delta]) => delta).join('')).not.toContain('Alpha requires review.')
@@ -1893,8 +2366,7 @@ describe('Ax orchestration stages', () => {
       open: async () => ({
         functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
         invoke,
-        validateObservation: async (actionName, output, signal) =>
-          !signal.aborted && actionName === 'pages.get' && ownedSnapshots.has(JSON.stringify(output)),
+        validateObservation: async (actionName, output, signal) => !signal.aborted && actionName === 'pages.get' && ownedSnapshots.has(JSON.stringify(output)),
         snapshot: async () => ({}),
         close: vi.fn(),
         authoritySha256: 'c'.repeat(64)
@@ -1933,7 +2405,7 @@ describe('Ax orchestration stages', () => {
       { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1:revision:rev-1]] Beta requires audit. [[cite:page:2:revision:rev-2]]' }] },
       { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1:revision:rev-1]] However, beta requires audit. [[cite:page:2:revision:rev-2]]' }] }
     ]
-    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => offersCollectionFinish(input) ? finishCollectionResponse : responses.shift()!)
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => (offersCollectionFinish(input) ? finishCollectionResponse : responses.shift()!))
     const event = vi.fn(async (...args: [string, unknown]) => {
       void args
     })
@@ -2010,7 +2482,12 @@ describe('Ax orchestration stages', () => {
     }
     const text = vi.fn(async () => {})
 
-    await new AxAgentEngine(factoryFor(chat), pageEvidenceActions(async () => true), undefined, { decisionProviders: fixtureDecisionProviders }).execute(request, { text, event })
+    await new AxAgentEngine(
+      factoryFor(chat),
+      pageEvidenceActions(async () => true),
+      undefined,
+      { decisionProviders: fixtureDecisionProviders }
+    ).execute(request, { text, event })
 
     expect(event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({ inputTokens: 1, outputTokens: 1, totalTokens: 2 })])
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
@@ -2186,10 +2663,9 @@ describe('Ax orchestration stages', () => {
     const reconcile = vi.fn(async () => {})
     const release = vi.fn(async () => {})
     const dispatchBudget = { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
-    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'estimated' }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
-      { ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget },
-      { text: async () => {}, event: async () => {} }
-    )
+    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'estimated' }), undefined, undefined, {
+      decisionProviders: fixtureDecisionProviders
+    }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget }, { text: async () => {}, event: async () => {} })
     const admitted = reserve.mock.calls[0]?.[0]
     expect(admitted).toBeDefined()
     const expectedAdmissionCost = admitted!.tokens * 2
@@ -2218,10 +2694,9 @@ describe('Ax orchestration stages', () => {
     const reconcile = vi.fn(async () => {})
     const release = vi.fn(async () => {})
     const dispatchBudget = { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
-    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
-      { ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget },
-      { text: async () => {}, event: async () => {} }
-    )
+    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), undefined, undefined, {
+      decisionProviders: fixtureDecisionProviders
+    }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget }, { text: async () => {}, event: async () => {} })
     const admitted = await reserve.mock.results[0]!.value
     expect(admitted).toBeDefined()
     expect(admitted.costMicros).toBeGreaterThanOrEqual(9_326)
@@ -2248,10 +2723,15 @@ describe('Ax orchestration stages', () => {
       const release = vi.fn(async () => {})
       const dispatchBudget = { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
       await expect(
-        new AxAgentEngine(factoryFor(
-          vi.fn(async () => response),
-          options
-        ), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget }, { text: async () => {}, event: async () => {} })
+        new AxAgentEngine(
+          factoryFor(
+            vi.fn(async () => response),
+            options
+          ),
+          undefined,
+          undefined,
+          { decisionProviders: fixtureDecisionProviders }
+        ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner', dispatchBudget }, { text: async () => {}, event: async () => {} })
       ).rejects.toMatchObject({ code: 'PROVIDER_USAGE_INVALID' })
       return { release, reconcile }
     }
@@ -2304,7 +2784,9 @@ describe('Ax orchestration stages', () => {
     const reconcile = vi.fn(async () => {})
     const release = vi.fn(async () => {})
     const chat = vi.fn(async () => response)
-    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), undefined, undefined, {
+      decisionProviders: fixtureDecisionProviders
+    }).execute(
       {
         ...baseRequest(new AbortController().signal),
         purpose: 'planner',
@@ -2353,7 +2835,9 @@ describe('Ax orchestration stages', () => {
     })
     const chat = vi.fn(async () => stream)
     const text = vi.fn(async () => {})
-    const execution = new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream' }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+    const execution = new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream' }), undefined, undefined, {
+      decisionProviders: fixtureDecisionProviders
+    }).execute(
       {
         ...baseRequest(new AbortController().signal),
         purpose: 'planner',
@@ -2489,7 +2973,12 @@ describe('Ax orchestration stages', () => {
     const usage = { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
     const exactResponses = chunks.map(chunk => ({ results: [{ index: 0, content: chunk }], modelUsage: usage }) satisfies AxChatResponse)
     const exactText = vi.fn(async () => {})
-    const exact = await new AxAgentEngine(factoryFor(async () => responseStream(exactResponses), { streaming: true, usage: 'stream', maxOutputTokens: 4_096 }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: exactText, event: async () => {} })
+    const exact = await new AxAgentEngine(
+      factoryFor(async () => responseStream(exactResponses), { streaming: true, usage: 'stream', maxOutputTokens: 4_096 }),
+      undefined,
+      undefined,
+      { decisionProviders: fixtureDecisionProviders }
+    ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: exactText, event: async () => {} })
     expect(exact).toMatchObject({ inputTokens: 1, outputTokens: 1, totalTokens: 2 })
     expect(exactText.mock.calls.map(([value]) => value).join('')).toBe(content)
 
@@ -2509,7 +2998,9 @@ describe('Ax orchestration stages', () => {
     const event = vi.fn(async () => {})
     const text = vi.fn(async () => {})
     await expect(
-      new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream', maxOutputTokens: 4_096 }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+      new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream', maxOutputTokens: 4_096 }), undefined, undefined, {
+        decisionProviders: fixtureDecisionProviders
+      }).execute(
         {
           ...baseRequest(new AbortController().signal),
           purpose: 'planner',
@@ -2544,10 +3035,10 @@ describe('Ax orchestration stages', () => {
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) =>
       synthesisInputFromRequest(input) === undefined
         ? collectionResponse
-        : {
+        : ({
             results: [{ index: 0, content: synthesisFixtureAnswer(input, { claims: [], unresolvedFacets: [0] }) }],
             modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 2, completionTokens: 1, totalTokens: 3 } }
-          } satisfies AxChatResponse
+          } satisfies AxChatResponse)
     )
     const invoke = vi.fn(async (_name: string, _input: unknown) => ({}))
     const actions: AgentActionSessionProvider = {
@@ -2560,7 +3051,9 @@ describe('Ax orchestration stages', () => {
       })
     }
     const event = vi.fn(async () => {})
-    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'root', limits: { maxTurns: 2, maxToolCalls: 1 } }, { text: async () => {}, event })
+    const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, {
+      decisionProviders: fixtureDecisionProviders
+    }).execute({ ...baseRequest(new AbortController().signal), purpose: 'root', limits: { maxTurns: 2, maxToolCalls: 1 } }, { text: async () => {}, event })
     expect(result).toMatchObject({ inputTokens: 3, outputTokens: 2, totalTokens: 5, executionLimit: { reason: 'evidence', publication: 'inability' } })
     expect(invoke).toHaveBeenCalledOnce()
     expect(invoke).toHaveBeenCalledWith('pages.get', argumentSmall, expect.any(AbortSignal), 'replace')
@@ -2592,17 +3085,25 @@ describe('Ax orchestration stages', () => {
     const exactChat: AgentProviderService['service']['chat'] = vi.fn(async input =>
       synthesisInputFromRequest(input) === undefined
         ? responseStream(firstStreamResponses)
-        : {
+        : ({
             results: [{ index: 0, content: synthesisFixtureAnswer(input, { claims: [], unresolvedFacets: [0] }) }],
             modelUsage: { ...usage, tokens: { promptTokens: 2, completionTokens: 1, totalTokens: 3 } }
-          } satisfies AxChatResponse
+          } satisfies AxChatResponse)
     )
     const exactEvent = vi.fn(async () => {})
-    const exact = await new AxAgentEngine(factoryFor(exactChat, {
-      streaming: true,
-      usage: 'stream',
-      maxOutputTokens: 4_096
-    }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'root', limits: { maxTurns: 2, maxToolCalls: 1 } }, { text: async () => {}, event: exactEvent })
+    const exact = await new AxAgentEngine(
+      factoryFor(exactChat, {
+        streaming: true,
+        usage: 'stream',
+        maxOutputTokens: 4_096
+      }),
+      actions,
+      undefined,
+      { decisionProviders: fixtureDecisionProviders }
+    ).execute(
+      { ...baseRequest(new AbortController().signal), purpose: 'root', limits: { maxTurns: 2, maxToolCalls: 1 } },
+      { text: async () => {}, event: exactEvent }
+    )
     expect(exact).toMatchObject({ totalTokens: 5, executionLimit: { reason: 'evidence', publication: 'inability' } })
     expect(invoke).toHaveBeenCalledOnce()
     expect(invoke).toHaveBeenCalledWith('pages.get', { x: argumentValue }, expect.any(AbortSignal), 'exact-argument')
@@ -2631,7 +3132,12 @@ describe('Ax orchestration stages', () => {
     const overflowText = vi.fn(async () => {})
     const overflowEvent = vi.fn(async () => {})
     await expect(
-      new AxAgentEngine(factoryFor(async () => overflowStream, { streaming: true, usage: 'stream', maxOutputTokens: 4_096 }), overflowActions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'root' }, { text: overflowText, event: overflowEvent })
+      new AxAgentEngine(
+        factoryFor(async () => overflowStream, { streaming: true, usage: 'stream', maxOutputTokens: 4_096 }),
+        overflowActions,
+        undefined,
+        { decisionProviders: fixtureDecisionProviders }
+      ).execute({ ...baseRequest(new AbortController().signal), purpose: 'root' }, { text: overflowText, event: overflowEvent })
     ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
     expect(cancelCalls).toBe(1)
     expect(overflowInvoke).not.toHaveBeenCalled()
@@ -2645,10 +3151,12 @@ describe('Ax orchestration stages', () => {
     type FunctionCalls = NonNullable<AxChatResponse['results'][number]['functionCalls']>
     const run = async (functionCalls: FunctionCalls) => {
       const response = { results: [{ index: 0, functionCalls }], modelUsage: usage } as unknown as AxChatResponse
-      return new AxAgentEngine(factoryFor(async () => response, { maxOutputTokens: 4_096 }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
-        { ...baseRequest(new AbortController().signal), purpose: 'planner' },
-        { text: vi.fn(async () => {}), event: vi.fn(async () => {}) }
-      )
+      return new AxAgentEngine(
+        factoryFor(async () => response, { maxOutputTokens: 4_096 }),
+        undefined,
+        undefined,
+        { decisionProviders: fixtureDecisionProviders }
+      ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: vi.fn(async () => {}), event: vi.fn(async () => {}) })
     }
     await expect(run([{ id: exactId, type: 'function', function: { name: 'wiki_get_page', params: '' } }])).rejects.toMatchObject({
       code: 'UNEXPECTED_PROVIDER_TOOL_CALL'
@@ -2691,7 +3199,12 @@ describe('Ax orchestration stages', () => {
       const reconcile = vi.fn(async () => {})
       const release = vi.fn(async () => {})
       await expect(
-        new AxAgentEngine(factoryFor(async () => response, { maxOutputTokens: 4_096 }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+        new AxAgentEngine(
+          factoryFor(async () => response, { maxOutputTokens: 4_096 }),
+          actions,
+          undefined,
+          { decisionProviders: fixtureDecisionProviders }
+        ).execute(
           {
             ...baseRequest(new AbortController().signal),
             dispatchBudget: { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
@@ -2732,10 +3245,10 @@ describe('Ax orchestration stages', () => {
       const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) =>
         synthesisInputFromRequest(input) === undefined
           ? collectionResponse
-          : {
+          : ({
               results: [{ index: 0, content: synthesisFixtureAnswer(input, { claims: [], unresolvedFacets: [0] }) }],
               modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 2, completionTokens: 1, totalTokens: 3 } }
-            } satisfies AxChatResponse
+            } satisfies AxChatResponse)
       )
       const invoke = vi.fn(async () => ({}))
       const actions: AgentActionSessionProvider = {
@@ -2748,7 +3261,9 @@ describe('Ax orchestration stages', () => {
         })
       }
       const event = vi.fn(async () => {})
-      const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'root', limits: { maxTurns: 2, maxToolCalls: 1 } }, { text: async () => {}, event })
+      const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, {
+        decisionProviders: fixtureDecisionProviders
+      }).execute({ ...baseRequest(new AbortController().signal), purpose: 'root', limits: { maxTurns: 2, maxToolCalls: 1 } }, { text: async () => {}, event })
       expect(result).toMatchObject({ totalTokens: 5, executionLimit: { reason: 'evidence', publication: 'inability' } })
       expect(invoke).toHaveBeenCalledOnce()
       expect(invoke).toHaveBeenCalledWith('pages.get', params, expect.any(AbortSignal), 'exact')
@@ -2783,7 +3298,12 @@ describe('provider fragment boundaries', () => {
       stream: ReadableStream<AxChatResponse>,
       options: { readonly preserveThoughtBlock?: AgentProviderService['preserveThoughtBlock']; readonly maxOutputTokens?: number } = {}
     ) =>
-      new AxAgentEngine(factoryFor(async () => stream, { streaming: true, usage: 'stream', maxOutputTokens: options.maxOutputTokens ?? 4_096, ...options }), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: vi.fn(async () => {}), event: vi.fn(async () => {}) })
+      new AxAgentEngine(
+        factoryFor(async () => stream, { streaming: true, usage: 'stream', maxOutputTokens: options.maxOutputTokens ?? 4_096, ...options }),
+        undefined,
+        undefined,
+        { decisionProviders: fixtureDecisionProviders }
+      ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: vi.fn(async () => {}), event: vi.fn(async () => {}) })
 
     const exactResponses = lazyStream(65_536, () => ({ results: [], modelUsage: usage }) satisfies AxChatResponse)
     await executeStream(exactResponses)
@@ -2881,21 +3401,26 @@ describe('provider fragment boundaries', () => {
       index: 0,
       thoughtBlocks: [{ data, encrypted: true, signature }]
     }))
-    await new AxAgentEngine(factoryFor(
-      async () =>
-        responseStream([
-          { results: fullBlocks, modelUsage: usage },
-          {
-            results: [{ id: 'shrink_3', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 'small' }] }],
-            modelUsage: usage
-          },
-          {
-            results: [{ id: 'shrink_new', index: 0, thoughtBlocks: [{ data: 'x'.repeat(32_662), encrypted: true, signature }] }],
-            modelUsage: usage
-          }
-        ]),
-      { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
-    ), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
+    await new AxAgentEngine(
+      factoryFor(
+        async () =>
+          responseStream([
+            { results: fullBlocks, modelUsage: usage },
+            {
+              results: [{ id: 'shrink_3', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 'small' }] }],
+              modelUsage: usage
+            },
+            {
+              results: [{ id: 'shrink_new', index: 0, thoughtBlocks: [{ data: 'x'.repeat(32_662), encrypted: true, signature }] }],
+              modelUsage: usage
+            }
+          ]),
+        { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
+      ),
+      undefined,
+      undefined,
+      { decisionProviders: fixtureDecisionProviders }
+    ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
 
     const growthBlocks = Array.from({ length: 4 }, (_, index) => ({
       id: `growth_${index}`,
@@ -2904,49 +3429,64 @@ describe('provider fragment boundaries', () => {
     }))
     let growthCancelCalls = 0
     await expect(
-      new AxAgentEngine(factoryFor(
-        async () =>
-          responseStream(
-            [
-              { results: growthBlocks, modelUsage: usage },
-              {
-                results: [{ id: 'growth_3', index: 0, thoughtBlocks: [{ data, encrypted: true, signature: `${signature}s` }] }],
-                modelUsage: usage
-              }
-            ],
-            () => (growthCancelCalls += 1)
-          ),
-        { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
-      ), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
+      new AxAgentEngine(
+        factoryFor(
+          async () =>
+            responseStream(
+              [
+                { results: growthBlocks, modelUsage: usage },
+                {
+                  results: [{ id: 'growth_3', index: 0, thoughtBlocks: [{ data, encrypted: true, signature: `${signature}s` }] }],
+                  modelUsage: usage
+                }
+              ],
+              () => (growthCancelCalls += 1)
+            ),
+          { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
+        ),
+        undefined,
+        undefined,
+        { decisionProviders: fixtureDecisionProviders }
+      ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
     ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
     expect(growthCancelCalls).toBe(1)
 
-    await new AxAgentEngine(factoryFor(
-      async () =>
-        responseStream([
-          {
-            results: [{ id: 'signature-exact', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 's'.repeat(131_039) }] }],
-            modelUsage: usage
-          }
-        ]),
-      { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
-    ), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
+    await new AxAgentEngine(
+      factoryFor(
+        async () =>
+          responseStream([
+            {
+              results: [{ id: 'signature-exact', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 's'.repeat(131_039) }] }],
+              modelUsage: usage
+            }
+          ]),
+        { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
+      ),
+      undefined,
+      undefined,
+      { decisionProviders: fixtureDecisionProviders }
+    ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
 
     let signatureCancelCalls = 0
     await expect(
-      new AxAgentEngine(factoryFor(
-        async () =>
-          responseStream(
-            [
-              {
-                results: [{ id: 'signature-next', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 's'.repeat(131_040) }] }],
-                modelUsage: usage
-              }
-            ],
-            () => (signatureCancelCalls += 1)
-          ),
-        { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
-      ), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
+      new AxAgentEngine(
+        factoryFor(
+          async () =>
+            responseStream(
+              [
+                {
+                  results: [{ id: 'signature-next', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 's'.repeat(131_040) }] }],
+                  modelUsage: usage
+                }
+              ],
+              () => (signatureCancelCalls += 1)
+            ),
+          { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
+        ),
+        undefined,
+        undefined,
+        { decisionProviders: fixtureDecisionProviders }
+      ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
     ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
     expect(signatureCancelCalls).toBe(1)
   })
@@ -2984,7 +3524,9 @@ describe('engine preflight', () => {
       messages: [{ role: 'user', content: 'x'.repeat(8_000) }],
       limits: { maxTokens: 6_000, maxTurns: 4, maxToolCalls: 8, maxOutputTokens: 2_048 }
     }
-    const engine = new AxAgentEngine(factoryFor(chat), { open } as unknown as AgentActionSessionProvider, undefined, { decisionProviders: fixtureDecisionProviders })
+    const engine = new AxAgentEngine(factoryFor(chat), { open } as unknown as AgentActionSessionProvider, undefined, {
+      decisionProviders: fixtureDecisionProviders
+    })
 
     const result = await engine.preflight(request)
 
@@ -3347,11 +3889,16 @@ describe('bounded root publication accounting', () => {
       if (final) synthesisRequests.push(input)
       else collectionRequests.push(input)
       return {
-        results: [final
-          ? { index: 0, content: synthesisFixtureAnswer(input, {
-              claims: [{ evidenceId: 'page:1:revision:rev-1', statement: 'Alpha requires review.' }]
-            }) }
-          : { index: 0, functionCalls: [{ id: 'read-alpha', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }],
+        results: [
+          final
+            ? {
+                index: 0,
+                content: synthesisFixtureAnswer(input, {
+                  claims: [{ evidenceId: 'page:1:revision:rev-1', statement: 'Alpha requires review.' }]
+                })
+              }
+            : { index: 0, functionCalls: [{ id: 'read-alpha', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }
+        ],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
       } satisfies AxChatResponse
     })
@@ -3386,7 +3933,9 @@ describe('bounded root publication accounting', () => {
       limits: { maxTurns: 3, maxToolCalls: 1, maxOutputTokens: 512 }
     }
     const admittedBudget = new PublicationBudgetLedger(120_000)
-    const admitted = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+    const admitted = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal' }), actions, undefined, {
+      decisionProviders: fixtureDecisionProviders
+    }).execute(
       { ...request, limits: { ...request.limits, maxTokens: admittedBudget.maximumTokens }, dispatchBudget: admittedBudget },
       { text: async () => {}, event: async () => {} }
     )
@@ -3408,10 +3957,9 @@ describe('bounded root publication accounting', () => {
     // adaptation must publish an explicit inability without another paid turn.
     const budget = new PublicationBudgetLedger(120_000)
     const text = vi.fn(async () => {})
-    const limited = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal', maxContextTokens: nativeRequestBytes - 1 }), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
-      { ...request, limits: { ...request.limits, maxTokens: budget.maximumTokens }, dispatchBudget: budget },
-      { text, event: async () => {} }
-    )
+    const limited = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal', maxContextTokens: nativeRequestBytes - 1 }), actions, undefined, {
+      decisionProviders: fixtureDecisionProviders
+    }).execute({ ...request, limits: { ...request.limits, maxTokens: budget.maximumTokens }, dispatchBudget: budget }, { text, event: async () => {} })
     expect(limited.contextLimit).toEqual({ reason: 'tool_result_capacity', omittedActionCallIds: ['read-alpha'] })
     expect(limited.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
     expect(limited.citations).toBeUndefined()
@@ -3455,7 +4003,8 @@ describe('bounded root publication accounting', () => {
         decideBatch: async (...args: Parameters<typeof semanticVerdicts.decideBatch>) => {
           const decision = await semanticVerdicts.decideBatch(...args)
           return {
-            ...decision, usage: nativeUsage,
+            ...decision,
+            usage: nativeUsage,
             estimatedCost: { ...decision.estimatedCost!, amount: nativeCostMicros / 1_000_000 },
             estimatedCostMicros: nativeCostMicros
           }
@@ -3473,28 +4022,32 @@ describe('bounded root publication accounting', () => {
         }
         const answer = partialAnswer ?? (outcome === 'exhausted' || (outcome === 'repaired' && attempts === 1) ? rejected : accepted)
         return {
-          results: [final
-            ? {
-                index: 0,
-                content: synthesisFixtureAnswer(input, answer),
-                ...(outcome === 'length' ? { finishReason: 'length' as const } : {})
-              }
-            : {
-                index: 0,
-                content: recentPartial
-                  ? `<wiki-request-plan>${JSON.stringify({
-                      facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'recent-window' }]
-                    })}</wiki-request-plan>`
-                  : '',
-                functionCalls: [{
-                  id: 'read-alpha',
-                  type: 'function',
-                  function: {
-                    name: recentPartial ? input.functions!.find(fn => fn.name.includes('recent'))!.name : 'wiki_get_page',
-                    params: recentPartial ? '{"limit":10}' : '{"id":1}'
-                  }
-                }]
-              }],
+          results: [
+            final
+              ? {
+                  index: 0,
+                  content: synthesisFixtureAnswer(input, answer),
+                  ...(outcome === 'length' ? { finishReason: 'length' as const } : {})
+                }
+              : {
+                  index: 0,
+                  content: recentPartial
+                    ? `<wiki-request-plan>${JSON.stringify({
+                        facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'recent-window' }]
+                      })}</wiki-request-plan>`
+                    : '',
+                  functionCalls: [
+                    {
+                      id: 'read-alpha',
+                      type: 'function',
+                      function: {
+                        name: recentPartial ? input.functions!.find(fn => fn.name.includes('recent'))!.name : 'wiki_get_page',
+                        params: recentPartial ? '{"limit":10}' : '{"id":1}'
+                      }
+                    }
+                  ]
+                }
+          ],
           modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
         } satisfies AxChatResponse
       })
@@ -3531,13 +4084,15 @@ describe('bounded root publication accounting', () => {
       })
       const actions: AgentActionSessionProvider = {
         open: async () => ({
-          functions: [{
-            name: recentPartial ? 'pages.listRecent' : 'pages.get',
-            title: recentPartial ? 'Read recent pages' : 'Read page',
-            description: recentPartial ? 'Read recent pages' : 'Read one page',
-            parameters: { type: 'object', properties: {} },
-            risk: 'read'
-          }],
+          functions: [
+            {
+              name: recentPartial ? 'pages.listRecent' : 'pages.get',
+              title: recentPartial ? 'Read recent pages' : 'Read page',
+              description: recentPartial ? 'Read recent pages' : 'Read one page',
+              parameters: { type: 'object', properties: {} },
+              risk: 'read'
+            }
+          ],
           invoke,
           validateObservation: async () => true,
           snapshot: async () => ({}),
@@ -3547,19 +4102,29 @@ describe('bounded root publication accounting', () => {
       }
       const text = vi.fn(async () => {})
       const event = vi.fn(async (_type: string, _data: unknown) => {})
-      const result = await new AxAgentEngine(factoryFor(chat, { usage: 'terminal', coverage: async () => ({
-        results: [{
-          index: 0,
-          content: JSON.stringify({
-            verdict: recentPartial ? 'incomplete' : 'complete',
-            feedback: recentPartial ? 'Alpha has no verified contribution.' : ''
-          }),
-          finishReason: 'stop'
-        }],
-        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 3, totalTokens: 12 } }
-      }) }), actions, undefined, {
-        decisionProviders
-      }).execute(
+      const result = await new AxAgentEngine(
+        factoryFor(chat, {
+          usage: 'terminal',
+          coverage: async () => ({
+            results: [
+              {
+                index: 0,
+                content: JSON.stringify({
+                  verdict: recentPartial ? 'incomplete' : 'complete',
+                  feedback: recentPartial ? 'Alpha has no verified contribution.' : ''
+                }),
+                finishReason: 'stop'
+              }
+            ],
+            modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 3, totalTokens: 12 } }
+          })
+        }),
+        actions,
+        undefined,
+        {
+          decisionProviders
+        }
+      ).execute(
         {
           ...baseRequest(new AbortController().signal),
           messages: [{ role: 'user', content: userRequest }],
@@ -3574,9 +4139,19 @@ describe('bounded root publication accounting', () => {
       expect(budget.tools).toBe(1)
       const semanticChecks = recentPartial ? 4 : outcome === 'length' ? 0 : outcome === 'first-accepted' ? 1 : 2
       const coverageChecks = recentPartial || outcome === 'first-accepted' || outcome === 'repaired' ? 1 : 0
-      expect(event.mock.calls.filter(([type, data]) => type === 'model.turn' && typeof data === 'object' && data !== null &&
-        'verification' in data && typeof data.verification === 'object' && data.verification !== null &&
-        'phase' in data.verification && data.verification.phase === 'coverage_audit')).toHaveLength(coverageChecks)
+      expect(
+        event.mock.calls.filter(
+          ([type, data]) =>
+            type === 'model.turn' &&
+            typeof data === 'object' &&
+            data !== null &&
+            'verification' in data &&
+            typeof data.verification === 'object' &&
+            data.verification !== null &&
+            'phase' in data.verification &&
+            data.verification.phase === 'coverage_audit'
+        )
+      ).toHaveLength(coverageChecks)
       expect(budget.consumedTokens).toBe(expectedTurns * 5 + semanticChecks * nativeUsage.totalTokens + coverageChecks * 12)
       expect(budget.consumedCostMicros).toBe(expectedTurns * 7 + semanticChecks * nativeCostMicros + coverageChecks * 17)
       expect(result.inputTokens).toBe(expectedTurns * 3 + semanticChecks * nativeUsage.inputTokens + coverageChecks * 7)

@@ -18,26 +18,6 @@ interface RequestLifecycleEvents {
 const hasRequestLifecycleEvents = (value: AgentSseRequest): value is AgentSseRequest & RequestLifecycleEvents =>
   typeof Reflect.get(value, 'once') === 'function' && typeof Reflect.get(value, 'off') === 'function'
 
-interface Notification {
-  readonly channel?: string
-  readonly payload?: string
-}
-
-interface NotificationConnection {
-  query(sql: string): Promise<unknown>
-  on(event: 'notification', listener: (notification: Notification) => void): void
-  removeListener(event: 'notification', listener: (notification: Notification) => void): void
-}
-
-const isNotificationConnection = (value: unknown): value is NotificationConnection => {
-  if (value === null || typeof value !== 'object') return false
-  return (
-    typeof Reflect.get(value, 'query') === 'function' &&
-    typeof Reflect.get(value, 'on') === 'function' &&
-    typeof Reflect.get(value, 'removeListener') === 'function'
-  )
-}
-
 const parseCursor = (req: AgentSseRequest): number => {
   const header = req.get('last-event-id')
   const query = req.query.after
@@ -69,34 +49,6 @@ const writeWithBackpressure = async (res: Response, value: string, signal: Abort
   return promise
 }
 
-const openNotificationListener = async (knex: Knex, runId: string, wake: () => void): Promise<() => Promise<void>> => {
-  if (knex.client.config.client !== 'pg' && knex.client.config.client !== 'postgresql') return async () => {}
-  const connection: unknown = await knex.client.acquireConnection()
-  if (!isNotificationConnection(connection)) {
-    await knex.client.releaseConnection(connection)
-    throw new AgentRepositoryError('AGENT_EVENT_LISTENER_FAILED', 'Database connection cannot receive notifications', 500)
-  }
-  const listener = (notification: Notification): void => {
-    if (notification.channel === 'wiki_agent_events' && notification.payload === runId) wake()
-  }
-  connection.on('notification', listener)
-  try {
-    await connection.query('LISTEN wiki_agent_events')
-  } catch (error) {
-    connection.removeListener('notification', listener)
-    await knex.client.releaseConnection(connection)
-    throw error
-  }
-  return async () => {
-    connection.removeListener('notification', listener)
-    try {
-      await connection.query('UNLISTEN wiki_agent_events')
-    } finally {
-      await knex.client.releaseConnection(connection)
-    }
-  }
-}
-
 export interface AgentSseLimits {
   readonly maximumConnectionsPerUser: number
   readonly reconciliationMilliseconds?: number
@@ -122,7 +74,13 @@ export const streamOwnedAgentEvents = async (
   if (currentConnections >= limits.maximumConnectionsPerUser) throw new AgentRepositoryError('SSE_CONNECTION_LIMIT', 'Too many agent event streams', 429)
   let cursor = parseCursor(req)
   if (cursor > run.eventSequence) throw new AgentRepositoryError('INVALID_EVENT_CURSOR', 'Event cursor is ahead of the run', 400)
-  const ready = AgentRunStreamReadySchema.parse({ schemaVersion: 1, ownerId, sessionId: run.sessionId, runId: run.id, replayThroughSequence: run.eventSequence })
+  const ready = AgentRunStreamReadySchema.parse({
+    schemaVersion: 1,
+    ownerId,
+    sessionId: run.sessionId,
+    runId: run.id,
+    replayThroughSequence: run.eventSequence
+  })
 
   connections.set(ownerId, currentConnections + 1)
   let closed = false
@@ -140,7 +98,6 @@ export const streamOwnedAgentEvents = async (
   let requestAbortAttached = false
   let responseCloseAttached = false
   let signalAbortAttached = false
-  let closeNotifications: () => Promise<void> = async () => {}
   try {
     if (requestLifecycle) {
       requestLifecycle.once('aborted', onClose)
@@ -153,7 +110,6 @@ export const streamOwnedAgentEvents = async (
       signalAbortAttached = true
     }
     if (limits.signal?.aborted || req.aborted || res.destroyed) onClose()
-    closeNotifications = await openNotificationListener(knex, runId, wake)
     if (closed || limits.signal?.aborted || req.aborted || res.destroyed) return
     res.status(200)
     res.set({
@@ -166,6 +122,7 @@ export const streamOwnedAgentEvents = async (
     res.flushHeaders()
     if (!(await writeWithBackpressure(res, `event: ${AGENT_RUN_STREAM_READY_EVENT}\ndata: ${canonicalJson(ready)}\n\n`, streamAbort.signal))) return
 
+    // Poll through the shared pool; idle streams must not retain database connections.
     const reconciliationMilliseconds = limits.reconciliationMilliseconds ?? 1_000
     const keepaliveMilliseconds = limits.keepaliveMilliseconds ?? 15_000
     let lastWriteAt = Date.now()
@@ -206,13 +163,9 @@ export const streamOwnedAgentEvents = async (
     if (requestAbortAttached) requestLifecycle?.off('aborted', onClose)
     if (responseCloseAttached) res.off('close', onClose)
     if (signalAbortAttached) limits.signal?.removeEventListener('abort', onClose)
-    try {
-      await closeNotifications()
-    } finally {
-      const remaining = (connections.get(ownerId) ?? 1) - 1
-      if (remaining <= 0) connections.delete(ownerId)
-      else connections.set(ownerId, remaining)
-      if (!res.destroyed && !res.writableEnded) res.end()
-    }
+    const remaining = (connections.get(ownerId) ?? 1) - 1
+    if (remaining <= 0) connections.delete(ownerId)
+    else connections.set(ownerId, remaining)
+    if (!res.destroyed && !res.writableEnded) res.end()
   }
 }

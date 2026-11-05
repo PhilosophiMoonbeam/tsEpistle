@@ -19,6 +19,7 @@ import {
   type AgentTerminalRunStatus
 } from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
+import { readAgentDispatchAccounting, type AgentDispatchAccountingState } from './dispatch-accounting.ts'
 import { readAgentUsageEvent } from './providers/usage.ts'
 import { AgentRepositoryError, validateAgentGoogleSearchGrounding } from './repository.ts'
 
@@ -692,6 +693,8 @@ export interface AdmitAgentRunInput {
   readonly ownerId: number
   readonly sessionId: string
   readonly clientRequestId: string
+  /** Stable client body proof; the admission hash remains the original authority snapshot. */
+  readonly clientPayloadSha256?: string
   readonly expectedSessionVersion: number
   readonly profileResolutionSha256: string
   readonly content: string
@@ -778,6 +781,50 @@ const admissionEnvelope = (input: AdmitAgentRunInput): string =>
     quota: input.quota
   })
 
+/**
+ * Status recovery is deliberately separate from fresh admission. Callers must
+ * lock and refresh the current principal and owned, nondeleted session first.
+ * Historical admissions do not prove the original client body (notably invoked
+ * versus selected skills), so they cannot be upgraded by guessing equality.
+ */
+export const recoverAgentRunInTransaction = async (
+  transaction: Knex.Transaction,
+  input: { readonly ownerId: number; readonly sessionId: string; readonly clientRequestId: string; readonly clientPayloadSha256: string }
+): Promise<AgentRunRecord | null> => {
+  const row = await transaction<RunRow>('agentRuns')
+    .where({ ownerId: input.ownerId, sessionId: input.sessionId, clientRequestId: input.clientRequestId })
+    .first()
+  if (!row) return null
+  const queued = await transaction('agentEvents').where({ runId: row.id, type: 'run.queued', sequence: 1 }).first('data', 'dataSha256')
+  if (!queued)
+    throw new AgentRepositoryError('RUN_REPLAY_UNAVAILABLE', 'This historical request has no client payload proof; retrieve its existing run instead.', 409)
+  if (sha256(queued.data) !== queued.dataSha256) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored queued context hash is invalid', 500)
+  let data: unknown
+  try {
+    data = JSON.parse(queued.data)
+  } catch {
+    throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored queued context is invalid', 500)
+  }
+  if (typeof data !== 'object' || data === null || Array.isArray(data) || Reflect.get(data, 'runId') !== row.id)
+    throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored queued context is invalid', 500)
+  const identity = Reflect.get(data, 'clientRequestIdentity')
+  if (identity === undefined)
+    throw new AgentRepositoryError('RUN_REPLAY_UNAVAILABLE', 'This historical request has no client payload proof; retrieve its existing run instead.', 409)
+  if (
+    typeof identity !== 'object' ||
+    identity === null ||
+    Array.isArray(identity) ||
+    Reflect.get(identity, 'version') !== 1 ||
+    typeof Reflect.get(identity, 'payloadSha256') !== 'string' ||
+    !SHA256.test(Reflect.get(identity, 'payloadSha256')) ||
+    Reflect.get(identity, 'admissionSha256') !== row.clientRequestSha256
+  )
+    throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored client request proof is invalid', 500)
+  if (Reflect.get(identity, 'payloadSha256') !== input.clientPayloadSha256)
+    throw new AgentRepositoryError('RUN_IDEMPOTENCY_MISMATCH', 'Client request ID was reused with different input', 409)
+  return runRecord(row)
+}
+
 const nextMessageOrdinal = async (transaction: Knex.Transaction, sessionId: string): Promise<number> => {
   const latest = (await transaction('agentMessages').where({ sessionId }).max('ordinal as ordinal').first()) as { ordinal: number | string | null } | undefined
   return Number(latest?.ordinal ?? 0) + 1
@@ -789,11 +836,13 @@ const queuedEventData = (
   knowledgeContext?: AgentKnowledgeContext,
   generationTools?: readonly AgentGenerationTool[],
   mediaBindings?: AgentMediaBindings,
-  presetId?: AgentPresetId
+  presetId?: AgentPresetId,
+  clientRequestIdentity?: Readonly<{ version: 1; payloadSha256: string; admissionSha256: string }>
 ): { data: string; dataSha256: string } => {
   const value: AgentEventData = {
     runId,
     status: 'queued',
+    ...(clientRequestIdentity === undefined ? {} : { clientRequestIdentity }),
     ...(presetId === undefined ? {} : { presetId }),
     ...(generationTools === undefined ? {} : { generationTools }),
     mediaBindings: mediaBindings ?? {},
@@ -812,6 +861,8 @@ export const admitAgentRunInTransaction = async (
   if (generationTools?.length && input.executionMode !== 'agent')
     throw new AgentRepositoryError('INVALID_GENERATION_TOOLS', 'This conversation mode cannot use generation tools.', 400)
   await acquireAgentCoordinatorAdvisoryLocks(transaction, [input.ownerId])
+  if (input.clientPayloadSha256 !== undefined && !SHA256.test(input.clientPayloadSha256))
+    throw new AgentRepositoryError('INVALID_CLIENT_REQUEST_IDENTITY', 'Client payload hash is invalid', 400)
   const mediaBindings = normalizeAgentMediaBindings(input.mediaBindings) ?? (await listAgentMediaBindings(transaction, input.ownerId))
   const requiredKinds = new Set<AgentMediaKind>(generationTools ?? [])
   if (input.mediaRequest) requiredKinds.add(AgentMediaKindSchema.parse(input.mediaRequest.kind))
@@ -957,7 +1008,15 @@ export const admitAgentRunInTransaction = async (
   if (input.skillVersionIds.length > 0)
     await transaction('agentRunSkills').insert(input.skillVersionIds.map((skillVersionId, ordinal) => ({ runId, skillVersionId, ordinal })))
   await reserveQuotaInTransaction(transaction, runId, input.ownerId, input.quota, input.quotaLimits, now, input.reservationExpiresAt)
-  const event = queuedEventData(runId, input.currentPage, input.knowledgeContext, input.generationTools, input.mediaBindings, input.presetId)
+  const event = queuedEventData(
+    runId,
+    input.currentPage,
+    input.knowledgeContext,
+    input.generationTools,
+    input.mediaBindings,
+    input.presetId,
+    input.clientPayloadSha256 === undefined ? undefined : { version: 1, payloadSha256: input.clientPayloadSha256, admissionSha256: inputHash }
+  )
   await transaction('agentEvents').insert({
     id: input.queuedEventId ?? randomUUID(),
     runId,
@@ -969,9 +1028,6 @@ export const admitAgentRunInTransaction = async (
     data: event.data,
     createdAt: now
   })
-  if (transaction.client.config.client === 'pg' || transaction.client.config.client === 'postgresql') {
-    await transaction.raw("SELECT pg_notify('wiki_agent_events', ?)", [runId])
-  }
   await transaction('agentSessions').where({ id: input.sessionId }).update({ lastActivityAt: now, updatedAt: now })
   return { run: runRecord(row), replayed: false }
 }
@@ -1059,7 +1115,12 @@ const assertTerminalMessageStatus = (runStatus: AgentTerminalRunStatus, messageS
   if (!valid) throw new AgentRepositoryError('INVALID_TERMINAL_MESSAGE_STATUS', 'Assistant message status is inconsistent with the terminal run', 400)
 }
 
-const persistedAgentRunUsage = async (transaction: Knex.Transaction, runId: string): Promise<ReturnType<typeof readAgentUsageEvent> | null> => {
+const persistedAgentRunUsage = async (
+  transaction: Knex.Transaction,
+  runId: string
+): Promise<(AgentDispatchAccountingState['usage'] & { readonly exposure: AgentQuotaRequest }) | null> => {
+  const journal = await readAgentDispatchAccounting(transaction, runId)
+  if (journal !== null) return { ...journal.usage, exposure: journal.exposure }
   const rows = (await transaction('agentEvents')
     .where({ runId })
     .whereIn('type', ['task.planCreated', 'model.turn', 'usage.updated'])
@@ -1098,7 +1159,7 @@ const persistedAgentRunUsage = async (transaction: Knex.Transaction, runId: stri
       costMicros = storedQuotaSum(costMicros, usage.costMicros, 'Persisted cost usage')
     }
   }
-  return { inputTokens, outputTokens, totalTokens, costMicros }
+  return { inputTokens, outputTokens, totalTokens, costMicros, exposure: { tokens: 0, costMicros: 0 } }
 }
 
 export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transaction, input: TerminalizeAgentRunInput): Promise<AgentRunRecord> => {
@@ -1126,8 +1187,14 @@ export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transac
       const pendingIntent = await readAgentRunQuotaSettlementIntent(transaction, row.id, row.ownerId)
       if (pendingIntent !== null) {
         const usage = await persistedAgentRunUsage(transaction, row.id)
-        const consumedTokens = Math.max(usage?.totalTokens ?? 0, pendingIntent.consumedTokens)
-        const consumedCostMicros = Math.max(usage?.costMicros ?? 0, pendingIntent.consumedCostMicros)
+        const consumedTokens = Math.max(
+          storedQuotaSum(usage?.totalTokens ?? 0, usage?.exposure.tokens ?? 0, 'Persisted dispatch tokens'),
+          pendingIntent.consumedTokens
+        )
+        const consumedCostMicros = Math.max(
+          storedQuotaSum(usage?.costMicros ?? 0, usage?.exposure.costMicros ?? 0, 'Persisted dispatch cost'),
+          pendingIntent.consumedCostMicros
+        )
         await reconcileAgentRunQuotaInTransaction(
           transaction,
           {
@@ -1196,7 +1263,7 @@ export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transac
     }))
   )
 
-  const persistedUsage = input.quota === undefined ? await persistedAgentRunUsage(transaction, row.id) : null
+  const persistedUsage = await persistedAgentRunUsage(transaction, row.id)
   const runPatch: Record<string, unknown> = {
     status,
     eventSequence,
@@ -1229,8 +1296,14 @@ export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transac
   if (changed !== 1) throw new AgentRepositoryError('RUN_TERMINAL_FENCE_CHANGED', 'Agent run changed during terminalization', 409)
 
   const persistedIntent = input.quota === undefined ? await readAgentRunQuotaSettlementIntent(transaction, row.id, row.ownerId) : null
-  const persistedTokens = Math.max(persistedUsage?.totalTokens ?? 0, persistedIntent?.consumedTokens ?? 0)
-  const persistedCostMicros = Math.max(persistedUsage?.costMicros ?? 0, persistedIntent?.consumedCostMicros ?? 0)
+  const persistedTokens = Math.max(
+    storedQuotaSum(persistedUsage?.totalTokens ?? 0, persistedUsage?.exposure.tokens ?? 0, 'Persisted dispatch tokens'),
+    persistedIntent?.consumedTokens ?? 0
+  )
+  const persistedCostMicros = Math.max(
+    storedQuotaSum(persistedUsage?.costMicros ?? 0, persistedUsage?.exposure.costMicros ?? 0, 'Persisted dispatch cost'),
+    persistedIntent?.consumedCostMicros ?? 0
+  )
   const quota =
     input.quota ??
     ({
@@ -1243,16 +1316,15 @@ export const terminalizeAgentRunInTransaction = async (transaction: Knex.Transac
     {
       runId: row.id,
       ownerId: row.ownerId,
-      consumedTokens: quota.consumedTokens,
-      consumedCostMicros: quota.consumedCostMicros,
-      status: quota.status,
+      consumedTokens: Math.max(quota.consumedTokens, persistedTokens),
+      consumedCostMicros: Math.max(quota.consumedCostMicros, persistedCostMicros),
+      status: persistedTokens > 0 || persistedCostMicros > 0 ? 'consumed' : quota.status,
       now
     },
     { allowMissing: input.quota === undefined, acceptAnyReconciled: input.quota === undefined, advisoryLocksHeld: true }
   )
   if (row.mediaRequest && JSON.parse(row.mediaRequest).kind === 'transcription')
     await transaction('agentMedia').where({ runId: row.id, ownerId: row.ownerId }).delete()
-  if (isPostgres(transaction)) await transaction.raw("SELECT pg_notify('wiki_agent_events', ?)", [row.id])
   return runRecord({ ...row, ...runPatch, status, eventSequence } as RunRow)
 }
 

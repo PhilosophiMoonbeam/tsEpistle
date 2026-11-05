@@ -718,6 +718,7 @@ export const AGENT_EVENT_TYPES = [
   'approval.requested',
   'approval.resolved',
   'usage.updated',
+  'dispatch.accounting',
   'media.usage',
   'run.completed',
   'run.partial',
