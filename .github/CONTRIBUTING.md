@@ -23,6 +23,8 @@ When auditing existing tests, trace each candidate to its supported behavior, ca
 
 UI layout and paint claims need a native normal-application browser flow; compiled template/style spelling and copied DOM geometry are not runtime proof. Exercise admission and authorization through current repository/runtime or HTTP consumers. For the four-attachment boundary, prove that both Attach and the actual file input disable at four ready uploads, then re-enable after deleting exactly one selected attachment. Retire an unsupported private helper and its exclusive tests together, while preserving independently live callers, server endpoints, and their behavioral coverage.
 
+When canonical model reads gain required columns, update hand-built PostgreSQL fixtures alongside them. Repair fixture/schema drift rather than narrowing production reads or weakening behavioral assertions.
+
 Native cadence checks measure from the executed timer's registration origin, not a MutationObserver callback delivered after the mounting task. Preserve the 9–18 second toolbar cadence and hover-resume bounds; an actual early-animation negative control must still fail those bounds.
 
 Properties-dialog regressions compile the owner's actual invocation instead of copying Vuetify props. Event transports exercise channel isolation and selected-listener removal while retaining siblings. Service-key issuance uses genuine signing credentials and token verification, so stale runtime keys, invalid grants, and expiration failures cannot hide behind a mocked token.

@@ -55,6 +55,7 @@ suite('PostgreSQL protection search withdrawal', () => {
       CREATE TABLE assets (id integer PRIMARY KEY, hash text NOT NULL);
       CREATE TABLE pages (
         id integer PRIMARY KEY, "sourceRevision" bigint NOT NULL, "renderedSourceRevision" bigint,
+        "changeReason" varchar(200),
         path text NOT NULL, hash text NOT NULL DEFAULT '', "localeCode" varchar(35) NOT NULL,
         title text NOT NULL, description text NOT NULL DEFAULT '', content text NOT NULL DEFAULT '',
         render text NOT NULL DEFAULT '', toc jsonb NOT NULL DEFAULT '[]'::jsonb,
