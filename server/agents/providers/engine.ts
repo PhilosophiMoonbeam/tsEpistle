@@ -3215,7 +3215,7 @@ const assessDraft = (
       if (!group.evidenceIds.some(evidenceId => seenCitationIds.has(evidenceId)))
         issues.push(`The final answer does not cite validated evidence for research task ${group.title}.`)
     }
-    if (!pendingSemanticSupport && (nativeDraft?.allRequestFacetsUnresolved !== true || nativeDraft?.requireRecentCoverage === true)) {
+    if (!pendingSemanticSupport && nativeDraft?.allRequestFacetsUnresolved !== true) {
       for (const group of coverage.recentGroups) {
         const missing = group.evidenceIds.filter(evidenceId => !claims.some(claim => claim.pageEvidenceId === evidenceId && claim.supported))
         if (missing.length > 0) issues.push(`The final answer does not cite every page returned by pages.listRecent: ${missing.join(', ')}.`)
@@ -3540,8 +3540,6 @@ const subagentEvidenceCorrection = (issues: readonly string[], hasEvidenceConfli
 interface NativeDraft {
   readonly answer: WikiSynthesisAnswer
   readonly allRequestFacetsUnresolved: boolean
-  /** Trusted CatchUp rows still get their one bounded repair despite model uncertainty. */
-  readonly requireRecentCoverage?: boolean
   readonly inputMediaSources?: readonly WikiSynthesisInputMedia[]
   readonly evidence: ReadonlyMap<string, CitationEvidence>
   readonly authorizeSourceInputs: AgentSourceAuthorizer
@@ -6776,8 +6774,8 @@ export class AxAgentEngine implements AgentEngine {
         /^Proposal: [0-9a-f-]{36}; result hash: [0-9a-f]{64}\.$/iu.test(line) ||
         /^Wiki proposal [0-9a-f-]{36} status: (?:denied|expired|cancelled)\.$/iu.test(line)
     )
-    const catchUpOrder = request.presetId === 'catch-up' && (request.purpose ?? 'root') === 'root'
-      ? new Map((input.coverage?.recentGroups ?? []).flatMap(group => group.evidenceIds).map((id, index) => [id, index]))
+    const recentOrder = (input.coverage?.recentGroups.length ?? 0) > 0
+      ? new Map(input.coverage!.recentGroups.flatMap(group => group.evidenceIds).map((id, index) => [id, index]))
       : undefined
     const program = createWikiSynthesisProgram(sources, {
       structured,
@@ -6805,8 +6803,8 @@ export class AxAgentEngine implements AgentEngine {
           rejection = 'Canonical synthesis output exceeded its provider content byte limit.'
           return rejection
         }
-        if (catchUpOrder !== undefined) {
-          answer.claims.sort((left, right) => (catchUpOrder.get(left.evidenceId) ?? Number.MAX_SAFE_INTEGER) - (catchUpOrder.get(right.evidenceId) ?? Number.MAX_SAFE_INTEGER))
+        if (recentOrder !== undefined) {
+          answer.claims.sort((left, right) => (recentOrder.get(left.evidenceId) ?? Number.MAX_SAFE_INTEGER) - (recentOrder.get(right.evidenceId) ?? Number.MAX_SAFE_INTEGER))
           content = renderWikiSynthesisAnswer(answer)
         }
         rendered = content
@@ -6815,7 +6813,6 @@ export class AxAgentEngine implements AgentEngine {
         nativeDraft = {
           answer,
           allRequestFacetsUnresolved: input.requestFacets.length > 0 && answer.unresolvedFacets.length === input.requestFacets.length,
-          requireRecentCoverage: catchUpOrder !== undefined && input.reserveRepair,
           inputMediaSources,
           evidence: sourceEvidence,
           authorizeSourceInputs: input.authorizeEvidence,
@@ -7644,7 +7641,6 @@ export class AxAgentEngine implements AgentEngine {
       const retrievals: RetrievalTrace[] = []
       const recentGroups: RecentEvidenceCoverage[] = []
       const recentWindows: RecentEvidenceCoverage[] = []
-      const catchUp = request.presetId === 'catch-up' && (request.purpose ?? 'root') === 'root'
       // Navigation hints and model-planned tasks describe the request; only action
       // admission and fresh read receipts confer authority. Keep this plan run-local.
       const contextPlan = {
@@ -7673,10 +7669,6 @@ export class AxAgentEngine implements AgentEngine {
           ...(request.research?.incompleteTasks.map(() => ({ state: 'unavailable' as const, evidenceIds: [] as readonly string[] })) ?? [])
         ],
         reservations: { maxTurns, maxToolCalls, maxTokens }
-      }
-      if (catchUp && contextPlan.intent.length > 0) {
-        contextPlan.requestFacets = [{ start: 0, end: contextPlan.intent.length, quote: contextPlan.intent, coverage: 'recent-window' }]
-        contextPlan.explicitContentFacets = true
       }
       if (contextPlan.facets.length === 0) contextPlan.facets.push({ state: 'unread', evidenceIds: [] })
       const excludedEvidenceIds = new Set<string>()
@@ -8057,12 +8049,7 @@ export class AxAgentEngine implements AgentEngine {
         expectedVersionId?: number | null,
         providerCallId = actionCallId
       ): PageEvidenceCollection => {
-        const collected = collectPageEvidence(actionName, actionCallId, output, citationRegistry, retrievals, expectedVersionId, providerCallId)
-        const window = collected.recent
-        const collection = catchUp && window !== null
-          ? { ...collected, recent: { ...window, windowComplete: window.windowComplete &&
-            (window.returnedCount === 10 || (window.returnedCount < 10 && window.exhausted === true)) } }
-          : collected
+        const collection = collectPageEvidence(actionName, actionCallId, output, citationRegistry, retrievals, expectedVersionId, providerCallId)
         for (const evidenceId of collection.conflictingEvidenceIds) evidenceConflictIds.add(evidenceId)
         for (const evidence of citationRegistry.values()) {
           if (evidenceConflictIds.has(evidence.citation.evidenceId)) continue
@@ -9345,7 +9332,7 @@ export class AxAgentEngine implements AgentEngine {
         } finally {
           if (sequence !== finalizationSequence) await sequence?.close()
         }
-        if (turn === 0 && result.rootRequestPlan !== undefined && !catchUp) {
+        if (turn === 0 && result.rootRequestPlan !== undefined) {
           contextPlan.requestFacets = result.rootRequestPlan
           contextPlan.explicitContentFacets = true
         }
@@ -10735,6 +10722,10 @@ export class AxAgentEngine implements AgentEngine {
             if (cached === undefined && resolved.name === 'memory.manage') completedMemoryOutput = output
             if (finishIndex !== -1 && delivered && evidenceCollection.conflictingEvidenceIds.length === 0) {
               const sourceActionCallId = cached?.actionCallId ?? actionCallId
+              const allowBoundedRecentFinish = evidenceCollection.recent?.windowComplete === true &&
+                contextPlan.requestFacets !== undefined &&
+                contextPlan.requestFacets.length > 0 &&
+                contextPlan.requestFacets.every(facet => facet.coverage === 'recent-window')
               let completeReads = 0
               for (const evidence of citationRegistry.values()) {
                 if (excludedEvidenceIds.has(evidence.citation.evidenceId)) continue
@@ -10747,7 +10738,7 @@ export class AxAgentEngine implements AgentEngine {
                       representation.sourceUnits.some(unit => unit.complete) &&
                       (representation.binding.representation !== 'recent-excerpt' ||
                         metadataRecord(representation.binding.representationMetadata)?.contentTruncated === false ||
-                        (catchUp && evidenceCollection.recent?.windowComplete === true)) &&
+                        (allowBoundedRecentFinish && evidenceCollection.recent?.evidenceIds.includes(evidence.citation.evidenceId) === true)) &&
                       representation.deliveries.some(
                         delivery =>
                           delivery.actionCallId === sourceActionCallId &&
