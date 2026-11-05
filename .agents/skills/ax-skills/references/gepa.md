@@ -1,6 +1,6 @@
 # GEPA and Pareto optimization
 
-Source API snapshot: `@ax-llm/ax` 25.4.5. Use for `AxGEPA`, global `optimize(...)`, reflective prompt evolution, multi-objective/Pareto tuning, `validationExamples`, `maxMetricCalls`, and generator/flow/agent-tree optimization. Prefer global `optimize(...)`; use direct `AxGEPA` or `AxBootstrapFewShot` only for low-level control. Agent wrapper tuning belongs in [agent optimization](references/agent-optimize.md); inference-time `bestOfN`/`refine` belongs in [refinement](references/refine.md); evolving context knowledge belongs in [playbooks](references/playbook.md).
+Source API snapshot: `@ax-llm/ax` 25.4.8. Use for `AxGEPA`, global `optimize(...)`, reflective prompt evolution, multi-objective/Pareto tuning, `validationExamples`, `maxMetricCalls`, and generator/flow/agent-tree optimization. Prefer global `optimize(...)`; use direct `AxGEPA` or `AxBootstrapFewShot` only for low-level control. Agent wrapper tuning belongs in [agent optimization](references/agent-optimize.md); inference-time `bestOfN`/`refine` belongs in [refinement](references/refine.md); evolving context knowledge belongs in [playbooks](references/playbook.md).
 
 ## Execution and selection contract
 
@@ -9,9 +9,19 @@ Source API snapshot: `@ax-llm/ax` 25.4.5. Use for `AxGEPA`, global `optimize(...
 - GEPA edits generic string components from `getOptimizableComponents()`; a tree exposing none fails. Register child programs under the root. Selection uses measured component accept/reject history, not LLM-generated numeric scores: the teacher proposes text, metrics decide acceptance.
 - For small starter sets, global `optimize(...)` defaults to `AxBootstrapFewShot -> AxGEPA`, retaining demos in `result.optimizedProgram.demos`. Direct `AxGEPA` has its own `bootstrap` option instead.
 - Always keep `train` and held-out `validationExamples` distinct; do not reuse training examples for selection. Pass a holdout when available.
-- Set `maxMetricCalls` for a strict cost bound (global default `100`); it must cover the initial full validation pass plus several rounds. For expensive trees start with `auto: 'light'` or fewer `numTrials`, then scale up.
+- Set `maxMetricCalls` for a strict cost bound. Global `optimize(...)` uses at least `100` implicitly, increasing it only to fit mandatory validation passes; it never raises an explicit limit. Direct `AxGEPA.compile()` requires a positive limit. Reserve validation plus evolution rounds; for expensive trees start with `auto: 'light'` or fewer `numTrials`, then scale up.
 - `result.optimizedProgram` is the best easy-to-apply candidate; `result.paretoFront` is the complete multi-objective trade-off set. Apply with `program.applyOptimization(result.optimizedProgram!)`, not only `setInstruction(...)`.
 - Function/tool trace reflection uses stable component IDs where available; function renames do not break saved candidate maps.
+
+### Baseline and bootstrap budgets
+
+`result.baselineScore` and `result.baselineScores` measure the original program, including caller-supplied demos, before this run changes demos or components. Both global `optimize(...)` and direct `AxGEPA.compile()` measure it before bootstrap.
+
+Baseline and final selection use the same validation subset (including GEPA's size cap), student model, `sampleCount`, metric or adapter, and scalarization. `baselineScores` holds averaged objective values; scalar metrics use `{ score: value }`. `baselineScore` scalarizes that average vector, just like `bestScore`. A dominated seed may disappear from `paretoFront` without removing the baseline metadata.
+
+When bootstrap adds demos, budget two validation passes: original baseline and demo-seeded program. Both count against GEPA's `maxMetricCalls`. Without new demos, GEPA reuses the baseline evaluation without extra model calls. Bootstrap demo generation has its own budget/options; `stats.totalCalls` includes both bootstrap and GEPA evaluations, so it can exceed `maxMetricCalls`.
+
+Bootstrap collects only fresh traces from the current training run. A conditional child last called during baseline validation must not contribute its stale held-out trace as a demo.
 
 ## Metrics and judge boundaries
 
@@ -45,12 +55,12 @@ import { ai, ax, optimize, AxAIOpenAIModel } from '@ax-llm/ax';
 const student = ai({
   name: 'openai',
   apiKey: process.env.OPENAI_APIKEY!,
-  config: { model: AxAIOpenAIModel.GPT54Mini },
+  config: { model: AxAIOpenAIModel.GPT56Luna },
 });
 const teacher = ai({
   name: 'openai',
   apiKey: process.env.OPENAI_APIKEY!,
-  config: { model: AxAIOpenAIModel.GPT54 },
+  config: { model: AxAIOpenAIModel.GPT56 },
 });
 const classifier = ax(
   'emailText:string -> priority:class "high, normal, low", rationale:string'
@@ -77,7 +87,13 @@ const result = await optimize(classifier, train, metric, {
   maxMetricCalls: 120,
 });
 classifier.applyOptimization(result.optimizedProgram!);
-console.log(result.bestScore);
+console.log({
+  baseline: result.baselineScore,
+  optimized: result.bestScore,
+  delta: result.baselineScore === undefined
+    ? undefined
+    : result.bestScore - result.baselineScore,
+});
 ```
 
 ## Pareto flow example
@@ -182,9 +198,11 @@ const loaded = JSON.parse(saved);
 program.applyOptimization(loaded);
 ```
 
+Baseline fields are result metadata, not part of the optimized artifact. Save `baselineScore` and `baselineScores` separately alongside serialized artifacts for experiment comparisons. These fields are optional on the shared result type; other optimizers may omit them.
+
 ## Failure diagnosis
 
-- Budget-too-small error: increase `maxMetricCalls` until the initial validation pass fits.
+- Budget-too-small error: increase `maxMetricCalls` until required validation passes fit (two when bootstrap adds demos); explicit limits are never raised.
 - Components never change: each failed teacher call emits `gepa_teacher` through the optimizer `logger` (default: student AI logger); `verbose: false` silences it. Check expensive-teacher permission.
 - Empty/poor Pareto front: ensure metrics return numbers for every example.
 - No tree effect: register children and expose optimizable components.

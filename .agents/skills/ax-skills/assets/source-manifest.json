@@ -3,11 +3,11 @@
   "source_root": ".agents/skills/ax-llm",
   "upstream": {
     "package": "@ax-llm/ax",
-    "version": "25.4.5",
-    "git_commit": "288505e1b3b6dc686cb781fcc64fb7f5fd3da22e",
+    "version": "25.4.8",
+    "git_commit": "686f8ba96cf652e044cf922b67c16c8f09754a70",
     "index_url": "https://ax-llm.github.io/ax/typescript/.well-known/agent-skills/index.json",
     "archive_url": "https://ax-llm.github.io/ax/typescript/.well-known/agent-skills/ax-llm/skill.tar.gz",
-    "archive_sha256": "c231b34d518eb17892d8a5e0415c1070059bbd77862ba94bb4c3f4e53ee30fa7"
+    "archive_sha256": "d9370e5ff179b72e70cabae56ad070bcb821c55aca477309a08bceda9dfe90d9"
   },
   "sources": [
     {
@@ -16,7 +16,7 @@
         "SKILL.md",
         "references/llm.md"
       ],
-      "sha256": "2fa79edd88d32a1a48c974803f31735fd26b1cff146a11ad03a759e85acaaf12",
+      "sha256": "7e02f2b928e62c4a154f48a3ca62a585527ed329b05cfb1285a339409e5ccbba",
       "original_bytes": 3359,
       "original_lines": 54
     },
@@ -79,9 +79,9 @@
       "destinations": [
         "references/ai.md"
       ],
-      "sha256": "e10929509ce9e63324c58b77b5ae82a0f39f9eb6579b8139e08b9d503a4fc0f0",
-      "original_bytes": 64428,
-      "original_lines": 1250
+      "sha256": "0351a8c775b65927367365313b16970a48ea1637b1bd9623efc688fe0ef1123e",
+      "original_bytes": 65238,
+      "original_lines": 1261
     },
     {
       "source": ".agents/skills/ax-llm/references/ax-audio.md",
@@ -115,18 +115,18 @@
       "destinations": [
         "references/gen.md"
       ],
-      "sha256": "abf16f94ef7ffad41a4821b37d000142de33b94a001d1687191a0c69707824f1",
-      "original_bytes": 29990,
-      "original_lines": 639
+      "sha256": "6dba2c8c5cce27310f35b47cd46fa706adb76425dfc35b6ca130ed358c3764c0",
+      "original_bytes": 30208,
+      "original_lines": 640
     },
     {
       "source": ".agents/skills/ax-llm/references/ax-gepa.md",
       "destinations": [
         "references/gepa.md"
       ],
-      "sha256": "b1cc9064607aa63c113a0a6dd698f31f57701b7082ea1709f0466a9d65ad4f9c",
-      "original_bytes": 10693,
-      "original_lines": 260
+      "sha256": "6894b7b572186f2e76784979940852903aaebffdb471648129f42d012d565440",
+      "original_bytes": 12368,
+      "original_lines": 271
     },
     {
       "source": ".agents/skills/ax-llm/references/ax-mcp.md",

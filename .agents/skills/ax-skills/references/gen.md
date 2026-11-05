@@ -1,6 +1,6 @@
 # AxGen execution, streaming, and validation
 
-Use for `ax()`, `AxGen`, `forward()`, `streamingForward()`, structured outputs, assertions, processors, hooks, and self-tuning. Source snapshot: Ax 25.4.5. Prefer short, modern, copyable code; add tutorial prose only when requested. Use [signature reference](references/signature.md) for field contracts, [AI reference](references/ai.md) for providers, [refine reference](references/refine.md) for reward-scored selection, [MCP reference](references/mcp.md) for MCP construction/transports/prompts/resources/tools/tasks/subscriptions/authentication/events, and [event runtime reference](references/event-runtime.md) for wake/resume routing.
+Use for `ax()`, `AxGen`, `forward()`, `streamingForward()`, structured outputs, assertions, processors, hooks, and self-tuning. Source snapshot: Ax 25.4.8. Prefer short, modern, copyable code; add tutorial prose only when requested. Use [signature reference](references/signature.md) for field contracts, [AI reference](references/ai.md) for providers, [refine reference](references/refine.md) for reward-scored selection, [MCP reference](references/mcp.md) for MCP construction/transports/prompts/resources/tools/tasks/subscriptions/authentication/events, and [event runtime reference](references/event-runtime.md) for wake/resume routing.
 
 ## Construction and execution defaults
 
@@ -226,6 +226,8 @@ const result = await gen.forward(llm, { question: '...' }, {
 - Forced `'required'` / named calls apply only on the first step. Subsequent steps remove the force and tools to allow an answer. In the `function` structured-output rung, the forced step omits `__axOutput` so forcing reaches a user tool.
 - `stopFunction` accepts string or string[]; matching calls halt multi-step without an answer. Output retains every step's thought, including the stop step, streamed or not.
 - Otherwise continue until outputs are filled or `maxSteps` is reached.
+- In TypeScript AxGen, an unknown function name receives a result for its own call ID with `isError: true` and the available registered names. Valid sibling calls run normally and their completed results remain in history; every call ID in that batch is answered before the next model request, allowing correction on the next step without discarding successful results. This applies to `forward()` and `streamingForward()`.
+- Unknown-name recovery does not swallow arbitrary validation/runtime failures or authorize replaying completed effects. Unexpected handler errors still fail the run; application code owns authorization, idempotency and replay policy. This is not an agent/RLM or generated-port parity guarantee; [PR 878](https://github.com/ax-llm/ax/pull/878) explicitly leaves generated ports on the old raise-and-retry behavior until ported.
 
 ## Response/context caching and sampling
 
@@ -364,6 +366,7 @@ try {
 - `AxGenerateError.details` contains `model`, `signature`.
 - Failed forwards use `Generate failed: <reason>` with wrapped error as `cause`. Exhausted validation/assertion/refusal retries use `Generate failed: Unable to fix validation error: <last error>`, ending with `LLM Output:` and last-attempt answers (samples joined with `---`).
 - Token-limit truncation fails with `Generate failed: Max tokens reached before completion`, streamed or not.
+- A refusal retry removes the refused assistant turn and resends from the same user or function-result message, including when refusal follows already-streamed partial content. This request-history cleanup does not undo text already presented to the caller; apply the streaming version-reset rules.
 - Wrapping follows type, not message: `ValidationError` / `AxAssertionError` outside retries surface unchanged; other failures wrap regardless of message.
 - `stop()` / `abortSignal` cancellation throws `AxAIServiceAbortedError`.
 - Constructor/call `strictMode: true` requires the answer to start with its first required field's label. Unlabeled answers retry with correction instead of being treated as single-field answers; call value wins.

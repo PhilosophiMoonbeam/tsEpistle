@@ -1,6 +1,6 @@
 # Core AxAgent Construction and Runtime Contracts
 
-Use for `agent(...)`, ordinary tool-using assistants, identity, child delegation, namespaced functions, discovery, `bubbleErrors`, host-side completion, clarification, and public run/state APIs. Generate the smallest correct factory-based shape and copyable code; do not add tutorial prose unless requested. Source API snapshot: `@ax-llm/ax` 25.4.5.
+Use for `agent(...)`, ordinary tool-using assistants, identity, child delegation, namespaced functions, discovery, `bubbleErrors`, host-side completion, clarification, and public run/state APIs. Generate the smallest correct factory-based shape and copyable code; do not add tutorial prose unless requested. Source API snapshot: `@ax-llm/ax` 25.4.8.
 
 ## Choose the Agent Shape
 
@@ -391,6 +391,8 @@ const myAgent = agent('query:string -> answer:string', {
 - Matching errors from handlers, actor execution, or `llmQuery(...)` sub-queries bypass actor-loop catches and propagate immediately to `.forward()`.
 - Do not list expected recoverable tool errors; let the actor handle `[ERROR] ...`.
 - `AxAgentClarificationError` and `AxAIServiceAbortedError` always bubble unconditionally.
+
+**Go release boundary (25.4.6):** agent `Forward` and `StreamingForward` preserve the concrete `AxGenerateError` and nested provider causes through generation and agent error conversions. Use `errors.As` for `AxGenerateError` / `AxError` and `errors.Unwrap` for the cause chain; provider status, code, retryability, response payload, URL, and request body remain available. This fixes error identity and metadata preservation, not `bubbleErrors` policy or a cross-language parity claim. See [PR #866's Go error boundary](https://github.com/ax-llm/ax/blob/a2780f9a10acf6576765092153c7604babf277c3/tools/axir/internal/axir/templates/go/goRuntime.go.txt).
 
 ## Discovery Mode
 

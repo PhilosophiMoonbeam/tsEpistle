@@ -1,6 +1,6 @@
 # Native MCP integration with Ax
 
-Use for `AxMCPClient`, transports, catalogs, tools/prompts/resources, tasks, subscriptions, host requests, authentication/OAuth, MCP Apps, replay, and native integration with Gen, Agent, Flow, chat, optimization, and event runtimes. Source API snapshot: 25.4.5. MCP is a live protocol client, not a function-conversion utility: preserve client/session ownership, catalogs, raw content, tasks, notifications, identity policy, and cancellation context.
+Use for `AxMCPClient`, transports, catalogs, tools/prompts/resources, tasks, subscriptions, host requests, authentication/OAuth, MCP Apps, replay, and native integration with Gen, Agent, Flow, chat, optimization, and event runtimes. Source API snapshot: 25.4.8. MCP is a live protocol client, not a function-conversion utility: preserve client/session ownership, catalogs, raw content, tasks, notifications, identity policy, and cancellation context.
 
 ## Integration and safety rules
 
@@ -75,6 +75,8 @@ const local = new AxMCPClient(stdio, { namespace: 'local' });
 ```
 
 Stdio owns its child process. After `local.close()`, also call `stdio.terminate()` until the transport directly exposes the common `close()` lifecycle.
+
+On Windows, the Node-hosted stdio transport resolves commands such as `npx` using the effective child environment (`PATH`, `PATHEXT`, `ComSpec`). Batch files such as `.cmd` launch through `cmd.exe` with argument escaping; native `.exe` / `.com` programs spawn directly. This 25.4.7 fix belongs to the separate Node tools transport, not portable AxIR clients; see [PR 870](https://github.com/ax-llm/ax/pull/870). Windows execution was not qualified by this collection's Linux checks.
 
 ## Gen, Agent, Flow, and chat
 

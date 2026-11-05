@@ -1,6 +1,6 @@
 # AxAgent Optimization and Evaluation
 
-Use for `agent.optimize(...)`, task datasets, judge options, optimization targets, evaluation semantics, delegation tuning, and saved `optimizedProgram` artifacts in `@ax-llm/ax`. Source API snapshot: 25.4.5. Configure a runnable agent first; see [agent authoring](references/agent.md). Generic `ax(...)`/`flow(...)` tuning with top-level `optimize(program, train, metric, options)` belongs in [GEPA](references/gepa.md), not this agent workflow. Keep examples short and copyable; repeat general agent guidance only when needed.
+Use for `agent.optimize(...)`, task datasets, judge options, optimization targets, evaluation semantics, delegation tuning, and saved `optimizedProgram` artifacts in `@ax-llm/ax`. Source API snapshot: 25.4.8. Configure a runnable agent first; see [agent authoring](references/agent.md). Generic `ax(...)`/`flow(...)` tuning with top-level `optimize(program, train, metric, options)` belongs in [GEPA](references/gepa.md), not this agent workflow. Keep examples short and copyable; repeat general agent guidance only when needed.
 
 ## Defaults and target selection
 

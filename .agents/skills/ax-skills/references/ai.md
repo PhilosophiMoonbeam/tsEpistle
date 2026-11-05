@@ -1,6 +1,6 @@
 # AI providers, models, and runtime configuration
 
-Use for `ai()`, deployment profiles, model catalogs/presets, routing and balancing, embeddings, thinking, service tiers, caching, cancellation, and provider-specific request contracts. Prefer short copyable code, not tutorial prose unless requested. Source API snapshot: 25.4.5. Audio task-specific detail belongs in [audio](references/audio.md); signature design in [signatures](references/signature.md); agent/runtime design is outside this reference.
+Use for `ai()`, deployment profiles, model catalogs/presets, routing and balancing, embeddings, thinking, service tiers, caching, cancellation, and provider-specific request contracts. Prefer short copyable code, not tutorial prose unless requested. Source API snapshot: 25.4.8. Audio task-specific detail belongs in [audio](references/audio.md); signature design in [signatures](references/signature.md); agent/runtime design is outside this reference.
 
 ## Factory and deployment profiles
 
@@ -29,6 +29,8 @@ const grok = ai({ name: 'grok', apiKey: 'your-key' });
 Use `axAIProfiles()` to discover the complete named catalog and `axGetAIProfile(name)` to inspect endpoint requirements, authentication, operations, capabilities, model rules, sources, and review dates. Use `name: 'openai-compatible'` plus `apiURL` for an unlisted custom endpoint; unknown names are errors.
 
 Profile-only branded classes were removed in the major-version migration. Use `ai({ name: ... })` for Azure OpenAI, Cohere, DeepSeek, DeepSeek Responses, Mistral, Reka, and Grok. Retained low-level classes represent genuine transports/runtimes only; legacy model enum and catalog exports remain usable.
+
+For Bedrock GPT deployments, choose the transport before selecting tools or structured output: the `amazon-bedrock` Chat Completions profile, OpenAI Responses routes, and native AWS `Converse` have different contracts. See [AWS Bedrock](#aws-bedrock) for verified model IDs, native schemas, reasoning/tool constraints, and service tiers.
 
 Use `ai()` for standard providers, never `new AxAIOpenAI(...)` or hardcoded branded constructors. `axAIProfiles()` is authoritative for names: `openai`, `openai-compatible`, `openai-responses`, `anthropic`, `google-gemini`, `azure-openai`, `deepseek`, `meta`, `meta-chat`, `meta-messages`, `mistral`, `cohere`, `grok`, routers `together`, `openrouter`, `orcarouter`, hosted inference profiles, and configurable local runtimes. Azure requires both `resourceName` and `deploymentName`. Do not mix `thinkingTokenBudget` with explicit `temperature` on Anthropic thinking models: adaptive models omit `temperature`, `topP`, and `topK`; older thinking models ignore `temperature` and `topK`, and send `topP` only at >= 0.95. See the detailed sampling rules below for the source's explicit-value exceptions. Do not invent Meta image, file, model-listing, or response-lifecycle methods: Muse Image uses `chat()`, Voice uses `transcribe()` or realtime `chat()`, and inline data/URLs use normal chat content.
 
@@ -693,7 +695,7 @@ Ax registry keys are content-based and are not account-scoped. Require a stable 
 
 ## AWS Bedrock
 
-Use the `amazon-bedrock` profile for Bedrock's OpenAI-compatible Mantle endpoint. Supply the account/region-specific OpenAI base URL and a Bedrock API key explicitly:
+Use the `amazon-bedrock` profile for Bedrock's OpenAI Chat Completions deployment, including Mantle. Supply the account/region-specific OpenAI base URL and a Bedrock API key explicitly:
 
 ```typescript
 const bedrock = ai({
@@ -703,6 +705,17 @@ const bedrock = ai({
   config: { model: process.env.BEDROCK_MODEL_ID! },
 });
 ```
+
+On this profile, 25.4.6 verifies native JSON Schema and mapped `thinkingTokenBudget` support for these Bedrock IDs, including geographic prefixes such as `us.` and `global.`:
+
+| Models / IDs | Reasoning and function tools on `amazon-bedrock` |
+| --- | --- |
+| GPT-6 Sol (`openai.gpt-6-sol`), Luna (`openai.gpt-6-luna`), GPT-5.6 Sol (`openai.gpt-5.6-sol`) | Function tools require explicit `thinkingTokenBudget: 'none'` or `config.reasoningEffort: 'none'`; an omitted or enabled effort is rejected locally when tools are present. |
+| GPT-6 Astra (`openai.gpt-6-astra`), GPT-6.1 Sol (`openai.gpt-6.1-sol`) | Reasoning is required: disabling it is rejected locally. Function tools are rejected on this profile, without function emulation. |
+
+For these models, the public `thinkingTokenBudget` levels map as follows: `minimal` → `low`; `low`, `medium`, and `high` retain their names; `highest` → `xhigh`; `none` disables reasoning only where permitted above. Requests omit `temperature`, `top_p`, and `stop`. Standard service tier is accepted; unsupported Flex/Priority requests fail locally before transport. GPT-OSS and unknown-model defaults are unchanged; do not extend these verified rules to every Bedrock ID.
+
+For complex signatures, AxGen defaults to native schema output (`response_format: json_schema`), not a function tool. Schema-only output therefore does not require disabling reasoning, including on Astra and GPT-6.1 Sol. For reasoning **and function tools**, use `name: 'openai-responses'` with the same Bedrock base URL instead. These are deployment-profile rules, not native AWS `Converse` rules. Source: [25.4.6 profile declarations (PR #866)](https://github.com/ax-llm/ax/blob/a2780f9a10acf6576765092153c7604babf277c3/ir/axcore/data/provider-profiles.json).
 
 To reach OpenAI's GPT models on those endpoints through the `openai` or `openai-responses` provider, name them with Bedrock's IDs: `openai.gpt-6-sol` on bedrock-mantle, or a cross-Region inference profile such as `us.openai.gpt-6-sol` or `global.openai.gpt-6-astra` on bedrock-runtime. Ax applies the named model's contracts: its built-in model info (so `temperature` and `top_p` are not sent), the GPT-5.6 and GPT-6 effort ladders, the reasoning rules of Astra and GPT-6.1 Sol, and, on `openai`, routing the GPT-6 family to `<apiURL>/responses`. It leaves off what Bedrock does not serve: prompt-cache breakpoints on Chat Completions (Bedrock caches these models on the Responses API only) and Astra chat sessions, since async tools, steering, and reasoning updates are not available there.
 
@@ -728,6 +741,8 @@ const bedrock = new AxAIBedrock({
 ```
 
 The native client uses Bedrock `Converse` and `ConverseStream`. Claude models advertise native functions, streaming, image/document input, prompt-cache breakpoints, and their verified thinking modes. GPT-6 Sol, Luna, Astra, and GPT-6.1 Sol (`AxAIBedrockModel.Gpt6Sol`, `Gpt6Luna`, `Gpt6Astra`, `Gpt61Sol`) advertise native functions, streaming, image input, and reasoning effort. Structured-output and service-tier support remain model-specific; query `bedrock.getFeatures(model)` instead of assuming every Bedrock model has the same capabilities. The AWS SDK remains a dependency of `@ax-llm/ax-ai-aws-bedrock` only and is not pulled into `@ax-llm/ax`.
+
+In the AWS package, 25.4.6 adds `AxAIBedrockModel.ClaudeHaiku55` (`us.anthropic.claude-haiku-5-5`). Haiku 5.5 uses adaptive thinking by default but permits `thinkingTokenBudget: 'none'`. It omits `temperature` and `topP` even with thinking disabled, and advertises both native and function structured-output modes (`['native', 'function']`). This is bounded native AWS support, not a generated-package or other-profile parity claim. Source: [PR #865 capabilities](https://github.com/ax-llm/ax/blob/55cea37e37ab5f35a7191ddc3fd91c502f56a620/src/aws-bedrock/info.ts) and [model enum](https://github.com/ax-llm/ax/blob/55cea37e37ab5f35a7191ddc3fd91c502f56a620/src/aws-bedrock/types.ts).
 
 Use `contextCache.ttlSeconds` for a 5-minute or supported 1-hour cache point, and `thinkingTokenBudget` for legacy budget thinking or the corresponding adaptive-thinking effort on current Claude models:
 
