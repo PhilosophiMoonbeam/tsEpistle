@@ -85,7 +85,7 @@
   "dependencies": {
     "@asciidoctor/core": "4.1.1",
     "@aws-sdk/client-s3": "3.1155.0",
-    "@ax-llm/ax": "25.4.5",
+    "@ax-llm/ax": "25.4.8",
     "@azure/storage-blob": "12.33.0",
     "@codemirror/autocomplete": "6.20.3",
     "@codemirror/commands": "6.11.0",

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "41049942788481a7034b91e75a5c45029b8996472f114d82fad430109f0ef7fb",
+    "sha256": "4cd9a0e78063e4e7ae46836ece90dcb08ee06bd8629db4f94b6333a6a4ceead8",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -386,7 +386,7 @@
     {
       "name": "@ax-llm/ax",
       "versions": [
-        "25.4.5"
+        "25.4.8"
       ],
       "license": "Apache-2.0",
       "author": "Vikram <https://twitter.com/dosco>",

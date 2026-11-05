@@ -7,7 +7,7 @@
       "dependencies": {
         "@asciidoctor/core": "4.1.1",
         "@aws-sdk/client-s3": "3.1155.0",
-        "@ax-llm/ax": "25.4.5",
+        "@ax-llm/ax": "25.4.8",
         "@azure/storage-blob": "12.33.0",
         "@codemirror/autocomplete": "6.20.3",
         "@codemirror/commands": "6.11.0",
@@ -354,7 +354,7 @@
 
     "@aws/lambda-invoke-store": ["@aws/lambda-invoke-store@0.3.0", "", {}, "sha512-sl4Bm6yiMNYrZKkqqDFWN0UfnWhlS8ivKxrYl+6t0gCLrqr8y3B2IqZZbFRkfaVVp7C/baApyh71P+LeE1A2sQ=="],
 
-    "@ax-llm/ax": ["@ax-llm/ax@25.4.5", "", { "dependencies": { "@opentelemetry/api": "^1.9.0" }, "peerDependencies": { "zod": "^3.24.0 || ^4.0.0" }, "optionalPeers": ["zod"], "bin": { "ax": "cli/index.mjs" } }, "sha512-nrTEjvhcPb4CGUqeQrhbmJebSZIegEZklLbMbYyukdNI2gysYqU5O4TD49MAMyXGvnH5LeigB65ZyvvAIlNDQQ=="],
+    "@ax-llm/ax": ["@ax-llm/ax@25.4.8", "", { "dependencies": { "@opentelemetry/api": "^1.9.0" }, "peerDependencies": { "zod": "^3.24.0 || ^4.0.0" }, "optionalPeers": ["zod"], "hasInstallScript": true, "bin": { "ax": "cli/index.mjs" } }, "sha512-/eDX3YI7BQlgaZIjEs2Wi/55Aymi4Ts/bNu87RTGLWHmXPLHitwpxeOV5UMbNfnWTP1v1ss2LEss9RzLtpL46A=="],
 
     "@axe-core/playwright": ["@axe-core/playwright@4.13.0", "", { "dependencies": { "axe-core": "~4.13.0" }, "peerDependencies": { "playwright-core": ">= 1.0.0" } }, "sha512-6YLx+kxXu5GJceG4ozFg+33a2EMTdjYwWGloJ3sb9Kta5pp+ZNS53uxGVog5JetIY8s++P5UrtX+cri+u0VAVg=="],
 
