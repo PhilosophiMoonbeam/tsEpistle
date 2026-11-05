@@ -23,6 +23,19 @@ const runTsc = require(runTscPath) as {
 }
 
 runTsc.getLanguagePlugins = (typescript, options) => {
+  // Volar passes the transformed CLI's lexical TypeScript proxy here. Its sys
+  // is distinct from require('typescript').sys; drain the CLI's piped output
+  // before its explicit exit so diagnostics cannot truncate --listFiles.
+  typescript.sys.exit = code => {
+    process.stdout.write('', error => {
+      if (error) throw error
+      process.stderr.write('', error => {
+        if (error) throw error
+        process.exit(code)
+      })
+    })
+  }
+
   const configFilePath = options.options.configFilePath
   if (typeof configFilePath !== 'string') throw new Error('Vue typechecking requires a TypeScript project config')
   const vueOptions = vueLanguageCore.createParsedCommandLine(typescript, typescript.sys, configFilePath).vueOptions
@@ -53,16 +66,5 @@ type CompilableModule = Module & { _compile: (source: string, filename: string) 
 const tscModule = new Module(tscPath) as CompilableModule
 tscModule.filename = tscPath
 tscModule.paths = require.resolve.paths(tscPath) ?? []
-
-// TypeScript exits explicitly; drain piped diagnostics and file lists first.
-typescript.sys.exit = code => {
-  process.stdout.write('', error => {
-    if (error) throw error
-    process.stderr.write('', error => {
-      if (error) throw error
-      process.exit(code)
-    })
-  })
-}
 
 tscModule._compile(transformedTsc, tscPath)
