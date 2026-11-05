@@ -1587,7 +1587,9 @@ const resolveDraftDiscard = (discard: boolean, restoreFocus = true): void => {
 const confirmDraftDiscard = (): Promise<boolean> => new Promise(resolve => {
   if (draftDiscardResolver) { resolve(false); return }
   const activeElement = document.activeElement
-  discardDraftRestoreTarget = activeElement instanceof HTMLElement && activeElement.closest('.agent-memory') ? activeElement : null
+  discardDraftRestoreTarget = activeElement instanceof HTMLElement && activeElement.isConnected && activeElement !== document.body
+    ? activeElement
+    : null
   panelMenuOpen.value = false
   restoreDiscardDraftFocus = false
   draftDiscardResolver = resolve

@@ -1268,10 +1268,14 @@ describe('Wiki Agent workspace unsaved-state transitions', () => {
           await settle()
           expect(mounted.root.querySelector('.agent-composer__media-attachments')?.textContent).toContain('owned-draft.pdf')
         }
+        let closeOpener: HTMLButtonElement | null = null
         const act = async () => {
           if (transition === 'new-chat') mounted.root.querySelector<HTMLButtonElement>('[aria-label="New chat"]')!.click()
-          else if (transition === 'workspace-close') mounted.root.querySelector<HTMLButtonElement>('.inline-agent__close-action')!.click()
-          else {
+          else if (transition === 'workspace-close') {
+            closeOpener = mounted.root.querySelector<HTMLButtonElement>('.inline-agent__close-action')!
+            closeOpener.focus()
+            closeOpener.click()
+          } else {
             mounted.root.querySelector<HTMLButtonElement>('.inline-agent__history-toggle')!.click()
             await settle()
             const target = Array.from(mounted.root.querySelectorAll<HTMLElement>('.v-list-item')).find(element =>
@@ -1292,6 +1296,7 @@ describe('Wiki Agent workspace unsaved-state transitions', () => {
         if (unsaved === 'personal-detail') expect(mounted.root.querySelector<HTMLTextAreaElement>('.agent-memory textarea')?.value).toBe(exactText)
         else expect(mounted.root.querySelector('.agent-composer__media-attachments')?.textContent).toContain('owned-draft.pdf')
         expect(workspace.requests.filter(request => request.method !== 'GET')).toEqual(before.filter(request => request.method !== 'GET'))
+        if (transition === 'workspace-close') expect(document.activeElement === closeOpener).toBe(true)
         if (transition === 'workspace-close' && unsaved === 'personal-detail') {
           // Discarding local Memory is not a network mutation.
           testPwaState.connectionState = 'offline'
