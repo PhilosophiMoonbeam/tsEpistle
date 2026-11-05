@@ -936,7 +936,7 @@ export const ACTION_CATALOG = {
     descriptor: descriptor(
       'pages.preparePatch',
       'Prepare page patch',
-      'Prepare a strict hashline patch from the exact Markdown snapshot returned by read-for-patch. Preserve undisclosed lines, terminology, heading hierarchy, link style and final-newline state unless the request changes them. Search and read related pages only when the change affects their relationships; never manufacture links or tags. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.',
+      'Prepare a strict WikiLinePatchV1 patch with version exactly "wiki-line-patch-v1" from the exact Markdown snapshot returned by read-for-patch. Preserve undisclosed lines, terminology, heading hierarchy, link style and final-newline state unless the request changes them. Search and read related pages only when the change affects their relationships; never manufacture links or tags. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.',
       'proposal',
       ['write:pages'],
       both,

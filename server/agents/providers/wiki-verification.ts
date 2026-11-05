@@ -2,7 +2,7 @@ import type { DecisionBatchQuestion, DecisionBatchRequest, DecisionBatchResult, 
 import { normalizeDecisionAnswer, validateDecisionBatchRequest } from '../decision-providers.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import type { SourceContext, SourceLink, SourceRecord, SourceSpan, SourceUnit } from './source-document.ts'
-import { validateWikiSynthesisAttachmentClaims, type WikiSynthesisAnswer, type WikiSynthesisInputMedia } from './wiki-synthesis.ts'
+import { validateWikiSynthesisAttachmentClaims, type WikiSynthesisAnswer, type WikiSynthesisInputMedia, type WikiSynthesisSource } from './wiki-synthesis.ts'
 import { isLiteralSourceClaim } from './wiki-source-quotation.ts'
 import { packWikiReadTexts } from './wiki-read-transport.ts'
 
@@ -12,7 +12,7 @@ interface WikiVerificationSourceFields {
   readonly unitId: string
   readonly context: string
   readonly text: string
-  readonly kind: SourceUnit['kind'] | 'page-title' | 'source-read'
+  readonly kind: SourceUnit['kind'] | 'page-title' | 'source-read' | 'recent-excerpt'
   readonly complete: boolean
   readonly closure: {
     readonly unit: SourceUnit
@@ -24,11 +24,11 @@ interface WikiVerificationSourceFields {
   } | null
 }
 
-/** Complete-read bindings cannot claim a generated unit or structural closure. */
+/** Original-read bindings cannot claim a generated unit or structural closure. */
 export type WikiVerificationSource = WikiVerificationSourceFields &
   (
     | { readonly kind: SourceUnit['kind'] | 'page-title'; readonly readId?: never; readonly authorText?: never }
-    | { readonly kind: 'source-read'; readonly readId: string; readonly authorText: string; readonly closure: null }
+    | { readonly kind: 'source-read' | 'recent-excerpt'; readonly readId: string; readonly authorText: string; readonly closure: null; readonly excerpt?: WikiSynthesisSource['excerpt'] }
   )
 
 /** Expanded native source, including the existing lightweight narration form. */
@@ -42,11 +42,12 @@ export interface WikiVerificationEvidence {
   readonly sourceRevision: string
   /** Host-issued physical read identity; aliases retain their separate evidence identity. */
   readonly readId: string
-  /** Complete registered read representation, restricted to its admitted scope. */
+  /** Exact registered read representation, restricted to its admitted scope. */
   readonly source: string
   /** Parser-admitted authored content and trusted title context, required for read-scoped proof. */
   readonly authorText?: string
   readonly context?: string
+  readonly excerpt?: WikiSynthesisSource['excerpt']
 }
 
 export interface WikiVerificationInput {
@@ -137,7 +138,7 @@ export const decodeWikiVerificationSources = (sources: readonly unknown[], readT
       typeof decoded.complete !== 'boolean'
     )
       invalid('malformed expanded native source')
-    if (decoded.kind === 'source-read' || Object.hasOwn(decoded, 'closure')) validateWikiVerificationSource(decoded as unknown as WikiVerificationSource)
+    if (decoded.kind === 'source-read' || decoded.kind === 'recent-excerpt' || Object.hasOwn(decoded, 'closure')) validateWikiVerificationSource(decoded as unknown as WikiVerificationSource)
     else if (!Object.hasOwn(decoded, 'ownership')) invalid('native source lacks its closure or narration ownership')
     return decoded as unknown as WikiVerificationDecodedSource
   })
@@ -224,9 +225,9 @@ export const validateWikiVerificationSource = (source: WikiVerificationSource): 
     !source.unitId
   )
     invalid('malformed exact source binding')
-  if (source.kind === 'source-read') {
+  if (source.kind === 'source-read' || source.kind === 'recent-excerpt') {
     if (
-      !source.complete ||
+      (source.kind === 'source-read' ? !source.complete || source.excerpt !== undefined : source.complete || source.excerpt === undefined) ||
       !source.text.trim() ||
       typeof source.readId !== 'string' ||
       !source.readId ||
@@ -236,6 +237,19 @@ export const validateWikiVerificationSource = (source: WikiVerificationSource): 
       source.closure !== null
     )
       invalid('a read-scoped claim requires its complete exact physical read binding without a unit closure')
+    if (source.kind === 'recent-excerpt') {
+      const excerpt = source.excerpt!
+      if (!plain(excerpt) || typeof excerpt.representationMetadata !== 'string')
+        invalid('a bounded excerpt requires explicit original representation metadata')
+      let metadata: unknown
+      try { metadata = JSON.parse(excerpt.representationMetadata) } catch { invalid('a bounded excerpt requires its original representation metadata') }
+      if (excerpt.representation !== 'recent-excerpt' || !plain(metadata) || metadata.contentTruncated !== true ||
+        !Number.isSafeInteger(metadata.sourceContentCharacters) || (metadata.sourceContentCharacters as number) <= source.text.length ||
+        typeof metadata.updatedAt !== 'string' || !Number.isFinite(Date.parse(metadata.updatedAt)) ||
+        !Array.isArray(excerpt.readReceipts) || excerpt.readReceipts.length === 0 ||
+        excerpt.readReceipts.some(receipt => !plain(receipt) || typeof receipt.actionCallId !== 'string' || !receipt.actionCallId || receipt.actionName !== 'pages.listRecent'))
+        invalid('a bounded excerpt requires exact truncation metadata and a recent-read receipt')
+    }
     return
   }
   if (source.kind === 'page-title') {
@@ -358,6 +372,7 @@ Select supports, contradicts or not_supported independently for each assertion.
 # Warnings
 For kind source-read, source.text is the COMPLETE unchanged original physical read; source.authorText retains that same read's complete parser-admitted body, not a selected assertion or record catalog. Its exactly registered context proves only literal page-title metadata. Interpret authored references, including pronouns and phrases such as "both plans", using the same read's prose, headings, tables and lists within that factual body boundary. Judge every subject, row, column, field and value association across the read. Concise paragraphs, lists, selected-field comparisons and Markdown tables need not copy complete native blocks or repeat field labels. Do not borrow antecedents, facts or qualifications from another physical read, page, selected source or outside knowledge. Exact-looking excerpts still require contextual support.
 For a genuine original-unit source, use only its selected assertion and complete owned closure. A prose assertion subset does not authorize adjacent assertions; a complete native unit or container authorizes its original content, preserving each record's owners. The registered read supplies same-source context, not authority to replace that unit binding. A page-title source proves only its exact title property.
+For kind recent-excerpt, source.text is ONLY the exact delivered original prefix and source.authorText is ONLY its parser-admitted visible body. complete:false and excerpt retain the immutable representation/truncation metadata and original pages.listRecent read receipt. These are scope boundaries, not content proof. Judge only affirmative facts established within that visible body and its visible governing context. Never infer an unread suffix, missing antecedent or qualifier, page-wide absence/completeness, or a revision difference. If the claim depends on such unseen context or broadens the excerpt's scope, select not_supported. A bounded excerpt may support a local fact without proving the full page was read.
 For every source kind, preserve conditions, qualifications, fictional/authored/untested status, warnings, quantities, units, serving or per-item bases, elapsed versus active timing and target associations. Judge preservation of authored conditions, not whether the user has met real-world prerequisites. This support task does not judge missing requested content or corpus completeness. Apply state.visibilityPolicy.
 # Context Dump
 Host validation binds each source to its registered evidence identity, revision and physical read. sources contains the independently bound sources for one physical read; sourceIndexes maps each entry to its original source index. Each question's bound_source.sourceIndex selects exactly one entry through sourceIndexes, never the union of sources. candidate_index selects that assertion from candidate; claimIndexes preserves its original claim index. Other candidates are not evidence. evidence retains original evidence identities and their physical readId. readTexts retains complete physical read text once; evidence source references use readTexts[textIndex].slice(start,end) with exclusive-end UTF-16 offsets. Decode whole-string source leaves using sourceTextLookup without changing ownership.`
@@ -435,7 +450,8 @@ export const buildWikiVerificationPlan = (input: WikiVerificationInput): WikiVer
       (original.sourceRevision !== entry.sourceRevision ||
         original.source !== entry.source ||
         original.authorText !== entry.authorText ||
-        original.context !== entry.context)
+        original.context !== entry.context ||
+        JSON.stringify(original.excerpt) !== JSON.stringify(entry.excerpt))
     )
       invalid('physical read identity has inconsistent original content, revision or authored visibility')
     if (!original) physicalReads.set(entry.readId, entry)
@@ -455,11 +471,12 @@ export const buildWikiVerificationPlan = (input: WikiVerificationInput): WikiVer
     const registered = evidence.get(evidenceKey(source))
     if (!registered) invalid('original selected source lacks its registered read')
     if (
-      source.kind === 'source-read' &&
+      (source.kind === 'source-read' || source.kind === 'recent-excerpt') &&
       (source.readId !== registered.readId ||
         source.text !== registered.source ||
         source.authorText !== registered.authorText ||
-        source.context !== registered.context)
+        source.context !== registered.context ||
+        JSON.stringify(source.excerpt) !== JSON.stringify(registered.excerpt))
     )
       invalid('read-scoped source does not retain its exact registered physical read, authored visibility and trusted context')
   }
@@ -490,7 +507,7 @@ export const buildWikiVerificationPlan = (input: WikiVerificationInput): WikiVer
       contributions.set(readId, contribution)
     }
     contribution.push({ claimIndex, sourceIndex })
-    if (source.kind !== 'source-read' && isLiteralSourceClaim(claim, source)) {
+    if (source.kind !== 'source-read' && source.kind !== 'recent-excerpt' && isLiteralSourceClaim(claim, source)) {
       literalSupportCount++
       return
     }
@@ -549,7 +566,7 @@ export const buildWikiVerificationPlan = (input: WikiVerificationInput): WikiVer
         // associations; duplicated span/field/link catalogs remain host authority.
         sources: narration
           ? selected.map(({ closure, ...binding }) =>
-              binding.kind === 'source-read'
+              binding.kind === 'source-read' || binding.kind === 'recent-excerpt'
                 ? { ...binding, closure: null }
                 : {
                     ...binding,
@@ -602,7 +619,10 @@ export const buildWikiVerificationPlan = (input: WikiVerificationInput): WikiVer
     requests.push(request)
   }
   const addSupportRequests = (entries: readonly SupportEntry[], contribution: readonly SupportEntry[]): void => {
-    const fullContribution = contribution.some(entry => originalSources[entry.sourceIndex]!.kind === 'source-read')
+    const fullContribution = contribution.some(entry => {
+      const kind = originalSources[entry.sourceIndex]!.kind
+      return kind === 'source-read' || kind === 'recent-excerpt'
+    })
     const sourceIndexes = [...new Set((fullContribution ? contribution : entries).map(entry => entry.sourceIndex))]
     const selected = sourceIndexes.map(index => originalSources[index]!)
     const reads = [...new Set(selected.map(evidenceKey))].map(key => evidence.get(key)!)

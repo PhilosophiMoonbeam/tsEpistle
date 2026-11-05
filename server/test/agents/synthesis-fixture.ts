@@ -2,7 +2,7 @@ import { AxMockAIService, type AxAIService, type AxChatRequest, type AxChatRespo
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import type { DecisionProviderRegistry, DecisionProviderRuntime } from '../../agents/decision-providers.ts'
 import type { AgentProviderChatOptions } from '../../agents/providers/factory.ts'
-import { wikiSynthesisSourceRef } from '../../agents/providers/wiki-synthesis.ts'
+import { wikiSynthesisSourceRef, type WikiSynthesisSource } from '../../agents/providers/wiki-synthesis.ts'
 
 /**
  * Test-only Jev decision judge for engine fixtures. It is a mock dependency,
@@ -165,12 +165,13 @@ export interface SynthesisFixtureRead {
   readonly representation: string
   readonly complete: boolean
   readonly readText: string
+  readonly excerpt?: WikiSynthesisSource['excerpt']
 }
 
 export interface SynthesisFixtureSource extends SynthesisFixtureRead {
   readonly sourceRef: string
   readonly text: string
-  readonly kind: 'source-read'
+  readonly kind: 'source-read' | 'recent-excerpt'
 }
 
 export const synthesisReadsFromRequest = (request: Readonly<AxChatRequest>): SynthesisFixtureRead[] => {
@@ -196,7 +197,8 @@ export const synthesisReadsFromRequest = (request: Readonly<AxChatRequest>): Syn
     return {
       readRef: header[1]!, evidenceId: row.evidenceId, sourceRevision: row.revision,
       title: row.title, representation: row.representation, complete: row.status === 'full',
-      readText: sourceText.slice(bodyStart, bodyEnd)
+      readText: sourceText.slice(bodyStart, bodyEnd),
+      ...(row.excerpt === undefined ? {} : { excerpt: row.excerpt as WikiSynthesisSource['excerpt'] })
     }
   })
 }
@@ -221,11 +223,11 @@ export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): S
       Object.keys(source).some(key => !['readRef', 'evidenceId', 'sourceRevision'].includes(key)))
       throw new Error('Invalid supplied synthesis read locator')
     const read = reads.get(source.readRef)
-    if (read === undefined || !read.complete || read.sourceRevision !== source.sourceRevision)
+    if (read === undefined || (!read.complete && read.excerpt?.representation !== 'recent-excerpt') || read.sourceRevision !== source.sourceRevision)
       throw new Error('Missing or incompatible supplied synthesis read')
     return {
       ...read, sourceRef, evidenceId: source.evidenceId,
-      text: read.readText, kind: 'source-read' as const
+      text: read.readText, kind: read.complete ? 'source-read' as const : 'recent-excerpt' as const
     }
   })
 }

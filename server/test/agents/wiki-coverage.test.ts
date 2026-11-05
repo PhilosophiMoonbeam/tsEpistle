@@ -109,8 +109,8 @@ describe('Wiki coverage input binding', () => {
     const encoded = encodeWikiCoverageInput({ ...valid, reads })
     expect(encodeWikiCoverageInput({ ...valid, reads: [...reads].reverse() }).sourceText).toBe(encoded.sourceText)
     expect(JSON.parse(encoded.sourceText)).toEqual([
-      { readRef: 'r1', title: 'Approvals', source: 'ZZZ governing body.\r\n' },
-      { readRef: reads[0]!.readRef, title: 'Other', source: authorText }
+      { readRef: 'r1', title: 'Approvals', source: 'ZZZ governing body.\r\n', complete: true },
+      { readRef: reads[0]!.readRef, title: 'Other', source: authorText, complete: true }
     ])
     expect(encoded.sourceText).not.toContain('hidden')
     const changedBody = encodeWikiCoverageInput({
@@ -124,6 +124,21 @@ describe('Wiki coverage input binding', () => {
     expect(changedRevision.sourceText).not.toBe(encoded.sourceText)
     expect(changedRepresentation.sourceText).not.toBe(encoded.sourceText)
     expect(JSON.parse(encoded.claims)).toEqual(valid.claims)
+  })
+  it('retains bounded-prefix scope and refuses to silently promote it to a complete read', () => {
+    const valid = input()
+    const excerpt = {
+      representation: 'recent-excerpt' as const,
+      representationMetadata: JSON.stringify({ contentTruncated: true, sourceContentCharacters: 500, updatedAt: '2026-10-30T12:00:00.000Z' }),
+      readReceipts: [{ actionCallId: 'recent-original', actionName: 'pages.listRecent' as const }]
+    }
+    const bounded = { ...valid.reads[0]!, complete: false, excerpt }
+    const encoded = encodeWikiCoverageInput({ ...valid, reads: [bounded] })
+    expect(JSON.parse(encoded.sourceText)).toEqual([{
+      readRef: bounded.readRef, title: bounded.title, source: bounded.authorText, complete: false, excerpt
+    }])
+    expect(() => encodeWikiCoverageInput({ ...valid, reads: [{ ...bounded, complete: true }] })).toThrow()
+    expect(() => encodeWikiCoverageInput({ ...valid, reads: [{ ...bounded, excerpt: undefined }] })).toThrow()
   })
 
   it('places complete untrusted reads before changing conversation, question, facets and claims with a stable optional-field system prompt', async () => {

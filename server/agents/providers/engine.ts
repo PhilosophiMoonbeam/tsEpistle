@@ -1361,7 +1361,7 @@ const citationPhysicalReadId = (evidence: Pick<CitationEvidence, 'pageEvidenceId
     )
     .digest('hex')
 
-const completeWikiReadBindings = (
+const admittedWikiReadBindings = (
   evidence: ReadonlyMap<string, CitationEvidence>
 ): ReadonlyMap<
   string,
@@ -1387,10 +1387,6 @@ const completeWikiReadBindings = (
       throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Physical read aliases changed original content or revision', 409)
     if (previous === undefined || (previous.evidenceId.includes(':section:') && !evidenceId.includes(':section:')))
       physicalReads.set(readId, { evidenceId, representation })
-  }
-  for (const [readId, { representation }] of physicalReads) {
-    if (representation.binding.representation === 'recent-excerpt' && metadataRecord(representation.binding.representationMetadata)?.contentTruncated !== false)
-      physicalReads.delete(readId)
   }
   return physicalReads
 }
@@ -3034,7 +3030,7 @@ const assessDraft = (
     const evidence =
       nativeDraft === undefined ||
       (boundClaim?.evidenceId === evidenceId &&
-        readSource?.kind === 'source-read' &&
+        (readSource?.kind === 'source-read' || readSource?.kind === 'recent-excerpt') &&
         boundClaim.unitId === `read:${readSource.readId}` &&
         registeredEvidence?.binding.sourceRevision === boundClaim.sourceRevision &&
         boundEvidence?.binding.sourceRevision === boundClaim.sourceRevision &&
@@ -3121,7 +3117,7 @@ const assessDraft = (
     )
       issues.push(
         nativeDraft !== undefined
-          ? `Citation ${evidenceId} lacks complete-source semantic support.`
+          ? `Citation ${evidenceId} lacks source-scoped semantic support.`
           : `Citation ${evidenceId} does not support every factual clause from a single source unit in its cited scope.`
       )
     if (!seenCitationIds.has(evidenceId)) {
@@ -3219,7 +3215,7 @@ const assessDraft = (
       if (!group.evidenceIds.some(evidenceId => seenCitationIds.has(evidenceId)))
         issues.push(`The final answer does not cite validated evidence for research task ${group.title}.`)
     }
-    if (!pendingSemanticSupport && nativeDraft?.allRequestFacetsUnresolved !== true) {
+    if (!pendingSemanticSupport && (nativeDraft?.allRequestFacetsUnresolved !== true || nativeDraft?.requireRecentCoverage === true)) {
       for (const group of coverage.recentGroups) {
         const missing = group.evidenceIds.filter(evidenceId => !claims.some(claim => claim.pageEvidenceId === evidenceId && claim.supported))
         if (missing.length > 0) issues.push(`The final answer does not cite every page returned by pages.listRecent: ${missing.join(', ')}.`)
@@ -3544,6 +3540,8 @@ const subagentEvidenceCorrection = (issues: readonly string[], hasEvidenceConfli
 interface NativeDraft {
   readonly answer: WikiSynthesisAnswer
   readonly allRequestFacetsUnresolved: boolean
+  /** Trusted CatchUp rows still get their one bounded repair despite model uncertainty. */
+  readonly requireRecentCoverage?: boolean
   readonly inputMediaSources?: readonly WikiSynthesisInputMedia[]
   readonly evidence: ReadonlyMap<string, CitationEvidence>
   readonly authorizeSourceInputs: AgentSourceAuthorizer
@@ -3586,7 +3584,7 @@ const selectVerifiedRecentDraft = (
   for (let index = 0; index < draft.answer.claims.length; index++) {
     const claim = draft.answer.claims[index]!
     const source = draft.readSources.get(canonicalJson([claim.evidenceId, claim.sourceRevision, claim.unitId]))
-    if (source?.kind !== 'source-read' || !source.complete) return undefined
+    if (source?.kind !== 'source-read' && source?.kind !== 'recent-excerpt') return undefined
     readIds.push(source.readId)
     if (!supported.has(index)) declinedReads.add(source.readId)
   }
@@ -6718,7 +6716,18 @@ export class AxAgentEngine implements AgentEngine {
       for (const file of mediaFiles.values()) await file.authorizePayload?.(request.signal)
       request.signal.throwIfAborted()
     }
-    for (const [readId, { evidenceId, representation }] of completeWikiReadBindings(evidence)) {
+    for (const [readId, { evidenceId, representation }] of admittedWikiReadBindings(evidence)) {
+      const bounded = representation.binding.representation === 'recent-excerpt' &&
+        metadataRecord(representation.binding.representationMetadata)?.contentTruncated === true
+      const excerpt: WikiSynthesisSource['excerpt'] = bounded ? {
+        representation: 'recent-excerpt',
+        representationMetadata: representation.binding.representationMetadata,
+        readReceipts: representation.readReceipts.map(receipt => {
+          if (receipt.actionName !== 'pages.listRecent')
+            throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'A bounded excerpt requires its own recent read receipt', 409)
+          return { actionCallId: receipt.actionCallId, actionName: receipt.actionName }
+        })
+      } : undefined
       const source: WikiSynthesisSource = {
         evidenceId,
         sourceRevision: representation.binding.sourceRevision,
@@ -6726,8 +6735,9 @@ export class AxAgentEngine implements AgentEngine {
         readId,
         context: representation.authoritativeTitle ?? '',
         text: representation.binding.retrievedSource,
-        kind: 'source-read',
-        complete: true
+        kind: bounded ? 'recent-excerpt' : 'source-read',
+        complete: !bounded,
+        ...(excerpt === undefined ? {} : { excerpt })
       }
       const key = canonicalJson([source.evidenceId, source.sourceRevision, source.unitId])
       const literals = readLiteralSnapshot(representation)
@@ -6741,7 +6751,8 @@ export class AxAgentEngine implements AgentEngine {
         readId,
         title: representation.authoritativeTitle,
         representation: representation.binding.representation,
-        complete: true,
+        complete: source.complete,
+        ...(excerpt === undefined ? {} : { excerpt }),
         source: source.text
       })
     }
@@ -6765,6 +6776,9 @@ export class AxAgentEngine implements AgentEngine {
         /^Proposal: [0-9a-f-]{36}; result hash: [0-9a-f]{64}\.$/iu.test(line) ||
         /^Wiki proposal [0-9a-f-]{36} status: (?:denied|expired|cancelled)\.$/iu.test(line)
     )
+    const catchUpOrder = request.presetId === 'catch-up' && (request.purpose ?? 'root') === 'root'
+      ? new Map((input.coverage?.recentGroups ?? []).flatMap(group => group.evidenceIds).map((id, index) => [id, index]))
+      : undefined
     const program = createWikiSynthesisProgram(sources, {
       structured,
       inputMediaSources,
@@ -6778,7 +6792,7 @@ export class AxAgentEngine implements AgentEngine {
         if (
           bound === undefined ||
           literals === undefined ||
-          !source.complete ||
+          (source.kind === 'source-read' ? !source.complete : source.complete || source.excerpt?.representationMetadata !== bound.binding.representationMetadata) ||
           source.unitId !== `read:${source.readId}` ||
           source.sourceRevision !== bound.binding.sourceRevision ||
           source.text !== bound.binding.retrievedSource
@@ -6791,12 +6805,17 @@ export class AxAgentEngine implements AgentEngine {
           rejection = 'Canonical synthesis output exceeded its provider content byte limit.'
           return rejection
         }
+        if (catchUpOrder !== undefined) {
+          answer.claims.sort((left, right) => (catchUpOrder.get(left.evidenceId) ?? Number.MAX_SAFE_INTEGER) - (catchUpOrder.get(right.evidenceId) ?? Number.MAX_SAFE_INTEGER))
+          content = renderWikiSynthesisAnswer(answer)
+        }
         rendered = content
         // Read identity and exact literal admission are mechanical; every claim
-        // still requires independent complete-source Jev proof before publication.
+        // still requires independent Jev proof within its exact admitted scope.
         nativeDraft = {
           answer,
           allRequestFacetsUnresolved: input.requestFacets.length > 0 && answer.unresolvedFacets.length === input.requestFacets.length,
+          requireRecentCoverage: catchUpOrder !== undefined && input.reserveRepair,
           inputMediaSources,
           evidence: sourceEvidence,
           authorizeSourceInputs: input.authorizeEvidence,
@@ -7625,6 +7644,7 @@ export class AxAgentEngine implements AgentEngine {
       const retrievals: RetrievalTrace[] = []
       const recentGroups: RecentEvidenceCoverage[] = []
       const recentWindows: RecentEvidenceCoverage[] = []
+      const catchUp = request.presetId === 'catch-up' && (request.purpose ?? 'root') === 'root'
       // Navigation hints and model-planned tasks describe the request; only action
       // admission and fresh read receipts confer authority. Keep this plan run-local.
       const contextPlan = {
@@ -7653,6 +7673,10 @@ export class AxAgentEngine implements AgentEngine {
           ...(request.research?.incompleteTasks.map(() => ({ state: 'unavailable' as const, evidenceIds: [] as readonly string[] })) ?? [])
         ],
         reservations: { maxTurns, maxToolCalls, maxTokens }
+      }
+      if (catchUp && contextPlan.intent.length > 0) {
+        contextPlan.requestFacets = [{ start: 0, end: contextPlan.intent.length, quote: contextPlan.intent, coverage: 'recent-window' }]
+        contextPlan.explicitContentFacets = true
       }
       if (contextPlan.facets.length === 0) contextPlan.facets.push({ state: 'unread', evidenceIds: [] })
       const excludedEvidenceIds = new Set<string>()
@@ -7903,14 +7927,14 @@ export class AxAgentEngine implements AgentEngine {
           const bound = draft.evidence.get(key)
           const current = verificationEvidence.get(source.evidenceId)
           if (
-            source.kind !== 'source-read' ||
+            (source.kind !== 'source-read' && source.kind !== 'recent-excerpt') ||
             bound === undefined ||
             current === undefined ||
             current.document !== bound.document ||
             current.binding.sourceRevision !== source.sourceRevision ||
             current.binding.retrievedSource !== source.text
           )
-            throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the current authorized complete read', 409)
+            throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the current authorized original read', 409)
           physicalReadIds.set(current.document, source.readId)
           return {
             evidenceId: source.evidenceId,
@@ -7918,7 +7942,8 @@ export class AxAgentEngine implements AgentEngine {
             readId: source.readId,
             source: source.text,
             context: current.authoritativeTitle ?? '',
-            authorText: source.authorText
+            authorText: source.authorText,
+            ...(source.kind !== 'recent-excerpt' ? {} : { excerpt: source.excerpt })
           }
         })
         const requestFacets = contextPlan.requestFacets?.length ? contextPlan.requestFacets.map(facet => facet.quote) : [contextPlan.intent]
@@ -7932,12 +7957,12 @@ export class AxAgentEngine implements AgentEngine {
               throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the original validated claim binding', 409)
             const source = draft.readSources.get(key)
             if (
-              source?.kind !== 'source-read' ||
+              (source?.kind !== 'source-read' && source?.kind !== 'recent-excerpt') ||
               source.unitId !== `read:${source.readId}` ||
               source.text !== bound.binding.retrievedSource ||
               source.sourceRevision !== claim.sourceRevision
             )
-              throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the exact complete original read', 409)
+              throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires the exact admitted original read', 409)
             selected.set(key, source)
           }
           let preparedPlan: WikiVerificationPlan | null
@@ -8032,7 +8057,12 @@ export class AxAgentEngine implements AgentEngine {
         expectedVersionId?: number | null,
         providerCallId = actionCallId
       ): PageEvidenceCollection => {
-        const collection = collectPageEvidence(actionName, actionCallId, output, citationRegistry, retrievals, expectedVersionId, providerCallId)
+        const collected = collectPageEvidence(actionName, actionCallId, output, citationRegistry, retrievals, expectedVersionId, providerCallId)
+        const window = collected.recent
+        const collection = catchUp && window !== null
+          ? { ...collected, recent: { ...window, windowComplete: window.windowComplete &&
+            (window.returnedCount === 10 || (window.returnedCount < 10 && window.exhausted === true)) } }
+          : collected
         for (const evidenceId of collection.conflictingEvidenceIds) evidenceConflictIds.add(evidenceId)
         for (const evidence of citationRegistry.values()) {
           if (evidenceConflictIds.has(evidence.citation.evidenceId)) continue
@@ -8986,7 +9016,10 @@ export class AxAgentEngine implements AgentEngine {
         const restored = await restoreEvidenceContext(null, systemMessageFor(null), finalizationMaxOutputTokens, readinessValidations, true)
         const readinessEvidence = new Map<string, CitationEvidence>()
         const physicalReadIds = new WeakMap<ParsedSourceDocument, string>()
-        const reads = [...completeWikiReadBindings(restored ?? new Map())].map(([readId, { evidenceId, representation }]) => {
+        const reads = [...admittedWikiReadBindings(restored ?? new Map())]
+          .filter(([, { representation }]) => representation.binding.representation !== 'recent-excerpt' ||
+            metadataRecord(representation.binding.representationMetadata)?.contentTruncated === false)
+          .map(([readId, { evidenceId, representation }]) => {
           readinessEvidence.set(evidenceId, representation)
           physicalReadIds.set(representation.document, readId)
           return {
@@ -9015,8 +9048,9 @@ export class AxAgentEngine implements AgentEngine {
           readinessCheckedRequestSha256 = requestSha256
           const readiness = await createWikiDecision(readinessEvidence, physicalReadIds, readinessContext.authorize)(nativeRequest, 'context_readiness')
           if (readiness !== null && assessWikiContextReadiness(readiness)) {
-            await requireLiveWikiVerification(readinessEvidence)
-            warmReadinessEvidence = readinessEvidence
+            const synthesisEvidence = restored ?? readinessEvidence
+            await requireLiveWikiVerification(synthesisEvidence)
+            warmReadinessEvidence = synthesisEvidence
             phase = 'synthesizing'
             discoveryTurn = null
             tools = null
@@ -9311,7 +9345,7 @@ export class AxAgentEngine implements AgentEngine {
         } finally {
           if (sequence !== finalizationSequence) await sequence?.close()
         }
-        if (turn === 0 && result.rootRequestPlan !== undefined) {
+        if (turn === 0 && result.rootRequestPlan !== undefined && !catchUp) {
           contextPlan.requestFacets = result.rootRequestPlan
           contextPlan.explicitContentFacets = true
         }
@@ -9531,7 +9565,7 @@ export class AxAgentEngine implements AgentEngine {
               }
               if (selectedDraft !== undefined) adoptVerifiedRecentPartial(verifiedDraft)
               else result = { ...result, rootNativeDraft: verifiedDraft }
-              // Every published claim still needs complete-source proof.
+              // Every published claim still needs proof within its exact admitted source scope.
               // An explicitly unresolved request can retain verified partial findings.
               assessment = assessDraft(
                 assessableContent,
@@ -9565,13 +9599,14 @@ export class AxAgentEngine implements AgentEngine {
                   ...(nativeDraft.inputMediaSources === undefined ? {} : { inputMediaSources: nativeDraft.inputMediaSources }),
                   ...(nativeDraft.answer.attachmentClaims === undefined ? {} : { attachmentClaims: nativeDraft.answer.attachmentClaims }),
                   reads: [...nativeDraft.readSources.values()].map(source => {
-                    if (source.kind !== 'source-read')
-                      throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Coverage requires unchanged complete physical reads', 409)
-                    return { readRef: source.readId, source: source.text, authorText: source.authorText, title: source.context }
+                    if (source.kind !== 'source-read' && source.kind !== 'recent-excerpt')
+                      throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Coverage requires unchanged admitted physical reads', 409)
+                    return { readRef: source.readId, source: source.text, authorText: source.authorText, title: source.context, complete: source.complete,
+                      ...(source.kind !== 'recent-excerpt' ? {} : { excerpt: source.excerpt }) }
                   }),
                   claims: nativeDraft.answer.claims.map(claim => {
                     const source = nativeDraft.readSources.get(canonicalJson([claim.evidenceId, claim.sourceRevision, claim.unitId]))
-                    if (source?.kind !== 'source-read')
+                    if (source?.kind !== 'source-read' && source?.kind !== 'recent-excerpt')
                       throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Coverage claim lacks its exact physical read', 409)
                     return { readRef: source.readId, statement: claim.statement }
                   })
@@ -9651,7 +9686,7 @@ export class AxAgentEngine implements AgentEngine {
           }
           const sourceLocalFailures = assessment.issues.filter(
             issue =>
-              issue.includes('does not support every factual clause from a single source unit') || issue.includes('lacks complete-source semantic support')
+              issue.includes('does not support every factual clause from a single source unit') || issue.includes('lacks source-scoped semantic support')
           ).length
           const exactIntegrityFailures = assessment.claims.filter(claim => claim.sourceActionCallId !== null && !claim.integritySupported).length
           const unreadFailures = assessment.claims.filter(claim => claim.sourceActionCallId === null).length
@@ -10711,7 +10746,8 @@ export class AxAgentEngine implements AgentEngine {
                       representation.readReceipts.some(receipt => receipt.actionCallId === sourceActionCallId) &&
                       representation.sourceUnits.some(unit => unit.complete) &&
                       (representation.binding.representation !== 'recent-excerpt' ||
-                        metadataRecord(representation.binding.representationMetadata)?.contentTruncated === false) &&
+                        metadataRecord(representation.binding.representationMetadata)?.contentTruncated === false ||
+                        (catchUp && evidenceCollection.recent?.windowComplete === true)) &&
                       representation.deliveries.some(
                         delivery =>
                           delivery.actionCallId === sourceActionCallId &&

@@ -3332,7 +3332,7 @@ describe('Ax agent engine', () => {
   it.each([
     ['cut field', '- Name: Maya Quinn\n  - Phone: 555-0100', 'Maya Quinn has phone 555-0100.'],
     ['unseen suffix condition', 'Maya Quinn may approve release', 'Maya Quinn may approve release.']
-  ] as const)('withholds every factual claim from an incomplete recent read with %s', async (_case, terminal, rejected) => {
+  ] as const)('rejects an incomplete recent tail with %s but retains its independently supported prefix', async (_case, terminal, rejected) => {
     const citation = 'page:42:revision:1'
     const fact = 'The northern office opens at 09:00.'
     const content = `# Guide\n\n${fact}\n\n${terminal}`
@@ -3363,16 +3363,20 @@ describe('Ax agent engine', () => {
             citation: { evidenceId: citation, label: 'Guide', href: '/en/guide' }
           }
         ]
-      })
+      }),
+      [],
+      {},
+      {},
+      rejectFixtureStatements([rejected])
     )
     const result = await fixture.execute('What does the recent Guide excerpt say?')
     expect(fixture.event.mock.calls.filter(([type]) => type === 'evidence.provenance').at(0)?.[1]).toMatchObject({ accepted: false })
     const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
-    expect(visibleWikiText(published)).not.toContain(fact)
+    expect(visibleWikiText(published)).toContain(fact)
     expect(visibleWikiText(published)).not.toContain(visibleWikiText(rejected))
-    expect(published).not.toContain(`[[cite:${citation}]]`)
-    expect(result.citations ?? []).toEqual([])
-    expect(result.executionLimit).toMatchObject({ reason: 'evidence' })
+    expect(published).toContain(`[[cite:${citation}]]`)
+    expect(result.citations?.map(item => item.evidenceId)).toEqual([citation])
+    expect(result.executionLimit).toBeUndefined()
   })
 
   it.each([
@@ -9154,9 +9158,10 @@ describe('Ax agent engine', () => {
       rejectedStatements: ['The protected rollout begins after audit.']
     })
     expect(omittedPromotion.error).toBeUndefined()
-    expect(omittedPromotion.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('Release window is staged.')
     expect(omittedPromotion.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('The protected rollout begins after audit.')
-    expect(omittedPromotion.result?.citations ?? []).toEqual([])
+    expect(omittedPromotion.result?.citations).toEqual(
+      expectedReadCitations([{ evidenceId: currentEvidenceId, kind: 'page', label: 'Guide', href: '/en/guide' }])
+    )
     expect(omittedPromotion.result?.contextLimit).toEqual({ reason: 'tool_result_capacity', omittedActionCallIds: ['full-omitted'] })
     expect(omittedPromotion.calls.flatMap(synthesisSourcesFromRequest).some(source => source.text.includes('The protected rollout begins after audit.'))).toBe(
       false
@@ -11365,6 +11370,124 @@ describe('request-derived evidence coverage', () => {
       citation: { evidenceId: `page:${id}:revision:7`, label: `Release ${id}`, href: `/en/releases/${id}` }
     }
   })
+  it.each([
+    ['native', 'missing'], ['prompt', 'missing'],
+    ['native', 'forged source'], ['prompt', 'forged source'],
+    ['native', 'all unresolved'], ['prompt', 'all unresolved'],
+    ['native', 'positive readiness'], ['prompt', 'positive readiness'],
+    ['native', 'same batch finish'], ['prompt', 'same batch finish']
+  ] as const)('publishes all ten newest-first CatchUp contributions from three bounded prefixes on %s with %s metadata or handoff', async (mode, metadataKind) => {
+    const userRequest = 'Summarize the 10 most recently updated Wiki pages I can access.'
+    const facts = Array.from({ length: 10 }, (_, index) => `Release ${210 - index} requires review after ${31 + index} days.`)
+    const rows = facts.map((fact, index) => {
+      const id = 210 - index
+      const truncated = index === 0 || index === 3 || index === 8
+      const content = truncated ? `${fact}\n\nUnfinished archive note` : fact
+      return {
+        id, locale: 'en', path: `release/${id}`, title: `Release ${id}`, contentType: 'markdown', sourceRevision: '7',
+        updatedAt: `2026-10-${String(30 - index).padStart(2, '0')}T12:00:00.000Z`,
+        content, sourceContentCharacters: content.length + (truncated ? 500 : 0), contentTruncated: truncated,
+        citation: { evidenceId: `page:${id}:revision:7`, label: `Release ${id}`, href: `/en/release/${id}` }
+      }
+    })
+    const metadata = metadataKind === 'missing' ? undefined :
+      `<wiki-request-plan>${JSON.stringify({ facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'source' }] })}</wiki-request-plan>`
+    const fixture = questionFixture(
+      mode,
+      [
+        { ...(metadata === undefined ? {} : { metadata }), calls: [
+          { id: 'ten-recent-prefixes', name: 'pages.listRecent', arguments: { limit: 10 } },
+          ...(metadataKind === 'same batch finish' ? [{ id: 'bounded-finish', name: 'wiki_finish_collection' as const, arguments: {} }] : [])
+        ] },
+        ...(metadataKind === 'all unresolved' ? [{
+          answer: (input: Readonly<AxChatRequest>) => synthesisFixtureAnswer(input, {
+            claims: rows.filter(row => !row.contentTruncated).map(row => ({ evidenceId: row.citation.evidenceId, statement: row.content })),
+            unresolvedFacets: [0]
+          })
+        }] : []),
+        { answer: input => synthesisFixtureAnswer(input, {
+          claims: rows.map((row, index) => ({ evidenceId: row.citation.evidenceId, statement: facts[index]! })).reverse(),
+          unresolvedFacets: []
+        }) }
+      ],
+      name => {
+        if (name !== 'pages.listRecent') throw new Error(`Unexpected full-page reread: ${name}`)
+        return { kind: 'recent-page-evidence', requestedLimit: 10, exhausted: false, pages: rows }
+      },
+      [], {}, { presetId: 'catch-up' },
+      {
+        ...fixtureDecisionProviders,
+        async decideBatch(input, options) {
+          const result = await fixtureDecisionProviders.decideBatch(input, options)
+          if (metadataKind !== 'positive readiness' || !Object.hasOwn(input.questions, 'context_readiness')) return result
+          return { ...result, answers: { context_readiness: {
+            choice: 'answerable', probabilities: { answerable: 1, collect: 0, not_established: 0 }, confidence: 1
+          } } }
+        }
+      }
+    )
+    const result = await fixture.execute(userRequest, { maxTurns: 4, maxToolCalls: metadataKind === 'positive readiness' ? 2 : 1, maxOutputTokens: 2_048 })
+    expect(result.executionLimit).toBeUndefined()
+    expect(result.citations?.map(citation => citation.evidenceId)).toEqual(rows.map(row => row.citation.evidenceId))
+    expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.listRecent'])
+    const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+    if (metadataKind === 'positive readiness' || metadataKind === 'same batch finish') expect(fixture.providerCalls).toHaveLength(2)
+    for (const fact of facts) expect(published).toContain(fact)
+    expect(published.indexOf(facts[0]!)).toBeLessThan(published.indexOf(facts[9]!))
+    expect(published).not.toContain('Evidence limits')
+    expect(published).not.toContain('Unfinished archive note')
+  })
+  it.each(['hidden suffix', 'unestablished scope', 'unexhausted smaller limit', 'missing newest with forged facets', 'empty exhausted window'] as const)(
+    'keeps CatchUp honestly partial for %s despite a model completeness claim', async failure => {
+      const userRequest = 'Summarize the 10 most recently updated Wiki pages I can access.'
+      const rows = recentRows.map((row, index) => ({
+        ...row,
+        content: index === 0 ? `${row.content}\n\nUnfinished archive note` : row.content,
+        sourceContentCharacters: index === 0 ? row.content.length + 500 : row.content.length,
+        contentTruncated: index === 0,
+        updatedAt: index === 0 ? '2026-10-30T12:00:00.000Z' : '2026-10-29T12:00:00.000Z'
+      }))
+      const hidden = 'Release 94 requires a separate review and no other review.'
+      const metadata = `<wiki-request-plan>${JSON.stringify({ facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'source' }] })}</wiki-request-plan>`
+      const claims = (failure === 'missing newest with forged facets' ? recentRows.slice(1) : recentRows).map((row, index) => ({
+        evidenceId: row.citation.evidenceId,
+        statement: failure === 'hidden suffix' && index === 0 ? hidden : row.content
+      }))
+      const answer = (input: Readonly<AxChatRequest>) => synthesisFixtureAnswer(input, {
+        claims: failure === 'empty exhausted window' ? [] : claims,
+        unresolvedFacets: failure === 'missing newest with forged facets' || failure === 'empty exhausted window' ? [0] : []
+      })
+      const fixture = questionFixture(
+        'native',
+        [{ metadata, calls: [{ id: 'bounded-negative', name: 'pages.listRecent', arguments: { limit: failure === 'unexhausted smaller limit' ? 2 : 10 } }] },
+          { answer }, { answer }],
+        () => ({ kind: 'recent-page-evidence', requestedLimit: failure === 'unexhausted smaller limit' ? 2 : 10,
+          exhausted: failure !== 'unexhausted smaller limit', pages: failure === 'empty exhausted window' ? [] : rows }),
+        [],
+        { coverage: async () => ({ results: [{ index: 0, content: JSON.stringify({
+          verdict: failure === 'unestablished scope' ? 'not_established' : 'complete',
+          feedback: failure === 'unestablished scope' ? 'The requested scope is not established by these prefixes.' : ''
+        }), finishReason: 'stop' }] }) },
+        { presetId: 'catch-up' },
+        rejectFixtureStatements([hidden])
+      )
+      const result = await fixture.execute(userRequest, { maxTurns: 4, maxToolCalls: 1, maxOutputTokens: 2_048 })
+      expect(result.executionLimit?.reason).toBe('evidence')
+      expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.listRecent'])
+      const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+      expect(published).not.toContain(hidden)
+      expect(published).toContain(failure === 'unestablished scope' ? "couldn't complete a source-verified answer" : 'Evidence limits')
+      if (failure !== 'unestablished scope' && failure !== 'empty exhausted window') {
+        expect(published).toContain(recentRows[1]!.content)
+        expect(result.executionLimit?.publication).toBe('partial')
+      } else if (failure === 'empty exhausted window') {
+        expect(result.citations ?? []).toEqual([])
+        for (const row of recentRows) expect(published).not.toContain(row.content)
+      }
+    }
+  )
+
+
 
   it.each(['native', 'prompt'] as const)(
     'preserves exhausted recent scope through synthesis and the coverage audit without optional metadata on %s',
@@ -11439,7 +11562,8 @@ describe('request-derived evidence coverage', () => {
                 ]
               }
             }
-          }
+          },
+          { presetId: 'catch-up' }
         )
         const result = await fixture.execute(userRequest, { maxTurns: 4, maxToolCalls: 1, maxOutputTokens: 2_048 })
         const published = fixture.text.mock.calls.map(([delta]) => delta).join('')

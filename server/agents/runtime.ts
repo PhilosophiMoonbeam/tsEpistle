@@ -16,7 +16,8 @@ import {
   type AgentGoogleSearchGrounding,
   type AgentRunStatus,
   type AgentToolContextExclusion,
-  isTerminalAgentRunStatus
+  isTerminalAgentRunStatus,
+  AGENT_PRESET_IDS
 } from '../../shared/agents/contracts.ts'
 import { type DecisionUsage, DecisionUsageSchema } from '../../shared/agents/decision-providers.ts'
 import { type AgentKnowledgeContext, AgentCurrentPageHintSchema, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
@@ -948,6 +949,8 @@ export interface AgentEngineRequest {
   readonly mediaRequest?: { readonly kind: 'image' | 'transcription' | 'video' | 'music' }
   readonly run: AgentRunClaim
   readonly purpose?: 'root' | 'planner' | 'subagent'
+  /** Explicit user intent from this run's hash-checked queued context, never source authority. */
+  readonly presetId?: AgentPresetId
   readonly actionAllowlist?: readonly AgentActionName[]
   readonly task?: AgentResearchTask
   readonly subagentRunId?: string
@@ -1574,14 +1577,22 @@ const knowledgeContextHint = (value: string | undefined): AgentKnowledgeContext 
   }
 }
 
-const currentPageHint = (value: string | undefined): AgentCurrentPageHint | undefined => {
+const requestContextHints = (
+  value: string | undefined
+): { readonly currentPage: AgentCurrentPageHint | undefined; readonly presetId: AgentPresetId | undefined } | undefined => {
   if (value === undefined) return undefined
   if (Buffer.byteLength(value, 'utf8') > 32 * 1_024) throw new AgentRepositoryError('AGENT_RUN_CONTEXT_CORRUPT', 'Stored run context is too large', 500)
   try {
     const parsed: unknown = JSON.parse(value)
-    const currentPage = typeof parsed === 'object' && parsed !== null ? Reflect.get(parsed, 'currentPage') : undefined
-    if (currentPage === undefined) return undefined
-    return AgentCurrentPageHintSchema.parse(currentPage)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('invalid context')
+    const currentPage = Reflect.get(parsed, 'currentPage')
+    const presetId = Reflect.get(parsed, 'presetId')
+    if (presetId !== undefined && (typeof presetId !== 'string' || !AGENT_PRESET_IDS.includes(presetId as AgentPresetId)))
+      throw new Error('invalid preset')
+    return {
+      currentPage: currentPage === undefined ? undefined : AgentCurrentPageHintSchema.parse(currentPage),
+      presetId: presetId as AgentPresetId | undefined
+    }
   } catch (error) {
     if (error instanceof AgentRepositoryError) throw error
     throw new AgentRepositoryError('AGENT_RUN_CONTEXT_CORRUPT', 'Stored run context is invalid', 500)
@@ -3766,7 +3777,9 @@ export class AgentProductRuntime {
       if (!sessionRow) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent session was not found', 404)
       if (contextRow && sha256(contextRow.data) !== contextRow.dataSha256)
         throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored queued context hash is invalid', 500)
-      const currentPage = currentPageHint(contextRow?.data)
+      const requestHints = requestContextHints(contextRow?.data)
+      const currentPage = requestHints?.currentPage
+      const presetId = requestHints?.presetId
       const generationTools = generationToolsHint(contextRow?.data)
       const mediaBindings = mediaBindingsHint(contextRow?.data)
       claim = { ...claim, mediaBindings }
@@ -4145,6 +4158,7 @@ export class AgentProductRuntime {
         ...(mediaRequest ? { mediaRequest } : {}),
         run: claim,
         purpose: 'root',
+        ...(presetId === undefined ? {} : { presetId }),
         authorizeDispatch: () => this.#authorizeClaim(claim),
         memoryContextDelivered: async deliveryId => {
           const targets = (['user', 'agent'] as const)
@@ -5132,7 +5146,7 @@ export class AgentProductRuntime {
       const mediaBindings = mediaBindingsHint(initialContext?.data)
       await assertRunMediaBindings(transaction, locked.ownerId, mediaBindings, generationTools ?? [])
       const knowledgeContext = knowledgeContextHint(initialContext?.data)
-      const currentPage = currentPageHint(initialContext?.data)
+      const currentPage = requestContextHints(initialContext?.data)?.currentPage
       const changed = await transaction('agentGoals')
         .where({ id: locked.id, ownerId: locked.ownerId, version: locked.version, status: locked.status })
         .update({
@@ -5421,7 +5435,7 @@ export class AgentProductRuntime {
       const mediaBindings = mediaBindingsHint(initialContext?.data)
       await assertRunMediaBindings(transaction, locked.ownerId, mediaBindings, generationTools ?? [])
       const knowledgeContext = knowledgeContextHint(initialContext?.data)
-      const currentPage = currentPageHint(initialContext?.data)
+      const currentPage = requestContextHints(initialContext?.data)?.currentPage
       const newMaxTokens = safeUsageSum(usage.tokens, locked.tokenAllowance, 'Renewed goal token budget')
       const changed = await transaction('agentGoals')
         .where({ id: locked.id, ownerId: locked.ownerId, version: locked.version, status: locked.status })

@@ -267,7 +267,7 @@ export interface AgentGoogleSearchGrounding {
   readonly citations: readonly AgentGoogleSearchCitation[]
 }
 
-/** Display-only user intent; never source authority or provider instructions. */
+/** Explicit user intent; never source authority or tool authorization. */
 export const AGENT_PRESET_IDS = ['page-summary', 'wiki-overview', 'page-connections', 'wiki-connections', 'catch-up'] as const
 export type AgentPresetId = (typeof AGENT_PRESET_IDS)[number]
 

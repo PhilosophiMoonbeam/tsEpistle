@@ -954,6 +954,43 @@ describe('Wiki verification complete-read consumer boundaries', () => {
       expect(assessWikiVerificationResults(issued, batchResults(issued)).valid).toBe(false)
     }
   })
+  it('requires native proof for exact bounded prefixes and seals their incomplete scope, parser visibility and original receipt', () => {
+    const text = 'Review is required only after approval.\n\nUnfinished archive note'
+    const authorText = 'Review is required only after approval.'
+    const excerpt = {
+      representation: 'recent-excerpt' as const,
+      representationMetadata: JSON.stringify({ updatedAt: '2026-10-30T12:00:00.000Z', sourceContentCharacters: text.length + 500, contentTruncated: true }),
+      readReceipts: [{ actionCallId: 'recent-original', actionName: 'pages.listRecent' as const }]
+    }
+    const boundedSource = { ...readSource, kind: 'recent-excerpt' as const, complete: false, text, authorText, excerpt }
+    const boundedRead = { ...readInput().evidence[0]!, source: text, authorText, excerpt }
+    const candidate = readInput({
+      sources: [boundedSource], evidence: [boundedRead],
+      claims: [{ ...readInput().claims[0]!, statement: authorText }]
+    })
+    const built = buildWikiVerificationPlan(candidate)!
+    expect(built.literalSupportCount).toBe(0)
+    expect(assessWikiVerificationResults(built, []).valid).toBe(false)
+    expect(assessWikiVerificationResults(built, batchResults(built)).valid).toBe(true)
+    expect(state(built.requests[0]!).sources[0]).toEqual(boundedSource)
+    for (const changed of [
+      { ...boundedSource, complete: true },
+      { ...boundedSource, kind: 'source-read' as const },
+      { ...boundedSource, excerpt: undefined },
+      { ...boundedSource, text: `${text} manufactured suffix` },
+      { ...boundedSource, excerpt: { ...excerpt, readReceipts: [{ actionCallId: 'foreign', actionName: 'pages.listRecent' as const }] } }
+    ])
+      expect(() => buildWikiVerificationPlan({ ...candidate, sources: [changed] })).toThrow()
+    for (const target of ['source', 'evidence', 'request'] as const) {
+      const issued = buildWikiVerificationPlan(candidate)!
+      if (target === 'request') Reflect.set(issued.requests[0]!, 'state', '{}')
+      else {
+        const original = target === 'source' ? issued.originalSources[0]! : issued.originalEvidence[0]!
+        Reflect.set(original, 'excerpt', { ...excerpt, representationMetadata: '{}' })
+      }
+      expect(assessWikiVerificationResults(issued, batchResults(issued)).valid).toBe(false)
+    }
+  })
 })
 
 describe('Wiki verification source-local admission', () => {

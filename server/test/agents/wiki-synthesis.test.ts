@@ -59,9 +59,10 @@ const fixtureReads = (sources: readonly WikiSynthesisSource[]): WikiSynthesisRea
     sourceRevision: source.sourceRevision,
     readId: source.readId,
     title: source.context || null,
-    representation: 'markdown',
+    representation: source.kind === 'recent-excerpt' ? 'recent-excerpt' : 'markdown',
     complete: source.complete,
-    source: source.text
+    source: source.text,
+    ...(source.excerpt === undefined ? {} : { excerpt: source.excerpt })
   }))
 const encodeFixtureSources = (sources: readonly WikiSynthesisSource[]) => encodeWikiSynthesisSources(sources, fixtureReads(sources))
 const input: WikiSynthesisInput = {
@@ -116,6 +117,25 @@ describe('Wiki source-bound typed synthesis', () => {
       expect(request.responseFormat?.type).toBe(mode === 'native' ? 'json_schema' : 'json_object')
     }
   })
+  it('admits an explicitly bounded recent prefix without making an incomplete full-read binding selectable', async () => {
+    const text = `${source.text}\n\nUnfinished archive note`
+    const bounded: WikiSynthesisSource = {
+      ...source, text, kind: 'recent-excerpt', complete: false,
+      excerpt: {
+        representation: 'recent-excerpt',
+        representationMetadata: JSON.stringify({ contentTruncated: true, sourceContentCharacters: text.length + 500, updatedAt: '2026-10-30T12:00:00.000Z' }),
+        readReceipts: [{ actionCallId: 'recent-original', actionName: 'pages.listRecent' }]
+      }
+    }
+    const accepted = await generate(answer(), [bounded]).result
+    expect(accepted.claims).toEqual(answer().claims)
+    for (const invalid of [
+      { ...bounded, complete: true },
+      { ...bounded, excerpt: undefined },
+      { ...bounded, kind: 'source-read' as const }
+    ]) expect(() => createWikiSynthesisProgram([invalid])).toThrow()
+  })
+
 
   it('streams source-bound claims when native optional output channels are null', async () => {
     const wire = JSON.stringify({ ...encodeWikiSynthesisAnswer(answer()), attachmentClaims: null, recommendations: null })
@@ -721,7 +741,7 @@ describe('Wiki source-bound typed synthesis', () => {
         },
         mode
       )
-      await expect(rejected.result).rejects.toThrow('exact original complete source binding')
+      await expect(rejected.result).rejects.toThrow()
     }
   })
 
