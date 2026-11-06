@@ -51,12 +51,14 @@ export interface ActionHandlerContext {
   readonly authority: ActionAuthority
   readonly actionCallId: string
   readonly signal: AbortSignal
-  readonly reauthorize: () => Promise<void>
-  readonly fenceSideEffect: () => Promise<void>
+  readonly reauthorize: (additionalRequiredFlags?: readonly (keyof AgentFeatureFlags)[]) => Promise<void>
+  readonly fenceSideEffect: (additionalRequiredFlags?: readonly (keyof AgentFeatureFlags)[]) => Promise<void>
   readonly executeAction: (actionName: AgentActionName, input: unknown) => Promise<unknown>
 }
 
 export type ActionHandler = (input: unknown, context: ActionHandlerContext) => Promise<unknown>
+
+export type ActionOwnedMutationAdmission = (input: unknown, authority: ActionAuthority) => Promise<boolean>
 
 export interface ActionExecutionRequest {
   readonly knowledgeContext?: AgentKnowledgeContext
@@ -148,16 +150,17 @@ const hasAdmissionPermission = (snapshot: ActionAdmissionSnapshot, permission: s
     permission !== 'use:agent-browser' &&
     snapshot.permissions.includes('manage:system'))
 
-const assertAdmission = (definition: ActionDefinition, snapshot: ActionAdmissionSnapshot): void => {
+const assertAdmission = (definition: ActionDefinition, snapshot: ActionAdmissionSnapshot, ownedMutation = false): void => {
   const descriptor = definition.descriptor
   if (!descriptor.exposure[snapshot.transport]) throw new ActionKernelError('ACTION_NOT_EXPOSED', 'Action is not exposed on this transport', 404)
   if (snapshot.executionMode !== 'agent' || !snapshot.supportsTools) throw new ActionKernelError('TOOLS_UNAVAILABLE', 'The selected execution profile cannot use actions', 409)
   const basePermission = snapshot.transport === 'agent' ? 'use:agents' : 'use:mcp'
   if (!hasAdmissionPermission(snapshot, basePermission)) throw new ActionKernelError('ACTION_FORBIDDEN', `Missing ${basePermission}`, 403)
   for (const permission of descriptor.requiredPermissions) {
-    if (!hasAdmissionPermission(snapshot, permission)) throw new ActionKernelError('ACTION_FORBIDDEN', `Missing ${permission}`, 403)
+    if (!hasAdmissionPermission(snapshot, permission) && !(ownedMutation && permission === 'write:pages'))
+      throw new ActionKernelError('ACTION_FORBIDDEN', `Missing ${permission}`, 403)
   }
-  if (descriptor.name === 'pages.applyProposal' && !hasAdmissionPermission(snapshot, 'write:pages') && !hasAdmissionPermission(snapshot, 'delete:pages')) {
+  if (descriptor.name === 'pages.applyProposal' && !ownedMutation && !hasAdmissionPermission(snapshot, 'write:pages') && !hasAdmissionPermission(snapshot, 'delete:pages')) {
     throw new ActionKernelError('ACTION_FORBIDDEN', 'Missing page mutation permission', 403)
   }
   if (snapshot.transport === 'agent' && !snapshot.featureFlags['agents.provider.enabled']) {
@@ -240,11 +243,11 @@ export const toMcpAction = (definition: ActionDefinition): McpActionDescriptor =
 }
 
 export class ActionKernel {
-  private readonly handlers = new Map<AgentActionName, ActionHandler>()
+  private readonly handlers = new Map<AgentActionName, { readonly handler: ActionHandler; readonly ownedMutationAdmission?: ActionOwnedMutationAdmission }>()
 
-  register(name: AgentActionName, handler: ActionHandler): void {
+  register(name: AgentActionName, handler: ActionHandler, ownedMutationAdmission?: ActionOwnedMutationAdmission): void {
     if (this.handlers.has(name)) throw new ActionKernelError('DUPLICATE_ACTION_HANDLER', `Handler for ${name} is already registered`, 500)
-    this.handlers.set(name, handler)
+    this.handlers.set(name, { handler, ...(ownedMutationAdmission === undefined ? {} : { ownedMutationAdmission }) })
   }
 
   offer(auth: RequestAuthContext, snapshot: ActionAdmissionSnapshot, requestId: string): readonly OfferedAction[] {
@@ -253,7 +256,8 @@ export class ActionKernel {
     for (const definition of Object.values(ACTION_CATALOG)) {
       if (!registered.has(definition.descriptor.name)) continue
       try {
-        assertAdmission(definition, snapshot)
+        const potentialOwnedMutation = snapshot.transport === 'agent' && auth.kind === 'user' && registered.get(definition.descriptor.name)?.ownedMutationAdmission !== undefined
+        assertAdmission(definition, snapshot, potentialOwnedMutation)
         offered.push({ definition, authority: createActionAuthority(definition.descriptor.name, requestId, auth, snapshot) })
       } catch (error: unknown) {
         if (!(error instanceof ActionKernelError)) throw error
@@ -277,18 +281,37 @@ export class ActionKernel {
     const liveAdmission = await request.refreshAdmission(authority, input)
     if (request.signal.aborted) throw new ActionKernelError('ACTION_CANCELLED', 'Action was cancelled before handler dispatch', 409)
     if (liveAdmission.transport !== authority.transport) throw new ActionKernelError('INVALID_AUTHORITY', 'Action transport changed after admission', 400)
-    assertAdmission(definition, liveAdmission)
-    const handler = this.handlers.get(authority.actionName)
-    if (!handler) throw new ActionKernelError('ACTION_HANDLER_MISSING', `Action ${authority.actionName} has no registered handler`, 501)
-    const reauthorize = async (): Promise<void> => {
+    const registration = this.handlers.get(authority.actionName)
+    if (!registration) throw new ActionKernelError('ACTION_HANDLER_MISSING', `Action ${authority.actionName} has no registered handler`, 501)
+    const assertCurrentAdmission = async (snapshot: ActionAdmissionSnapshot, additionalRequiredFlags?: readonly (keyof AgentFeatureFlags)[]): Promise<void> => {
+      const ownedMutation = authority.transport === 'agent' && authority.requester.kind === 'user'
+        ? registration.ownedMutationAdmission
+        : undefined
+      // An owner-scoped hook can replace only missing public mutation rights.
+      // Base access, transport, tools, flags and allowlists remain hard vetoes.
+      assertAdmission(definition, snapshot, ownedMutation !== undefined)
+      if (additionalRequiredFlags !== undefined) {
+        for (const flag of additionalRequiredFlags) {
+          if (!snapshot.featureFlags[flag]) throw new ActionKernelError('ACTION_DISABLED', `Feature ${flag} is disabled`, 404)
+        }
+      }
+      const needsOwnedMutation =
+        (definition.descriptor.requiredPermissions.includes('write:pages') && !hasAdmissionPermission(snapshot, 'write:pages')) ||
+        (authority.actionName === 'pages.applyProposal' && !hasAdmissionPermission(snapshot, 'write:pages') && !hasAdmissionPermission(snapshot, 'delete:pages'))
+      if (needsOwnedMutation && (ownedMutation === undefined || !(await ownedMutation(input, authority)))) {
+        throw new ActionKernelError('ACTION_FORBIDDEN', 'Missing page mutation permission for this operation', 403)
+      }
+    }
+    await assertCurrentAdmission(liveAdmission)
+    const reauthorize = async (additionalRequiredFlags?: readonly (keyof AgentFeatureFlags)[]): Promise<void> => {
       if (request.signal.aborted) throw new ActionKernelError('ACTION_CANCELLED', 'Action was cancelled before side-effect dispatch', 409)
       const currentAdmission = await request.refreshAdmission(authority, input)
       if (currentAdmission.transport !== authority.transport) throw new ActionKernelError('INVALID_AUTHORITY', 'Action transport changed after admission', 400)
-      assertAdmission(definition, currentAdmission)
+      await assertCurrentAdmission(currentAdmission, additionalRequiredFlags)
       if (request.signal.aborted) throw new ActionKernelError('ACTION_CANCELLED', 'Action was cancelled before side-effect dispatch', 409)
     }
-    const fenceSideEffect = async (): Promise<void> => {
-      await reauthorize()
+    const fenceSideEffect = async (additionalRequiredFlags?: readonly (keyof AgentFeatureFlags)[]): Promise<void> => {
+      await reauthorize(additionalRequiredFlags)
       await request.fenceSideEffect?.()
       if (request.signal.aborted) throw new ActionKernelError('ACTION_CANCELLED', 'Action was cancelled before side-effect dispatch', 409)
     }
@@ -298,7 +321,7 @@ export class ActionKernel {
       const nestedAuthority = createActionAuthority(actionName, authority.requestId, authFromAuthority(authority), currentAdmission)
       return this.execute({ ...request, authority: nestedAuthority, input: nestedInput })
     }
-    const output = await handler(input, { ...(request.knowledgeContext ? { knowledgeContext: request.knowledgeContext } : {}), authority, actionCallId: z.string().min(1).max(128).parse(request.actionCallId), signal: request.signal, reauthorize, fenceSideEffect, executeAction })
+    const output = await registration.handler(input, { ...(request.knowledgeContext ? { knowledgeContext: request.knowledgeContext } : {}), authority, actionCallId: z.string().min(1).max(128).parse(request.actionCallId), signal: request.signal, reauthorize, fenceSideEffect, executeAction })
     if (request.signal.aborted) throw new ActionKernelError('ACTION_CANCELLED', 'Action was cancelled during execution', 409)
     try {
       return definition.output.parse(output)

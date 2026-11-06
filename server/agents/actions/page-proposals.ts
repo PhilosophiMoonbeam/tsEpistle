@@ -15,6 +15,7 @@ import { getMcpProposal, getOwnedProposal, persistProposal, type PersistedPropos
 import { applyApprovedProposal } from '../proposals/execution.ts'
 import { withOkfProducer } from '../../okf/mutation-context.ts'
 import { isApiPrincipal } from '../../helpers/api-principal.ts'
+import { principalId } from '../../helpers/page-access.ts'
 
 const PageSchema = z.looseObject({
   id: z.coerce.number().int().positive(),
@@ -455,6 +456,7 @@ const prepareCreate = async (
 ): Promise<PreparedProposal> => {
   const parsed = ACTION_CATALOG['pages.prepareCreate'].input.parse(input)
   const user = await requester(dependencies, context.authority)
+  const visibility = parsed.visibility ?? 'public'
   for (const visibility of ['private', 'public'] as const) {
     try {
       await dependencies.operations.getByPath({ path: parsed.path, locale: parsed.locale, visibility, requester: user })
@@ -478,10 +480,11 @@ const prepareCreate = async (
     content: parsed.content,
     editor: 'markdown',
     contentType: parsed.contentType,
-    visibility: 'public',
+    visibility,
     isPublished: parsed.isPublished,
     tags: parsed.tags
   }
+  await dependencies.operations.authorizeMutation({ kind: 'create', input: operationInput, requester: user })
   return {
     pageId: null,
     path: parsed.path,
@@ -494,7 +497,9 @@ const prepareCreate = async (
     patchFormat: null,
     patchEngineVersion: null,
     patchMetadata: { kind: 'create', operationInput, pageId: null, path: parsed.path, locale: parsed.locale, resultIdentity },
-    summary: `Create ${parsed.locale}/${parsed.path}`
+    summary: parsed.visibility === undefined
+      ? `Create ${parsed.locale}/${parsed.path}`
+      : `Create ${parsed.locale}/${parsed.path} (${visibility}, ${parsed.isPublished ? 'published' : 'unpublished'})`
   }
 }
 
@@ -695,6 +700,8 @@ const apply = async (dependencies: PageProposalActionDependencies, context: Acti
   const approverUser = context.authority.requester.kind === 'user' ? requestingUser : await dependencies.resolveApprover?.(expectedApproverId)
   if (!approverUser) throw new ActionKernelError('APPROVER_UNAVAILABLE', 'Proposal approver is no longer available', 403)
   const metadata = MetadataSchema.parse(JSON.parse(proposal.operation))
+  const requiredFlags = ACTION_CATALOG[proposal.actionName].requiredFlags
+  await context.reauthorize(requiredFlags)
   const output = await applyApprovedProposal(dependencies.knex, {
     proposalId: proposal.id,
     approvalId: input.approvalId,
@@ -720,7 +727,7 @@ const apply = async (dependencies: PageProposalActionDependencies, context: Acti
       }
     },
     mutate: async () => {
-      await context.fenceSideEffect()
+      await context.fenceSideEffect(requiredFlags)
       await dependencies.operations.authorizeMutation({ kind: metadata.kind, input: metadata.operationInput, requester: requestingUser })
       if (context.authority.requester.kind === 'apiKey') {
         await dependencies.operations.authorizeMutation({ kind: metadata.kind, input: metadata.operationInput, requester: approverUser })
@@ -769,9 +776,47 @@ const apply = async (dependencies: PageProposalActionDependencies, context: Acti
   return { proposalId: proposal.id, status: 'applied' as const, resultHash: output.resultHash, page }
 }
 
+const authorizeOwnedPrivateCreate = async (
+  dependencies: PageProposalActionDependencies,
+  authority: ActionAuthority,
+  operationInput: Record<string, unknown>
+): Promise<boolean> => {
+  if (authority.transport !== 'agent' || authority.requester.kind !== 'user' || operationInput.visibility !== 'private') return false
+  const user = await requester(dependencies, authority)
+  if (isApiPrincipal(user) || principalId(user) !== authority.requester.userId) return false
+  await dependencies.operations.authorizeMutation({ kind: 'create', input: operationInput, requester: user })
+  return true
+}
+
+const authorizeOwnedPrivateCreateProposal = async (
+  dependencies: PageProposalActionDependencies,
+  authority: ActionAuthority,
+  input: unknown
+): Promise<boolean> => {
+  if (authority.transport !== 'agent' || authority.requester.kind !== 'user') return false
+  const parsed = ACTION_CATALOG['pages.applyProposal'].input.parse(input)
+  const { proposal, approval } = await getOwnedProposal(dependencies.knex, authority.requester.userId, parsed.proposalId)
+  if (
+    proposal.actionName !== 'pages.prepareCreate' ||
+    approval.id !== parsed.approvalId ||
+    approval.status !== 'approved' ||
+    approval.approvedByUserId !== authority.requester.userId ||
+    approval.inputHash !== proposal.inputHash ||
+    approval.authoritySha256 !== proposal.authoritySha256 ||
+    approval.authorityVersion !== proposal.authorityVersion ||
+    approval.patchSha256 !== (proposal.patchSha256 ?? null) ||
+    approval.resultCanonicalSha256 !== (proposal.resultCanonicalSha256 ?? null) ||
+    approval.diffSha256 !== (proposal.diffSha256 ?? null)
+  ) return false
+  const metadata = MetadataSchema.parse(JSON.parse(proposal.operation))
+  return metadata.kind === 'create' && await authorizeOwnedPrivateCreate(dependencies, authority, metadata.operationInput)
+}
+
 export const registerPageProposalActions = (kernel: ActionKernel, dependencies: PageProposalActionDependencies): void => {
-  kernel.register('pages.prepareCreate', (input, context) =>
-    prepareAndWait(dependencies, context, input, () => prepareCreate(dependencies, context, input as Record<string, unknown>))
+  kernel.register(
+    'pages.prepareCreate',
+    (input, context) => prepareAndWait(dependencies, context, input, () => prepareCreate(dependencies, context, input as Record<string, unknown>)),
+    (input, authority) => authorizeOwnedPrivateCreate(dependencies, authority, ACTION_CATALOG['pages.prepareCreate'].input.parse(input))
   )
   kernel.register('pages.preparePatch', (input, context) =>
     prepareAndWait(dependencies, context, input, () => preparePatch(dependencies, context, input as { patch: { snapshotToken: string } }))
@@ -785,5 +830,9 @@ export const registerPageProposalActions = (kernel: ActionKernel, dependencies: 
   kernel.register('pages.prepareDelete', (input, context) =>
     prepareAndWait(dependencies, context, input, () => prepareDelete(dependencies, context, input as Record<string, unknown>))
   )
-  kernel.register('pages.applyProposal', async (input, context) => apply(dependencies, context, input as { proposalId: string; approvalId: string }))
+  kernel.register(
+    'pages.applyProposal',
+    async (input, context) => apply(dependencies, context, input as { proposalId: string; approvalId: string }),
+    (input, authority) => authorizeOwnedPrivateCreateProposal(dependencies, authority, input)
+  )
 }

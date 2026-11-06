@@ -128,6 +128,33 @@ const ApplicationMetadata = z.object({
   operationInput: z.record(z.string(), z.unknown()).optional()
 })
 
+const OperationContentHash = z.string().regex(/^[a-f0-9]{64}$/)
+const PatchCommittedIdentity = z.object({
+  actionName: z.literal('pages.preparePatch'),
+  pageId: AppliedPageId,
+  sourceRevision: z.string().min(1).max(64),
+  contentSha256: OperationContentHash
+})
+const CreateCommittedIdentity = z.object({
+  actionName: z.literal('pages.prepareCreate'),
+  pageId: AppliedPageId,
+  path: z.string().min(1).max(1_024),
+  locale: z.string().min(2).max(35),
+  contentSha256: OperationContentHash
+})
+// Only these approved creation values may enter the private audit group.
+// In particular, neither the full operation input nor its content is exposed.
+const ApprovedCreationMetadata = z.object({
+  title: z.string().min(1).max(255),
+  path: z.string().min(1).max(1_024),
+  locale: z.string().min(2).max(35),
+  contentType: z.literal('markdown'),
+  visibility: z.enum(['public', 'private']),
+  isPublished: z.boolean(),
+  tags: z.array(z.string().max(255)).max(100),
+  description: z.string().max(1_000)
+})
+
 const readCommittedApplication = async (knex: Knex, authority: ActionAuthority, output: unknown) => {
   const receipt = ACTION_CATALOG['pages.applyProposal'].output.safeParse(output)
   if (!receipt.success || authority.requester.kind !== 'user' || authority.transport !== 'agent') return undefined
@@ -185,6 +212,20 @@ const readCommittedApplication = async (knex: Knex, authority: ActionAuthority, 
     stableId.success &&
     canonicalJson(committed.data) === canonicalJson({ ...metadata.data.resultIdentity, pageId: stableId.data })
   if (canonicalJson(committed.data) !== approvedResult && !dynamicCreate) return undefined
+  const preparation = ACTION_CATALOG[proposal.actionName]
+  if (!proposal.actionName.startsWith('pages.prepare') || preparation.requiredFlags.some(flag => !authority.featureFlags[flag])) return undefined
+  // applyProposal can be offered without public mutation rights for an owned
+  // private create. That potential offer must not authorize historical receipts
+  // for patches, public creates, or other approved operations.
+  const ownedPrivateCreate =
+    proposal.actionName === 'pages.prepareCreate' &&
+    metadata.data.kind === 'create' &&
+    metadata.data.operationInput?.visibility === 'private'
+  if (
+    !ownedPrivateCreate &&
+    !authority.permissions.some(permission => permission === 'write:pages' || permission === 'delete:pages' || permission === 'manage:system')
+  )
+    return undefined
   const page = receipt.data.page
   // A null page discloses status only; it is not evidence of deletion.
   const pageId = metadata.data.kind === 'create' ? (stableId.success ? stableId.data : null) : metadata.data.pageId
@@ -374,7 +415,9 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
                 if (!currentAction || signal.aborted) return undefined
                 const prepared = ACTION_CATALOG['pages.preparePatch'].output.safeParse(output)
                 const application =
-                  prepared.success && prepared.data.actionName === 'pages.preparePatch' && prepared.data.status === 'applied'
+                  prepared.success &&
+                  (prepared.data.actionName === 'pages.preparePatch' || prepared.data.actionName === 'pages.prepareCreate') &&
+                  prepared.data.status === 'applied'
                     ? prepared.data.application
                     : output
                 const authenticated = await readCommittedApplication(this.#dependencies.knex, currentAction.authority, application)
@@ -383,37 +426,82 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
                 const operationInput = metadata.operationInput
                 if (
                   receipt.page === null ||
-                  proposal.actionName !== 'pages.preparePatch' ||
-                  metadata.kind !== 'patch' ||
+                  (proposal.actionName !== 'pages.preparePatch' && proposal.actionName !== 'pages.prepareCreate') ||
+                  (prepared.success && prepared.data.actionName !== proposal.actionName) ||
                   proposal.contentPurgedAt !== null ||
-                  proposal.input === null ||
+                  typeof proposal.input !== 'string' ||
                   typeof proposal.diff !== 'string' ||
                   proposal.diff.length === 0 ||
-                  proposal.diff.length > 8_192 ||
-                  proposal.baseSourceRevision == null ||
+                  Buffer.byteLength(proposal.diff, 'utf8') > 8_192 ||
                   operationInput === undefined ||
-                  metadata.pageId !== proposal.pageId ||
-                  operationInput.id !== metadata.pageId ||
-                  String(operationInput.expectedSourceRevision) !== String(proposal.baseSourceRevision) ||
-                  committed.actionName !== 'pages.preparePatch' ||
-                  committed.pageId !== metadata.pageId ||
-                  typeof committed.sourceRevision !== 'string' ||
-                  committed.sourceRevision.length === 0 ||
-                  committed.sourceRevision.length > 64 ||
+                  typeof operationInput.content !== 'string' ||
                   createHash('sha256').update(proposal.diff).digest('hex') !== proposal.diffSha256
                 )
                   return undefined
+                // Retained input must still be readable, but raw call input is
+                // never an authority for the approved operation or its result.
+                try {
+                  const retainedInput: unknown = JSON.parse(proposal.input)
+                  if (typeof retainedInput !== 'object' || retainedInput === null || Array.isArray(retainedInput)) return undefined
+                } catch {
+                  return undefined
+                }
+                const identity =
+                  proposal.actionName === 'pages.preparePatch'
+                    ? PatchCommittedIdentity.safeParse(committed)
+                    : CreateCommittedIdentity.safeParse(committed)
+                if (
+                  !identity.success ||
+                  canonicalJson(identity.data) !== canonicalJson(committed) ||
+                  identity.data.pageId !== receipt.page.id ||
+                  identity.data.contentSha256 !==
+                    createHash('sha256').update(canonicalJson({ source: operationInput.content.replace(/\r\n?/g, '\n') })).digest('hex')
+                )
+                  return undefined
+                let creationMetadata: z.infer<typeof ApprovedCreationMetadata> | undefined
+                let baseSourceRevision: string | null = null
+                let resultSourceRevision: string | null = null
+                if (identity.data.actionName === 'pages.preparePatch') {
+                  if (
+                    metadata.kind !== 'patch' ||
+                    proposal.baseSourceRevision == null ||
+                    metadata.pageId !== proposal.pageId ||
+                    operationInput.id !== metadata.pageId ||
+                    String(operationInput.expectedSourceRevision) !== String(proposal.baseSourceRevision) ||
+                    identity.data.pageId !== metadata.pageId
+                  )
+                    return undefined
+                  baseSourceRevision = String(proposal.baseSourceRevision)
+                  resultSourceRevision = identity.data.sourceRevision
+                } else {
+                  const approved = ApprovedCreationMetadata.safeParse(operationInput)
+                  if (
+                    metadata.kind !== 'create' ||
+                    metadata.pageId !== null ||
+                    proposal.pageId != null ||
+                    proposal.baseSourceRevision != null ||
+                    !approved.success ||
+                    approved.data.path !== metadata.path ||
+                    approved.data.locale !== metadata.locale ||
+                    identity.data.path !== metadata.path ||
+                    identity.data.locale !== metadata.locale
+                  )
+                    return undefined
+                  creationMetadata = approved.data
+                }
                 const evidence = JSON.stringify({
                   proposalId: receipt.proposalId,
                   resultHash: receipt.resultHash,
                   page: { id: receipt.page.id, locale: metadata.locale, path: metadata.path },
                   reviewedChange: {
-                    actionName: 'pages.preparePatch',
-                    baseSourceRevision: String(proposal.baseSourceRevision),
-                    resultSourceRevision: committed.sourceRevision,
+                    actionName: identity.data.actionName,
+                    baseSourceRevision,
+                    resultSourceRevision,
                     operationSha256: proposal.operationSha256,
                     diffSha256: proposal.diffSha256,
                     diff: proposal.diff,
+                    resultIdentity: identity.data,
+                    ...(creationMetadata === undefined ? {} : { creationMetadata }),
                     inputFields: Object.keys(operationInput).sort()
                   }
                 })

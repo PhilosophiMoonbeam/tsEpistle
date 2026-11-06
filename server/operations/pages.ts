@@ -3539,10 +3539,14 @@ const authorizeMutation = async (input: OperationInput, transaction?: Knex.Trans
   if (kind === 'create') {
     const path = stringValue(operationInput.path, 'path')
     const locale = stringValue(operationInput.locale, 'locale')
+    const visibility = operationInput.visibility === undefined ? 'public' : operationInput.visibility
+    if (visibility !== 'public' && visibility !== 'private') {
+      throw new ApplicationError('visibility must be public or private', { code: 'INVALID_INPUT' })
+    }
     wiki.models.pages.assertCreateAccess({
       path,
       locale,
-      visibility: 'public',
+      visibility,
       tags: operationInput.tags,
       user: requester as Express.User,
       authority

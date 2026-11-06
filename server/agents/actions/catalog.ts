@@ -917,6 +917,7 @@ export const ACTION_CATALOG = {
         .max(1_000_000)
         .describe('Wiki Markdown source: paragraphs, headings, emphasis, code fences, lists, task lists, blockquotes, ordinary links/images and rectangular tables. Avoid raw HTML and editor-specific extensions unless requested.'),
       contentType: z.literal('markdown'),
+      visibility: z.enum(['public', 'private']).optional().describe('Page visibility; omitted means public. Private pages belong to the authenticated owner.'),
       isPublished: z.boolean().default(true),
       tags: z.array(z.string().max(255)).max(100).default([])
     }),
