@@ -5918,6 +5918,7 @@ export class AxAgentEngine implements AgentEngine {
                   base.validateObservation!(actionName, output, signal, originalInput)
               }
             : {}),
+          ...(base.operationEvidence ? { operationEvidence: (output: unknown, signal: AbortSignal) => base.operationEvidence!(output, signal) } : {}),
           snapshot: signal => base.snapshot(signal),
           close: () => base.close()
         }
@@ -7483,6 +7484,7 @@ export class AxAgentEngine implements AgentEngine {
         })
       }
       const validateObservation = actionSession?.validateObservation
+      const readOperationEvidence = actionSession?.operationEvidence?.bind(actionSession)
       const validateStoredEvidence = async (actionName: string, output: unknown): Promise<boolean> => {
         if (typeof validateObservation !== 'function' || !isPageReadActionName(actionName)) return false
         request.signal.throwIfAborted()
@@ -7525,10 +7527,21 @@ export class AxAgentEngine implements AgentEngine {
         }
         request.signal.throwIfAborted()
       }
+      // Keep private audit support out of transcript/snapshot state. Its feedback
+      // derivatives require the same live operation authority on later dispatch.
+      const admittedOperationEvidence = new Map<unknown, string>()
       const requireFreshApplicationReceipts = async (): Promise<void> => {
+        for (const [receipt, expected] of admittedOperationEvidence) {
+          if (!readOperationEvidence || (await readOperationEvidence(receipt, request.signal)) !== expected)
+            throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Private operation evidence changed or is no longer authorized', 409)
+        }
         if (typeof validateObservation !== 'function') return
         for (const [message, receipt] of trackedApplicationReceipts) {
-          if (receipt !== undefined && (await validateObservation.call(actionSession, 'pages.applyProposal', receipt, request.signal)) !== true)
+          if (
+            receipt !== undefined &&
+            !admittedOperationEvidence.has(receipt) &&
+            (await validateObservation.call(actionSession, 'pages.applyProposal', receipt, request.signal)) !== true
+          )
             throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Applied result identity changed or is no longer authorized', 409)
           authorizedApplicationReceipts.add(message)
         }
@@ -8133,7 +8146,7 @@ export class AxAgentEngine implements AgentEngine {
         return missing
       }
       const nudgeRecentBodyReads = (ids: readonly string[]): string =>
-        `These recent-page excerpts have no parser-admitted body content: ${ids.join(', ')}. If their body is needed for the original request and the user permits full-page reads, use pages.get only for those pages; retain the other usable reads. Do not fetch outside the requested scope or contrary to a user restriction. Otherwise finish with supported requested content and leave unavailable requested content unresolved. Never infer facts from opaque markup or an unseen suffix.`
+        `These recent-page excerpts have no parser-admitted body content: ${ids.join(', ')}. For a requested content recap, their headings or opaque markup cannot supply a page summary. If full-page reads are permitted within the original scope, use ${AGENT_TOOL_NAMES['pages.get']} for these pages before finishing; retain the other usable reads. A title-only listing does not need full reads. Do not fetch outside the requested scope or contrary to a user restriction: finish with supported requested content and leave genuinely unavailable requested content unresolved. Never infer facts from opaque markup or an unseen suffix.`
       const rememberRecentBodyNudge = (ids: readonly string[]): void => {
         for (const id of ids) {
           const evidence = citationRegistry.get(id)
@@ -9676,12 +9689,25 @@ export class AxAgentEngine implements AgentEngine {
                   requiresRecentObservationCoverage)
               ) {
                 const conversationContext = wikiConversationContext(conversation)
+                const operationEvidence: string[] = []
+                if (requiresOperationCoverage && readOperationEvidence) {
+                  for (const receipt of trackedApplicationReceipts.values()) {
+                    const group = await readOperationEvidence(receipt, request.signal)
+                    if (group === undefined) continue
+                    const admitted = admittedOperationEvidence.get(receipt)
+                    if (admitted !== undefined && admitted !== group)
+                      throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Private operation evidence changed after admission', 409)
+                    admittedOperationEvidence.set(receipt, group)
+                    if (!operationEvidence.includes(group)) operationEvidence.push(group)
+                  }
+                }
                 const coverageInput = encodeWikiCoverageInput({
                   userRequest: userRequestWithRecentScope(assessmentEvidence),
                   ...(conversationContext === undefined ? {} : { conversationContext }),
                   requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [contextPlan.intent],
                   unresolvedFacets: nativeDraft.answer.unresolvedFacets,
                   ...(coverageObservations.length === 0 ? {} : { observations: coverageObservations }),
+                  ...(operationEvidence.length === 0 ? {} : { operationEvidence }),
                   ...(nativeDraft.inputMediaSources === undefined ? {} : { inputMediaSources: nativeDraft.inputMediaSources }),
                   ...(nativeDraft.answer.attachmentClaims === undefined ? {} : { attachmentClaims: nativeDraft.answer.attachmentClaims }),
                   reads: [...nativeDraft.readSources.values()].map(source => {

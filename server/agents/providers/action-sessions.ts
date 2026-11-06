@@ -7,8 +7,8 @@ import { ACTION_CATALOG, type ActionCapability, type ActionCapabilityOutputKind,
 import { type ActionAdmissionSnapshot, type ActionAuthority, ActionKernel } from '../actions/kernel.ts'
 import { markAgentRunSideEffectsStarted } from '../coordinator.ts'
 import { SUBAGENT_READ_ACTIONS } from '../orchestration.ts'
-import { AgentRepositoryError } from '../repository.ts'
 import { getOwnedProposal } from '../proposals/repository.ts'
+import { AgentRepositoryError } from '../repository.ts'
 import type { AgentEngineRequest } from '../runtime.ts'
 import type { AgentActionSessionProvider } from './engine.ts'
 import { type AxActionSession, AxSessionHarness } from './session-harness.ts'
@@ -122,12 +122,15 @@ const AppliedResultIdentity = z.record(z.string(), z.unknown())
 const ApplicationMetadata = z.object({
   kind: z.enum(['create', 'patch', 'move', 'restore', 'delete']),
   pageId: AppliedPageId.nullable(),
-  resultIdentity: AppliedResultIdentity
+  path: z.string().min(1).max(1_024),
+  locale: z.string().min(2).max(35),
+  resultIdentity: AppliedResultIdentity,
+  operationInput: z.record(z.string(), z.unknown()).optional()
 })
 
-const validateCommittedApplication = async (knex: Knex, authority: ActionAuthority, output: unknown): Promise<boolean> => {
+const readCommittedApplication = async (knex: Knex, authority: ActionAuthority, output: unknown) => {
   const receipt = ACTION_CATALOG['pages.applyProposal'].output.safeParse(output)
-  if (!receipt.success || authority.requester.kind !== 'user' || authority.transport !== 'agent') return false
+  if (!receipt.success || authority.requester.kind !== 'user' || authority.transport !== 'agent') return undefined
   const { proposal, approval } = await getOwnedProposal(knex, authority.requester.userId, receipt.data.proposalId)
   if (
     proposal.status !== 'applied' ||
@@ -138,9 +141,11 @@ const validateCommittedApplication = async (knex: Knex, authority: ActionAuthori
     approval.authorityVersion !== proposal.authorityVersion ||
     approval.patchSha256 !== (proposal.patchSha256 ?? null) ||
     approval.resultCanonicalSha256 !== (proposal.resultCanonicalSha256 ?? null) ||
-    approval.diffSha256 !== (proposal.diffSha256 ?? null)
+    approval.diffSha256 !== (proposal.diffSha256 ?? null) ||
+    approval.operationSha256 !== proposal.operationSha256 ||
+    createHash('sha256').update(proposal.operation).digest('hex') !== proposal.operationSha256
   )
-    return false
+    return undefined
   const execution = await knex('agentActionExecutions')
     .where({
       proposalId: proposal.id,
@@ -156,13 +161,22 @@ const validateCommittedApplication = async (knex: Knex, authority: ActionAuthori
   if (
     typeof execution?.result !== 'string' ||
     execution.result !== proposal.applyResult ||
-    createHash('sha256').update(execution.result).digest('hex') !== receipt.data.resultHash
+    createHash('sha256').update(execution.result).digest('hex') !== receipt.data.resultHash ||
+    (proposal.resultCanonicalSha256 !== null && proposal.resultCanonicalSha256 !== receipt.data.resultHash)
   )
-    return false
-  const metadata = ApplicationMetadata.safeParse(JSON.parse(proposal.operation))
-  if (!metadata.success) return false
-  const committed = AppliedResultIdentity.safeParse(JSON.parse(execution.result))
-  if (!committed.success) return false
+    return undefined
+  let operation: unknown
+  let result: unknown
+  try {
+    operation = JSON.parse(proposal.operation)
+    result = JSON.parse(execution.result)
+  } catch {
+    return undefined
+  }
+  const metadata = ApplicationMetadata.safeParse(operation)
+  if (!metadata.success) return undefined
+  const committed = AppliedResultIdentity.safeParse(result)
+  if (!committed.success) return undefined
   const stableId = AppliedPageId.safeParse(committed.data.pageId)
   const approvedResult = canonicalJson(metadata.data.resultIdentity)
   const dynamicCreate =
@@ -170,12 +184,12 @@ const validateCommittedApplication = async (knex: Knex, authority: ActionAuthori
     proposal.resultCanonicalSha256 === null &&
     stableId.success &&
     canonicalJson(committed.data) === canonicalJson({ ...metadata.data.resultIdentity, pageId: stableId.data })
-  if (canonicalJson(committed.data) !== approvedResult && !dynamicCreate) return false
+  if (canonicalJson(committed.data) !== approvedResult && !dynamicCreate) return undefined
   const page = receipt.data.page
   // A null page discloses status only; it is not evidence of deletion.
-  if (page === null) return true
   const pageId = metadata.data.kind === 'create' ? (stableId.success ? stableId.data : null) : metadata.data.pageId
-  return metadata.data.kind !== 'delete' && pageId === page.id
+  if (page !== null && (metadata.data.kind === 'delete' || pageId !== page.id)) return undefined
+  return { receipt: receipt.data, proposal, metadata: metadata.data, committed: committed.data }
 }
 
 const decodeSnapshot = (value: Uint8Array | null): Readonly<Record<string, unknown>> | undefined => {
@@ -273,7 +287,7 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
               return false
             // Operation receipts are not source evidence. Authenticate the
             // committed result before checking current read authority below.
-            if (actionName === 'pages.applyProposal' && !(await validateCommittedApplication(this.#dependencies.knex, currentAction.authority, output)))
+            if (actionName === 'pages.applyProposal' && !(await readCommittedApplication(this.#dependencies.knex, currentAction.authority, output)))
               return false
             const valid = await this.#dependencies.validateObservation?.(request, currentAction.authority, actionName, output, signal, originalInput)
             return valid === true && !signal.aborted
@@ -344,6 +358,80 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
       authoritySha256,
       specialistAuthoritySha256,
       ...(admission.allowedActions === undefined ? {} : { allowedActions: admission.allowedActions }),
+      ...(this.#dependencies.validateObservation
+        ? {
+            // Host-only coverage evidence. Never register this reader in the
+            // runtime harness, action catalog, result events, or snapshots.
+            operationEvidence: async (output: unknown, signal: AbortSignal): Promise<string | undefined> => {
+              if (signal.aborted || !offered.some(action => hasWikiApplicationCapability(action.definition.descriptor.name, action.definition.capability)))
+                return undefined
+              try {
+                const currentAdmission = await this.#dependencies.refreshAdmission(request)
+                if (signal.aborted || currentAdmission.transport !== admission.transport) return undefined
+                const currentAction = this.#dependencies.kernel
+                  .offer(authFor(request), currentAdmission, request.run.id)
+                  .find(action => hasWikiApplicationCapability(action.definition.descriptor.name, action.definition.capability))
+                if (!currentAction || signal.aborted) return undefined
+                const prepared = ACTION_CATALOG['pages.preparePatch'].output.safeParse(output)
+                const application =
+                  prepared.success && prepared.data.actionName === 'pages.preparePatch' && prepared.data.status === 'applied'
+                    ? prepared.data.application
+                    : output
+                const authenticated = await readCommittedApplication(this.#dependencies.knex, currentAction.authority, application)
+                if (!authenticated) return undefined
+                const { receipt, proposal, metadata, committed } = authenticated
+                const operationInput = metadata.operationInput
+                if (
+                  receipt.page === null ||
+                  proposal.actionName !== 'pages.preparePatch' ||
+                  metadata.kind !== 'patch' ||
+                  proposal.contentPurgedAt !== null ||
+                  proposal.input === null ||
+                  typeof proposal.diff !== 'string' ||
+                  proposal.diff.length === 0 ||
+                  proposal.diff.length > 8_192 ||
+                  proposal.baseSourceRevision == null ||
+                  operationInput === undefined ||
+                  metadata.pageId !== proposal.pageId ||
+                  operationInput.id !== metadata.pageId ||
+                  String(operationInput.expectedSourceRevision) !== String(proposal.baseSourceRevision) ||
+                  committed.actionName !== 'pages.preparePatch' ||
+                  committed.pageId !== metadata.pageId ||
+                  typeof committed.sourceRevision !== 'string' ||
+                  committed.sourceRevision.length === 0 ||
+                  committed.sourceRevision.length > 64 ||
+                  createHash('sha256').update(proposal.diff).digest('hex') !== proposal.diffSha256
+                )
+                  return undefined
+                const evidence = JSON.stringify({
+                  proposalId: receipt.proposalId,
+                  resultHash: receipt.resultHash,
+                  page: { id: receipt.page.id, locale: metadata.locale, path: metadata.path },
+                  reviewedChange: {
+                    actionName: 'pages.preparePatch',
+                    baseSourceRevision: String(proposal.baseSourceRevision),
+                    resultSourceRevision: committed.sourceRevision,
+                    operationSha256: proposal.operationSha256,
+                    diffSha256: proposal.diffSha256,
+                    diff: proposal.diff,
+                    inputFields: Object.keys(operationInput).sort()
+                  }
+                })
+                if (Buffer.byteLength(evidence, 'utf8') > 8_192 || signal.aborted) return undefined
+                const authorized = await this.#dependencies.validateObservation?.(request, currentAction.authority, 'pages.applyProposal', receipt, signal)
+                return authorized === true && !signal.aborted ? evidence : undefined
+              } catch (error: unknown) {
+                if (
+                  signal.aborted ||
+                  isAdmissionRejection(error) ||
+                  (typeof error === 'object' && error !== null && Reflect.get(error, 'code') === 'PROPOSAL_LEDGER_CORRUPT')
+                )
+                  return undefined
+                throw error
+              }
+            }
+          }
+        : {}),
       authorizeSyntheticAction: async (name: AgentActionName, signal: AbortSignal): Promise<boolean> => {
         if (signal.aborted) return false
         let current: ActionAdmissionSnapshot

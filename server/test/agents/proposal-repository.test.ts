@@ -1059,128 +1059,473 @@ describe('agent proposal repository', () => {
     replacementPage = null
   })
 
-  it.each(['complete', 'read revoked before publication', 'remaining read and write', 'remaining work without plan'] as const)(
-    'resumes a human-approved private patch without its superseded native source: %s',
-    async outcome => {
-      const runId = '00000000-0000-4000-8000-000000000001'
-      const sessionId = '00000000-0000-4000-8000-000000000020'
-      const leaseOwner = 'patch-test-worker'
-      const leaseToken = '00000000-0000-4000-8000-000000000030'
-      const patchRequest = 'Change only the review marker to approved-once, wait for human approval, then report the applied outcome.'
-      const remainingWork = 'Read the current incident owner from page 44, then update its review marker.'
-      const hasRemainingWork = outcome === 'remaining read and write' || outcome === 'remaining work without plan'
-      const userRequest = hasRemainingWork ? `${patchRequest} ${remainingWork}` : patchRequest
-      const requestPlan =
-        outcome === 'remaining read and write'
-          ? `<wiki-request-plan>${JSON.stringify({
-              facets: [
-                { start: 0, end: patchRequest.length, quote: patchRequest, coverage: 'source' },
-                { start: patchRequest.length + 1, end: userRequest.length, quote: remainingWork, coverage: 'source' }
-              ]
-            })}</wiki-request-plan>`
-          : undefined
-      await knex('agentRuns').insert({
+  it.each([
+    'complete',
+    'read revoked before publication',
+    'remaining read and write',
+    'remaining work without plan',
+    'proposal purged during private audit',
+    'read revoked during private audit'
+  ] as const)('resumes a human-approved private patch without its superseded native source: %s', async outcome => {
+    const runId = '00000000-0000-4000-8000-000000000001'
+    const sessionId = '00000000-0000-4000-8000-000000000020'
+    const leaseOwner = 'patch-test-worker'
+    const leaseToken = '00000000-0000-4000-8000-000000000030'
+    const patchRequest = 'Change only the review marker to approved-once, wait for human approval, then report the applied outcome.'
+    const remainingWork = 'Read the current incident owner from page 44, then update its review marker.'
+    const hasRemainingWork = outcome === 'remaining read and write' || outcome === 'remaining work without plan'
+    const losesPrivateEvidence = outcome === 'proposal purged during private audit' || outcome === 'read revoked during private audit'
+    const privateFeedbackCanary = 'PRIVATE_APPROVED_PATCH_AUDIT_FEEDBACK_CANARY_7f0c91'
+    let privateAuditRequests = 0
+    const userRequest = hasRemainingWork ? `${patchRequest} ${remainingWork}` : patchRequest
+    const requestPlan =
+      outcome === 'remaining read and write'
+        ? `<wiki-request-plan>${JSON.stringify({
+            facets: [
+              { start: 0, end: patchRequest.length, quote: patchRequest, coverage: 'source' },
+              { start: patchRequest.length + 1, end: userRequest.length, quote: remainingWork, coverage: 'source' }
+            ]
+          })}</wiki-request-plan>`
+        : undefined
+    await knex('agentRuns').insert({
+      id: runId,
+      sessionId,
+      ownerId: 7,
+      status: 'running',
+      attempts: 1,
+      leaseOwner,
+      leaseToken,
+      eventSequence: 0,
+      updatedAt: new Date()
+    })
+    let readable = true
+    let page = {
+      id: 43,
+      locale: 'en',
+      path: 'private/approved-patch',
+      title: 'Private patch fixture',
+      description: 'Controlled private fixture',
+      contentType: 'markdown',
+      editor: 'markdown',
+      content: 'Keep this disclaimer.\nReview marker: before-approval.\n',
+      sourceRevision: '2',
+      updatedAt: '2026-10-15T15:59:38.000Z',
+      isPublished: false,
+      isPrivate: true,
+      authorId: 7,
+      tags: ['controlled-fixture']
+    }
+    const operations = {
+      get: vi.fn(async (input: Record<string, unknown>) => {
+        expect(input.requester).toMatchObject({ id: 7 })
+        if (!readable) throw Object.assign(new Error('Private page read forbidden'), { status: 403 })
+        return { ...page }
+      }),
+      getByPath: vi.fn(),
+      getVersion: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(async ({ input }: { input: Record<string, unknown> }) => {
+        expect(input.expectedSourceRevision).toBe('2')
+        page = { ...page, content: String(input.content), sourceRevision: '3' }
+        return { ...page }
+      }),
+      move: vi.fn(),
+      restore: vi.fn(),
+      remove: vi.fn(),
+      authorizeMutation: vi.fn(async () => {}),
+      search: vi.fn(),
+      searchTags: vi.fn(),
+      listTags: vi.fn(),
+      discover: vi.fn(),
+      listRecent: vi.fn(),
+      getHistory: vi.fn(),
+      listLinks: vi.fn(),
+      listRelated: vi.fn()
+    }
+    const signingSecret = Buffer.alloc(32, 7)
+    const dependencies = {
+      operations,
+      resolveRequester: async () => ({ id: 7 }) as Express.User,
+      snapshotSigningSecret: signingSecret
+    }
+    const kernel = new ActionKernel()
+    registerPageReadActions(kernel, dependencies)
+    registerPageProposalActions(kernel, { ...dependencies, knex })
+    const admission = {
+      transport: 'agent' as const,
+      executionMode: 'agent' as const,
+      supportsTools: true,
+      permissions: ['use:agents', 'read:pages', 'write:pages'],
+      groupIds: [3],
+      featureFlags: flags
+    }
+    const validate = createPageEvidenceValidator(dependencies)
+    const sessions = new KernelActionSessionProvider({
+      knex,
+      kernel,
+      resolveAdmission: async () => admission,
+      refreshAdmission: async () => admission,
+      validateObservation: (request, authority, actionName, output, signal, input) =>
+        validate(authority, request.knowledgeContext, actionName, output, signal, input)
+    })
+    let collectorTurns = 0
+    const providerRequests: Readonly<AxChatRequest>[] = []
+    const fixtureErrors: unknown[] = []
+    const respond = async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+      providerRequests.push(input)
+      const call = (id: string, name: string, params: unknown): AxChatResponse => ({
+        results: [{ index: 0, functionCalls: [{ id, type: 'function', function: { name, params: JSON.stringify(params) } }] }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+      })
+      if (collectorTurns++ === 0) {
+        const response = call('enable-authoring', 'wiki_enable_tools', { category: 'authoring' })
+        if (requestPlan !== undefined) response.results[0]!.content = requestPlan
+        return response
+      }
+      if (collectorTurns === 2) return call('read-patch', AGENT_TOOL_NAMES['pages.readForPatch'], { pageId: 43, previousSnapshotToken: null })
+      if (collectorTurns === 3) {
+        const result = input.chatPrompt.find(message => message.role === 'function' && message.functionId === 'read-patch')
+        if (result?.role !== 'function') throw new Error('Missing real patch snapshot')
+        const snapshot = ACTION_CATALOG['pages.readForPatch'].output.parse(JSON.parse(result.result))
+        const line = snapshot.disclosed[0]!.lines[1]!
+        return call('prepare-patch', AGENT_TOOL_NAMES['pages.preparePatch'], {
+          patch: {
+            version: 'wiki-line-patch-v1',
+            snapshotToken: snapshot.snapshotToken,
+            baseDocumentTag: snapshot.documentTag,
+            resultFinalNewline: true,
+            operations: [
+              {
+                kind: 'replace',
+                range: { start: { line: line.number, tag: line.tag }, end: { line: line.number, tag: line.tag } },
+                lines: ['Review marker: approved-once.']
+              }
+            ]
+          }
+        })
+      }
+      const control = synthesisCollectionControl(input)
+      if (control !== undefined) throw new Error('Superseded native collector exchange must not be resumed')
+      expect(synthesisSourcesFromRequest(input)).toEqual([])
+      expect(JSON.stringify(input)).not.toContain('before-approval')
+      expect(JSON.stringify(input)).not.toContain('snapshotToken')
+      const observations = synthesisObservationsFromRequest(input)
+      expect(observations).toContain('Wiki proposal application status: applied.')
+      expect(observations).toContain(
+        'Applied page: {"id":43,"locale":"en","path":"private/approved-patch","title":"Private patch fixture","sourceRevision":"3"}'
+      )
+      if (outcome === 'read revoked before publication') readable = false
+      return {
+        results: [{ index: 0, content: synthesisFixtureAnswer(input, { claims: [], observations, unresolvedFacets: [] }) }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+      }
+    }
+    const chat = vi.fn((input: Readonly<AxChatRequest>) =>
+      respond(input).catch(error => {
+        fixtureErrors.push(error)
+        throw error
+      })
+    )
+    const factory = {
+      create: async () => ({
+        service: fullAxFixtureService(
+          chat,
+          hasRemainingWork || losesPrivateEvidence
+            ? {
+                coverage: async input => {
+                  try {
+                    if (losesPrivateEvidence) {
+                      privateAuditRequests += 1
+                      expect(privateAuditRequests).toBe(1)
+                      const approved = await knex('agentProposals').first('id', 'status', 'diff', 'operationSha256', 'diffSha256')
+                      expect(approved.status).toBe('applied')
+                      const admitted = JSON.stringify(input)
+                      expect(admitted).toContain(approved.operationSha256)
+                      expect(admitted).toContain(approved.diffSha256)
+                      expect(admitted).toContain('-Review marker: before-approval.')
+                      expect(admitted).toContain('+Review marker: approved-once.')
+                      if (outcome === 'proposal purged during private audit') {
+                        expect(
+                          await knex('agentProposals').where({ id: approved.id }).update({
+                            input: null,
+                            diff: null,
+                            contentPurgedAt: new Date().toISOString()
+                          })
+                        ).toBe(1)
+                      } else readable = false
+                    }
+                    return {
+                      results: [
+                        {
+                          index: 0,
+                          content: JSON.stringify({
+                            verdict: losesPrivateEvidence ? 'incomplete' : 'not_established',
+                            feedback: losesPrivateEvidence
+                              ? privateFeedbackCanary
+                              : 'Only the first patch is committed. The incident-owner read and second update remain unfulfilled.'
+                          })
+                        }
+                      ]
+                    }
+                  } catch (error) {
+                    fixtureErrors.push(error)
+                    throw error
+                  }
+                }
+              }
+            : {}
+        ),
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'estimated',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+      })
+    } as unknown as AgentProviderFactory
+    const engineRequest: AgentEngineRequest = {
+      run: {
         id: runId,
         sessionId,
+        userMessageId: '00000000-0000-4000-8000-000000000003',
+        assistantMessageId: '00000000-0000-4000-8000-000000000004',
         ownerId: 7,
+        goalId: null,
+        goalContinuation: null,
+        clientRequestId: '00000000-0000-4000-8000-000000000005',
+        clientRequestSha256: 'a'.repeat(64),
         status: 'running',
+        providerProfileVersionId: '00000000-0000-4000-8000-000000000006',
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        executionMode: 'agent',
+        googleSearchEnabled: false,
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        promptVersion: 1,
+        totalTokens: 0,
         attempts: 1,
+        maxAttempts: 3,
+        eventSequence: 0,
         leaseOwner,
         leaseToken,
-        eventSequence: 0,
-        updatedAt: new Date()
+        leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+        cancelRequestedAt: null,
+        sideEffectsStarted: false,
+        errorCode: null,
+        errorMessage: null,
+        queuedAt: new Date().toISOString(),
+        startedAt: new Date().toISOString(),
+        completedAt: null
+      },
+      messages: [{ role: 'user', content: userRequest }],
+      memory: { user: [], agent: [] },
+      skills: [],
+      currentPage: null,
+      signal: new AbortController().signal
+    }
+    const engine = new AxAgentEngine(factory, sessions, undefined, { decisionProviders: fixtureDecisionProviders })
+    const text = vi.fn(async (_delta: string) => {})
+    const event = vi.fn(async (_type: string, _data: unknown) => {})
+    // The production engine intentionally sanitizes provider failures. Keep
+    // assertions from this owned fixture visible to the test runner instead.
+    const execution = engine.execute(engineRequest, { text, event }).catch(error => {
+      throw fixtureErrors.at(-1) ?? error
+    })
+    void execution.catch(() => {})
+    await vi.waitFor(async () => {
+      expect(await knex('agentRuns').where({ id: runId }).first('status')).toEqual({ status: 'awaiting_approval' })
+    })
+    expect(operations.update).not.toHaveBeenCalled()
+    const approval = await knex('agentApprovals').first('id', 'proposalId')
+    await decideProposal(knex, {
+      proposalId: approval.proposalId,
+      approvalId: approval.id,
+      userId: 7,
+      decision: 'approved',
+      authorize: async () => {}
+    })
+    if (outcome !== 'read revoked before publication' && !losesPrivateEvidence) {
+      const completed = await execution
+      expect(completed.executionLimit).toEqual(hasRemainingWork ? { reason: 'evidence', publication: 'partial' } : undefined)
+      expect(completed.citations).toBeUndefined()
+      const published = text.mock.calls.map(([delta]) => delta).join('')
+      expect(published).toContain('Wiki proposal application status: applied.')
+      if (hasRemainingWork) expect(published).toContain(remainingWork.replace('.', '\\.'))
+      expect(providerRequests).toHaveLength(hasRemainingWork ? 5 : 4)
+      expect(completed.totalTokens).toBeGreaterThan(0)
+    } else {
+      await expect(execution).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+      expect(text).not.toHaveBeenCalled()
+    }
+    if (losesPrivateEvidence) {
+      expect(privateAuditRequests).toBe(1)
+      expect(providerRequests).toHaveLength(4)
+      expect(JSON.stringify(providerRequests)).not.toContain(privateFeedbackCanary)
+      const publicEvents = JSON.stringify(event.mock.calls)
+      expect(publicEvents).not.toContain(privateFeedbackCanary)
+      expect(publicEvents).not.toContain('-Review marker: before-approval.')
+      expect(publicEvents).not.toContain('+Review marker: approved-once.')
+      expect(publicEvents).not.toContain('reviewedChange')
+    }
+    expect(operations.update).toHaveBeenCalledOnce()
+    expect(await knex('agentRuns').where({ id: runId }).first('sideEffectsStarted')).toEqual({ sideEffectsStarted: 1 })
+    expect(page).toMatchObject({
+      content: 'Keep this disclaimer.\nReview marker: approved-once.\n',
+      sourceRevision: '3',
+      isPrivate: true,
+      isPublished: false,
+      authorId: 7,
+      title: 'Private patch fixture',
+      tags: ['controlled-fixture']
+    })
+    expect(await knex('agentProposals').select('status')).toEqual([{ status: 'applied' }])
+    expect(await knex('agentActionExecutions').select('status')).toEqual([{ status: 'committed' }])
+    const completedPatches = event.mock.calls.filter(
+      ([type, data]) =>
+        type === 'tool.completed' && typeof data === 'object' && data !== null && 'actionName' in data && data.actionName === 'pages.preparePatch'
+    )
+    expect(completedPatches).toHaveLength(1)
+    if (outcome === 'complete') {
+      const completedData = completedPatches[0]![1] as { result: string }
+      const application = ACTION_CATALOG['pages.preparePatch'].output.parse(JSON.parse(completedData.result)).application
+      if (application === undefined || application.page === null) throw new Error('Expected applied patch receipt')
+      const stored = await knex('agentProposals').where({ id: approval.proposalId }).first()
+      const committed = await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).first('result')
+      expect(application).not.toHaveProperty('reviewedChange')
+      expect(completedData.result).not.toContain('before-approval')
+      expect(completedData.result).not.toContain('approved-once')
+      expect(application.resultHash).toBe(createHash('sha256').update(committed.result).digest('hex'))
+      const signal = engineRequest.signal
+      const session = await sessions.open(engineRequest)
+      const evidence = await session?.operationEvidence?.(application, signal)
+      if (evidence === undefined) throw new Error('Expected host-only authenticated patch evidence')
+      expect(await session?.operationEvidence?.(JSON.parse(completedData.result), signal)).toBe(evidence)
+      const group = JSON.parse(evidence)
+      expect(group.reviewedChange).toEqual({
+        actionName: 'pages.preparePatch',
+        baseSourceRevision: '2',
+        resultSourceRevision: '3',
+        operationSha256: stored.operationSha256,
+        diffSha256: stored.diffSha256,
+        diff: stored.diff,
+        inputFields: ['content', 'expectedSourceRevision', 'id']
       })
-      let readable = true
-      let page = {
-        id: 43,
-        locale: 'en',
-        path: 'private/approved-patch',
-        title: 'Private patch fixture',
-        description: 'Controlled private fixture',
-        contentType: 'markdown',
-        editor: 'markdown',
-        content: 'Keep this disclaimer.\nReview marker: before-approval.\n',
-        sourceRevision: '2',
-        updatedAt: '2026-10-15T15:59:38.000Z',
-        isPublished: false,
-        isPrivate: true,
-        authorId: 7,
-        tags: ['controlled-fixture']
-      }
-      const operations = {
-        get: vi.fn(async (input: Record<string, unknown>) => {
-          expect(input.requester).toMatchObject({ id: 7 })
-          if (!readable) throw Object.assign(new Error('Private page read forbidden'), { status: 403 })
-          return { ...page }
-        }),
-        getByPath: vi.fn(),
-        getVersion: vi.fn(),
-        create: vi.fn(),
-        update: vi.fn(async ({ input }: { input: Record<string, unknown> }) => {
-          expect(input.expectedSourceRevision).toBe('2')
-          page = { ...page, content: String(input.content), sourceRevision: '3' }
-          return { ...page }
-        }),
-        move: vi.fn(),
-        restore: vi.fn(),
-        remove: vi.fn(),
-        authorizeMutation: vi.fn(async () => {}),
-        search: vi.fn(),
-        searchTags: vi.fn(),
-        listTags: vi.fn(),
-        discover: vi.fn(),
-        listRecent: vi.fn(),
-        getHistory: vi.fn(),
-        listLinks: vi.fn(),
-        listRelated: vi.fn()
-      }
-      const signingSecret = Buffer.alloc(32, 7)
-      const dependencies = {
-        operations,
-        resolveRequester: async () => ({ id: 7 }) as Express.User,
-        snapshotSigningSecret: signingSecret
-      }
-      const kernel = new ActionKernel()
-      registerPageReadActions(kernel, dependencies)
-      registerPageProposalActions(kernel, { ...dependencies, knex })
-      const admission = {
-        transport: 'agent' as const,
-        executionMode: 'agent' as const,
-        supportsTools: true,
-        permissions: ['use:agents', 'read:pages', 'write:pages'],
-        groupIds: [3],
-        featureFlags: flags
-      }
-      const validate = createPageEvidenceValidator(dependencies)
-      const sessions = new KernelActionSessionProvider({
-        knex,
-        kernel,
-        resolveAdmission: async () => admission,
-        refreshAdmission: async () => admission,
-        validateObservation: (request, authority, actionName, output, signal, input) =>
-          validate(authority, request.knowledgeContext, actionName, output, signal, input)
+      expect(group).toMatchObject({
+        proposalId: approval.proposalId,
+        resultHash: application.resultHash,
+        page: { id: 43, locale: 'en', path: 'private/approved-patch' }
       })
-      let collectorTurns = 0
-      const providerRequests: Readonly<AxChatRequest>[] = []
-      const fixtureErrors: unknown[] = []
-      const respond = async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
-        providerRequests.push(input)
-        const call = (id: string, name: string, params: unknown): AxChatResponse => ({
-          results: [{ index: 0, functionCalls: [{ id, type: 'function', function: { name, params: JSON.stringify(params) } }] }],
-          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+      expect(group.reviewedChange.diff).toContain('-Review marker: before-approval.')
+      expect(group.reviewedChange.diff).toContain('+Review marker: approved-once.')
+      expect(createHash('sha256').update(group.reviewedChange.diff).digest('hex')).toBe(stored.diffSha256)
+      expect(evidence).not.toContain('snapshotToken')
+      expect(await session?.validateObservation?.('pages.applyProposal', application, signal)).toBe(true)
+      for (const altered of [
+        { ...application, resultHash: 'f'.repeat(64) },
+        { ...application, page: { ...application.page, id: 999 } },
+        { ...application, page: null },
+        { ...application, reviewedChange: group.reviewedChange }
+      ]) {
+        expect(await session?.operationEvidence?.(altered, signal)).toBeUndefined()
+      }
+      await knex('agentProposals')
+        .where({ id: approval.proposalId })
+        .update({ diff: `${stored.diff}\n` })
+      expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+      await knex('agentProposals').where({ id: approval.proposalId }).update({ diff: stored.diff, baseSourceRevision: '1' })
+      expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+      await knex('agentProposals').where({ id: approval.proposalId }).update({ baseSourceRevision: '2' })
+      const forgedOperation = JSON.parse(stored.operation)
+      forgedOperation.operationInput.title = 'Unapproved metadata mutation'
+      const forgedOperationText = canonicalJson(forgedOperation)
+      await knex('agentProposals')
+        .where({ id: approval.proposalId })
+        .update({
+          operation: forgedOperationText,
+          operationSha256: createHash('sha256').update(forgedOperationText).digest('hex')
         })
-        if (collectorTurns++ === 0) {
-          const response = call('enable-authoring', 'wiki_enable_tools', { category: 'authoring' })
-          if (requestPlan !== undefined) response.results[0]!.content = requestPlan
-          return response
-        }
-        if (collectorTurns === 2) return call('read-patch', AGENT_TOOL_NAMES['pages.readForPatch'], { pageId: 43, previousSnapshotToken: null })
-        if (collectorTurns === 3) {
-          const result = input.chatPrompt.find(message => message.role === 'function' && message.functionId === 'read-patch')
-          if (result?.role !== 'function') throw new Error('Missing real patch snapshot')
-          const snapshot = ACTION_CATALOG['pages.readForPatch'].output.parse(JSON.parse(result.result))
-          const line = snapshot.disclosed[0]!.lines[1]!
-          return call('prepare-patch', AGENT_TOOL_NAMES['pages.preparePatch'], {
+      expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+      await knex('agentProposals').where({ id: approval.proposalId }).update({ operation: stored.operation, operationSha256: stored.operationSha256 })
+      await knex('agentApprovals')
+        .where({ id: approval.id })
+        .update({ diffSha256: 'f'.repeat(64) })
+      expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+      await knex('agentApprovals').where({ id: approval.id }).update({ diffSha256: stored.diffSha256 })
+      const committedValue = JSON.parse(committed.result)
+      await knex('agentActionExecutions')
+        .where({ proposalId: approval.proposalId })
+        .update({ result: canonicalJson({ ...committedValue, sourceRevision: '4' }) })
+      expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+      await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).update({ result: committed.result })
+      expect(await session?.operationEvidence?.(application, signal)).toBe(evidence)
+      const appliedPage = page
+      page = { ...page, content: 'A subsequent independent revision.\n', sourceRevision: '4' }
+      const replayed = ACTION_CATALOG['pages.applyProposal'].output.parse(
+        await kernel.execute({
+          authority: applyingAuthority(runId),
+          actionCallId: 'historical-patch-receipt',
+          input: { proposalId: approval.proposalId, approvalId: approval.id },
+          signal,
+          refreshAdmission: async () => admission
+        })
+      )
+      expect(replayed).toMatchObject({ resultHash: application.resultHash, page: { sourceRevision: '4' } })
+      expect(replayed).not.toHaveProperty('reviewedChange')
+      expect(await session?.operationEvidence?.(replayed, signal)).toBe(evidence)
+      expect(operations.update).toHaveBeenCalledOnce()
+      readable = false
+      expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+      readable = true
+      const originalPermissions = admission.permissions
+      admission.permissions = ['use:agents', 'read:pages']
+      expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+      admission.permissions = originalPermissions
+      page = appliedPage
+      await knex('agentProposals').where({ id: approval.proposalId }).update({ diff: null })
+      expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+      await knex('agentProposals').where({ id: approval.proposalId }).update({
+        diff: stored.diff,
+        input: null,
+        contentPurgedAt: new Date().toISOString()
+      })
+      expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+      expect(await session?.validateObservation?.('pages.applyProposal', application, signal)).toBe(true)
+      expect(JSON.parse((await knex('agentProposals').where({ id: approval.proposalId }).first('operation')).operation).operationInput.content).toContain(
+        'Review marker: approved-once.'
+      )
+
+      // A complete multibyte diff that exceeds the presentation budget is
+      // omitted, not shortened or recovered from the retained operation body.
+      const snapshot = ACTION_CATALOG['pages.readForPatch'].output.parse(
+        await kernel.execute({
+          authority: createActionAuthority('pages.readForPatch', runId, { kind: 'user', userId: 7, ownershipUserId: 7, principal: null }, admission),
+          actionCallId: 'oversize-snapshot',
+          input: { pageId: 43, previousSnapshotToken: null },
+          signal,
+          refreshAdmission: async () => admission
+        })
+      )
+      const line = snapshot.disclosed[0]!.lines[1]!
+      operations.update.mockImplementationOnce(async ({ input }: { input: Record<string, unknown> }) => {
+        expect(input.expectedSourceRevision).toBe('3')
+        page = { ...page, content: String(input.content), sourceRevision: '4' }
+        return { ...page }
+      })
+      const oversizedPromise = withInvokingAgentRunLease(signal, { id: runId, ownerId: 7, attempts: 1, leaseOwner, leaseToken }, () =>
+        kernel.execute({
+          authority: createActionAuthority('pages.preparePatch', runId, { kind: 'user', userId: 7, ownershipUserId: 7, principal: null }, admission),
+          actionCallId: 'oversize-reviewed-patch',
+          input: {
             patch: {
               version: 'wiki-line-patch-v1',
               snapshotToken: snapshot.snapshotToken,
@@ -1190,168 +1535,40 @@ describe('agent proposal repository', () => {
                 {
                   kind: 'replace',
                   range: { start: { line: line.number, tag: line.tag }, end: { line: line.number, tag: line.tag } },
-                  lines: ['Review marker: approved-once.']
+                  lines: ['漢'.repeat(3_000)]
                 }
               ]
             }
-          })
-        }
-        const control = synthesisCollectionControl(input)
-        if (control !== undefined) throw new Error('Superseded native collector exchange must not be resumed')
-        expect(synthesisSourcesFromRequest(input)).toEqual([])
-        expect(JSON.stringify(input)).not.toContain('before-approval')
-        expect(JSON.stringify(input)).not.toContain('snapshotToken')
-        const observations = synthesisObservationsFromRequest(input)
-        expect(observations).toContain('Wiki proposal application status: applied.')
-        expect(observations).toContain(
-          'Applied page: {"id":43,"locale":"en","path":"private/approved-patch","title":"Private patch fixture","sourceRevision":"3"}'
-        )
-        if (outcome === 'read revoked before publication') readable = false
-        return {
-          results: [{ index: 0, content: synthesisFixtureAnswer(input, { claims: [], observations, unresolvedFacets: [] }) }],
-          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
-        }
-      }
-      const chat = vi.fn((input: Readonly<AxChatRequest>) =>
-        respond(input).catch(error => {
-          fixtureErrors.push(error)
-          throw error
+          },
+          signal,
+          refreshAdmission: async () => admission
         })
       )
-      const factory = {
-        create: async () => ({
-          service: fullAxFixtureService(
-            chat,
-            hasRemainingWork
-              ? {
-                  coverage: async () => ({
-                    results: [
-                      {
-                        index: 0,
-                        content: JSON.stringify({
-                          verdict: 'not_established',
-                          feedback: 'Only the first patch is committed. The incident-owner read and second update remain unfulfilled.'
-                        })
-                      }
-                    ]
-                  })
-                }
-              : {}
-          ),
-          capabilities: {
-            streaming: false,
-            toolCalling: 'native',
-            parallelToolCalls: true,
-            structuredOutput: 'native-json-schema',
-            usage: 'estimated',
-            cancellation: true,
-            maxContextTokens: 100_000,
-            maxOutputTokens: 4_000
-          },
-          transportKind: 'openai-responses',
-          model: 'gpt-test',
-          capabilityRevision: 'cap-1',
-          pricingRevision: 'price-1',
-          pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
-        })
-      } as unknown as AgentProviderFactory
-      const engineRequest: AgentEngineRequest = {
-        run: {
-          id: runId,
-          sessionId,
-          userMessageId: '00000000-0000-4000-8000-000000000003',
-          assistantMessageId: '00000000-0000-4000-8000-000000000004',
-          ownerId: 7,
-          goalId: null,
-          goalContinuation: null,
-          clientRequestId: '00000000-0000-4000-8000-000000000005',
-          clientRequestSha256: 'a'.repeat(64),
-          status: 'running',
-          providerProfileVersionId: '00000000-0000-4000-8000-000000000006',
-          transportKind: 'openai-responses',
-          model: 'gpt-test',
-          executionMode: 'agent',
-          googleSearchEnabled: false,
-          capabilityRevision: 'cap-1',
-          pricingRevision: 'price-1',
-          promptVersion: 1,
-          totalTokens: 0,
-          attempts: 1,
-          maxAttempts: 3,
-          eventSequence: 0,
-          leaseOwner,
-          leaseToken,
-          leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
-          cancelRequestedAt: null,
-          sideEffectsStarted: false,
-          errorCode: null,
-          errorMessage: null,
-          queuedAt: new Date().toISOString(),
-          startedAt: new Date().toISOString(),
-          completedAt: null
-        },
-        messages: [{ role: 'user', content: userRequest }],
-        memory: { user: [], agent: [] },
-        skills: [],
-        currentPage: null,
-        signal: new AbortController().signal
-      }
-      const engine = new AxAgentEngine(factory, sessions, undefined, { decisionProviders: fixtureDecisionProviders })
-      const text = vi.fn(async (_delta: string) => {})
-      const event = vi.fn(async (_type: string, _data: unknown) => {})
-      // The production engine intentionally sanitizes provider failures. Keep
-      // assertions from this owned fixture visible to the test runner instead.
-      const execution = engine.execute(engineRequest, { text, event }).catch(error => {
-        throw fixtureErrors.at(-1) ?? error
-      })
-      void execution.catch(() => {})
+      let oversizedApproval: { id: string; proposalId: string } | undefined
       await vi.waitFor(async () => {
-        expect(await knex('agentRuns').where({ id: runId }).first('status')).toEqual({ status: 'awaiting_approval' })
+        oversizedApproval = await knex('agentApprovals').whereNot({ id: approval.id }).first('id', 'proposalId')
+        expect(oversizedApproval).toBeDefined()
       })
-      expect(operations.update).not.toHaveBeenCalled()
-      const approval = await knex('agentApprovals').first('id', 'proposalId')
+      if (!oversizedApproval) throw new Error('Expected oversized patch approval')
       await decideProposal(knex, {
-        proposalId: approval.proposalId,
-        approvalId: approval.id,
+        proposalId: oversizedApproval.proposalId,
+        approvalId: oversizedApproval.id,
         userId: 7,
         decision: 'approved',
         authorize: async () => {}
       })
-      if (outcome !== 'read revoked before publication') {
-        const completed = await execution
-        expect(completed.executionLimit).toEqual(hasRemainingWork ? { reason: 'evidence', publication: 'partial' } : undefined)
-        expect(completed.citations).toBeUndefined()
-        const published = text.mock.calls.map(([delta]) => delta).join('')
-        expect(published).toContain('Wiki proposal application status: applied.')
-        if (hasRemainingWork) expect(published).toContain(remainingWork.replace('.', '\\.'))
-        expect(providerRequests).toHaveLength(hasRemainingWork ? 5 : 4)
-        expect(completed.totalTokens).toBeGreaterThan(0)
-      } else {
-        await expect(execution).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
-        expect(text).not.toHaveBeenCalled()
-      }
-      expect(operations.update).toHaveBeenCalledOnce()
-      expect(await knex('agentRuns').where({ id: runId }).first('sideEffectsStarted')).toEqual({ sideEffectsStarted: 1 })
-      expect(page).toMatchObject({
-        content: 'Keep this disclaimer.\nReview marker: approved-once.\n',
-        sourceRevision: '3',
-        isPrivate: true,
-        isPublished: false,
-        authorId: 7,
-        title: 'Private patch fixture',
-        tags: ['controlled-fixture']
-      })
-      expect(await knex('agentProposals').select('status')).toEqual([{ status: 'applied' }])
-      expect(await knex('agentActionExecutions').select('status')).toEqual([{ status: 'committed' }])
-      expect(
-        event.mock.calls.filter(
-          ([type, data]) =>
-            type === 'tool.completed' && typeof data === 'object' && data !== null && 'actionName' in data && data.actionName === 'pages.preparePatch'
-        )
-      ).toHaveLength(1)
-      expect(event.mock.calls.filter(([type]) => type === 'tool.failed')).toHaveLength(0)
+      const oversized = ACTION_CATALOG['pages.preparePatch'].output.parse(await oversizedPromise)
+      const oversizedStored = await knex('agentProposals').where({ id: oversizedApproval.proposalId }).first('diff', 'diffSha256')
+      expect(oversizedStored.diff.length).toBeLessThan(8_192)
+      expect(Buffer.byteLength(oversizedStored.diff, 'utf8')).toBeGreaterThan(8_192)
+      expect(createHash('sha256').update(oversizedStored.diff).digest('hex')).toBe(oversizedStored.diffSha256)
+      expect(oversized.application?.status).toBe('applied')
+      expect(oversized.application).not.toHaveProperty('reviewedChange')
+      expect(await session?.operationEvidence?.(oversized.application, signal)).toBeUndefined()
+      session?.close()
     }
-  )
+    expect(event.mock.calls.filter(([type]) => type === 'tool.failed')).toHaveLength(0)
+  })
 
   it('pauses a prepared move for approval and applies only the approved immutable operation', async () => {
     const runId = '00000000-0000-4000-8000-000000000001'

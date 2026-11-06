@@ -35,6 +35,8 @@ export interface AxActionSession {
   invoke(name: string, input: unknown, signal: AbortSignal, actionCallId: string): Promise<unknown>
   /** Bound metadata projections require the matching original function input. */
   validateObservation?(actionName: AgentActionName, output: unknown, signal: AbortSignal, originalInput?: unknown): Promise<boolean>
+  /** Host-only, live-authorized immutable operation proof for private coverage; never a tool result or snapshot. */
+  operationEvidence?(output: unknown, signal: AbortSignal): Promise<string | undefined>
   snapshot(signal: AbortSignal): Promise<Readonly<Record<string, unknown>>>
   close(): void
 }
