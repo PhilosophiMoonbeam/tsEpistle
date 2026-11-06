@@ -2,20 +2,21 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
 import {
-  AxAssertionError,
-  AxGenerateError,
-  axGetRuntimeHookFrame,
-  axRuntimeHookFrame,
   type AxAIService,
   type AxAIServiceOptions,
+  AxAssertionError,
   type AxChatRequest,
   type AxChatResponse,
   type AxChatResponseResult,
   type AxFunctionJSONSchema,
-  type AxRuntimeHookFramedOptions
+  AxGenerateError,
+  type AxRuntimeHookFramedOptions,
+  axGetRuntimeHookFrame,
+  axRuntimeHookFrame
 } from '@ax-llm/ax'
 import type { MarkdownIt, MarkdownItOptions, Token } from 'markdown-it'
 import * as markdownItModule from 'markdown-it'
+import type { AgentMediaView } from '../../../shared/agents/contracts.ts'
 import {
   AGENT_TOOL_NAMES,
   type AgentActionName,
@@ -24,10 +25,9 @@ import {
   type AgentTokenUsage,
   TOOL_DISCOVERY_CONTROL_NAME
 } from '../../../shared/agents/contracts.ts'
-import { agentMediaToolInputs, type AgentMediaKind } from '../../../shared/agents/media-providers.ts'
-import type { AgentMediaView } from '../../../shared/agents/contracts.ts'
-import { DecisionUsageSchema } from '../../../shared/agents/decision-providers.ts'
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
+import { DecisionUsageSchema } from '../../../shared/agents/decision-providers.ts'
+import { type AgentMediaKind, agentMediaToolInputs } from '../../../shared/agents/media-providers.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { ACTION_CATALOG } from '../actions/catalog.ts'
 import {
@@ -41,11 +41,11 @@ import {
   readAgentCompactionCheckpoint
 } from '../compaction.ts'
 import { type AgentApprovalContinuationCheckpoint, withInvokingAgentRunLease } from '../coordinator.ts'
-import { DecisionProviderFailure } from '../decision-providers.ts'
 import type { DecisionProviderRegistry, DecisionProviderRuntime } from '../decision-providers.ts'
-import { decodeAgentAudioVideo } from '../media-decoding.ts'
+import { DecisionProviderFailure } from '../decision-providers.ts'
 import type { ExternalMcpService } from '../external-mcp.ts'
 import { loadAgentMediaPayload } from '../media.ts'
+import { decodeAgentAudioVideo } from '../media-decoding.ts'
 import { type AgentEvidenceSeed, SUBAGENT_READ_ACTIONS } from '../orchestration.ts'
 import { prepareAgentPdf } from '../pdf-preparation.ts'
 import { AgentRepositoryError } from '../repository.ts'
@@ -81,8 +81,10 @@ import {
   deriveAgentProviderResourceLimits,
   encodeAgentProviderContinuation
 } from './factory.ts'
-import { agentVideoCostMicros } from './media-pricing.ts'
+import type { GeminiMediaInputTransport } from './gemini-media.ts'
 import { agentMediaInputModality, assertAgentMediaInput } from './media-input-policy.ts'
+import { agentVideoCostMicros } from './media-pricing.ts'
+import type { AgentMediaInput } from './media-transport.ts'
 import {
   type PromptToolCategoryIndex,
   type PromptToolDefinition,
@@ -119,28 +121,26 @@ import {
 } from './tool-discovery.ts'
 import { initialToolCategoriesFor } from './tool-intent.ts'
 import { type AgentProviderUsage, acceptCumulativeAgentProviderUsage, assertAgentTokenUsage, readAgentProviderUsage } from './usage.ts'
+import { assessWikiContextReadiness, buildWikiContextReadinessRequest } from './wiki-context-readiness.ts'
+import { createWikiCoverageProgram, encodeWikiCoverageInput, type WikiCoverageResult, type WikiCoverageWireInput } from './wiki-coverage.ts'
+import { getLiteralSourceStatement, isLiteralSourceClaim } from './wiki-source-quotation.ts'
 import {
   createWikiSynthesisProgram,
   createWikiSynthesisStreamGuard,
   encodeWikiSynthesisSources,
-  renderWikiSynthesisClaimStatement,
+  renderWikiSynthesisAnswer,
   renderWikiSynthesisAttachmentClaimStatement,
+  renderWikiSynthesisClaimStatement,
+  validateWikiSynthesisShape,
   type WikiSynthesisAnswer,
-  type WikiSynthesisSource,
   type WikiSynthesisInputMedia,
   type WikiSynthesisRead,
-  wikiSynthesisSourceRef,
-  renderWikiSynthesisAnswer,
-  validateWikiSynthesisShape
+  type WikiSynthesisSource,
+  wikiSynthesisSourceRef
 } from './wiki-synthesis.ts'
 import { WIKI_SYNTHESIS_CALIBRATION } from './wiki-synthesis-calibration.ts'
-import { assessWikiVerificationResults, buildWikiVerificationPlan } from './wiki-verification.ts'
 import type { WikiVerificationPlan, WikiVerificationSource } from './wiki-verification.ts'
-import { assessWikiContextReadiness, buildWikiContextReadinessRequest } from './wiki-context-readiness.ts'
-import { createWikiCoverageProgram, encodeWikiCoverageInput, type WikiCoverageResult, type WikiCoverageWireInput } from './wiki-coverage.ts'
-import { getLiteralSourceStatement, isLiteralSourceClaim } from './wiki-source-quotation.ts'
-import type { AgentMediaInput } from './media-transport.ts'
-import type { GeminiMediaInputTransport } from './gemini-media.ts'
+import { assessWikiVerificationResults, buildWikiVerificationPlan } from './wiki-verification.ts'
 
 const MAX_TURNS = 12
 const MAX_TOOL_CALLS = 32
@@ -2977,13 +2977,15 @@ const readCodeLiterals = (statement: string): readonly string[] =>
   )
 
 // Literal existence is independent of entity/row/field association. Jev owns
-// meaning across this complete read; hidden bytes and other reads are not pools.
-const readLiteralIntegrity = (statement: string, literals: ReadLiteralSnapshot, evidence: CitationEvidence): boolean =>
-  literalNumbers(statement).every(number => literals.numbers.has(number)) &&
-  readIdentityAddresses(statement).every(address => literals.addresses.has(address)) &&
-  literalPhones(statement).every(phone => literals.phones.has(phone)) &&
-  readCodeLiterals(statement).every(literal => literals.texts.some(text => text.includes(literal)) || literals.destinations.has(literal)) &&
-  renderedLinkSignatures(statement).every(link => evidence.renderedLinks.has(link))
+// meaning across the admitted read; hidden bytes and other reads are not pools.
+const readLiteralFailure = (statement: string, literals: ReadLiteralSnapshot, evidence: CitationEvidence): string | undefined => {
+  if (!literalNumbers(statement).every(number => literals.numbers.has(number))) return 'numbers'
+  if (!readIdentityAddresses(statement).every(address => literals.addresses.has(address))) return 'addresses'
+  if (!literalPhones(statement).every(phone => literals.phones.has(phone))) return 'phones'
+  if (!readCodeLiterals(statement).every(literal => literals.texts.some(text => text.includes(literal)) || literals.destinations.has(literal))) return 'code'
+  if (!renderedLinkSignatures(statement).every(link => evidence.renderedLinks.has(link))) return 'links'
+  return undefined
+}
 
 const assessDraft = (
   content: string,
@@ -3063,7 +3065,7 @@ const assessDraft = (
     const exactLinks = claimLinks.every(link => evidence.renderedLinks.has(link))
     const exactCodeLinkLiterals =
       nativeDraft !== undefined
-        ? literals !== undefined && readLiteralIntegrity(boundClaim!.statement, literals, evidence)
+        ? literals !== undefined && readLiteralFailure(boundClaim!.statement, literals, evidence) === undefined
         : linkLookingCodeLiterals(extractedClaim.renderedClaim).every(literal => evidence.source.includes(literal))
     const clauseAssessments = nativeDraft === undefined ? assessClaimClauses(assessmentClaim, evidence) : []
     const matchedTerms = [...new Set(clauseAssessments.flatMap(clause => clause.matchedTerms))]
@@ -6715,17 +6717,19 @@ export class AxAgentEngine implements AgentEngine {
       request.signal.throwIfAborted()
     }
     for (const [readId, { evidenceId, representation }] of admittedWikiReadBindings(evidence)) {
-      const bounded = representation.binding.representation === 'recent-excerpt' &&
-        metadataRecord(representation.binding.representationMetadata)?.contentTruncated === true
-      const excerpt: WikiSynthesisSource['excerpt'] = bounded ? {
-        representation: 'recent-excerpt',
-        representationMetadata: representation.binding.representationMetadata,
-        readReceipts: representation.readReceipts.map(receipt => {
-          if (receipt.actionName !== 'pages.listRecent')
-            throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'A bounded excerpt requires its own recent read receipt', 409)
-          return { actionCallId: receipt.actionCallId, actionName: receipt.actionName }
-        })
-      } : undefined
+      const bounded =
+        representation.binding.representation === 'recent-excerpt' && metadataRecord(representation.binding.representationMetadata)?.contentTruncated === true
+      const excerpt: WikiSynthesisSource['excerpt'] = bounded
+        ? {
+            representation: 'recent-excerpt',
+            representationMetadata: representation.binding.representationMetadata,
+            readReceipts: representation.readReceipts.map(receipt => {
+              if (receipt.actionName !== 'pages.listRecent')
+                throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'A bounded excerpt requires its own recent read receipt', 409)
+              return { actionCallId: receipt.actionCallId, actionName: receipt.actionName }
+            })
+          }
+        : undefined
       const source: WikiSynthesisSource = {
         evidenceId,
         sourceRevision: representation.binding.sourceRevision,
@@ -6759,7 +6763,7 @@ export class AxAgentEngine implements AgentEngine {
     const rejectClaim = (source: WikiSynthesisSource, reason: string): string => {
       const issue = `SourceRef ${wikiSynthesisSourceRef(source)} failed host check: ${reason}.`
       rejectedClaims.add(issue)
-      rejection = `${[...rejectedClaims].join('\n')}\nRetain exact literals from the admitted complete source and its current read identity. Preserve qualifications and factual relationships; Jev judges their meaning across that source. Omit unrequested attributes.`
+      rejection = `${[...rejectedClaims].join('\n')}\nRetain exact literals from the admitted original read and its current identity. For a bounded recent-excerpt, only its admitted visible prefix is available. The failed literal category identifies what needs correction; omit an unrequested value rather than borrowing or reformatting it. Preserve qualifications and factual relationships; Jev judges their meaning across that source.`
       return issue
     }
     let rendered: string | undefined
@@ -6774,9 +6778,10 @@ export class AxAgentEngine implements AgentEngine {
         /^Proposal: [0-9a-f-]{36}; result hash: [0-9a-f]{64}\.$/iu.test(line) ||
         /^Wiki proposal [0-9a-f-]{36} status: (?:denied|expired|cancelled)\.$/iu.test(line)
     )
-    const recentOrder = (input.coverage?.recentGroups.length ?? 0) > 0
-      ? new Map(input.coverage!.recentGroups.flatMap(group => group.evidenceIds).map((id, index) => [id, index]))
-      : undefined
+    const recentOrder =
+      (input.coverage?.recentGroups.length ?? 0) > 0
+        ? new Map(input.coverage!.recentGroups.flatMap(group => group.evidenceIds).map((id, index) => [id, index]))
+        : undefined
     const program = createWikiSynthesisProgram(sources, {
       structured,
       inputMediaSources,
@@ -6790,13 +6795,16 @@ export class AxAgentEngine implements AgentEngine {
         if (
           bound === undefined ||
           literals === undefined ||
-          (source.kind === 'source-read' ? !source.complete : source.complete || source.excerpt?.representationMetadata !== bound.binding.representationMetadata) ||
+          (source.kind === 'source-read'
+            ? !source.complete
+            : source.complete || source.excerpt?.representationMetadata !== bound.binding.representationMetadata) ||
           source.unitId !== `read:${source.readId}` ||
           source.sourceRevision !== bound.binding.sourceRevision ||
           source.text !== bound.binding.retrievedSource
         )
           return rejectClaim(source, 'original-read-binding')
-        return readLiteralIntegrity(claim.statement, literals, bound) ? true : rejectClaim(source, 'exact-literals')
+        const failure = readLiteralFailure(claim.statement, literals, bound)
+        return failure === undefined ? true : rejectClaim(source, `exact-literals/${failure}`)
       },
       validateAnswer: (answer, content) => {
         if (Buffer.byteLength(JSON.stringify(answer), 'utf8') > deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes) {
@@ -6804,7 +6812,9 @@ export class AxAgentEngine implements AgentEngine {
           return rejection
         }
         if (recentOrder !== undefined) {
-          answer.claims.sort((left, right) => (recentOrder.get(left.evidenceId) ?? Number.MAX_SAFE_INTEGER) - (recentOrder.get(right.evidenceId) ?? Number.MAX_SAFE_INTEGER))
+          answer.claims.sort(
+            (left, right) => (recentOrder.get(left.evidenceId) ?? Number.MAX_SAFE_INTEGER) - (recentOrder.get(right.evidenceId) ?? Number.MAX_SAFE_INTEGER)
+          )
           content = renderWikiSynthesisAnswer(answer)
         }
         rendered = content
@@ -7536,6 +7546,7 @@ export class AxAgentEngine implements AgentEngine {
       // a committed change look like an incomplete streamed operation.
       let durablePageMutationApplied =
         request.recoveredAction !== undefined && isAppliedPageProposalResult(request.recoveredAction.actionName, request.recoveredAction.output)
+      let appliedPageContinuationInvalidated = false
       let recoveredPageEvidenceAvailable = true
       if (request.recoveredAction !== undefined) {
         if ((request.purpose ?? 'root') !== 'root' || tools === null || actionSession === null)
@@ -8095,6 +8106,33 @@ export class AxAgentEngine implements AgentEngine {
         if (windows.length === 0) return contextPlan.intent
         return `${contextPlan.intent}\n\nHost-observed recent-page collection scope (not page facts or additional request obligations):\n${canonicalJson(windows)}\nFor a requested bounded recent listing or recap, requestedLimit is an upper bound. Only windowComplete:true certifies that the eligible accessible action window reached that limit or actual exhaustion with all returned rows available. A smaller exhausted complete window is not by itself an unresolved request facet. Cover every returned page with an available exact read; disclose missing requested evidence or unread content. Incidental recent research does not expand an ordinary question. This scope establishes no Wiki-wide absence, exclusivity, revision differences or unread-suffix coverage. Keep every other unsupported request facet unresolved.`
       }
+      const recentBodyReadIds = (): readonly string[] | undefined => {
+        let missing: string[] | undefined
+        for (const evidence of citationRegistry.values()) {
+          if (
+            excludedEvidenceIds.has(evidence.citation.evidenceId) ||
+            !recentGroups.some(group => group.evidenceIds.includes(evidence.citation.evidenceId)) ||
+            evidence.binding.representation !== 'recent-excerpt' ||
+            metadataRecord(evidence.binding.representationMetadata)?.contentTruncated !== true
+          )
+            continue
+          const hasBody = evidence.document.units.some(
+            unit =>
+              unit.complete &&
+              unit.visibleText !== null &&
+              unit.visibleText.trim().length > 0 &&
+              unit.kind !== 'heading' &&
+              unit.kind !== 'summary' &&
+              unit.kind !== 'opaque' &&
+              unit.kind !== 'list' &&
+              unit.kind !== 'table'
+          )
+          if (!hasBody) (missing ??= []).push(evidence.citation.evidenceId)
+        }
+        return missing
+      }
+      const recentBodyReadFeedback = (ids: readonly string[]): string =>
+        `These recent-page excerpts have no parser-admitted body content: ${ids.join(', ')}. Use pages.get for only those pages before finishing the requested recap; retain the other usable recent reads. Do not infer facts from opaque markup or an unseen suffix.`
       const pageReadCache = new Map<string, { readonly actionCallId: string; readonly output: unknown }>()
       if (specialistContinuation) {
         for (const stored of specialistContinuation.evidenceMessages) {
@@ -8207,7 +8245,7 @@ export class AxAgentEngine implements AgentEngine {
           return citation === null ? [] : [citation.evidenceId]
         })
       }
-      const reauthorizeEvidencePrompt = async (validationResults: EvidenceValidationCache): Promise<boolean> => {
+      const reauthorizeEvidencePrompt = async (validationResults: EvidenceValidationCache, retireSourceProjections = false): Promise<boolean> => {
         if (typeof validateObservation !== 'function') return false
         let invalidated = false
         for (const [message, application] of trackedApplicationReceipts) {
@@ -8240,7 +8278,29 @@ export class AxAgentEngine implements AgentEngine {
             const message = messages[index]
             if (message === undefined) continue
             const payload = trackedEvidenceMessages.get(message)
-            if (payload === undefined) continue
+            if (payload === undefined) {
+              if (!retireSourceProjections) continue
+              const response = trackedInternalResponses.get(message)
+              if (
+                response === undefined ||
+                trackedOperationReceipts.has(message) ||
+                sourceIndependentControlResponses.has(message) ||
+                !isWikiSourceProjection(message) ||
+                unavailableInternalResponses.has(message)
+              )
+                continue
+              let valid = false
+              try {
+                valid = (await validateObservation.call(actionSession, response.actionName, response.output, request.signal, response.input)) === true
+              } catch {
+                request.signal.throwIfAborted()
+              }
+              request.signal.throwIfAborted()
+              if (valid) continue
+              messages[index] = unavailableActionResult(message.role === 'function' ? 'native' : 'prompt', response.callId, response.providerName)
+              invalidated = true
+              continue
+            }
             const receipts = payload.receipts ?? [{ actionCallId: payload.actionCallId, actionName: payload.actionName, sourceOutput: payload.sourceOutput }]
             let valid = true
             for (const receipt of receipts) {
@@ -8995,7 +9055,8 @@ export class AxAgentEngine implements AgentEngine {
           maxTurns < 2 ||
           !contextPlan.intent.trim() ||
           request.recoveredAction !== undefined ||
-          citationRegistry.size === 0
+          citationRegistry.size === 0 ||
+          recentBodyReadIds() !== undefined
         )
           return
         const readinessValidations: EvidenceValidationCache = new Map()
@@ -9004,20 +9065,23 @@ export class AxAgentEngine implements AgentEngine {
         const readinessEvidence = new Map<string, CitationEvidence>()
         const physicalReadIds = new WeakMap<ParsedSourceDocument, string>()
         const reads = [...admittedWikiReadBindings(restored ?? new Map())]
-          .filter(([, { representation }]) => representation.binding.representation !== 'recent-excerpt' ||
-            metadataRecord(representation.binding.representationMetadata)?.contentTruncated === false)
+          .filter(
+            ([, { representation }]) =>
+              representation.binding.representation !== 'recent-excerpt' ||
+              metadataRecord(representation.binding.representationMetadata)?.contentTruncated === false
+          )
           .map(([readId, { evidenceId, representation }]) => {
-          readinessEvidence.set(evidenceId, representation)
-          physicalReadIds.set(representation.document, readId)
-          return {
-            evidenceId,
-            sourceRevision: representation.binding.sourceRevision,
-            readId,
-            source: representation.binding.retrievedSource,
-            authorText: readLiteralSnapshot(representation).authorText,
-            context: representation.authoritativeTitle ?? ''
-          }
-        })
+            readinessEvidence.set(evidenceId, representation)
+            physicalReadIds.set(representation.document, readId)
+            return {
+              evidenceId,
+              sourceRevision: representation.binding.sourceRevision,
+              readId,
+              source: representation.binding.retrievedSource,
+              authorText: readLiteralSnapshot(representation).authorText,
+              context: representation.authoritativeTitle ?? ''
+            }
+          })
         const readinessContext = await prepareProviderSourceContext(conversation, true)
         const nativeRequest = buildWikiContextReadinessRequest({
           userRequest: contextPlan.intent,
@@ -9064,8 +9128,8 @@ export class AxAgentEngine implements AgentEngine {
           publicationWindow &&
           turn < maxTurns - 1 &&
           phase === 'collecting' &&
-          citationRegistry.size === 0 &&
-          (seenCandidateIdentities.size > 0 || contextPlan.selectedPageIds.length > 0 || request.currentPage !== undefined)
+          ((citationRegistry.size === 0 && (seenCandidateIdentities.size > 0 || contextPlan.selectedPageIds.length > 0 || request.currentPage !== undefined)) ||
+            recentBodyReadIds() !== undefined)
         if ((request.purpose ?? 'root') === 'root' && (turn >= maxTurns - 1 || (publicationWindow && !requiredSourceRead))) {
           phase = 'synthesizing'
           discoveryTurn = null
@@ -9362,6 +9426,26 @@ export class AxAgentEngine implements AgentEngine {
           return await publishExecutionLimit('tools')
         }
         if (result.calls.length === 0 && tools !== null && (request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent') {
+          const missingBodyReads = recentBodyReadIds()
+          if (missingBodyReads !== undefined) {
+            await sink.event('model.turn', modelTurnData(turn + 1, { ...result, content: '' }, 'answer_rejected'))
+            const assistant: ChatPromptMessage = {
+              role: 'assistant',
+              ...(tools.mode === 'native'
+                ? (result.nativeContent ?? result.content).length === 0
+                  ? {}
+                  : { content: result.nativeContent ?? result.content }
+                : { content: result.content }),
+              ...(result.thoughtBlocks.length === 0 ? {} : { thoughtBlocks: result.thoughtBlocks })
+            }
+            activePrompt.push(assistant)
+            trackedAssistantSourceInputs.set(assistant, providerSourceInputs(bounded.chatPrompt))
+            const feedback: ChatPromptMessage = { role: 'user', content: recentBodyReadFeedback(missingBodyReads) }
+            activePrompt.push(feedback)
+            sourceIndependentControlResponses.add(feedback)
+            activeBatchEnds.push(activePrompt.length)
+            continue
+          }
           // Collector prose is not a candidate answer. Its paid receipt is
           // settled above; hand off privately without consuming a repair.
           await sink.event('model.turn', modelTurnData(turn + 1, { ...result, content: '' }, 'collection_complete'))
@@ -9571,7 +9655,10 @@ export class AxAgentEngine implements AgentEngine {
                 result = { ...result, rootRejectedDraft: canonicalJson(nativeDraft.answer) }
               }
               const operationObservations = nativeDraft.answer.observations.filter(line => nativeDraft.operationObservations.has(line))
-              const requiresOperationCoverage = contextPlan.explicitContentFacets && !nativeDraft.allRequestFacetsUnresolved && operationObservations.length > 0
+              const requiresOperationCoverage =
+                (contextPlan.explicitContentFacets || appliedPageContinuationInvalidated) &&
+                !nativeDraft.allRequestFacetsUnresolved &&
+                operationObservations.length > 0
               if (
                 (semantic.valid || selectedRecentPartial) &&
                 (nativeDraft.answer.claims.length > 0 || (nativeDraft.answer.attachmentClaims?.length ?? 0) > 0 || requiresOperationCoverage)
@@ -9588,8 +9675,14 @@ export class AxAgentEngine implements AgentEngine {
                   reads: [...nativeDraft.readSources.values()].map(source => {
                     if (source.kind !== 'source-read' && source.kind !== 'recent-excerpt')
                       throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Coverage requires unchanged admitted physical reads', 409)
-                    return { readRef: source.readId, source: source.text, authorText: source.authorText, title: source.context, complete: source.complete,
-                      ...(source.kind !== 'recent-excerpt' ? {} : { excerpt: source.excerpt }) }
+                    return {
+                      readRef: source.readId,
+                      source: source.text,
+                      authorText: source.authorText,
+                      title: source.context,
+                      complete: source.complete,
+                      ...(source.kind !== 'recent-excerpt' ? {} : { excerpt: source.excerpt })
+                    }
                   }),
                   claims: nativeDraft.answer.claims.map(claim => {
                     const source = nativeDraft.readSources.get(canonicalJson([claim.evidenceId, claim.sourceRevision, claim.unitId]))
@@ -9672,8 +9765,7 @@ export class AxAgentEngine implements AgentEngine {
             }
           }
           const sourceLocalFailures = assessment.issues.filter(
-            issue =>
-              issue.includes('does not support every factual clause from a single source unit') || issue.includes('lacks source-scoped semantic support')
+            issue => issue.includes('does not support every factual clause from a single source unit') || issue.includes('lacks source-scoped semantic support')
           ).length
           const exactIntegrityFailures = assessment.claims.filter(claim => claim.sourceActionCallId !== null && !claim.integritySupported).length
           const unreadFailures = assessment.claims.filter(claim => claim.sourceActionCallId === null).length
@@ -10010,6 +10102,7 @@ export class AxAgentEngine implements AgentEngine {
         let toolBudgetExhausted = false
         let contextLimitedThisTurn = false
         let deliveredSourceReadThisTurn = false
+        let appliedPageMutationThisTurn = false
         const capacityMessagesFor = (fromIndex: number): readonly ChatPromptMessage[] =>
           result.calls.slice(fromIndex).map(nextCall => {
             const nextActionCallId = actionCallIdFor(request, nextCall.id)
@@ -10247,10 +10340,14 @@ export class AxAgentEngine implements AgentEngine {
           const call = result.calls[callIndex]!
           if (call.providerName === SYNTHESIS_CONTROL_NAME && activeTools.actionNames.has(SYNTHESIS_CONTROL_NAME)) {
             request.signal.throwIfAborted()
-            if (completedFinishReads !== callIndex) {
+            const missingBodyReads = recentBodyReadIds()
+            if (completedFinishReads !== callIndex || missingBodyReads !== undefined) {
               providerResultMessage(activePrompt, mode, call.id, call.providerName, {
                 status: 'collection_not_finished',
-                reason: 'Source reads did not all deliver complete citable evidence. Inspect their results and continue collection.'
+                reason:
+                  missingBodyReads === undefined
+                    ? 'Source reads did not all deliver complete citable evidence. Inspect their results and continue collection.'
+                    : recentBodyReadFeedback(missingBodyReads)
               })
             } else {
               providerResultMessage(activePrompt, mode, call.id, call.providerName, { status: 'collection_finished' })
@@ -10593,7 +10690,10 @@ export class AxAgentEngine implements AgentEngine {
             const actionElapsedMs = performance.now() - actionStartedAt
             // The action kernel validates this output; no earlier proposal state
             // (pending, approved, denied, expired, or cancelled) crosses the latch.
-            if (isAppliedPageProposalResult(resolved.name, output)) durablePageMutationApplied = true
+            if (isAppliedPageProposalResult(resolved.name, output)) {
+              durablePageMutationApplied = true
+              appliedPageMutationThisTurn = true
+            }
             const encoded = JSON.stringify(output)
             const summary = toolCompletionSummary(resolved.name, output, cached !== undefined)
             const candidateProgress = cached === undefined ? providerCandidateProgress(resolved.name, output, seenCandidateIdentities) : null
@@ -10722,7 +10822,8 @@ export class AxAgentEngine implements AgentEngine {
             if (cached === undefined && resolved.name === 'memory.manage') completedMemoryOutput = output
             if (finishIndex !== -1 && delivered && evidenceCollection.conflictingEvidenceIds.length === 0) {
               const sourceActionCallId = cached?.actionCallId ?? actionCallId
-              const allowBoundedRecentFinish = evidenceCollection.recent?.windowComplete === true &&
+              const allowBoundedRecentFinish =
+                evidenceCollection.recent?.windowComplete === true &&
                 contextPlan.requestFacets !== undefined &&
                 contextPlan.requestFacets.length > 0 &&
                 contextPlan.requestFacets.every(facet => facet.coverage === 'recent-window')
@@ -10800,6 +10901,19 @@ export class AxAgentEngine implements AgentEngine {
           if (!sourceIndependentControlResponses.has(message)) trackedAssistantSourceInputs.set(message, turnSourceInputs)
         }
         activeBatchEnds.push(activePrompt.length)
+        if (appliedPageMutationThisTurn && (await reauthorizeEvidencePrompt(new Map(), true))) {
+          // The committed operation remains an independently authenticated
+          // receipt, but its old source and signed collector exchange do not.
+          // Rebuild through typed synthesis rather than replaying or rewriting
+          // native state whose patch input was bound to the superseded revision.
+          // An optional collector plan is not required to preserve unfinished
+          // user work: audit receipt-only completion against the whole request.
+          appliedPageContinuationInvalidated = true
+          warmReadinessEvidence = undefined
+          phase = 'synthesizing'
+          discoveryTurn = null
+          tools = null
+        }
         if (deliveredSourceReadThisTurn && (request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent') {
           // Capture Ax's actual schema and generated messages before paying for
           // another collector acknowledgement. No evidence is pruned or clipped.

@@ -3,8 +3,8 @@ import type { Knex } from 'knex'
 import { z } from 'zod'
 import {
   AGENT_ACTION_NAMES,
-  AGENT_PROPOSAL_STATUSES,
   AGENT_PRESET_IDS,
+  AGENT_PROPOSAL_STATUSES,
   AGENT_TOOL_CALL_NAMES,
   AGENT_TOOL_CONTROL_NAMES,
   type AgentActionName,
@@ -17,8 +17,8 @@ import {
   type AgentFollowUpSuggestion,
   type AgentGoogleSearchGrounding,
   type AgentMessageView,
-  type AgentPresetId,
   type AgentPageActionLink,
+  type AgentPresetId,
   type AgentProposalView,
   type AgentRunView,
   type AgentRunWorkingPhase,
@@ -32,7 +32,9 @@ import {
   isExternalMcpToolCallName,
   isTerminalAgentRunStatus
 } from '../../shared/agents/contracts.ts'
-import { type AgentKnowledgeContext, AgentCurrentPageHintSchema, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
+import { AgentCurrentPageHintSchema, type AgentKnowledgeContext, AgentKnowledgeContextSchema } from '../../shared/agents/knowledge-context.ts'
+import type { WikiAuth } from '../controllers/_types.ts'
+import { canReadPage, type PageVisibilityRecord, pageRoute } from '../helpers/page-access.ts'
 import { latestAgentGoalForSession, projectAgentGoal } from './goals.ts'
 import { type AgentMediaRow, projectAgentMedia } from './media.ts'
 import { AgentMemoryRepository, projectAgentMemoryContext } from './memory.ts'
@@ -370,12 +372,7 @@ interface ProposalRow {
   risk: string
   status: string
   summary: string
-  operation: string
   pageId: number | null
-  pageLocale: string | null
-  pagePath: string | null
-  pageTitle: string | null
-  pageContentType: string | null
   baseSourceRevision: number | string | null
   authoritySha256: string
   inputHash: string
@@ -387,38 +384,81 @@ interface ProposalRow {
   expiresAt: Date | string
 }
 
+type ProposalPageMetadata = PageVisibilityRecord & { id: number; localeCode: string; title: string; contentType: string }
+
 const linkedPageActions = new Set<AgentActionName>(['pages.prepareCreate', 'pages.preparePatch', 'pages.prepareMove', 'pages.prepareRestore'])
 
-const proposalPageLink = (row: ProposalRow, status: AgentProposalView['status']): AgentPageActionLink | null => {
-  if (status !== 'applied' || !linkedPageActions.has(row.actionName as AgentActionName)) return null
-  const operation = parseJson(row.operation, 'AGENT_PROPOSAL_CORRUPT')
-  if (typeof operation !== 'object' || operation === null) throw new AgentRepositoryError('AGENT_PROPOSAL_CORRUPT', 'Agent proposal operation is invalid', 500)
-  const locale = stringValue(Reflect.get(operation, 'locale'), 16)
-  const path = stringValue(Reflect.get(operation, 'path'), 1_024)
-  if (!locale || !path) throw new AgentRepositoryError('AGENT_PROPOSAL_CORRUPT', 'Applied proposal target is invalid', 500)
-  return {
-    label: `/${path}`,
-    href: `/${encodeURIComponent(locale)}/${path
-      .split('/')
-      .map(segment => encodeURIComponent(segment))
-      .join('/')}`
+const readableProposalPages = async (knex: Knex, ownerId: number, rows: readonly ProposalRow[]): Promise<ReadonlyMap<string, ProposalPageMetadata>> => {
+  const pageIds = new Map<string, number>()
+  for (const row of rows) {
+    if (row.actionName !== 'pages.prepareCreate' && row.pageId !== null) pageIds.set(row.id, row.pageId)
   }
+  const creates = rows.filter(row => row.status === 'applied' && row.actionName === 'pages.prepareCreate')
+  if (creates.length > 0) {
+    const receipts = await knex<{ id: string; applyResult: string | null }>('agentProposals')
+      .whereIn(
+        'id',
+        creates.map(row => row.id)
+      )
+      .select('id', 'applyResult')
+    for (const receipt of receipts) {
+      const result = parseJson(receipt.applyResult, 'AGENT_PROPOSAL_CORRUPT')
+      const identity = z.object({ pageId: z.number().int().positive() }).safeParse(result)
+      // A historical create without its committed ID must not link to a
+      // replacement page at the original path.
+      if (identity.success) pageIds.set(receipt.id, identity.data.pageId)
+    }
+  }
+  const pagesByProposal = new Map<string, ProposalPageMetadata>()
+  if (pageIds.size === 0) return pagesByProposal
+  const owner = await knex('users').where({ id: ownerId, isActive: true }).first('id')
+  if (!owner) return pagesByProposal
+  const requester = { id: ownerId, permissions: [] as string[] }
+  const auth = WIKI.auth as WikiAuth
+  const authority = await auth.loadPageRuleAuthority(requester, knex.isTransaction ? (knex as Knex.Transaction) : undefined)
+  requester.permissions = [...authority.permissions]
+  const ids = [...new Set(pageIds.values())]
+  const [pages, tags] = await Promise.all([
+    knex<ProposalPageMetadata>('pages').whereIn('id', ids).select('id', 'localeCode', 'path', 'visibility', 'ownerId', 'title', 'contentType'),
+    knex<{ pageId: number; tag: string }>('pageTags')
+      .join('tags', 'tags.id', 'pageTags.tagId')
+      .whereIn('pageTags.pageId', ids)
+      .select('pageTags.pageId', 'tags.tag')
+  ])
+  const tagsByPage = new Map<number, Array<{ tag: string }>>()
+  for (const tag of tags) {
+    const pageTags = tagsByPage.get(tag.pageId)
+    if (pageTags) pageTags.push(tag)
+    else tagsByPage.set(tag.pageId, [tag])
+  }
+  const readable = new Map<number, ProposalPageMetadata>()
+  for (const page of pages) {
+    if (!canReadPage(requester, { ...page, tags: tagsByPage.get(page.id) ?? [] }, authority)) continue
+    readable.set(page.id, page)
+  }
+  for (const [proposalId, pageId] of pageIds) {
+    const page = readable.get(pageId)
+    if (page) pagesByProposal.set(proposalId, page)
+  }
+  return pagesByProposal
 }
 
-const proposalView = (row: ProposalRow, approval: AgentApprovalView | null): AgentProposalView => {
+const proposalView = (row: ProposalRow, approval: AgentApprovalView | null, page: ProposalPageMetadata | null): AgentProposalView => {
   if (!actionNames.has(row.actionName)) throw new AgentRepositoryError('AGENT_PROPOSAL_CORRUPT', 'Agent proposal action is invalid', 500)
   const status = proposalStatusSchema.parse(row.status)
   const target =
-    row.pageId === null
+    row.pageId === null || row.actionName === 'pages.prepareCreate' || page === null
       ? null
       : {
-          id: row.pageId,
-          locale: row.pageLocale ?? '',
-          path: row.pagePath ?? '',
-          title: row.pageTitle ?? '',
-          contentType: row.pageContentType ?? '',
+          id: page.id,
+          locale: page.localeCode,
+          path: page.path,
+          title: page.title,
+          contentType: page.contentType,
           sourceRevision: String(row.baseSourceRevision ?? '')
         }
+  const pageLink: AgentPageActionLink | null =
+    status === 'applied' && linkedPageActions.has(row.actionName as AgentActionName) && page !== null ? { label: `/${page.path}`, href: pageRoute(page) } : null
   return {
     id: row.id,
     sourceKind: row.sourceKind,
@@ -427,7 +467,7 @@ const proposalView = (row: ProposalRow, approval: AgentApprovalView | null): Age
     status,
     summary: row.summary,
     target,
-    pageLink: proposalPageLink(row, status),
+    pageLink,
     baseSourceRevision: row.baseSourceRevision === null ? null : String(row.baseSourceRevision),
     authoritySha256: row.authoritySha256,
     inputHash: row.inputHash,
@@ -607,7 +647,6 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
   options.signal?.throwIfAborted()
 
   const proposalQuery = knex<ProposalRow>('agentProposals')
-    .leftJoin('pages', 'pages.id', 'agentProposals.pageId')
     .where('agentProposals.sessionId', sessionId)
     .select({
       id: 'agentProposals.id',
@@ -617,10 +656,6 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
       status: 'agentProposals.status',
       summary: 'agentProposals.summary',
       pageId: 'agentProposals.pageId',
-      pageLocale: 'pages.localeCode',
-      pagePath: 'pages.path',
-      pageTitle: 'pages.title',
-      pageContentType: 'pages.contentType',
       baseSourceRevision: 'agentProposals.baseSourceRevision',
       authoritySha256: 'agentProposals.authoritySha256',
       inputHash: 'agentProposals.inputHash',
@@ -631,7 +666,6 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
       contentPurgedAt: 'agentProposals.contentPurgedAt',
       expiresAt: 'agentProposals.expiresAt'
     })
-    .select({ operation: 'agentProposals.operation' })
     .orderBy('agentProposals.createdAt')
     .orderBy('agentProposals.id')
     .limit(THREAD_RELATED_RECORD_LIMIT + 1)
@@ -671,6 +705,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
           proposalRows.map(proposal => proposal.id)
         )
   options.signal?.throwIfAborted()
+  const proposalPages = await readableProposalPages(knex, ownerId, proposalRows)
 
   const events = eventPages.flat()
   const routingDecisions: AgentThreadState['routingDecisions'][number][] = []
@@ -797,7 +832,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
     specialistInvocations,
     routingDecisions,
     goal,
-    proposals: proposalRows.map(row => proposalView(row, approvals.get(row.id) ?? null)),
+    proposals: proposalRows.map(row => proposalView(row, approvals.get(row.id) ?? null, proposalPages.get(row.id) ?? null)),
     artifacts: artifactRows.map(row => artifactView(row, now)),
     suggestions: reduced.suggestions,
     historyWindow: {

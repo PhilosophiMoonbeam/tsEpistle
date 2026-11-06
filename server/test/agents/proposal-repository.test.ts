@@ -1,24 +1,30 @@
 import { createHash } from 'node:crypto'
-import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
-import createKnex, { type Knex } from 'knex'
 import type { AxChatRequest, AxChatResponse } from '@ax-llm/ax'
-
-import { AGENT_FEATURE_FLAG_KEYS, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
-import { ActionKernel, createActionAuthority } from '../../agents/actions/kernel.ts'
+import createKnex, { type Knex } from 'knex'
+import { AGENT_FEATURE_FLAG_KEYS, AGENT_TOOL_NAMES, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
 import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
-import { createPageEvidenceValidator } from '../../agents/actions/page-reads.ts'
+import { ActionKernel, createActionAuthority } from '../../agents/actions/kernel.ts'
 import { registerPageProposalActions } from '../../agents/actions/page-proposals.ts'
+import { createPageEvidenceValidator, registerPageReadActions } from '../../agents/actions/page-reads.ts'
+import { withInvokingAgentRunLease } from '../../agents/coordinator.ts'
 import { applyApprovedProposal, decideProposal } from '../../agents/proposals/execution.ts'
 import { persistProposal, proposalResult } from '../../agents/proposals/repository.ts'
-import { withInvokingAgentRunLease } from '../../agents/coordinator.ts'
-import { OKF_PRODUCER_CONTEXT } from '../../okf/mutation-context.ts'
 import { KernelActionSessionProvider } from '../../agents/providers/action-sessions.ts'
 import { AxAgentEngine } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
-import { fixtureDecisionProviders, fullAxFixtureService, synthesisCollectionControl, synthesisFixtureAnswer } from './synthesis-fixture.ts'
-import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { createApiPrincipal } from '../../helpers/api-principal.ts'
+import { canonicalJson } from '../../helpers/canonical-json.ts'
+import { OKF_PRODUCER_CONTEXT } from '../../okf/mutation-context.ts'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
+import {
+  fixtureDecisionProviders,
+  fullAxFixtureService,
+  synthesisCollectionControl,
+  synthesisFixtureAnswer,
+  synthesisObservationsFromRequest,
+  synthesisSourcesFromRequest
+} from './synthesis-fixture.ts'
 
 const flags = Object.fromEntries(AGENT_FEATURE_FLAG_KEYS.map(flag => [flag, true])) as AgentFeatureFlags
 
@@ -158,6 +164,7 @@ describe('agent proposal repository', () => {
       table.binary('runtimeStateCiphertext').nullable()
       table.integer('eventSequence').notNullable().defaultTo(0)
       table.dateTime('cancelRequestedAt').nullable()
+      table.boolean('sideEffectsStarted').notNullable().defaultTo(false)
       table.dateTime('updatedAt').notNullable()
     })
     await knex.schema.createTable('agentEvents', table => {
@@ -485,8 +492,12 @@ describe('agent proposal repository', () => {
 
   it('bounds a personal admin key by read-only scope and attributes approved writes to its owner, not its approver', async () => {
     const admission = {
-      transport: 'mcp' as const, executionMode: 'agent' as const, supportsTools: true,
-      permissions: ['manage:system', 'use:mcp', 'write:pages'], groupIds: [3], featureFlags: flags
+      transport: 'mcp' as const,
+      executionMode: 'agent' as const,
+      supportsTools: true,
+      permissions: ['manage:system', 'use:mcp', 'write:pages'],
+      groupIds: [3],
+      featureFlags: flags
     }
     const auth = { kind: 'apiKey' as const, apiKeyId: 9, groupId: 1 }
     const requestId = '00000000-0000-4000-8000-000000000701'
@@ -505,30 +516,52 @@ describe('agent proposal repository', () => {
         currentPage = { ...value.input, id: 43, authorId: value.requester.id, sourceRevision: '1', editor: 'markdown' }
         return currentPage
       }),
-      update: vi.fn(), move: vi.fn(), restore: vi.fn(), remove: vi.fn(),
+      update: vi.fn(),
+      move: vi.fn(),
+      restore: vi.fn(),
+      remove: vi.fn(),
       authorizeMutation: vi.fn(async () => {})
     }
     const kernel = new ActionKernel()
     registerPageProposalActions(kernel, {
-      knex, operations,
+      knex,
+      operations,
       resolveRequester: async () => ({
-        ...createApiPrincipal(9, 1, ['manage:system']), ownershipUserId: 42, personalMcpAccess: access, groups: [3]
+        ...createApiPrincipal(9, 1, ['manage:system']),
+        ownershipUserId: 42,
+        personalMcpAccess: access,
+        groups: [3]
       }),
-      resolveApprover: async id => id === 42 ? owner : approver,
+      resolveApprover: async id => (id === 42 ? owner : approver),
       snapshotSigningSecret: Buffer.alloc(32, 7)
     })
-    const input = { path: 'docs/personal', locale: 'en', title: 'Personal edit', description: '', content: '# Personal edit\n', contentType: 'markdown', isPublished: true, tags: [] }
-    const execute = (actionName: 'pages.prepareCreate' | 'pages.applyProposal', value: unknown) => kernel.execute({
-      authority: createActionAuthority(actionName, requestId, auth, admission),
-      actionCallId: actionName, input: value, signal: new AbortController().signal, refreshAdmission: async () => admission
-    })
+    const input = {
+      path: 'docs/personal',
+      locale: 'en',
+      title: 'Personal edit',
+      description: '',
+      content: '# Personal edit\n',
+      contentType: 'markdown',
+      isPublished: true,
+      tags: []
+    }
+    const execute = (actionName: 'pages.prepareCreate' | 'pages.applyProposal', value: unknown) =>
+      kernel.execute({
+        authority: createActionAuthority(actionName, requestId, auth, admission),
+        actionCallId: actionName,
+        input: value,
+        signal: new AbortController().signal,
+        refreshAdmission: async () => admission
+      })
     await expect(execute('pages.prepareCreate', input)).rejects.toMatchObject({ code: 'MCP_READ_ONLY', status: 403 })
     expect(await knex('agentProposals')).toHaveLength(0)
     access = 'read-write'
     const prepared = ACTION_CATALOG['pages.prepareCreate'].output.parse(await execute('pages.prepareCreate', input))
     await decideProposal(knex, { proposalId: prepared.proposalId, approvalId: prepared.approvalId, userId: 8, decision: 'approved', authorize: async () => {} })
     access = 'read-only'
-    await expect(execute('pages.applyProposal', { proposalId: prepared.proposalId, approvalId: prepared.approvalId })).rejects.toMatchObject({ code: 'MCP_READ_ONLY' })
+    await expect(execute('pages.applyProposal', { proposalId: prepared.proposalId, approvalId: prepared.approvalId })).rejects.toMatchObject({
+      code: 'MCP_READ_ONLY'
+    })
     expect(operations.create).not.toHaveBeenCalled()
     access = 'read-write'
     await execute('pages.applyProposal', { proposalId: prepared.proposalId, approvalId: prepared.approvalId })
@@ -536,7 +569,10 @@ describe('agent proposal repository', () => {
     expect(currentPage).toMatchObject({ authorId: 42 })
     expect(operations.authorizeMutation).toHaveBeenCalledWith(expect.objectContaining({ requester: expect.objectContaining({ api: 9, ownershipUserId: 42 }) }))
     expect(operations.authorizeMutation).toHaveBeenCalledWith(expect.objectContaining({ requester: approver }))
-    expect(await knex('agentProposals').where({ id: prepared.proposalId }).first('requesterApiKeyId', 'requesterUserId')).toEqual({ requesterApiKeyId: 9, requesterUserId: null })
+    expect(await knex('agentProposals').where({ id: prepared.proposalId }).first('requesterApiKeyId', 'requesterUserId')).toEqual({
+      requesterApiKeyId: 9,
+      requesterUserId: null
+    })
   })
 
   it('replays a pre-ID pending create through the real action kernel without changing its immutable envelope', async () => {
@@ -1022,6 +1058,300 @@ describe('agent proposal repository', () => {
     expect(await knex('agentActionExecutions').where({ proposalId: legacy.proposal.id }).first('status')).toEqual({ status: 'recovery_required' })
     replacementPage = null
   })
+
+  it.each(['complete', 'read revoked before publication', 'remaining read and write', 'remaining work without plan'] as const)(
+    'resumes a human-approved private patch without its superseded native source: %s',
+    async outcome => {
+      const runId = '00000000-0000-4000-8000-000000000001'
+      const sessionId = '00000000-0000-4000-8000-000000000020'
+      const leaseOwner = 'patch-test-worker'
+      const leaseToken = '00000000-0000-4000-8000-000000000030'
+      const patchRequest = 'Change only the review marker to approved-once, wait for human approval, then report the applied outcome.'
+      const remainingWork = 'Read the current incident owner from page 44, then update its review marker.'
+      const hasRemainingWork = outcome === 'remaining read and write' || outcome === 'remaining work without plan'
+      const userRequest = hasRemainingWork ? `${patchRequest} ${remainingWork}` : patchRequest
+      const requestPlan =
+        outcome === 'remaining read and write'
+          ? `<wiki-request-plan>${JSON.stringify({
+              facets: [
+                { start: 0, end: patchRequest.length, quote: patchRequest, coverage: 'source' },
+                { start: patchRequest.length + 1, end: userRequest.length, quote: remainingWork, coverage: 'source' }
+              ]
+            })}</wiki-request-plan>`
+          : undefined
+      await knex('agentRuns').insert({
+        id: runId,
+        sessionId,
+        ownerId: 7,
+        status: 'running',
+        attempts: 1,
+        leaseOwner,
+        leaseToken,
+        eventSequence: 0,
+        updatedAt: new Date()
+      })
+      let readable = true
+      let page = {
+        id: 43,
+        locale: 'en',
+        path: 'private/approved-patch',
+        title: 'Private patch fixture',
+        description: 'Controlled private fixture',
+        contentType: 'markdown',
+        editor: 'markdown',
+        content: 'Keep this disclaimer.\nReview marker: before-approval.\n',
+        sourceRevision: '2',
+        updatedAt: '2026-10-15T15:59:38.000Z',
+        isPublished: false,
+        isPrivate: true,
+        authorId: 7,
+        tags: ['controlled-fixture']
+      }
+      const operations = {
+        get: vi.fn(async (input: Record<string, unknown>) => {
+          expect(input.requester).toMatchObject({ id: 7 })
+          if (!readable) throw Object.assign(new Error('Private page read forbidden'), { status: 403 })
+          return { ...page }
+        }),
+        getByPath: vi.fn(),
+        getVersion: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(async ({ input }: { input: Record<string, unknown> }) => {
+          expect(input.expectedSourceRevision).toBe('2')
+          page = { ...page, content: String(input.content), sourceRevision: '3' }
+          return { ...page }
+        }),
+        move: vi.fn(),
+        restore: vi.fn(),
+        remove: vi.fn(),
+        authorizeMutation: vi.fn(async () => {}),
+        search: vi.fn(),
+        searchTags: vi.fn(),
+        listTags: vi.fn(),
+        discover: vi.fn(),
+        listRecent: vi.fn(),
+        getHistory: vi.fn(),
+        listLinks: vi.fn(),
+        listRelated: vi.fn()
+      }
+      const signingSecret = Buffer.alloc(32, 7)
+      const dependencies = {
+        operations,
+        resolveRequester: async () => ({ id: 7 }) as Express.User,
+        snapshotSigningSecret: signingSecret
+      }
+      const kernel = new ActionKernel()
+      registerPageReadActions(kernel, dependencies)
+      registerPageProposalActions(kernel, { ...dependencies, knex })
+      const admission = {
+        transport: 'agent' as const,
+        executionMode: 'agent' as const,
+        supportsTools: true,
+        permissions: ['use:agents', 'read:pages', 'write:pages'],
+        groupIds: [3],
+        featureFlags: flags
+      }
+      const validate = createPageEvidenceValidator(dependencies)
+      const sessions = new KernelActionSessionProvider({
+        knex,
+        kernel,
+        resolveAdmission: async () => admission,
+        refreshAdmission: async () => admission,
+        validateObservation: (request, authority, actionName, output, signal, input) =>
+          validate(authority, request.knowledgeContext, actionName, output, signal, input)
+      })
+      let collectorTurns = 0
+      const providerRequests: Readonly<AxChatRequest>[] = []
+      const fixtureErrors: unknown[] = []
+      const respond = async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+        providerRequests.push(input)
+        const call = (id: string, name: string, params: unknown): AxChatResponse => ({
+          results: [{ index: 0, functionCalls: [{ id, type: 'function', function: { name, params: JSON.stringify(params) } }] }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+        })
+        if (collectorTurns++ === 0) {
+          const response = call('enable-authoring', 'wiki_enable_tools', { category: 'authoring' })
+          if (requestPlan !== undefined) response.results[0]!.content = requestPlan
+          return response
+        }
+        if (collectorTurns === 2) return call('read-patch', AGENT_TOOL_NAMES['pages.readForPatch'], { pageId: 43, previousSnapshotToken: null })
+        if (collectorTurns === 3) {
+          const result = input.chatPrompt.find(message => message.role === 'function' && message.functionId === 'read-patch')
+          if (result?.role !== 'function') throw new Error('Missing real patch snapshot')
+          const snapshot = ACTION_CATALOG['pages.readForPatch'].output.parse(JSON.parse(result.result))
+          const line = snapshot.disclosed[0]!.lines[1]!
+          return call('prepare-patch', AGENT_TOOL_NAMES['pages.preparePatch'], {
+            patch: {
+              version: 'wiki-line-patch-v1',
+              snapshotToken: snapshot.snapshotToken,
+              baseDocumentTag: snapshot.documentTag,
+              resultFinalNewline: true,
+              operations: [
+                {
+                  kind: 'replace',
+                  range: { start: { line: line.number, tag: line.tag }, end: { line: line.number, tag: line.tag } },
+                  lines: ['Review marker: approved-once.']
+                }
+              ]
+            }
+          })
+        }
+        const control = synthesisCollectionControl(input)
+        if (control !== undefined) throw new Error('Superseded native collector exchange must not be resumed')
+        expect(synthesisSourcesFromRequest(input)).toEqual([])
+        expect(JSON.stringify(input)).not.toContain('before-approval')
+        expect(JSON.stringify(input)).not.toContain('snapshotToken')
+        const observations = synthesisObservationsFromRequest(input)
+        expect(observations).toContain('Wiki proposal application status: applied.')
+        expect(observations).toContain(
+          'Applied page: {"id":43,"locale":"en","path":"private/approved-patch","title":"Private patch fixture","sourceRevision":"3"}'
+        )
+        if (outcome === 'read revoked before publication') readable = false
+        return {
+          results: [{ index: 0, content: synthesisFixtureAnswer(input, { claims: [], observations, unresolvedFacets: [] }) }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+        }
+      }
+      const chat = vi.fn((input: Readonly<AxChatRequest>) =>
+        respond(input).catch(error => {
+          fixtureErrors.push(error)
+          throw error
+        })
+      )
+      const factory = {
+        create: async () => ({
+          service: fullAxFixtureService(
+            chat,
+            hasRemainingWork
+              ? {
+                  coverage: async () => ({
+                    results: [
+                      {
+                        index: 0,
+                        content: JSON.stringify({
+                          verdict: 'not_established',
+                          feedback: 'Only the first patch is committed. The incident-owner read and second update remain unfulfilled.'
+                        })
+                      }
+                    ]
+                  })
+                }
+              : {}
+          ),
+          capabilities: {
+            streaming: false,
+            toolCalling: 'native',
+            parallelToolCalls: true,
+            structuredOutput: 'native-json-schema',
+            usage: 'estimated',
+            cancellation: true,
+            maxContextTokens: 100_000,
+            maxOutputTokens: 4_000
+          },
+          transportKind: 'openai-responses',
+          model: 'gpt-test',
+          capabilityRevision: 'cap-1',
+          pricingRevision: 'price-1',
+          pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+        })
+      } as unknown as AgentProviderFactory
+      const engineRequest: AgentEngineRequest = {
+        run: {
+          id: runId,
+          sessionId,
+          userMessageId: '00000000-0000-4000-8000-000000000003',
+          assistantMessageId: '00000000-0000-4000-8000-000000000004',
+          ownerId: 7,
+          goalId: null,
+          goalContinuation: null,
+          clientRequestId: '00000000-0000-4000-8000-000000000005',
+          clientRequestSha256: 'a'.repeat(64),
+          status: 'running',
+          providerProfileVersionId: '00000000-0000-4000-8000-000000000006',
+          transportKind: 'openai-responses',
+          model: 'gpt-test',
+          executionMode: 'agent',
+          googleSearchEnabled: false,
+          capabilityRevision: 'cap-1',
+          pricingRevision: 'price-1',
+          promptVersion: 1,
+          totalTokens: 0,
+          attempts: 1,
+          maxAttempts: 3,
+          eventSequence: 0,
+          leaseOwner,
+          leaseToken,
+          leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          cancelRequestedAt: null,
+          sideEffectsStarted: false,
+          errorCode: null,
+          errorMessage: null,
+          queuedAt: new Date().toISOString(),
+          startedAt: new Date().toISOString(),
+          completedAt: null
+        },
+        messages: [{ role: 'user', content: userRequest }],
+        memory: { user: [], agent: [] },
+        skills: [],
+        currentPage: null,
+        signal: new AbortController().signal
+      }
+      const engine = new AxAgentEngine(factory, sessions, undefined, { decisionProviders: fixtureDecisionProviders })
+      const text = vi.fn(async (_delta: string) => {})
+      const event = vi.fn(async (_type: string, _data: unknown) => {})
+      // The production engine intentionally sanitizes provider failures. Keep
+      // assertions from this owned fixture visible to the test runner instead.
+      const execution = engine.execute(engineRequest, { text, event }).catch(error => {
+        throw fixtureErrors.at(-1) ?? error
+      })
+      void execution.catch(() => {})
+      await vi.waitFor(async () => {
+        expect(await knex('agentRuns').where({ id: runId }).first('status')).toEqual({ status: 'awaiting_approval' })
+      })
+      expect(operations.update).not.toHaveBeenCalled()
+      const approval = await knex('agentApprovals').first('id', 'proposalId')
+      await decideProposal(knex, {
+        proposalId: approval.proposalId,
+        approvalId: approval.id,
+        userId: 7,
+        decision: 'approved',
+        authorize: async () => {}
+      })
+      if (outcome !== 'read revoked before publication') {
+        const completed = await execution
+        expect(completed.executionLimit).toEqual(hasRemainingWork ? { reason: 'evidence', publication: 'partial' } : undefined)
+        expect(completed.citations).toBeUndefined()
+        const published = text.mock.calls.map(([delta]) => delta).join('')
+        expect(published).toContain('Wiki proposal application status: applied.')
+        if (hasRemainingWork) expect(published).toContain(remainingWork.replace('.', '\\.'))
+        expect(providerRequests).toHaveLength(hasRemainingWork ? 5 : 4)
+        expect(completed.totalTokens).toBeGreaterThan(0)
+      } else {
+        await expect(execution).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+        expect(text).not.toHaveBeenCalled()
+      }
+      expect(operations.update).toHaveBeenCalledOnce()
+      expect(await knex('agentRuns').where({ id: runId }).first('sideEffectsStarted')).toEqual({ sideEffectsStarted: 1 })
+      expect(page).toMatchObject({
+        content: 'Keep this disclaimer.\nReview marker: approved-once.\n',
+        sourceRevision: '3',
+        isPrivate: true,
+        isPublished: false,
+        authorId: 7,
+        title: 'Private patch fixture',
+        tags: ['controlled-fixture']
+      })
+      expect(await knex('agentProposals').select('status')).toEqual([{ status: 'applied' }])
+      expect(await knex('agentActionExecutions').select('status')).toEqual([{ status: 'committed' }])
+      expect(
+        event.mock.calls.filter(
+          ([type, data]) =>
+            type === 'tool.completed' && typeof data === 'object' && data !== null && 'actionName' in data && data.actionName === 'pages.preparePatch'
+        )
+      ).toHaveLength(1)
+      expect(event.mock.calls.filter(([type]) => type === 'tool.failed')).toHaveLength(0)
+    }
+  )
 
   it('pauses a prepared move for approval and applies only the approved immutable operation', async () => {
     const runId = '00000000-0000-4000-8000-000000000001'

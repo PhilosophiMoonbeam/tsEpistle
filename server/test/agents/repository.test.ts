@@ -1,5 +1,5 @@
-import createKnex, { type Knex } from 'knex'
 import { createHash } from 'node:crypto'
+import createKnex, { type Knex } from 'knex'
 import type { AgentEvent, AgentEventData } from '../../../shared/agents/contracts.ts'
 import { agentConversationFolderNameKey, cleanAgentConversationFolderName } from '../../../shared/agents/conversation-folders.ts'
 import { type AgentCompactionReceipt, agentCompactionSha256 } from '../../agents/compaction.ts'
@@ -18,13 +18,11 @@ import {
   terminalizeAgentRun,
   transitionAgentRun
 } from '../../agents/coordinator.ts'
-import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
 import { AgentMediaProviderRegistry } from '../../agents/media-providers.ts'
-import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
-import { up as addAgentSecrets } from '../../db/migrations/2.5.141.ts'
-import { up as addAgentMediaProviders } from '../../db/migrations/tsepistle-000055-agent-media-providers.ts'
+import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
 import { projectAgentThread, reduceAgentEvents } from '../../agents/projection.ts'
 import { AgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
+import { DatabaseAgentSecretRegistry } from '../../agents/providers/secrets.ts'
 import {
   appendAgentEvent,
   appendAgentMessage,
@@ -42,11 +40,14 @@ import {
 import type { AgentEngineRequest, AgentResolvedAdmission } from '../../agents/runtime.ts'
 import { type AgentAdmissionResolver, type AgentEngine, AgentProductRuntime } from '../../agents/runtime.ts'
 import { SkillRuntime } from '../../agents/skills/runtime.ts'
+import { up as addAgentSecrets } from '../../db/migrations/2.5.141.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 import { up as addAgentGoalBudgetTiers } from '../../db/migrations/tsepistle-000042-agent-goal-budget-tiers.ts'
 import { up as addAgentMedia } from '../../db/migrations/tsepistle-000044-agent-media.ts'
 import { up as addAgentMediaContextState } from '../../db/migrations/tsepistle-000047-agent-media-context-state.ts'
 import { up as addAgentSpecialists } from '../../db/migrations/tsepistle-000054-agent-specialists.ts'
+import { up as addAgentMediaProviders } from '../../db/migrations/tsepistle-000055-agent-media-providers.ts'
+import { type AccessPage, evaluateGroupAccess, type PageRuleAuthority } from '../../helpers/group-access.ts'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
 const sessionId = '00000000-0000-4000-8000-000000000001'
@@ -321,6 +322,16 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.text('path').notNullable()
     table.string('title').notNullable()
     table.string('contentType').notNullable()
+    table.string('visibility').notNullable().defaultTo('public')
+    table.integer('ownerId').nullable()
+  })
+  await knex.schema.createTable('tags', table => {
+    table.integer('id').primary()
+    table.string('tag').notNullable()
+  })
+  await knex.schema.createTable('pageTags', table => {
+    table.integer('pageId').notNullable()
+    table.integer('tagId').notNullable()
   })
   await knex.schema.createTable('agentProposals', table => {
     table.uuid('id').primary()
@@ -332,6 +343,7 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.string('status').notNullable()
     table.text('summary').notNullable().defaultTo('')
     table.text('operation').notNullable().defaultTo('{}')
+    table.text('applyResult').nullable()
     table.integer('pageId').nullable()
     table.integer('baseSourceRevision').nullable()
     table.string('authoritySha256').notNullable()
@@ -1421,75 +1433,212 @@ describe('durable agent repositories', () => {
     ).toThrow(expect.objectContaining({ code: 'AGENT_EVENT_CORRUPT', status: 500 }))
   })
 
-  it('projects recovery-required proposals and durable links for applied page destinations', async () => {
-    await knex('pages').insert({ id: 42, localeCode: 'en', path: 'old-path', title: 'Old page', contentType: 'markdown' })
-    const createdAt = new Date('2026-08-17T00:00:00.000Z')
-    const expiresAt = new Date('2026-08-17T00:10:00.000Z')
-    const row = {
-      sessionId,
-      sourceKind: 'agent',
-      risk: 'proposal',
-      status: 'applied',
-      summary: 'Change a page',
-      pageId: null,
-      baseSourceRevision: null,
-      authoritySha256: 'a'.repeat(64),
-      inputHash: 'b'.repeat(64),
-      patchSha256: null,
-      resultCanonicalSha256: null,
-      diffSha256: null,
-      diff: null,
-      contentPurgedAt: null,
-      expiresAt,
-      createdAt
-    }
-    await knex('agentProposals').insert([
-      {
-        ...row,
-        id: '00000000-0000-4000-8000-000000000041',
-        actionName: 'pages.prepareCreate',
-        operation: JSON.stringify({ locale: 'en', path: 'example-page' })
-      },
-      {
-        ...row,
-        id: '00000000-0000-4000-8000-000000000042',
-        actionName: 'pages.preparePatch',
-        pageId: 42,
-        baseSourceRevision: 3,
-        operation: JSON.stringify({ locale: 'en', path: 'old-path' })
-      },
-      {
-        ...row,
-        id: '00000000-0000-4000-8000-000000000043',
-        actionName: 'pages.prepareMove',
-        pageId: 42,
-        baseSourceRevision: 3,
-        operation: JSON.stringify({ locale: 'en', path: 'handbook/example-page' })
-      },
-      {
-        ...row,
-        id: '00000000-0000-4000-8000-000000000044',
-        actionName: 'pages.prepareDelete',
-        status: 'recovery_required',
-        pageId: 42,
-        baseSourceRevision: 3,
-        operation: JSON.stringify({ locale: 'en', path: 'old-path' })
+  it('projects applied links to current readable canonical pages without rebinding historical creates', async () => {
+    const previousWiki = Reflect.get(globalThis, 'WIKI')
+    Reflect.set(globalThis, 'WIKI', {
+      auth: {
+        loadPageRuleAuthority: async (requester: unknown): Promise<PageRuleAuthority> => ({
+          requester,
+          permissions: ['read:pages'],
+          groups: [
+            {
+              id: 1,
+              permissions: ['read:pages'],
+              pageRules: [
+                { match: 'SUBTREE', path: '', deny: false, roles: ['read:pages'] },
+                { match: 'TAG', path: 'restricted', deny: true, roles: ['read:pages'] }
+              ]
+            }
+          ],
+          tagAliases: {}
+        }),
+        checkAccess: (user: { permissions?: string[] } | undefined, permissions: readonly string[]) =>
+          permissions.some(permission => user?.permissions?.includes(permission)),
+        checkPageAccess: (user: unknown, permissions: readonly string[], page: AccessPage, authority: PageRuleAuthority) =>
+          authority.requester === user && evaluateGroupAccess(authority.permissions, permissions, authority.groups, page, authority.tagAliases).allowed
       }
-    ])
-
-    const projected = await projectAgentThread(knex, 7, sessionId, {
-      memorySigningSecret: 'agent-memory-test-signing-secret',
-      profileResolutionToken: session => `profile:${session.id}:${session.version}`,
-      now: createdAt
     })
+    try {
+      await knex('pages').insert([
+        { id: 42, localeCode: 'en', path: 'direct-note', title: 'Private note', contentType: 'markdown', visibility: 'private', ownerId: 7 },
+        { id: 44, localeCode: 'fr', path: 'moved/note #1', title: 'Moved note', contentType: 'markdown', visibility: 'private', ownerId: 7 },
+        { id: 45, localeCode: 'en', path: 'restored', title: 'Public page', contentType: 'markdown', visibility: 'public', ownerId: 7 },
+        { id: 46, localeCode: 'en', path: 'other-owner', title: 'Other private note', contentType: 'markdown', visibility: 'private', ownerId: 8 },
+        { id: 47, localeCode: 'en', path: 'created', title: 'Created page', contentType: 'markdown', visibility: 'public', ownerId: null },
+        { id: 49, localeCode: 'en', path: 'legacy-created', title: 'Replacement page', contentType: 'markdown', visibility: 'public', ownerId: null }
+      ])
+      const createdAt = new Date('2026-08-17T00:00:00.000Z')
+      const row = {
+        sessionId,
+        sourceKind: 'agent',
+        risk: 'proposal',
+        status: 'applied',
+        summary: 'Change a page',
+        pageId: null,
+        baseSourceRevision: null,
+        authoritySha256: 'a'.repeat(64),
+        inputHash: 'b'.repeat(64),
+        patchSha256: null,
+        resultCanonicalSha256: null,
+        diffSha256: null,
+        diff: null,
+        contentPurgedAt: null,
+        expiresAt: new Date('2026-08-17T00:10:00.000Z'),
+        createdAt
+      }
+      const createIdentity = { actionName: 'pages.prepareCreate', locale: 'en', path: 'created', contentSha256: 'c'.repeat(64) }
+      const patchIdentity = { actionName: 'pages.preparePatch', pageId: 42, sourceRevision: '4', contentSha256: 'd'.repeat(64) }
+      const moveIdentity = { actionName: 'pages.prepareMove', pageId: 44, sourceRevision: '4', destinationLocale: 'fr', destinationPath: 'moved/note #1' }
+      const restoreIdentity = { actionName: 'pages.prepareRestore', pageId: 45, sourceRevision: '4', versionId: 12, contentSha256: 'e'.repeat(64) }
+      await knex('agentProposals').insert([
+        {
+          ...row,
+          id: '00000000-0000-4000-8000-000000000041',
+          actionName: 'pages.prepareCreate',
+          operation: JSON.stringify({
+            kind: 'create',
+            pageId: null,
+            locale: 'en',
+            path: 'created',
+            operationInput: { locale: 'en', path: 'created', visibility: 'public' },
+            resultIdentity: createIdentity
+          }),
+          applyResult: JSON.stringify({ ...createIdentity, pageId: 47 })
+        },
+        {
+          ...row,
+          id: '00000000-0000-4000-8000-000000000042',
+          actionName: 'pages.preparePatch',
+          pageId: 42,
+          baseSourceRevision: 3,
+          operation: JSON.stringify({
+            kind: 'patch',
+            pageId: 42,
+            locale: 'en',
+            path: 'direct-note',
+            operationInput: { id: 42, content: 'Updated', expectedSourceRevision: '3' },
+            resultIdentity: patchIdentity
+          }),
+          applyResult: JSON.stringify(patchIdentity)
+        },
+        {
+          ...row,
+          id: '00000000-0000-4000-8000-000000000043',
+          actionName: 'pages.prepareMove',
+          pageId: 44,
+          baseSourceRevision: 3,
+          operation: JSON.stringify({
+            kind: 'move',
+            pageId: 44,
+            locale: 'fr',
+            path: 'moved/note #1',
+            operationInput: { id: 44, destinationLocale: 'fr', destinationPath: 'moved/note #1', expectedSourceRevision: '3' },
+            resultIdentity: moveIdentity
+          }),
+          applyResult: JSON.stringify(moveIdentity)
+        },
+        {
+          ...row,
+          id: '00000000-0000-4000-8000-000000000044',
+          actionName: 'pages.prepareRestore',
+          pageId: 45,
+          baseSourceRevision: 3,
+          operation: JSON.stringify({
+            kind: 'restore',
+            pageId: 45,
+            locale: 'en',
+            path: 'restored',
+            operationInput: { pageId: 45, versionId: 12, expectedSourceRevision: '3' },
+            resultIdentity: restoreIdentity
+          }),
+          applyResult: JSON.stringify(restoreIdentity)
+        },
+        {
+          ...row,
+          id: '00000000-0000-4000-8000-000000000045',
+          actionName: 'pages.prepareCreate',
+          operation: JSON.stringify({
+            kind: 'create',
+            pageId: null,
+            locale: 'en',
+            path: 'legacy-created',
+            operationInput: { visibility: 'public' },
+            resultIdentity: { ...createIdentity, path: 'legacy-created' }
+          }),
+          applyResult: JSON.stringify({ ...createIdentity, path: 'legacy-created' })
+        },
+        {
+          ...row,
+          id: '00000000-0000-4000-8000-000000000046',
+          actionName: 'pages.preparePatch',
+          pageId: 46,
+          operation: JSON.stringify({ kind: 'patch', pageId: 46, locale: 'en', path: 'other-owner' })
+        },
+        {
+          ...row,
+          id: '00000000-0000-4000-8000-000000000047',
+          actionName: 'pages.prepareRestore',
+          pageId: 48,
+          operation: JSON.stringify({ kind: 'restore', pageId: 48, locale: 'en', path: 'deleted' })
+        },
+        {
+          ...row,
+          id: '00000000-0000-4000-8000-000000000048',
+          actionName: 'pages.prepareDelete',
+          pageId: 42,
+          status: 'recovery_required',
+          operation: JSON.stringify({ kind: 'delete', pageId: 42, locale: 'en', path: 'direct-note' })
+        }
+      ])
+      const options = {
+        memorySigningSecret: 'agent-memory-test-signing-secret',
+        profileResolutionToken: () => 'projection-profile',
+        now: createdAt
+      }
+      const projected = await projectAgentThread(knex, 7, sessionId, options)
+      expect(projected.proposals.map(proposal => proposal.pageLink)).toEqual([
+        { label: '/created', href: '/en/created' },
+        { label: '/direct-note', href: '/_private/en/direct-note' },
+        { label: '/moved/note #1', href: '/_private/fr/moved/note%20%231' },
+        { label: '/restored', href: '/en/restored' },
+        null,
+        null,
+        null,
+        null
+      ])
+      expect(projected.proposals[7]?.status).toBe('recovery_required')
+      expect(projected.proposals[5]?.target).toBeNull()
+      expect(projected.proposals[7]?.target?.id).toBe(42)
 
-    expect(projected.proposals.map(proposal => proposal.pageLink)).toEqual([
-      { label: '/example-page', href: '/en/example-page' },
-      { label: '/old-path', href: '/en/old-path' },
-      { label: '/handbook/example-page', href: '/en/handbook/example-page' },
-      null
-    ])
-    expect(projected.proposals[3]?.status).toBe('recovery_required')
+      await knex('pages').where({ id: 42 }).update({ visibility: 'public', path: 'renamed' })
+      await knex('pages').where({ id: 47 }).update({ visibility: 'private', ownerId: 7, path: 'private-created' })
+      await knex('tags').insert({ id: 1, tag: 'restricted' })
+      await knex('pageTags').insert({ pageId: 45, tagId: 1 })
+      const changed = await projectAgentThread(knex, 7, sessionId, options)
+      expect(changed.proposals.map(proposal => proposal.pageLink)).toEqual([
+        { label: '/private-created', href: '/_private/en/private-created' },
+        { label: '/renamed', href: '/en/renamed' },
+        { label: '/moved/note #1', href: '/_private/fr/moved/note%20%231' },
+        null,
+        null,
+        null,
+        null,
+        null
+      ])
+      await knex('pages').where({ id: 47 }).delete()
+      await knex('pages').insert({ id: 50, localeCode: 'en', path: 'created', title: 'New occupant', contentType: 'markdown' })
+      expect((await projectAgentThread(knex, 7, sessionId, options)).proposals[0]?.pageLink).toBeNull()
+      await knex('pages').where({ id: 42 }).update({ visibility: 'private', ownerId: 8, title: 'New private title canary', path: 'new-private-path-canary' })
+      const revoked = await projectAgentThread(knex, 7, sessionId, options)
+      for (const index of [1, 7]) {
+        expect(revoked.proposals[index]?.target).toBeNull()
+        expect(revoked.proposals[index]?.pageLink).toBeNull()
+      }
+      expect(JSON.stringify(revoked)).not.toContain('New private title canary')
+      expect(JSON.stringify(revoked)).not.toContain('new-private-path-canary')
+    } finally {
+      Reflect.set(globalThis, 'WIKI', previousWiki)
+    }
   })
 
   it('reserves and reconciles quota without double-counting retries', async () => {

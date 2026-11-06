@@ -20,11 +20,13 @@ export interface WikiSynthesisSource {
   readonly text: string
   readonly kind: 'source-read' | 'recent-excerpt'
   readonly complete: boolean
-  readonly excerpt?: {
-    readonly representation: 'recent-excerpt'
-    readonly representationMetadata: string
-    readonly readReceipts: readonly { readonly actionCallId: string; readonly actionName: 'pages.listRecent' }[]
-  } | undefined
+  readonly excerpt?:
+    | {
+        readonly representation: 'recent-excerpt'
+        readonly representationMetadata: string
+        readonly readReceipts: readonly { readonly actionCallId: string; readonly actionName: 'pages.listRecent' }[]
+      }
+    | undefined
 }
 
 /** Explicit registered author content; physical read aliases share readId only. */
@@ -239,16 +241,21 @@ const sourceSchema = z
     text: z.string(),
     kind: z.enum(['source-read', 'recent-excerpt']),
     complete: z.boolean(),
-    excerpt: z.object({
-      representation: z.literal('recent-excerpt'),
-      representationMetadata: z.string().min(1),
-      readReceipts: z.array(z.object({ actionCallId: z.string().min(1), actionName: z.literal('pages.listRecent') }).strict()).min(1)
-    }).strict().optional()
+    excerpt: z
+      .object({
+        representation: z.literal('recent-excerpt'),
+        representationMetadata: z.string().min(1),
+        readReceipts: z.array(z.object({ actionCallId: z.string().min(1), actionName: z.literal('pages.listRecent') }).strict()).min(1)
+      })
+      .strict()
+      .optional()
   })
   .strict()
   .refine(source => source.unitId === `read:${source.readId}`, 'A synthesis binding must identify its physical read.')
-  .refine(source => source.kind === 'recent-excerpt' ? !source.complete && source.excerpt !== undefined : source.excerpt === undefined,
-    'Only an explicitly bounded recent excerpt may carry excerpt scope, and it must remain incomplete.')
+  .refine(
+    source => (source.kind === 'recent-excerpt' ? !source.complete && source.excerpt !== undefined : source.excerpt === undefined),
+    'Only an explicitly bounded recent excerpt may carry excerpt scope, and it must remain incomplete.'
+  )
 const claimSchema = z
   .object({
     sourceRef: z.string().regex(/^s[A-Za-z0-9_-]{16}$/u),
@@ -291,6 +298,7 @@ const instructions = `# Goal
 Answer userRequest at its requested level of detail using the complete original reads and exact host-admitted observations. Inspect all reads for requested facts, author references and governing qualifications. Include only requested content and the qualifications needed to interpret it, not unrequested fields, contacts or background.
 Preserve subjects, literal values, conditions, exceptions, measurement stages, timing, preparation, testing, fictional and safety status. Resolve source-authored references using the same complete read, including adjacent prose and table headers. Keep independently authored records distinct and preserve field, row and column associations.
 An explicitly registered recent-excerpt is a bounded exception to the complete-read requirement: summarize only facts within its exact visible parser-admitted prefix. It is complete:false, never a full page. Preserve visible qualifications and unresolved references; never infer an unseen suffix, page-wide absence/completeness or revision differences. Truncation alone does not make an otherwise supported bounded recap incomplete. Search excerpts are not admitted bindings.
+For a brief recent-page recap, summarize each page's visible subject matter rather than reproducing navigation menus or external-link inventories. Omit unrequested credentials and contact details; the host's source citations provide navigation. Explicitly requested content and governing qualifications still belong in the answer.
 Use conversationContext only for continuity and references in the latest request. Earlier assistant statements and citations are not fresh factual evidence or authorization.
 For inventories, cover every requested qualifying member; distinguish direct entries from organizers and incidental mentions. For procedures, preserve requested inputs, quantities, prerequisites and ordered steps. For comparisons, cover requested dimensions consistently. For concise summaries, remove repetition and examples, not operationally distinct restrictions: retain each substantive section's eligibility, exceptions, exclusions, authority limits, timing bases, conditional changes and explicit non-guarantees.
 
@@ -556,8 +564,14 @@ const sourceRegistry = (sources: readonly WikiSynthesisSource[]): Map<string, Wi
     const existing = registry.get(key)
     if (existing !== undefined) {
       if (bindingKey(existing) !== bindingKey(source)) throw new Error('Distinct source bindings collided on a source reference.')
-      if (existing.context !== source.context || existing.text !== source.text || existing.readId !== source.readId || existing.complete !== source.complete ||
-        existing.kind !== source.kind || JSON.stringify(existing.excerpt) !== JSON.stringify(source.excerpt))
+      if (
+        existing.context !== source.context ||
+        existing.text !== source.text ||
+        existing.readId !== source.readId ||
+        existing.complete !== source.complete ||
+        existing.kind !== source.kind ||
+        JSON.stringify(existing.excerpt) !== JSON.stringify(source.excerpt)
+      )
         throw new Error('Conflicting source read binding.')
       continue
     }
@@ -576,7 +590,10 @@ const resolvedClaimSchema = (
   claimSchema.transform((claim, context): WikiSynthesisClaim => {
     const source = registry.get(claim.sourceRef)
     if (source === undefined || (!source.complete && source.kind !== 'recent-excerpt')) {
-      context.addIssue({ code: 'custom', message: 'Claims must reference the exact original binding of a complete admitted source unit or an explicitly bounded recent excerpt.' })
+      context.addIssue({
+        code: 'custom',
+        message: 'Claims must reference the exact original binding of a complete admitted source unit or an explicitly bounded recent excerpt.'
+      })
       return z.NEVER
     }
     const statement = normalizedInlineParagraph(claim.statement) ?? claim.statement
