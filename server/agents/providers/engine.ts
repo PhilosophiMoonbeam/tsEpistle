@@ -3553,20 +3553,79 @@ interface NativeDraft {
 }
 
 /**
+ * Only omitted whole-read contributions may return. The latest candidate owns
+ * every read it mentions, including siblings later declined by verification.
+ * Reuse current source scope and authority; never revive the retained catalog.
+ */
+const restoreVerifiedRecentDraft = (draft: NativeDraft, retained: NativeDraft, latestClaims: WikiSynthesisAnswer['claims']): NativeDraft | undefined => {
+  if (
+    (draft.inputMediaSources?.length ?? 0) > 0 ||
+    (draft.answer.attachmentClaims?.length ?? 0) > 0 ||
+    (draft.answer.recommendations ?? '').trim().length > 0 ||
+    draft.answer.observations.some(line => !draft.trustedObservations.has(line))
+  )
+    return undefined
+  const latestReadIds = new Set<string>()
+  for (const claim of latestClaims) {
+    const source = draft.readSources.get(canonicalJson([claim.evidenceId, claim.sourceRevision, claim.unitId]))
+    if (source?.kind !== 'source-read' && source?.kind !== 'recent-excerpt') return undefined
+    latestReadIds.add(source.readId)
+  }
+  const groups = new Map<string, WikiSynthesisAnswer['claims']>()
+  for (const claim of retained.answer.claims) {
+    const source = retained.readSources.get(canonicalJson([claim.evidenceId, claim.sourceRevision, claim.unitId]))
+    if (source?.kind !== 'source-read' && source?.kind !== 'recent-excerpt') return undefined
+    const group = groups.get(source.readId) ?? []
+    group.push(claim)
+    groups.set(source.readId, group)
+  }
+  const restoredClaims: WikiSynthesisAnswer['claims'] = []
+  for (const [readId, claims] of groups) {
+    if (latestReadIds.has(readId)) continue
+    if (
+      claims.some(claim => {
+        const key = canonicalJson([claim.evidenceId, claim.sourceRevision, claim.unitId])
+        const source = retained.readSources.get(key)
+        const currentSource = draft.readSources.get(key)
+        const original = retained.evidence.get(key)
+        return (
+          source === undefined ||
+          currentSource === undefined ||
+          original === undefined ||
+          draft.evidence.get(key)?.document !== original.document ||
+          canonicalJson(currentSource) !== canonicalJson(source)
+        )
+      })
+    )
+      continue
+    restoredClaims.push(...claims)
+  }
+  if (restoredClaims.length === 0) return undefined
+  const answer: WikiSynthesisAnswer = { ...draft.answer, claims: [...draft.answer.claims, ...restoredClaims] }
+  return {
+    ...draft,
+    answer,
+    content: renderWikiSynthesisAnswer(answer),
+    semanticSupport: new Set([...(draft.semanticSupport ?? []), ...restoredClaims.map(claim => canonicalJson(claim))])
+  }
+}
+
+/**
  * Same-read claims may qualify one another. Retain their original contribution
  * atomically; a declined claim must never leave an unqualified sibling behind.
  */
 const selectVerifiedRecentDraft = (
   draft: NativeDraft,
-  plan: WikiVerificationPlan,
+  plan: WikiVerificationPlan | null,
   nativeSupportedClaimIndexes: readonly number[],
   requestFacetCount: number,
-  allowCompleteSelection = false
+  allowCompleteSelection = false,
+  retained?: NativeDraft
 ): NativeDraft | undefined => {
-  const checks = Object.values(plan.checks)
+  const checks = Object.values(plan?.checks ?? {})
   if (
     requestFacetCount === 0 ||
-    nativeSupportedClaimIndexes.length === 0 ||
+    (nativeSupportedClaimIndexes.length === 0 && retained === undefined) ||
     checks.length !== draft.answer.claims.length ||
     checks.some(check => check.kind !== 'support') ||
     (draft.inputMediaSources?.length ?? 0) > 0 ||
@@ -3586,10 +3645,13 @@ const selectVerifiedRecentDraft = (
     if (!supported.has(index)) declinedReads.add(source.readId)
   }
   const claims = draft.answer.claims.filter((_claim, index) => !declinedReads.has(readIds[index]!))
-  if (claims.length === 0 || (!allowCompleteSelection && claims.length === draft.answer.claims.length)) return undefined
+  const restored =
+    retained === undefined ? undefined : restoreVerifiedRecentDraft({ ...draft, answer: { ...draft.answer, claims } }, retained, draft.answer.claims)
+  const selectedClaims = restored?.answer.claims ?? claims
+  if (selectedClaims.length === 0 || (!allowCompleteSelection && claims.length === draft.answer.claims.length && restored === undefined)) return undefined
   const answer: WikiSynthesisAnswer = {
     ...draft.answer,
-    claims,
+    claims: selectedClaims,
     unresolvedFacets: Array.from({ length: requestFacetCount }, (_value, index) => index)
   }
   return {
@@ -3597,7 +3659,7 @@ const selectVerifiedRecentDraft = (
     answer,
     allRequestFacetsUnresolved: true,
     content: renderWikiSynthesisAnswer(answer),
-    semanticSupport: new Set(claims.map(claim => canonicalJson(claim)))
+    semanticSupport: new Set(selectedClaims.map(claim => canonicalJson(claim)))
   }
 }
 
@@ -7695,6 +7757,7 @@ export class AxAgentEngine implements AgentEngine {
       const excludedEvidenceIds = new Set<string>()
       let cacheHitCount = 0
       let rejectedDraftCount = 0
+      let retainedRecentDraft: NativeDraft | undefined
       let repairFeedback = ''
       let synthesisProvider: AgentProviderService | undefined
       let invalidatedEvidenceCount = 0
@@ -9601,10 +9664,12 @@ export class AxAgentEngine implements AgentEngine {
             (result.rootNativeDraft.answer.claims.length > 0 ||
               (result.rootNativeDraft.answer.attachmentClaims?.length ?? 0) > 0 ||
               result.rootNativeDraft.answer.observations.length > 0 ||
-              (result.rootNativeDraft.answer.recommendations ?? '').trim().length > 0)
+              (result.rootNativeDraft.answer.recommendations ?? '').trim().length > 0 ||
+              retainedRecentDraft !== undefined)
           ) {
             try {
               let nativeDraft = result.rootNativeDraft
+              const candidateDraft = nativeDraft
               // A complete recent-read-only batch remains a bounded recent recap
               // even when optional model-authored facet metadata omitted that classification.
               // Incidental recent results beside other source reads do not widen this gate.
@@ -9619,21 +9684,79 @@ export class AxAgentEngine implements AgentEngine {
               const semantic =
                 plan === null ? { valid: true, issues: [], nativeSupportedClaimIndexes: [] } : assessWikiVerificationResults(plan, semanticResults)
               if (plan !== null) publicationVerificationEvidence = evidence
-              const selectedDraft =
-                !semantic.valid &&
-                plan !== null &&
+              const finalRecentAttempt =
                 (request.purpose ?? 'root') === 'root' &&
                 recentPublication &&
                 result.finishReason !== 'length' &&
                 (rejectedDraftCount >= MAX_ANSWER_REPAIRS || turn + 1 >= maxTurns)
-                  ? selectVerifiedRecentDraft(nativeDraft, plan, semantic.nativeSupportedClaimIndexes, contextPlan.requestFacets?.length ?? 1)
-                  : undefined
-              const verifiedDraft: NativeDraft = selectedDraft ?? {
-                ...nativeDraft,
-                semanticSupport: new Set(semantic.nativeSupportedClaimIndexes.map(index => canonicalJson(nativeDraft.answer.claims[index]!)))
+              if (
+                rejectedDraftCount === 0 &&
+                (request.purpose ?? 'root') === 'root' &&
+                recentPublication &&
+                result.finishReason !== 'length' &&
+                plan !== null
+              ) {
+                const retained = selectVerifiedRecentDraft(
+                  candidateDraft,
+                  plan,
+                  semantic.nativeSupportedClaimIndexes,
+                  contextPlan.requestFacets?.length ?? 1,
+                  true
+                )
+                if (
+                  retained !== undefined &&
+                  assessDraft(
+                    assessableActionStatusContent(retained.content, deliveredAttributedLines, deliveredBrowserAttributions),
+                    assessmentEvidence,
+                    {
+                      ...coverage,
+                      partialCoverage: { omittedCount: executedOmittedCount(), notExecutedCount: notExecutedActionCallIds.size }
+                    },
+                    retained
+                  ).valid
+                )
+                  retainedRecentDraft = retained
               }
-              const adoptVerifiedRecentPartial = (partial: NativeDraft): void => {
-                selectedRecentPartial = true
+              const selectedDraft =
+                !semantic.valid && plan !== null && finalRecentAttempt
+                  ? selectVerifiedRecentDraft(
+                      candidateDraft,
+                      plan,
+                      semantic.nativeSupportedClaimIndexes,
+                      contextPlan.requestFacets?.length ?? 1,
+                      false,
+                      retainedRecentDraft
+                    )
+                  : undefined
+              const supportedDraft: NativeDraft = selectedDraft ?? {
+                ...candidateDraft,
+                semanticSupport: new Set(semantic.nativeSupportedClaimIndexes.map(index => canonicalJson(candidateDraft.answer.claims[index]!)))
+              }
+              const restoredDraft =
+                semantic.valid && finalRecentAttempt && retainedRecentDraft !== undefined
+                  ? restoreVerifiedRecentDraft(supportedDraft, retainedRecentDraft, candidateDraft.answer.claims)
+                  : undefined
+              const orderVerifiedRecentDraft = (draft: NativeDraft): NativeDraft => {
+                const recentOrder = new Map(
+                  (coverage.recentGroups.length > 0 ? coverage.recentGroups : recentWindows)
+                    .flatMap(group => group.evidenceIds)
+                    .map((evidenceId, index) => [evidenceId, index])
+                )
+                const answer: WikiSynthesisAnswer = {
+                  ...draft.answer,
+                  // Stable sorting preserves each read's original claim/qualification order.
+                  claims: [...draft.answer.claims].sort(
+                    (left, right) =>
+                      (recentOrder.get(left.evidenceId) ?? Number.MAX_SAFE_INTEGER) - (recentOrder.get(right.evidenceId) ?? Number.MAX_SAFE_INTEGER)
+                  )
+                }
+                return { ...draft, answer, content: renderWikiSynthesisAnswer(answer) }
+              }
+              const verifiedDraft =
+                selectedDraft !== undefined || restoredDraft !== undefined ? orderVerifiedRecentDraft(restoredDraft ?? supportedDraft) : supportedDraft
+              if (restoredDraft !== undefined) publicationVerificationEvidence = evidence
+              const adoptVerifiedRecentDraft = (partial: NativeDraft, partialSelection = true): void => {
+                selectedRecentPartial = partialSelection
                 nativeDraft = partial
                 const selectedResult = {
                   ...result,
@@ -9651,7 +9774,8 @@ export class AxAgentEngine implements AgentEngine {
                 requestDisclosure = requestEvidenceDisclosure(contextPlan.requestFacets, partial.answer.unresolvedFacets, unestablishedCoverage)
                 assessableContent = assessableActionStatusContent(result.content, deliveredAttributedLines, deliveredBrowserAttributions)
               }
-              if (selectedDraft !== undefined) adoptVerifiedRecentPartial(verifiedDraft)
+              if (selectedDraft !== undefined || restoredDraft !== undefined)
+                adoptVerifiedRecentDraft(verifiedDraft, selectedDraft !== undefined || verifiedDraft.allRequestFacetsUnresolved)
               else result = { ...result, rootNativeDraft: verifiedDraft }
               // Every published claim still needs proof within its exact admitted source scope.
               // An explicitly unresolved request can retain verified partial findings.
@@ -9763,7 +9887,7 @@ export class AxAgentEngine implements AgentEngine {
                   audit.verdict === 'incomplete' &&
                   semantic.valid &&
                   assessment.valid &&
-                  plan !== null &&
+                  (plan !== null || retainedRecentDraft !== undefined) &&
                   (request.purpose ?? 'root') === 'root' &&
                   recentPublication &&
                   result.finishReason !== 'length' &&
@@ -9771,13 +9895,14 @@ export class AxAgentEngine implements AgentEngine {
                   (rejectedDraftCount >= MAX_ANSWER_REPAIRS || turn + 1 >= maxTurns)
                 ) {
                   const partial = selectVerifiedRecentDraft(
-                    nativeDraft,
+                    candidateDraft,
                     plan,
                     semantic.nativeSupportedClaimIndexes,
                     contextPlan.requestFacets?.length ?? 1,
-                    true
+                    true,
+                    retainedRecentDraft
                   )
-                  if (partial !== undefined) adoptVerifiedRecentPartial(partial)
+                  if (partial !== undefined) adoptVerifiedRecentDraft(orderVerifiedRecentDraft(partial))
                 }
                 if (
                   coverageOutputLimited ||

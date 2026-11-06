@@ -9,6 +9,7 @@ import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/
 import { ACTION_CATALOG } from '../../agents/actions/catalog.ts'
 import type { ActionHandler, ActionHandlerContext, ActionKernel } from '../../agents/actions/kernel.ts'
 import { registerMemoryAction } from '../../agents/actions/memory.ts'
+import { agentCompactionSourceDigest, agentCompactionSourcePrefixes } from '../../agents/compaction.ts'
 import { type AgentApprovalContinuationCheckpoint, type AgentRunLeaseIdentity, invokingAgentRunLease } from '../../agents/coordinator.ts'
 import type { AgentMemoryRepository } from '../../agents/memory.ts'
 import { parseChildEvidencePacket } from '../../agents/orchestration.ts'
@@ -21,7 +22,7 @@ import type { AxHarnessFunction } from '../../agents/providers/session-harness.t
 import { unpackWikiReadTexts } from '../../agents/providers/wiki-read-transport.ts'
 import { decodeWikiVerificationSources } from '../../agents/providers/wiki-verification.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
-import type { AgentEngineRequest, AgentEngineResult } from '../../agents/runtime.ts'
+import type { AgentEngineRequest, AgentEngineResult, AgentEngineSink } from '../../agents/runtime.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 import { geminiFixtureService } from './gemini-fixture.ts'
@@ -473,7 +474,12 @@ const questionFixture = (
   const text = vi.fn(async (_message: string) => {})
   const event = vi.fn(async (_type: string, _data: unknown) => {})
   const engine = new AxAgentEngine(factory, actions, undefined, { decisionProviders })
-  const execute = (userMessage: string, limits?: AgentEngineRequest['limits'], dispatchBudget?: AgentEngineRequest['dispatchBudget']) =>
+  const execute = (
+    userMessage: string,
+    limits?: AgentEngineRequest['limits'],
+    dispatchBudget?: AgentEngineRequest['dispatchBudget'],
+    commitCompaction?: AgentEngineSink['commitCompaction']
+  ) =>
     engine.execute(
       {
         ...request(new AbortController().signal),
@@ -482,7 +488,7 @@ const questionFixture = (
         ...(limits === undefined ? {} : { limits }),
         ...(dispatchBudget === undefined ? {} : { dispatchBudget })
       },
-      { text, event }
+      { text, event, ...(commitCompaction === undefined ? {} : { commitCompaction }) }
     )
   return { event, execute, invoke, providerCalls, text }
 }
@@ -12044,6 +12050,162 @@ describe('request-derived evidence coverage', () => {
       publishes ? 1 : 0
     )
   })
+
+  it.each(['omitted', 'empty unresolved with eligible history', 'revised same read', 'declined same read', 'revoked', 'changed'] as const)(
+    'preserves whole-read recent repair boundaries for %s contributions',
+    async repair => {
+      const userRequest = 'Summarize the 10 most recently updated Wiki pages and name each review owner.'
+      const emptyFinal = repair === 'empty unresolved with eligible history'
+      // The canonical-history shape matches the compaction engine fixtures.
+      // Collection grows the resident context past the eager, not ordinary, threshold.
+      const historyEntries = emptyFinal
+        ? [
+            { role: 'user' as const, content: `EARLIER_USER:${'a'.repeat(30_000)}` },
+            { role: 'assistant' as const, content: `EARLIER_REPLY:${'b'.repeat(30_000)}` },
+            { role: 'user' as const, content: `RECENT_USER:${'c'.repeat(5_000)}` },
+            { role: 'assistant' as const, content: `RECENT_REPLY:${'d'.repeat(5_000)}` },
+            { role: 'user' as const, content: userRequest }
+          ]
+        : []
+      const historySources = historyEntries.map((entry, index) => ({
+        id: `message-${index + 1}`,
+        ordinal: index + 1,
+        sourceSha256: agentCompactionSourceDigest({ ...entry, id: `message-${index + 1}`, ordinal: index + 1 }),
+        groundedExpiresAt: null
+      }))
+      const commitCompaction = vi.fn(async () => {})
+      const retained = recentRows[0]!
+      const qualification = 'Release 94 may ship only after safety approval.'
+      const rows = [
+        { ...retained, content: `${retained.content}\n\n${qualification}`, sourceContentCharacters: retained.content.length + qualification.length + 2 },
+        { ...recentRows[1]! },
+        ...(emptyFinal
+          ? Array.from({ length: 8 }, (_unused, index) => {
+              const id = 96 + index
+              const content = `Release ${id} requires a separate review.`
+              return {
+                ...retained,
+                id,
+                path: `releases/${id}`,
+                title: `Release ${id}`,
+                content,
+                sourceContentCharacters: content.length,
+                citation: { evidenceId: `page:${id}:revision:7`, label: `Release ${id}`, href: `/en/releases/${id}` }
+              }
+            })
+          : [])
+      ].map(row => {
+        if (!emptyFinal) return row
+        const content = `${row.content}\n\n${'Routine archival context remains unchanged. '.repeat(40)}`
+        return { ...row, content, sourceContentCharacters: content.length }
+      })
+      const declined = 'Release 95 does not require a separate review.'
+      const revised = 'Release 94 requires a separate review before it may ship, and shipment requires safety approval.'
+      const declinedRetained = 'Release 94 may ship without safety approval.'
+      let readable = true
+      const ownedRead = ownedReadFixture(name => {
+        if (name !== 'pages.listRecent') throw new Error(`Unexpected full-page reread: ${name}`)
+        return { kind: 'recent-page-evidence', requestedLimit: 10, exhausted: true, pages: rows }
+      })
+      const synthesisCallCounts: number[] = []
+      const answer = (input: Readonly<AxChatRequest>) => {
+        synthesisCallCounts.push(fixture.providerCalls.length)
+        const firstAttempt = synthesisCallCounts.length === 1
+        return synthesisFixtureAnswer(input, {
+          claims:
+            !firstAttempt && emptyFinal
+              ? []
+              : [
+                  ...(firstAttempt
+                    ? [
+                        { evidenceId: retained.citation.evidenceId, statement: retained.content },
+                        { evidenceId: retained.citation.evidenceId, statement: qualification }
+                      ]
+                    : repair === 'revised same read' || repair === 'declined same read'
+                      ? [{ evidenceId: retained.citation.evidenceId, statement: repair === 'revised same read' ? revised : declinedRetained }]
+                      : []),
+                  { evidenceId: rows[1]!.citation.evidenceId, statement: firstAttempt ? declined : rows[1]!.content },
+                  ...(firstAttempt
+                    ? rows.slice(2).map(row => ({ evidenceId: row.citation.evidenceId, statement: `Release ${row.id} requires a separate review.` }))
+                    : [])
+                ],
+          unresolvedFacets: !firstAttempt && emptyFinal ? [0] : []
+        })
+      }
+      const coverage = vi.fn(async (_input: Readonly<AxChatRequest>) => {
+        // Invalidate after the final audit receives its source, before publication.
+        if (repair === 'revoked') readable = false
+        if (repair === 'changed') rows[0]!.sourceRevision = '8'
+        return {
+          results: [
+            {
+              index: 0,
+              content: JSON.stringify({ verdict: 'incomplete', feedback: 'The source does not establish the requested review owners.' }),
+              finishReason: 'stop' as const
+            }
+          ]
+        }
+      })
+      const fixture = questionFixture(
+        'native',
+        [
+          {
+            metadata: `<wiki-request-plan>${JSON.stringify({
+              facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'recent-window' }]
+            })}</wiki-request-plan>`,
+            calls: [{ id: 'repair-omits-verified-recent', name: 'pages.listRecent', arguments: { limit: 10 } }]
+          },
+          { answer },
+          { answer }
+        ],
+        ownedRead.invoke,
+        [],
+        {
+          coverage,
+          ...(emptyFinal ? { maxContextTokens: 128_000 } : {}),
+          validateObservation: async (...arguments_) => readable && ownedRead.validateObservation(...arguments_)
+        },
+        emptyFinal
+          ? {
+              messages: historyEntries.map((entry, index) => ({ ...entry, canonicalSource: historySources[index]! })),
+              compaction: { sourcePrefixSha256: agentCompactionSourcePrefixes(historySources), groundedExpiresAt: null }
+            }
+          : {},
+        rejectFixtureStatements([declined, declinedRetained])
+      )
+      const execution = fixture.execute(
+        userRequest,
+        { maxTurns: 4, maxToolCalls: 1, maxOutputTokens: 2_048 },
+        undefined,
+        emptyFinal ? commitCompaction : undefined
+      )
+      if (repair === 'revoked' || repair === 'changed') {
+        await expect(execution).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+        expect(fixture.text).not.toHaveBeenCalled()
+      } else {
+        const result = await execution
+        const answerText = fixture.text.mock.calls.map(([delta]) => delta).join('')
+        const published = visibleWikiText(answerText)
+        expect(published.includes(retained.content)).toBe(repair === 'omitted' || emptyFinal)
+        expect(published.includes(qualification)).toBe(repair === 'omitted' || emptyFinal)
+        expect(published.includes(revised)).toBe(repair === 'revised same read')
+        expect(published.includes(rows[1]!.content)).toBe(!emptyFinal)
+        expect(published).not.toContain(declined)
+        expect(published).not.toContain(declinedRetained)
+        expect(answerText.includes(`[[cite:${retained.citation.evidenceId}]]`)).toBe(repair !== 'declined same read')
+        expect(result.citations?.map(citation => citation.evidenceId)).toEqual(
+          (emptyFinal ? rows.filter((_row, index) => index !== 1) : repair === 'declined same read' ? rows.slice(1) : rows).map(row => row.citation.evidenceId)
+        )
+        expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
+        if (emptyFinal) for (const row of rows.slice(2)) expect(published).toContain(`Release ${row.id} requires a separate review.`)
+      }
+      expect(coverage).toHaveBeenCalledOnce()
+      expect(synthesisCallCounts).toHaveLength(2)
+      expect(fixture.providerCalls).toHaveLength(synthesisCallCounts[0]! + 1)
+      expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.listRecent'])
+      if (emptyFinal) expect(commitCompaction).not.toHaveBeenCalled()
+    }
+  )
 
   it('does not turn incidental recent evidence into an incomplete-audit publication exception for other source reads', async () => {
     const userRequest = 'Explain the sensor calibration procedure.'
