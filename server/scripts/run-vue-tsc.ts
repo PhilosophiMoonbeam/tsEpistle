@@ -24,16 +24,10 @@ const runTsc = require(runTscPath) as {
 
 runTsc.getLanguagePlugins = (typescript, options) => {
   // Volar passes the transformed CLI's lexical TypeScript proxy here. Its sys
-  // is distinct from require('typescript').sys; drain the CLI's piped output
-  // before its explicit exit so diagnostics cannot truncate --listFiles.
+  // is distinct from require('typescript').sys. Natural termination preserves
+  // pending piped output; an empty write callback is not a Bun flush guarantee.
   typescript.sys.exit = code => {
-    process.stdout.write('', error => {
-      if (error) throw error
-      process.stderr.write('', error => {
-        if (error) throw error
-        process.exit(code)
-      })
-    })
+    process.exitCode = code
   }
 
   const configFilePath = options.options.configFilePath
