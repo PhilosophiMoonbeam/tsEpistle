@@ -368,6 +368,7 @@ const questionFixture = (
     readonly automaticCollectionControl?: boolean
     readonly beforeEgress?: (input: Readonly<AxChatRequest>) => Promise<void>
     readonly validateObservation?: (actionName: AgentActionName, output: unknown, signal: AbortSignal, originalInput?: unknown) => Promise<boolean>
+    readonly operationEvidence?: (output: unknown, signal: AbortSignal) => Promise<string | undefined>
   } = {},
   requestOptions: Partial<AgentEngineRequest> = {},
   decisionProviders: typeof fixtureDecisionProviders = fixtureDecisionProviders
@@ -471,7 +472,8 @@ const questionFixture = (
       invoke,
       snapshot: async () => ({}),
       close,
-      validateObservation
+      validateObservation,
+      ...(providerOptions.operationEvidence === undefined ? {} : { operationEvidence: providerOptions.operationEvidence })
     })
   }
   const text = vi.fn(async (_message: string) => {})
@@ -5229,6 +5231,42 @@ describe('Ax agent engine', () => {
       if (name === 'pages.prepareCreate') return proposal
       throw new Error(`Unexpected governed create action ${name}`)
     }
+
+    it.each(['revoked', 'changed'] as const)('withholds private operation support %s at the writer transport boundary', async change => {
+      const privateDiff = '--- base.md\n+++ result.md\n@@ -1 +1 @@\n-old\n+Private approved fixture detail.\n'
+      const originalGroup = canonicalJson({ proposalId, resultHash: application.resultHash, reviewedChange: { diff: privateDiff } })
+      let currentGroup: string | undefined = originalGroup
+      let writerEgresses = 0
+      const operationEvidence = vi.fn(async () => currentGroup)
+      const fixture = questionFixture(
+        'native',
+        [...acquisition, { answer: input => synthesisFixtureAnswer(input, { claims: [], observations, unresolvedFacets: [] }) }],
+        invoke,
+        [questionProposalAction],
+        {
+          operationEvidence,
+          beforeEgress: async input => {
+            if (synthesisInputFromRequest(input) === undefined) return
+            currentGroup =
+              change === 'revoked'
+                ? undefined
+                : canonicalJson({ proposalId, resultHash: application.resultHash, reviewedChange: { diff: `${privateDiff}changed\n` } })
+            await currentAgentSourceAuthorization()?.()
+            writerEgresses++
+          }
+        },
+        { currentPage: null, priorActivity: [] }
+      )
+      const execution = await fixture.execute(userRequest).then(
+        result => ({ result }),
+        error => ({ error })
+      )
+      if ('error' in execution) expect(execution.error).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+      expect(operationEvidence).toHaveBeenCalled()
+      expect(writerEgresses).toBe(0)
+      expect(fixture.invoke.mock.calls.filter(([name]) => name === 'pages.prepareCreate')).toHaveLength(1)
+      expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('Private approved fixture detail.')
+    })
 
     it('rejects discovery-only presentation after application and publishes the durable result without source facts', async () => {
       const fixture = questionFixture(

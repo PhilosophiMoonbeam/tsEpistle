@@ -13,7 +13,7 @@ const privateTracer = new ProxyTracerProvider().getTracer('wiki-coverage-private
 
 const nonblank = z.string().refine(value => value.trim().length > 0, 'Expected nonempty text.')
 const MAX_OPERATION_EVIDENCE_BYTES = 8_192
-// Decode only at the private audit boundary; the host retains the opaque
+// Decode only at private model-input boundaries; the host retains the opaque
 // original string for authenticated admission and freshness comparisons.
 const operationEvidenceSchema = nonblank
   .refine(value => Buffer.byteLength(value, 'utf8') <= MAX_OPERATION_EVIDENCE_BYTES, 'Operation evidence group exceeds 8192 UTF-8 bytes.')
@@ -26,6 +26,9 @@ const operationEvidenceSchema = nonblank
     }
   })
   .pipe(z.record(z.string(), z.json()))
+const operationEvidenceGroupsSchema = z.array(operationEvidenceSchema)
+export const encodeWikiOperationEvidence = (groups: readonly string[]): string => JSON.stringify(operationEvidenceGroupsSchema.parse(groups))
+
 const inputSchema = z
   .object({
     userRequest: nonblank,
@@ -53,7 +56,7 @@ const inputSchema = z
     ),
     claims: z.array(z.object({ readRef: nonblank, statement: nonblank }).strict()),
     observations: z.array(nonblank).optional(),
-    operationEvidence: z.array(operationEvidenceSchema).optional(),
+    operationEvidence: z.array(nonblank).optional(),
     inputMediaSources: z
       .array(z.object({ id: nonblank, filename: nonblank, mimeType: nonblank }).strict())
       .max(16)
@@ -154,7 +157,7 @@ export const encodeWikiCoverageInput = (input: WikiCoverageInput): WikiCoverageW
     ),
     claims: JSON.stringify(valid.claims),
     ...(valid.observations === undefined ? {} : { observations: JSON.stringify(valid.observations) }),
-    ...(valid.operationEvidence === undefined ? {} : { operationEvidence: JSON.stringify(valid.operationEvidence) }),
+    ...(valid.operationEvidence === undefined ? {} : { operationEvidence: encodeWikiOperationEvidence(valid.operationEvidence) }),
     ...(valid.inputMediaSources === undefined ? {} : { inputMediaReferences: JSON.stringify(valid.inputMediaSources) }),
     ...(valid.attachmentClaims === undefined ? {} : { attachmentClaims: JSON.stringify(valid.attachmentClaims) })
   }

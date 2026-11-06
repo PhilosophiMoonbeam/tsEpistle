@@ -122,7 +122,13 @@ import {
 import { initialToolCategoriesFor } from './tool-intent.ts'
 import { type AgentProviderUsage, acceptCumulativeAgentProviderUsage, assertAgentTokenUsage, readAgentProviderUsage } from './usage.ts'
 import { assessWikiContextReadiness, buildWikiContextReadinessRequest } from './wiki-context-readiness.ts'
-import { createWikiCoverageProgram, encodeWikiCoverageInput, type WikiCoverageResult, type WikiCoverageWireInput } from './wiki-coverage.ts'
+import {
+  createWikiCoverageProgram,
+  encodeWikiCoverageInput,
+  encodeWikiOperationEvidence,
+  type WikiCoverageResult,
+  type WikiCoverageWireInput
+} from './wiki-coverage.ts'
 import { getLiteralSourceStatement, isLiteralSourceClaim } from './wiki-source-quotation.ts'
 import {
   createWikiSynthesisProgram,
@@ -6743,6 +6749,7 @@ export class AxAgentEngine implements AgentEngine {
       readonly explicitContentFacets: boolean
       readonly observations: readonly string[]
       readonly operationObservations: readonly string[]
+      readonly operationEvidence: readonly string[] | undefined
       readonly repairFeedback: SynthesisRepairFeedback | undefined
       readonly coverage: Parameters<typeof assessDraft>[2]
       readonly assessableContent: (content: string) => string
@@ -7172,6 +7179,7 @@ export class AxAgentEngine implements AgentEngine {
           ...(inputMediaSources.length === 0 ? {} : { inputMediaReferences: JSON.stringify(inputMediaSources) }),
           requestFacets: [...input.requestFacets],
           availableObservations: [...input.observations],
+          ...(input.operationEvidence === undefined ? {} : { operationEvidence: encodeWikiOperationEvidence(input.operationEvidence) }),
           repairFeedback
         },
         {
@@ -7599,8 +7607,8 @@ export class AxAgentEngine implements AgentEngine {
         }
         request.signal.throwIfAborted()
       }
-      // Keep private audit support out of transcript/snapshot state. Its feedback
-      // derivatives require the same live operation authority on later dispatch.
+      // Keep private operation support out of transcript/snapshot state. Its
+      // writer/audit inputs and feedback retain the same live operation authority.
       const admittedOperationEvidence = new Map<unknown, string>()
       const requireFreshApplicationReceipts = async (): Promise<void> => {
         for (const [receipt, expected] of admittedOperationEvidence) {
@@ -7618,6 +7626,20 @@ export class AxAgentEngine implements AgentEngine {
           authorizedApplicationReceipts.add(message)
         }
         request.signal.throwIfAborted()
+      }
+      const currentOperationEvidence = async (): Promise<readonly string[] | undefined> => {
+        if (!readOperationEvidence || trackedApplicationReceipts.size === 0) return undefined
+        const groups: string[] = []
+        for (const receipt of trackedApplicationReceipts.values()) {
+          const group = await readOperationEvidence(receipt, request.signal)
+          const admitted = admittedOperationEvidence.get(receipt)
+          if (admitted !== undefined && admitted !== group)
+            throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Private operation evidence changed after admission', 409)
+          if (group === undefined) continue
+          admittedOperationEvidence.set(receipt, group)
+          if (!groups.includes(group)) groups.push(group)
+        }
+        return groups.length === 0 ? undefined : groups
       }
       const requireFreshRegisteredEvidence = (evidenceView: ReadonlyMap<string, CitationEvidence>): Promise<void> =>
         requireFreshReceipts(
@@ -9480,6 +9502,7 @@ export class AxAgentEngine implements AgentEngine {
                 explicitContentFacets: contextPlan.explicitContentFacets,
                 observations,
                 operationObservations: operationObservationLines(bounded.chatPrompt),
+                operationEvidence: await currentOperationEvidence(),
                 repairFeedback,
                 coverage: {
                   ...coverage,
@@ -9875,25 +9898,14 @@ export class AxAgentEngine implements AgentEngine {
                   requiresRecentObservationCoverage)
               ) {
                 const conversationContext = wikiConversationContext(conversation)
-                const operationEvidence: string[] = []
-                if (requiresOperationCoverage && readOperationEvidence) {
-                  for (const receipt of trackedApplicationReceipts.values()) {
-                    const group = await readOperationEvidence(receipt, request.signal)
-                    if (group === undefined) continue
-                    const admitted = admittedOperationEvidence.get(receipt)
-                    if (admitted !== undefined && admitted !== group)
-                      throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Private operation evidence changed after admission', 409)
-                    admittedOperationEvidence.set(receipt, group)
-                    if (!operationEvidence.includes(group)) operationEvidence.push(group)
-                  }
-                }
+                const operationEvidence = requiresOperationCoverage ? await currentOperationEvidence() : undefined
                 const coverageInput = encodeWikiCoverageInput({
                   userRequest: userRequestWithRecentScope(assessmentEvidence),
                   ...(conversationContext === undefined ? {} : { conversationContext }),
                   requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [contextPlan.intent],
                   unresolvedFacets: nativeDraft.answer.unresolvedFacets,
                   ...(coverageObservations.length === 0 ? {} : { observations: coverageObservations }),
-                  ...(operationEvidence.length === 0 ? {} : { operationEvidence }),
+                  ...(operationEvidence === undefined ? {} : { operationEvidence }),
                   ...(nativeDraft.inputMediaSources === undefined ? {} : { inputMediaSources: nativeDraft.inputMediaSources }),
                   ...(nativeDraft.answer.attachmentClaims === undefined ? {} : { attachmentClaims: nativeDraft.answer.attachmentClaims }),
                   reads: [...nativeDraft.readSources.values()].map(source => {
@@ -10432,6 +10444,7 @@ export class AxAgentEngine implements AgentEngine {
                     ])
                   ],
                   operationObservations: operationObservationLines(activePrompt),
+                  operationEvidence: await currentOperationEvidence(),
                   repairFeedback,
                   coverage: { ...coverage, partialCoverage: { omittedCount: executedOmittedCount(), notExecutedCount: notExecutedActionCallIds.size } },
                   assessableContent: content => content,
@@ -10440,6 +10453,7 @@ export class AxAgentEngine implements AgentEngine {
                     if (await reauthorizeEvidencePrompt(new Map()))
                       throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Native synthesis context is no longer authorized', 409)
                     await requireFreshRegisteredEvidence(prospectiveEvidence)
+                    await requireFreshApplicationReceipts()
                     await externalSynthesis.authorize()
                   }
                 },
@@ -11222,6 +11236,7 @@ export class AxAgentEngine implements AgentEngine {
                   ...browserAttributions.flatMap(observation => [...observation.quotedUnits].map(unit => `${observation.prefix}${unit}`))
                 ],
                 operationObservations: operationObservationLines(activePrompt),
+                operationEvidence: await currentOperationEvidence(),
                 repairFeedback,
                 coverage: { ...coverage, partialCoverage: { omittedCount: executedOmittedCount(), notExecutedCount: notExecutedActionCallIds.size } },
                 assessableContent: content => assessableActionStatusContent(content, attributedLines, browserAttributions),
