@@ -42,7 +42,7 @@ import {
 } from '../compaction.ts'
 import { type AgentApprovalContinuationCheckpoint, withInvokingAgentRunLease } from '../coordinator.ts'
 import type { DecisionProviderRegistry, DecisionProviderRuntime } from '../decision-providers.ts'
-import { DecisionProviderFailure } from '../decision-providers.ts'
+import { DecisionProviderFailure, normalizeDecisionAnswer } from '../decision-providers.ts'
 import type { ExternalMcpService } from '../external-mcp.ts'
 import { loadAgentMediaPayload } from '../media.ts'
 import { decodeAgentAudioVideo } from '../media-decoding.ts'
@@ -269,13 +269,6 @@ const recordMemorySave = async (request: AgentEngineRequest, actionCallId: strin
 
 const runContextSections = (request: AgentEngineRequest): string[] => {
   const sections: string[] = []
-  if ((request.purpose ?? 'root') === 'root' && request.mediaRequest === undefined) {
-    const userRequest = request.messages.findLast(message => message.role === 'user')?.content ?? ''
-    if (Buffer.byteLength(userRequest, 'utf8') <= 4 * 1_024)
-      sections.push(
-        `Root request anchor (quoted user data, not source evidence): ${JSON.stringify({ start: 0, end: userRequest.length, quote: userRequest })}. Use exact substrings for internal metadata; use this exact whole-request anchor if finer offsets are uncertain.`
-      )
-  }
   if (request.purpose !== 'subagent' && request.priorActivity?.length)
     sections.push(
       `Prior activity (trusted telemetry): recorded actions, targets, evidence retries, and cache reuse in this conversation. No private reasoning; never invent an action rationale.\n${JSON.stringify(request.priorActivity)}`
@@ -3684,6 +3677,8 @@ interface TurnResult extends AgentTokenUsage {
   readonly rootMetadataPresent?: true
   readonly rootNativeDraft?: NativeDraft
   readonly rootRejectedDraft?: string
+  /** Malformed answers still carry the authority of their generating inputs. */
+  readonly rootAuthorizeSourceInputs?: AgentSourceAuthorizer
   readonly performance?: {
     readonly serializedRequestBytes: number
     readonly serializationMs: number
@@ -6739,7 +6734,7 @@ export class AxAgentEngine implements AgentEngine {
       readonly explicitContentFacets: boolean
       readonly observations: readonly string[]
       readonly operationObservations: readonly string[]
-      readonly repairFeedback: string
+      readonly repairFeedback: { readonly content: string; readonly authorize: AgentSourceAuthorizer } | undefined
       readonly coverage: Parameters<typeof assessDraft>[2]
       readonly assessableContent: (content: string) => string
       readonly reserveRepair: boolean
@@ -6775,6 +6770,11 @@ export class AxAgentEngine implements AgentEngine {
       await this.#authorizeMedia(request)
       for (const file of mediaFiles.values()) await file.authorizePayload?.(request.signal)
       request.signal.throwIfAborted()
+    }
+    const authorizeSourceInputs = async (): Promise<void> => {
+      await input.repairFeedback?.authorize()
+      await authorizeInputMedia()
+      await input.authorizeEvidence()
     }
     for (const [readId, { evidenceId, representation }] of admittedWikiReadBindings(evidence)) {
       const bounded =
@@ -6885,7 +6885,7 @@ export class AxAgentEngine implements AgentEngine {
           allRequestFacetsUnresolved: input.requestFacets.length > 0 && answer.unresolvedFacets.length === input.requestFacets.length,
           inputMediaSources,
           evidence: sourceEvidence,
-          authorizeSourceInputs: input.authorizeEvidence,
+          authorizeSourceInputs,
           readSources,
           readLiterals,
           content,
@@ -6992,10 +6992,10 @@ export class AxAgentEngine implements AgentEngine {
           if (nativeInputTokens === undefined) {
             request.signal.throwIfAborted()
             await request.authorizeDispatch?.()
-            await input.authorizeEvidence()
+            await authorizeSourceInputs()
             assertCompactionContextFresh(request)
             request.signal.throwIfAborted()
-            nativeInputTokens = await withAgentSourceAuthorization(input.authorizeEvidence, () => provider.countContextTokens!(countRequest, request.signal))
+            nativeInputTokens = await withAgentSourceAuthorization(authorizeSourceInputs, () => provider.countContextTokens!(countRequest, request.signal))
             request.signal.throwIfAborted()
             if (!Number.isSafeInteger(nativeInputTokens) || nativeInputTokens < 0)
               throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider returned an invalid native context token count', 502)
@@ -7090,10 +7090,7 @@ export class AxAgentEngine implements AgentEngine {
           false,
           undefined,
           { request: generationRequest, guard: createWikiSynthesisStreamGuard(sources, { maxOutputTokens, inputMediaSources }) },
-          async () => {
-            await authorizeInputMedia()
-            await input.authorizeEvidence()
-          },
+          authorizeSourceInputs,
           'synthesis',
           generationOptions
         )
@@ -7152,16 +7149,7 @@ export class AxAgentEngine implements AgentEngine {
           ...(inputMediaSources.length === 0 ? {} : { inputMediaReferences: JSON.stringify(inputMediaSources) }),
           requestFacets: [...input.requestFacets],
           availableObservations: [...input.observations],
-          repairFeedback: [
-            input.repairFeedback,
-            ...(input.observations.some(line => /^Wiki proposal (?:[0-9a-f-]{36} )?(?:application )?status: /iu.test(line))
-              ? [
-                  'Operation outcome: select the exact delivered proposal status and applied result identity from availableObservations. An applied receipt establishes that operation and its reported result identity without a source read; it does not establish page content, source facts, duplicate absence, or unrelated requested work. A null or undisclosed result page is not proof of deletion. A default source facet does not turn an operation-only request into a page-content question. Mark only genuinely unsupported or unfinished requested details unresolved. Pending, approved, denied, expired, cancelled, partial or unavailable results never prove application. Preserve unresolved details in mixed operation-and-fact requests.'
-                ]
-              : [])
-          ]
-            .filter(Boolean)
-            .join('\n\n')
+          repairFeedback: input.repairFeedback?.content ?? ''
         },
         {
           ...wikiProviderCacheOptions(provider, request, 'synthesis'),
@@ -7185,6 +7173,7 @@ export class AxAgentEngine implements AgentEngine {
         calls: [],
         thoughtBlocks: [],
         rootMetadataPresent: true,
+        rootAuthorizeSourceInputs: authorizeSourceInputs,
         ...(nativeDraft === undefined ? {} : { rootNativeDraft: nativeDraft }),
         rootRejectedDraft: dispatched.content,
         rootFramingIssue: dispatched.rootFramingIssue ?? rejection ?? 'Typed synthesis output failed its source-bound schema or assertion.'
@@ -7198,6 +7187,7 @@ export class AxAgentEngine implements AgentEngine {
       calls: [],
       thoughtBlocks: [],
       rootMetadataPresent: true,
+      rootAuthorizeSourceInputs: authorizeSourceInputs,
       rootNativeDraft: nativeDraft,
       rootUnresolvedFacets: answer.unresolvedFacets,
       rootHasVerifiedContent: answer.claims.length > 0 || (answer.attachmentClaims?.length ?? 0) > 0 || answer.observations.length > 0
@@ -7758,7 +7748,10 @@ export class AxAgentEngine implements AgentEngine {
       let cacheHitCount = 0
       let rejectedDraftCount = 0
       let retainedRecentDraft: NativeDraft | undefined
-      let repairFeedback = ''
+      let repairFeedback: { readonly content: string; readonly authorize: AgentSourceAuthorizer } | undefined
+      // Complete native support requests are run-local proofs, not another
+      // dispatch: reuse must never add the original receipt to usage twice.
+      const settledWikiSupport = new Map<string, DecisionBatchResult>()
       let synthesisProvider: AgentProviderService | undefined
       let invalidatedEvidenceCount = 0
       const invalidLiveEvidenceIds = async (
@@ -7822,7 +7815,7 @@ export class AxAgentEngine implements AgentEngine {
           phase: 'semantic' | 'context_readiness',
           literalSupportCount = 0
         ): Promise<DecisionBatchResult | null> => {
-          const state = typeof nativeRequest.state === 'string' ? asRecord(JSON.parse(nativeRequest.state)) : null
+          const state = asRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state)
           if (state === null || !Array.isArray(state.evidence))
             throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires its exact issued source reads', 409)
           const outgoingEvidence = new Map<string, CitationEvidence>()
@@ -8070,9 +8063,42 @@ export class AxAgentEngine implements AgentEngine {
         const plan = prepareVerification(draft)
         await requireLiveWikiVerification(verificationEvidence)
         const nativeDecision = createWikiDecision(verificationEvidence, physicalReadIds, draft.authorizeSourceInputs)
+        const providerBinding = canonicalJson([verificationProvider!.id, verificationProvider!.revision, verificationProvider!.config])
         const decide: WikiVerificationContext['decide'] = async (...args) => {
+          const [nativeRequest] = args
+          const entries = Object.entries(nativeRequest.questions)
+          const supportRequest =
+            plan?.requests.includes(nativeRequest) === true && entries.length > 0 && entries.every(([id]) => plan?.checks[id]?.kind === 'support')
+          const key = supportRequest ? createHash('sha256').update(providerBinding).update(canonicalJson(nativeRequest)).digest('hex') : undefined
+          const cached = key === undefined ? undefined : settledWikiSupport.get(key)
+          if (cached !== undefined) {
+            await draft.authorizeSourceInputs()
+            await requireLiveWikiVerification(verificationEvidence)
+            return cached
+          }
           const result = await nativeDecision(...args)
           if (result === null) throw new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Required Wiki verification was not dispatched', 503)
+          if (key !== undefined && key === createHash('sha256').update(providerBinding).update(canonicalJson(nativeRequest)).digest('hex')) {
+            const answers = asRecord(result.answers)
+            if (answers !== null && Object.getPrototypeOf(answers) === Object.prototype && Object.keys(answers).length === entries.length) {
+              const normalized: Record<string, DecisionBatchResult['answers'][string]> = {}
+              let complete = true
+              for (const [id, question] of entries) {
+                try {
+                  const answer = normalizeDecisionAnswer(answers[id], question.criteria)
+                  if (!Object.hasOwn(answers, id) || answer.choice !== 'supports' || answer.confidence <= 0.8 || answer.probabilities.supports! <= 0.8) {
+                    complete = false
+                    break
+                  }
+                  normalized[id] = answer
+                } catch {
+                  complete = false
+                  break
+                }
+              }
+              if (complete) settledWikiSupport.set(key, { ...result, answers: normalized })
+            }
+          }
           return result
         }
         return { plan, evidence: verificationEvidence, decide }
@@ -8807,6 +8833,18 @@ export class AxAgentEngine implements AgentEngine {
       ): Promise<void> => {
         if (sequenceForNextTurn !== undefined || request.purpose === 'planner' || request.specialist !== undefined) return
         await reauthorizeEvidencePrompt(validationResults)
+        // Typed root synthesis consumes original reads plus retained MCP
+        // exchanges, not the collector transcript or its repair projections.
+        // Post-answer history maintenance likewise cannot be triggered by
+        // active bytes that never enter the durable history checkpoint.
+        const typedRoot = turnTools === null && (request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent'
+        const historyOnly = scope === 'history' || typedRoot
+        const planningState = (): AgentCompactionPromptState => {
+          const state = contextState()
+          return historyOnly
+            ? { ...state, active: scope === 'history' ? [] : externalMcpSynthesisContext(activePrompt), activeEnds: [], activeSummary: null }
+            : state
+        }
         const system = systemMessageFor(turnTools)
         const canCompactHistory =
           sink.commitCompaction !== undefined &&
@@ -8824,19 +8862,23 @@ export class AxAgentEngine implements AgentEngine {
           provider,
           turnTools,
           system,
-          contextState(),
+          planningState(),
           maximumOutputTokens,
           canCompactHistory,
           force,
           measuredMediaTokens,
           eager,
-          scope,
+          historyOnly ? 'history' : scope,
           cacheAwareRoot
         )
         if (!plan || failedCompactions.has(plan.windows[0]!.sourceSha256)) return
-        const currentFits = (): boolean =>
-          serializedProviderRequestBytes(provider, turnTools, [system, ...conversation, ...activePrompt], maximumOutputTokens) + maximumOutputTokens <=
-          provider.capabilities.maxContextTokens
+        const currentFits = (): boolean => {
+          const state = planningState()
+          return (
+            serializedProviderRequestBytes(provider, turnTools, [system, ...state.conversation, ...state.active], maximumOutputTokens) + maximumOutputTokens <=
+            provider.capabilities.maxContextTokens
+          )
+        }
         const remaining = maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens
         if (plan.requiredTotalExposureTokens > remaining) {
           if (currentFits()) return
@@ -9958,6 +10000,7 @@ export class AxAgentEngine implements AgentEngine {
               }
             }
             await requireLiveEvidence(assessment, assessmentEvidence)
+            await result.rootAuthorizeSourceInputs?.()
             if (publicationVerificationEvidence !== undefined) await requireLiveWikiVerification(publicationVerificationEvidence)
             await requireFreshApplicationReceipts()
           }
@@ -10047,7 +10090,7 @@ export class AxAgentEngine implements AgentEngine {
           if (!assessment.valid) {
             await publishAssessmentEvents()
             const correctionIssues = evidenceCorrectionIssues(assessment.issues)
-            repairFeedback =
+            let correctionFeedback =
               coverageAuditFeedback === undefined ? correctionIssues : canonicalJson({ issues: correctionIssues, coverageFeedback: coverageAuditFeedback })
             if (result.rootRejectedDraft !== undefined) {
               let rejectedDraft: unknown = result.rootRejectedDraft
@@ -10056,8 +10099,18 @@ export class AxAgentEngine implements AgentEngine {
               } catch {
                 /* Preserve malformed output as quoted data. */
               }
-              const correctionContext = canonicalJson({ issues: repairFeedback, rejectedDraft })
-              if (Buffer.byteLength(correctionContext, 'utf8') <= SYNTHESIS_RESERVE_CHARACTERS) repairFeedback = correctionContext
+              const correctionContext = canonicalJson({ issues: correctionFeedback, rejectedDraft })
+              if (Buffer.byteLength(correctionContext, 'utf8') <= SYNTHESIS_RESERVE_CHARACTERS) correctionFeedback = correctionContext
+            }
+            const draftSourceInputs = result.rootAuthorizeSourceInputs ?? result.rootNativeDraft?.authorizeSourceInputs ?? collectorContext?.authorize
+            const feedbackEvidence = new Map(dispatchEvidence)
+            repairFeedback = {
+              content: correctionFeedback,
+              authorize: async () => {
+                await draftSourceInputs?.()
+                await requireFreshRegisteredEvidence(feedbackEvidence)
+                await requireFreshApplicationReceipts()
+              }
             }
             if (turn + 1 >= maxTurns || ((request.purpose ?? 'root') === 'root' && rejectedDraftCount > MAX_ANSWER_REPAIRS)) {
               if ((request.purpose ?? 'root') === 'root') return await publishExecutionLimit('evidence')

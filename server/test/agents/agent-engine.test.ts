@@ -23,6 +23,7 @@ import { unpackWikiReadTexts } from '../../agents/providers/wiki-read-transport.
 import { decodeWikiVerificationSources } from '../../agents/providers/wiki-verification.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import type { AgentEngineRequest, AgentEngineResult, AgentEngineSink } from '../../agents/runtime.ts'
+import { currentAgentSourceAuthorization } from '../../agents/source-authorization.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { describe, expect, it, vi } from '../bun-test.mts'
 import { geminiFixtureService } from './gemini-fixture.ts'
@@ -365,6 +366,7 @@ const questionFixture = (
     readonly countContextTokens?: (input: Readonly<AxChatRequest>, signal: AbortSignal) => Promise<number>
     readonly coverage?: AxAIService['chat']
     readonly automaticCollectionControl?: boolean
+    readonly beforeEgress?: (input: Readonly<AxChatRequest>) => Promise<void>
     readonly validateObservation?: (actionName: AgentActionName, output: unknown, signal: AbortSignal, originalInput?: unknown) => Promise<boolean>
   } = {},
   requestOptions: Partial<AgentEngineRequest> = {},
@@ -373,6 +375,7 @@ const questionFixture = (
   const providerCalls: Readonly<AxChatRequest<unknown>>[] = []
   const responses = questionResponses(mode, steps)
   const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+    await providerOptions.beforeEgress?.(input)
     providerCalls.push(input)
     const control = providerOptions.automaticCollectionControl === false ? undefined : rootFixtureCollectionControl(input, responses[0])
     if (control !== undefined) return control
@@ -805,7 +808,7 @@ describe('Ax agent engine', () => {
     const decisions = sourceReadDecisions('supports above floor', input => {
       expect(fixture.text.mock.calls).toHaveLength(0)
       supportRequests++
-      const state = JSON.parse(input.state as string)
+      const state = questionRecord(typeof input.state === 'string' ? JSON.parse(input.state) : input.state)
       expect(state.evidence).toEqual([
         expect.objectContaining({
           evidenceId: 'page:79:revision:3',
@@ -867,7 +870,7 @@ describe('Ax agent engine', () => {
       const decisions = sourceReadDecisions(verdict, input => {
         expect(fixture.text.mock.calls).toHaveLength(0)
         supportRequests++
-        const state = JSON.parse(input.state as string)
+        const state = questionRecord(typeof input.state === 'string' ? JSON.parse(input.state) : input.state)
         expect(state.evidence).toEqual([
           expect.objectContaining({
             evidenceId: 'page:76:revision:1',
@@ -963,7 +966,7 @@ describe('Ax agent engine', () => {
       const decisions = sourceReadDecisions(['supports', verdict], input => {
         expect(fixture.text.mock.calls).toHaveLength(0)
         supportRequests++
-        const state = JSON.parse(input.state as string)
+        const state = questionRecord(typeof input.state === 'string' ? JSON.parse(input.state) : input.state)
         expect(state.candidate).toEqual([supported, rejected])
       })
       const answer = (input: Readonly<AxChatRequest>) => {
@@ -6957,7 +6960,7 @@ describe('Ax agent engine', () => {
           .filter(([, question]) => Object.hasOwn(question.criteria, 'supports'))
           .map(([id]) => id)
         if (supportIds.length === 0) return decision
-        const state = JSON.parse(input.state as string) as {
+        const state = (typeof input.state === 'string' ? JSON.parse(input.state) : input.state) as {
           candidate: readonly (string | { evidenceId: string; statement: string })[]
           evidence: readonly { evidenceId: string }[]
         }
@@ -10393,6 +10396,259 @@ describe('request-derived evidence coverage', () => {
       unresolvedFacets
     })
   }
+
+  it.each(['revoked', 'revised', 'late egress'] as const)('never re-egresses source-derived repair feedback after authority is %s', async change => {
+    const secret = 'REPAIR_AUTHORITY_SENTINEL_7c2a'
+    const fact = `The release requires supervisor approval: ${secret}.`
+    const page = questionReadPage(42, '1', 'Release', 'release', 'Rules', 'rules', fact)
+    const owned = ownedReadFixture(() => page)
+    let authorized = true
+    let rejected = false
+    let repairEgresses = 0
+    const fixture = questionFixture(
+      'native',
+      [
+        { calls: [{ id: 'repair-authority-read', name: 'pages.get', arguments: { id: 42 } }] },
+        { answer: input => sourceBoundAnswer(input, [{ evidenceId: page.citation.evidenceId, sourceText: fact, statement: fact }]) },
+        { answer: input => synthesisFixtureAnswer(input, { claims: [], unresolvedFacets: [0] }) }
+      ],
+      owned.invoke,
+      [],
+      {
+        coverage: async () => ({
+          results: [
+            { index: 0, content: JSON.stringify({ verdict: 'incomplete', feedback: `Retain ${secret} and the requested owner.` }), finishReason: 'stop' }
+          ]
+        }),
+        validateObservation: async (...args) => authorized && owned.validateObservation(...args),
+        beforeEgress: async input => {
+          if (!rejected) return
+          if (change === 'late egress') authorized = false
+          await currentAgentSourceAuthorization()?.()
+          if (JSON.stringify(input.chatPrompt).includes(secret)) repairEgresses++
+        }
+      }
+    )
+    fixture.event.mockImplementation(async (type, data) => {
+      if (type !== 'evidence.provenance' || questionRecord(data).accepted !== false) return
+      rejected = true
+      if (change === 'revoked') authorized = false
+      if (change === 'revised') page.sourceRevision = '2'
+    })
+    await expect(fixture.execute('Describe the release and name its owner.', { maxTurns: 4, maxToolCalls: 1 })).rejects.toMatchObject({
+      code: 'AGENT_EVIDENCE_INVALID'
+    })
+    expect(rejected).toBe(true)
+    expect(repairEgresses).toBe(0)
+    expect(fixture.text).not.toHaveBeenCalled()
+  })
+
+  it.each(['unchanged', 'changed qualifier', 'uncertain', 'malformed', 'source changed', 'provider changed'] as const)(
+    'reuses only complete settled canonical native support groups across a %s repair',
+    async change => {
+      const first = 'The release may ship only after safety approval.'
+      const revised = 'Safety approval is required before the release may ship.'
+      const second = 'The maintenance owner reviews the ledger.'
+      const pages = [
+        questionReadPage(42, '1', 'Release', 'release', 'Rules', 'rules', first),
+        questionReadPage(44, '1', 'Ledger', 'ledger', 'Review', 'review', second)
+      ]
+      const owned = ownedReadFixture((_name, input) => pages.find(page => page.id === questionRecord(input).id)!)
+      let revision = 1
+      let attempt = 0
+      let audits = 0
+      const groups: string[] = []
+      const settledNative: number[] = []
+      const decisionProviders = {
+        selectRuntime: async () => ({ ...(await fixtureDecisionProviders.selectRuntime()), revision }),
+        decideBatch: async (nativeRequest: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]) => {
+          const result = await fixtureDecisionProviders.decideBatch(nativeRequest, options)
+          if (Object.hasOwn(nativeRequest.questions, 'context_readiness')) return result
+          const state = questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state)
+          groups.push(canonicalJson(state.candidate))
+          const answers = { ...result.answers }
+          if (attempt === 1 && (change === 'uncertain' || change === 'malformed')) {
+            const id = Object.keys(nativeRequest.questions)[0]!
+            answers[id] = change === 'uncertain' ? { ...answers[id]!, confidence: 0.8 } : { ...answers[id]!, probabilities: { supports: 1 } }
+          }
+          return {
+            ...result,
+            providerRevision: revision,
+            answers,
+            usage: { inputTokens: 7, outputTokens: 2, totalTokens: 9, totalTokensSource: 'derived' as const },
+            estimatedCostMicros: 2
+          }
+        }
+      }
+      const answer = (input: Readonly<AxChatRequest>) => {
+        attempt++
+        return sourceBoundAnswer(input, [
+          { evidenceId: pages[0]!.citation.evidenceId, sourceText: first, statement: attempt > 1 && change === 'changed qualifier' ? revised : first },
+          { evidenceId: pages[1]!.citation.evidenceId, sourceText: second, statement: second }
+        ])
+      }
+      const fixture = questionFixture(
+        'native',
+        [{ calls: pages.map(page => ({ id: `reuse-read-${page.id}`, name: 'pages.get' as const, arguments: { id: page.id } })) }, { answer }, { answer }],
+        owned.invoke,
+        [],
+        {
+          validateObservation: owned.validateObservation,
+          coverage: async () => {
+            const incomplete = audits++ === 0 && change !== 'uncertain' && change !== 'malformed'
+            return {
+              results: [
+                {
+                  index: 0,
+                  content: JSON.stringify({ verdict: incomplete ? 'incomplete' : 'complete', feedback: incomplete ? 'Retain both source contributions.' : '' }),
+                  finishReason: 'stop'
+                }
+              ]
+            }
+          }
+        },
+        {},
+        decisionProviders
+      )
+      fixture.event.mockImplementation(async (type, data) => {
+        if (type !== 'evidence.provenance' || questionRecord(data).accepted !== false) return
+        if (change === 'source changed') pages[0]!.content += '\nThe source was revised.'
+        if (change === 'provider changed') revision++
+      })
+      let reservationId = 0
+      let settledTokens = 0
+      let settledCostMicros = 0
+      const dispatchBudget = {
+        reserve: vi.fn(async maximum => ({ id: ++reservationId, ...maximum })),
+        release: vi.fn(async () => {}),
+        consumeTool: vi.fn(async () => {}),
+        reconcile: vi.fn(async (_reservation, actual) => {
+          settledTokens += actual.totalTokens
+          settledCostMicros += actual.costMicros
+          if (actual.totalTokens === 9 && actual.costMicros === 2) settledNative.push(actual.totalTokens)
+        })
+      } satisfies NonNullable<AgentEngineRequest['dispatchBudget']>
+      const execution = fixture.execute('Describe the release restriction and the ledger review.', { maxTurns: 4, maxToolCalls: 2 }, dispatchBudget)
+      if (change === 'source changed' || change === 'provider changed') {
+        await expect(execution).rejects.toMatchObject({ code: change === 'source changed' ? 'AGENT_EVIDENCE_INVALID' : 'WIKI_VERIFICATION_FAILED' })
+        expect(fixture.text).not.toHaveBeenCalled()
+        return
+      }
+      const result = await execution
+      const expected = change === 'unchanged' ? 2 : change === 'changed qualifier' ? 3 : 4
+      expect(groups).toHaveLength(expected)
+      expect(settledNative).toHaveLength(expected)
+      expect(
+        fixture.event.mock.calls.filter(([type, data]) => {
+          const record = questionRecord(data)
+          return type === 'model.turn' && record.purpose === 'verification' && questionRecord(record.verification).phase === 'semantic'
+        })
+      ).toHaveLength(expected)
+      expect(result.executionLimit).toBeUndefined()
+      expect(result.totalTokens).toBe(settledTokens)
+      expect(result.costMicros).toBe(settledCostMicros)
+      expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(change === 'changed qualifier' ? revised : first)
+    }
+  )
+
+  it('does not pay to compact discarded active collection during typed repair or history-only finalization', async () => {
+    const fact = 'The release requires safety approval.'
+    const page = questionReadPage(42, '1', 'Release', 'release', 'Rules', 'rules', fact)
+    const userRequest = 'Describe the release restriction.'
+    const historyEntries = [
+      { role: 'user' as const, content: `Earlier question: ${'a'.repeat(3_000)}` },
+      { role: 'assistant' as const, content: `Earlier reply: ${'b'.repeat(3_000)}` },
+      { role: 'user' as const, content: userRequest }
+    ]
+    const historySources = historyEntries.map((entry, index) => ({
+      id: `unused-compaction-message-${index + 1}`,
+      ordinal: index + 1,
+      sourceSha256: agentCompactionSourceDigest({ ...entry, id: `unused-compaction-message-${index + 1}`, ordinal: index + 1 }),
+      groundedExpiresAt: null
+    }))
+    const commitCompaction = vi.fn(async () => {})
+    let audits = 0
+    const fixture = questionFixture(
+      'native',
+      [
+        {
+          // This is discarded collector state, not an oversized original read:
+          // no paid source verification or typed frame needs these bytes.
+          metadata: `COLLECTOR_ONLY_FIRST:${'x'.repeat(40_000)}`,
+          calls: [{ id: 'unused-compaction-read', name: 'pages.get', arguments: { id: 42 } }]
+        },
+        {
+          metadata: `COLLECTOR_ONLY_SECOND:${'y'.repeat(40_000)}`,
+          calls: [{ id: 'unused-compaction-finish', name: 'wiki_finish_collection', arguments: {} }]
+        },
+        { answer: input => sourceBoundAnswer(input, [{ evidenceId: page.citation.evidenceId, sourceText: fact, statement: fact }]) },
+        { answer: input => sourceBoundAnswer(input, [{ evidenceId: page.citation.evidenceId, sourceText: fact, statement: fact }]) }
+      ],
+      () => page,
+      [],
+      {
+        maxContextTokens: 100_000,
+        maxOutputTokens: 8_000,
+        coverage: async () => {
+          const incomplete = audits++ === 0
+          return {
+            results: [
+              {
+                index: 0,
+                content: JSON.stringify({ verdict: incomplete ? 'incomplete' : 'complete', feedback: incomplete ? 'Retain the release restriction.' : '' }),
+                finishReason: 'stop'
+              }
+            ]
+          }
+        }
+      },
+      {
+        messages: historyEntries.map((entry, index) => ({ ...entry, canonicalSource: historySources[index]! })),
+        compaction: { sourcePrefixSha256: agentCompactionSourcePrefixes(historySources), groundedExpiresAt: null }
+      }
+    )
+    const result = await fixture.execute(userRequest, { maxTurns: 4, maxToolCalls: 1, maxOutputTokens: 8_000 }, undefined, commitCompaction)
+    expect(audits).toBe(2)
+    expect(result.executionLimit).toBeUndefined()
+    expect(commitCompaction).not.toHaveBeenCalled()
+    expect(
+      fixture.event.mock.calls.some(
+        ([type, data]) => type === 'model.turn' && ['context_compacted', 'context_compaction_rejected'].includes(String(questionRecord(data).outcome))
+      )
+    ).toBe(false)
+    expect(fixture.providerCalls.filter(input => synthesisSourcesFromRequest(input).length > 0)).toHaveLength(2)
+  })
+
+  it.each(['exact UTF-16 facet', 'malformed facet', 'absent facet'] as const)(
+    'keeps one question copy and preserves the %s unresolved fallback',
+    async metadata => {
+      const userRequest = '🧭 QUESTION_SINGLE_COPY_SENTINEL_31d7 Describe calibration and the two recipients it names.'
+      const detail = 'the two recipients it names'
+      const start = userRequest.indexOf(detail)
+      const fact = 'Calibration requires supervised inspection before live use.'
+      const page = questionReadPage(42, '1', 'Calibration', 'calibration', 'Rules', 'rules', fact)
+      const fixture = questionFixture(
+        'native',
+        [
+          {
+            ...(metadata === 'absent facet'
+              ? {}
+              : {
+                  metadata: `<wiki-request-plan>${JSON.stringify({ facets: [{ start: metadata === 'malformed facet' ? start - 1 : start, end: start + detail.length, quote: detail, coverage: 'source' }] })}</wiki-request-plan>`
+                }),
+            calls: [{ id: 'single-question-read', name: 'pages.get', arguments: { id: 42 } }]
+          },
+          { answer: input => sourceBoundAnswer(input, [{ evidenceId: page.citation.evidenceId, sourceText: fact, statement: fact }], [0]) }
+        ],
+        () => page
+      )
+      const result = await fixture.execute(userRequest, { maxTurns: 4, maxToolCalls: 1 })
+      expect(JSON.stringify(fixture.providerCalls[0]!.chatPrompt).split('QUESTION_SINGLE_COPY_SENTINEL_31d7')).toHaveLength(2)
+      expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
+      const visible = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
+      expect(visible).toContain(metadata === 'exact UTF-16 facet' ? detail : userRequest)
+    }
+  )
 
   type MetadataFixtureMode =
     | 'complete titles'

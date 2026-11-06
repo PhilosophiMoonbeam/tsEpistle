@@ -400,7 +400,7 @@ describe('Ax orchestration stages', () => {
         async decideBatch(input, options) {
           if (!Object.hasOwn(input.questions, 'context_readiness')) {
             if (followup) {
-              const state = JSON.parse(input.state as string) as { evidence: { readId: string }[] }
+              const state = input.state as { evidence: { readId: string }[] }
               supportReadIds.push(...state.evidence.map(read => read.readId))
             }
             return fixtureDecisionProviders.decideBatch(input, options)
@@ -480,7 +480,7 @@ describe('Ax orchestration stages', () => {
         expect(delivered).toEqual([expect.objectContaining({ readText: content, complete: true })])
         expect(chat.mock.calls.slice(followupCallStart)).toHaveLength(1)
         expect(readinessRequests).toHaveLength(1)
-        const state = JSON.parse(readinessRequests[0]!.state as string) as {
+        const state = readinessRequests[0]!.state as {
           evidence: { evidenceId: string; sourceRevision: string; readId: string; source: WikiReadTextReference; authorText: WikiReadTextReference }[]
           readTexts: string[]
           conversationContext: string
@@ -803,7 +803,7 @@ describe('Ax orchestration stages', () => {
       if (collectionRead === 'truncated recent') expect(new Set(fixture.paidReadiness.map(request => JSON.stringify(request))).size).toBe(1)
       expect(fixture.paidReadiness).toHaveLength(collectionRead === 'truncated recent' ? 1 : 2)
       if (collectionRead === 'new complete read') {
-        const state = JSON.parse(fixture.paidReadiness[1]!.state as string) as { evidence: { evidenceId: string }[] }
+        const state = fixture.paidReadiness[1]!.state as { evidence: { evidenceId: string }[] }
         expect(state.evidence.map(read => read.evidenceId)).toContain('page:44:revision:1')
       }
       expect(fixture.budget.consumedTokens).toBe(result.totalTokens)
@@ -4000,7 +4000,7 @@ describe('bounded root publication accounting', () => {
       const semanticVerdicts = rejectFixtureStatements(['Alpha does not require review.'])
       const decisionProviders = {
         selectRuntime: async () => nativeRuntime,
-        decideBatch: async (...args: Parameters<typeof semanticVerdicts.decideBatch>) => {
+        decideBatch: vi.fn(async (...args: Parameters<typeof semanticVerdicts.decideBatch>) => {
           const decision = await semanticVerdicts.decideBatch(...args)
           return {
             ...decision,
@@ -4008,7 +4008,7 @@ describe('bounded root publication accounting', () => {
             estimatedCost: { ...decision.estimatedCost!, amount: nativeCostMicros / 1_000_000 },
             estimatedCostMicros: nativeCostMicros
           }
-        }
+        })
       }
       let attempts = 0
       const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
@@ -4137,7 +4137,7 @@ describe('bounded root publication accounting', () => {
       expect(attempts).toBe(expectedTurns - 1)
       expect(invoke).toHaveBeenCalledOnce()
       expect(budget.tools).toBe(1)
-      const semanticChecks = recentPartial ? 4 : outcome === 'length' ? 0 : outcome === 'first-accepted' ? 1 : 2
+      const semanticChecks = decisionProviders.decideBatch.mock.calls.length
       const coverageChecks = recentPartial || outcome === 'first-accepted' || outcome === 'repaired' ? 1 : 0
       expect(
         event.mock.calls.filter(

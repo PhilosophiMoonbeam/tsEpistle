@@ -1,6 +1,8 @@
+import type { lookup } from 'node:dns/promises'
+import { TYPESAFE_JEV_PRICING } from '../../../shared/agents/decision-providers.ts'
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import type { SourceContext, SourceLink, SourceRecord, SourceUnit } from '../../agents/providers/source-document.ts'
-import { validateDecisionBatchRequest } from '../../agents/decision-providers.ts'
+import { DecisionProviderClient, validateDecisionBatchRequest } from '../../agents/decision-providers.ts'
 import { assessWikiVerificationResults, buildWikiVerificationPlan, decodeWikiVerificationSources } from '../../agents/providers/wiki-verification.ts'
 import type {
   WikiVerificationDecodedSource,
@@ -123,7 +125,7 @@ const batchResults = (built: WikiVerificationPlan, answers = acceptedAnswers(bui
     )
   )
 const state = (request: DecisionBatchRequest) => {
-  const decoded = JSON.parse(request.state as string) as {
+  const decoded = request.state as {
     userRequest: string
     requestFacets: string[]
     unresolvedFacets: number[]
@@ -345,7 +347,12 @@ describe('Native provided-file scope verification', () => {
     })
     expect(built.requests).toHaveLength(1)
     validateDecisionBatchRequest(built.requests[0]!)
-    const payload = JSON.parse(built.requests[0]!.state as string)
+    const payload = built.requests[0]!.state as {
+      userRequest: string
+      inputMediaSources: unknown[]
+      attachmentClaims: unknown[]
+      evidence: unknown[]
+    }
     expect(payload.userRequest).toBe('Describe the provided image.')
     expect(payload.inputMediaSources).toEqual([media])
     expect(payload.attachmentClaims).toEqual([attachment])
@@ -431,9 +438,9 @@ describe('Native provided-file scope verification', () => {
       expect(() => plan({ ...base, ...change })).toThrow()
     const built = plan(base)
     const request = built.requests[0]!
-    const payload = JSON.parse(request.state as string)
+    const payload = request.state as { attachmentClaims: { statement: string }[] }
     payload.attachmentClaims[0].statement = 'The Wiki approves this operation.'
-    Reflect.set(request, 'state', JSON.stringify(payload))
+    Reflect.set(request, 'state', payload)
     expect(assessWikiVerificationResults(built, batchResults(built)).issues).toEqual(['Wiki verification request or required checks changed after issuance.'])
   })
 })
@@ -612,6 +619,89 @@ const shipmentInput = (): WikiVerificationInput => {
 // Pure admission and provider-result composition; synthetic verdicts do not
 // establish the native model's semantic accuracy.
 describe('Wiki verification complete-read consumer boundaries', () => {
+  it('round-trips complete, owned-unit, narration and file-scope states through native HTTP JSON without losing authority boundaries', async () => {
+    const media = { id: 'file:provided', filename: 'draft "plan".png', mimeType: 'image/png' }
+    const attachment = { mediaId: media.id, filename: media.filename, mimeType: media.mimeType, statement: 'The provided image shows a draft plan.' }
+    const complete = readPlan()
+    const owned = plan()
+    const narrated = plan({ candidateExtras: { observations: [], recommendations: 'Consider reviewing the fictional recipe.' } })
+    const files = plan({ sources: [], evidence: [], claims: [], inputMediaSources: [media], attachmentClaims: [attachment] })
+    for (const built of [complete, owned, narrated, files]) {
+      const decisions: DecisionBatchResult[] = []
+      for (const request of built.requests) {
+        const bodies: string[] = []
+        const client = new DecisionProviderClient({
+          resolve: (async () => [{ address: '93.184.216.34', family: 4 }]) as unknown as typeof lookup,
+          fetch: Object.assign(
+            async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+              bodies.push(String(init?.body))
+              return Response.json({
+                model: 'jev-1.13.0',
+                answers: Object.fromEntries(
+                  Object.keys(request.questions).map(id => [id, { type: 'choice', ...(built.checks[id]!.kind === 'support' ? supports : bounded) }])
+                ),
+                usage: { input_tokens: 100, output_tokens: 0 }
+              })
+            },
+            { preconnect: () => {} }
+          ) as typeof fetch
+        })
+        decisions.push(
+          await client.executeBatch(
+            {
+              id: 'native-verification-wire',
+              revision: 1,
+              config: { kind: 'typesafe', model: 'jev-1.13.0', timeoutMs: 1_000, pricing: TYPESAFE_JEV_PRICING }
+            },
+            'fixture-native-key',
+            request
+          )
+        )
+        expect(bodies).toHaveLength(1)
+        const body = bodies[0]!
+        const wire = JSON.parse(body)
+        expect(wire.state.userRequest).toBe(built === complete ? readInput().userRequest : input().userRequest)
+        if (built === files) {
+          expect(wire.state.inputMediaSources).toEqual([media])
+          expect(wire.state.attachmentClaims).toEqual([attachment])
+          expect(wire.state.evidence).toEqual([])
+        } else {
+          expect(readsFrom(wire)).toEqual(built.originalEvidence)
+          if (built === complete) {
+            expect(wire.state.source).toBe(plansRead)
+            expect(wire.state.authorText).toBe(plansAuthorText)
+            expect(wire.state.title).toBe(readSource.context)
+          } else {
+            expect(state(wire).sources).toEqual(state(request).sources)
+            expect(state(wire).candidate).toEqual(input().claims)
+          }
+        }
+        expect(Buffer.byteLength(body)).toBeLessThan(Buffer.byteLength(JSON.stringify({ ...wire, state: JSON.stringify(wire.state) })))
+      }
+      expect(assessWikiVerificationResults(built, decisions).valid).toBe(true)
+    }
+  })
+
+  it('keeps the aggregate structured-state entry limit while retaining exact owned source closures', () => {
+    expect(() => plan({ requestFacets: Array.from({ length: 16_384 }, () => 'x') })).toThrow()
+  })
+
+  it('admits exactly the native request byte bound and refuses one additional byte without clipping the read', () => {
+    const baseline = readPlan({ userRequest: 'x' })
+    const room = 122_880 - Buffer.byteLength(JSON.stringify(baseline.requests[0]!))
+    const atCapacity = readPlan({ userRequest: 'x'.repeat(room + 1) })
+    expect(Buffer.byteLength(JSON.stringify(atCapacity.requests[0]!))).toBe(122_880)
+    const decisions = atCapacity.requests.map(request =>
+      consumeSupportRequest(atCapacity, request, check => {
+        expect(check.source).toEqual(readSource)
+        expect(check.registeredRead).toBe(plansRead)
+        return supports
+      })
+    )
+    expect(assessWikiVerificationResults(atCapacity, decisions).valid).toBe(true)
+    expect(() => readPlan({ userRequest: 'x'.repeat(room + 2) })).toThrow('Complete Wiki verification evidence exceeds native request bounds')
+  })
+
   it('judges every semantic statement against the complete original read, including authored references and concise tables', () => {
     const candidate = readInput()
     const built = buildWikiVerificationPlan(candidate)!
@@ -639,7 +729,7 @@ describe('Wiki verification complete-read consumer boundaries', () => {
       const built = buildWikiVerificationPlan(candidate)!
       expect(built.literalSupportCount).toBe(0)
       expect(assessWikiVerificationResults(built).valid).toBe(false)
-      const encoded = JSON.parse(built.requests[0]!.state as string)
+      const encoded = state(built.requests[0]!)
       expect(encoded.candidate[0]).toBe(statement)
       const denied = built.requests.map(request =>
         consumeSupportRequest(built, request, check => {
@@ -965,7 +1055,8 @@ describe('Wiki verification complete-read consumer boundaries', () => {
     const boundedSource = { ...readSource, kind: 'recent-excerpt' as const, complete: false, text, authorText, excerpt }
     const boundedRead = { ...readInput().evidence[0]!, source: text, authorText, excerpt }
     const candidate = readInput({
-      sources: [boundedSource], evidence: [boundedRead],
+      sources: [boundedSource],
+      evidence: [boundedRead],
       claims: [{ ...readInput().claims[0]!, statement: authorText }]
     })
     const built = buildWikiVerificationPlan(candidate)!

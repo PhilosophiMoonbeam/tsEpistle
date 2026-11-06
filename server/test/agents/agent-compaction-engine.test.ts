@@ -499,10 +499,9 @@ describe('Ax agent engine context compaction', () => {
         ],
         invoke: async () => searchOutput,
         validateObservation: async (actionName, output, signal) =>
-          !signal.aborted && (
-            (actionName === 'pages.applyProposal' && JSON.stringify(output) === JSON.stringify(receipt)) ||
-            (actionName === 'pages.search' && JSON.stringify(output) === JSON.stringify(searchOutput))
-          ),
+          !signal.aborted &&
+          ((actionName === 'pages.applyProposal' && JSON.stringify(output) === JSON.stringify(receipt)) ||
+            (actionName === 'pages.search' && JSON.stringify(output) === JSON.stringify(searchOutput))),
         snapshot: async () => ({}),
         close: () => undefined
       })
@@ -1925,22 +1924,22 @@ ${sourceUnit}`,
       })
     }
     const text = vi.fn(async () => undefined)
-    const result = await new AxAgentEngine(factory, actions, undefined, {
-      decisionProviders: rejectFixtureStatements(['Alpha release does not require a staging receipt.'])
-    }).execute(
-      {
-        ...engineRequest(history.messages),
-        run: { ...engineRequest(history.messages).run, executionMode: 'agent' },
-        research: { packets: [], incompleteTasks: [], evidenceSeeds: [seed] }
-      },
-      { text, event: async () => undefined }
-    )
+    await expect(
+      new AxAgentEngine(factory, actions, undefined, {
+        decisionProviders: rejectFixtureStatements(['Alpha release does not require a staging receipt.'])
+      }).execute(
+        {
+          ...engineRequest(history.messages),
+          run: { ...engineRequest(history.messages).run, executionMode: 'agent' },
+          research: { packets: [], incompleteTasks: [], evidenceSeeds: [seed] }
+        },
+        { text, event: async () => undefined }
+      )
+    ).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
 
     expect(synthesisSourcesFromRequest(calls[1]!)).toEqual(expect.arrayContaining([expect.objectContaining({ evidenceId, text: seed.output.content })]))
-    expect(calls.at(-1)?.chatPrompt.every(message => typeof message.content !== 'string' || !message.content.includes(sourceUnit))).toBe(true)
-    expect(text.mock.calls.flat().join('')).not.toContain('Alpha release does not require a staging receipt.')
-    expect(result.citations).toBeUndefined()
-    expect(result).toMatchObject({ inputTokens: 503, outputTokens: 52, totalTokens: 555, costMicros: 607 })
+    expect(calls).toHaveLength(2)
+    expect(text).not.toHaveBeenCalled()
     expect(validateObservation).toHaveBeenCalledWith('pages.get', seed.output, expect.any(AbortSignal))
   })
 
@@ -2269,8 +2268,7 @@ ${sourceUnit}`,
           ownedSnapshots.add(JSON.stringify(page))
           return page
         },
-        validateObservation: async (name, output, signal) =>
-          !signal.aborted && name === 'pages.get' && ownedSnapshots.has(JSON.stringify(output)),
+        validateObservation: async (name, output, signal) => !signal.aborted && name === 'pages.get' && ownedSnapshots.has(JSON.stringify(output)),
         snapshot: async () => ({}),
         close: async () => undefined,
         authoritySha256: 'f'.repeat(64)

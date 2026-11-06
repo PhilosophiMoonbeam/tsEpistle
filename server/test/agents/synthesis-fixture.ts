@@ -42,15 +42,15 @@ export const fixtureDecisionProviders = {
     await options.onPreDispatch?.()
     const answers: Record<string, DecisionBatchResult['answers'][string]> = {}
     for (const [id, question] of Object.entries(request.questions)) {
-      const label = Object.keys(question.criteria).find(label => label === 'collect' || label === 'other' || label === 'supports' || label === 'complete' || label === 'bounded')
+      const label = Object.keys(question.criteria).find(
+        label => label === 'collect' || label === 'other' || label === 'supports' || label === 'complete' || label === 'bounded'
+      )
       if (label === undefined) throw new Error(`Fixture decision provider has no supported mock criterion for question ${id}`)
       const probabilities: Record<string, number> = Object.fromEntries(Object.keys(question.criteria).map(key => [key, key === label ? 1 : 0]))
       answers[id] = { choice: label, probabilities, confidence: 1 }
     }
     const pricing = provider.config.kind === 'typesafe' ? provider.config.pricing : null
-    const amount = pricing
-      ? (0 / 1_000_000) * pricing.inputPerMillion + (0 / 1_000_000) * pricing.outputPerMillion + pricing.perRequest
-      : 0
+    const amount = pricing ? (0 / 1_000_000) * pricing.inputPerMillion + (0 / 1_000_000) * pricing.outputPerMillion + pricing.perRequest : 0
     options.onRequestDispatched?.()
     return {
       providerId: provider.id,
@@ -59,7 +59,13 @@ export const fixtureDecisionProviders = {
       answers,
       usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, totalTokensSource: 'derived' },
       latencyMs: 0,
-      estimatedCost: pricing && { currency: pricing.currency, amount, pricingRevision: pricing.revision, source: pricing.source, verifiedAt: pricing.verifiedAt },
+      estimatedCost: pricing && {
+        currency: pricing.currency,
+        amount,
+        pricingRevision: pricing.revision,
+        source: pricing.source,
+        verifiedAt: pricing.verifiedAt
+      },
       estimatedCostMicros: pricing ? Math.round(amount * 1_000_000) : null
     }
   }
@@ -74,13 +80,18 @@ export const rejectFixtureStatements = (statements: readonly string[]) => ({
     const decision = await fixtureDecisionProviders.decideBatch(input, options)
     const supportQuestions = Object.entries(input.questions).filter(([, question]) => Object.hasOwn(question.criteria, 'supports'))
     if (supportQuestions.length === 0) return decision
-    const state = JSON.parse(input.state as string) as { candidate: readonly (string | { statement: string })[] }
+    const state = input.state as { candidate: readonly (string | { statement: string })[] }
     const answers = { ...decision.answers }
     for (const [id, question] of supportQuestions) {
       const instructions = question.instructions
-      if (typeof instructions !== 'object' || instructions === null || Array.isArray(instructions) ||
+      if (
+        typeof instructions !== 'object' ||
+        instructions === null ||
+        Array.isArray(instructions) ||
         !('candidate_index' in instructions) ||
-        typeof instructions.candidate_index !== 'number' || !Number.isSafeInteger(instructions.candidate_index))
+        typeof instructions.candidate_index !== 'number' ||
+        !Number.isSafeInteger(instructions.candidate_index)
+      )
         throw new Error(`Fixture support question lacks its independent candidate index: ${id}`)
       const claim = state.candidate[instructions.candidate_index]
       if (claim === undefined) throw new Error(`Fixture support question selects a missing candidate: ${id}`)
@@ -92,7 +103,7 @@ export const rejectFixtureStatements = (statements: readonly string[]) => ({
 })
 
 const coverageRecord = (value: unknown): Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}
+  typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 
 const isCoverageFixtureRequest = (request: Readonly<AxChatRequest>): boolean => {
   const format = coverageRecord(request.responseFormat)
@@ -100,48 +111,59 @@ const isCoverageFixtureRequest = (request: Readonly<AxChatRequest>): boolean => 
   const output = request.functions?.find(fn => fn.name === '__axOutput')?.parameters
   const properties = coverageRecord(coverageRecord(native.properties).verdict ? native.properties : coverageRecord(output).properties)
   if (Object.hasOwn(properties, 'verdict') && Object.hasOwn(properties, 'feedback')) return true
-  return request.chatPrompt.some(message => typeof message.content === 'string' &&
-    message.content.includes('Verdict') && message.content.includes('Feedback'))
+  return request.chatPrompt.some(message => typeof message.content === 'string' && message.content.includes('Verdict') && message.content.includes('Feedback'))
 }
 
 export const fullAxFixtureService = (
   chat: AxAIService['chat'],
   options: { readonly model?: string; readonly streaming?: boolean; readonly structuredOutput?: boolean; readonly coverage?: AxAIService['chat'] } = {}
-): AxAIService => new AxMockAIService({
-  name: 'Wiki fixture',
-  modelInfo: { name: options.model ?? 'gpt-test' },
-  features: {
-    functions: true,
-    streaming: options.streaming ?? false,
-    structuredOutputs: options.structuredOutput ?? true,
-    structuredOutputModes: options.structuredOutput === false ? [] : ['native']
-  },
-  chatResponse: async (request, chatOptions) => {
-    // This is the scripted HTTP entry, after host admission/source checks.
-    // A lost reply or interrupted stream must still retain paid exposure.
-    const hostOptions = chatOptions as Readonly<AgentProviderChatOptions> | undefined
-    hostOptions?.onRequestDispatched?.()
-    if (!isCoverageFixtureRequest(request)) return chat(request, chatOptions)
-    if (options.coverage !== undefined) return options.coverage(request, chatOptions)
-    return {
-      results: [{ index: 0, content: request.responseFormat === undefined && (request.functions?.length ?? 0) === 0
-        ? 'Verdict: complete' : JSON.stringify({ verdict: 'complete', feedback: '' }), finishReason: 'stop' }],
-      modelUsage: { ai: 'fixture', model: options.model ?? 'gpt-test',
-        tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } }
+): AxAIService =>
+  new AxMockAIService({
+    name: 'Wiki fixture',
+    modelInfo: { name: options.model ?? 'gpt-test' },
+    features: {
+      functions: true,
+      streaming: options.streaming ?? false,
+      structuredOutputs: options.structuredOutput ?? true,
+      structuredOutputModes: options.structuredOutput === false ? [] : ['native']
+    },
+    chatResponse: async (request, chatOptions) => {
+      // This is the scripted HTTP entry, after host admission/source checks.
+      // A lost reply or interrupted stream must still retain paid exposure.
+      const hostOptions = chatOptions as Readonly<AgentProviderChatOptions> | undefined
+      hostOptions?.onRequestDispatched?.()
+      if (!isCoverageFixtureRequest(request)) return chat(request, chatOptions)
+      if (options.coverage !== undefined) return options.coverage(request, chatOptions)
+      return {
+        results: [
+          {
+            index: 0,
+            content:
+              request.responseFormat === undefined && (request.functions?.length ?? 0) === 0
+                ? 'Verdict: complete'
+                : JSON.stringify({ verdict: 'complete', feedback: '' }),
+            finishReason: 'stop'
+          }
+        ],
+        modelUsage: { ai: 'fixture', model: options.model ?? 'gpt-test', tokens: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } }
+      }
     }
-  }
-})
+  })
 
 export const synthesisInputFromRequest = (request: Readonly<AxChatRequest>): string | undefined => {
   if ((request.functions?.length ?? 0) > 0) return undefined
-  const content = request.chatPrompt.filter(message => message.role === 'user' &&
-    (typeof message.content === 'string' || Array.isArray(message.content))).map(message =>
-    typeof message.content === 'string'
-      ? message.content
-      : message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
-  ).join('\n\n')
-  if (/^Source Text: /u.test(content) && content.includes('\n\nSource References: ') && content.includes('\n\nUser Request: '))
-    return `\n\n${content}`
+  const content = request.chatPrompt
+    .filter(message => message.role === 'user' && (typeof message.content === 'string' || Array.isArray(message.content)))
+    .map(message =>
+      typeof message.content === 'string'
+        ? message.content
+        : message.content
+            .filter(part => part.type === 'text')
+            .map(part => part.text)
+            .join('\n')
+    )
+    .join('\n\n')
+  if (/^Source Text: /u.test(content) && content.includes('\n\nSource References: ') && content.includes('\n\nUser Request: ')) return `\n\n${content}`
   return undefined
 }
 
@@ -149,9 +171,10 @@ const synthesisFieldText = (input: string, title: string): string => {
   const start = input.lastIndexOf(`\n\n${title}: `)
   if (start < 0) throw new Error(`Missing supplied synthesis ${title} field`)
   const value = input.slice(start + title.length + 4)
-  const end = title === 'Source Text'
-    ? value.lastIndexOf('\n\nSource References: ')
-    : value.search(/\n\n(?:Input Media References|Conversation Context|User Request|Request Facets|Available Observations|Repair Feedback): /u)
+  const end =
+    title === 'Source Text'
+      ? value.lastIndexOf('\n\nSource References: ')
+      : value.search(/\n\n(?:Input Media References|Conversation Context|User Request|Request Facets|Available Observations|Repair Feedback): /u)
   return end < 0 ? value : value.slice(0, end)
 }
 
@@ -181,22 +204,28 @@ export const synthesisReadsFromRequest = (request: Readonly<AxChatRequest>): Syn
   const headers = [...sourceText.matchAll(/(?:^|\n\n)SOURCE READ (d\d+) ([^\n]+)\n/gu)]
   return headers.map((header, index) => {
     const metadata: unknown = JSON.parse(header[2]!)
-    if (metadata === null || typeof metadata !== 'object' || Array.isArray(metadata))
-      throw new Error('Invalid supplied synthesis read metadata')
+    if (metadata === null || typeof metadata !== 'object' || Array.isArray(metadata)) throw new Error('Invalid supplied synthesis read metadata')
     const row = metadata as Record<string, unknown>
-    if (typeof row.evidenceId !== 'string' || typeof row.revision !== 'string' ||
-      row.title !== null && typeof row.title !== 'string' || typeof row.representation !== 'string' ||
-      row.status !== 'full' && row.status !== 'truncated')
+    if (
+      typeof row.evidenceId !== 'string' ||
+      typeof row.revision !== 'string' ||
+      (row.title !== null && typeof row.title !== 'string') ||
+      typeof row.representation !== 'string' ||
+      (row.status !== 'full' && row.status !== 'truncated')
+    )
       throw new Error('Invalid supplied synthesis read identity')
     const bodyStart = header.index! + header[0].length
     const nextStart = headers[index + 1]?.index ?? sourceText.length
     const footer = `\nEND SOURCE READ ${header[1]}`
     const bodyEnd = sourceText.lastIndexOf(footer, nextStart)
-    if (bodyEnd < bodyStart || bodyEnd + footer.length > nextStart)
-      throw new Error('Missing supplied synthesis read footer')
+    if (bodyEnd < bodyStart || bodyEnd + footer.length > nextStart) throw new Error('Missing supplied synthesis read footer')
     return {
-      readRef: header[1]!, evidenceId: row.evidenceId, sourceRevision: row.revision,
-      title: row.title, representation: row.representation, complete: row.status === 'full',
+      readRef: header[1]!,
+      evidenceId: row.evidenceId,
+      sourceRevision: row.revision,
+      title: row.title,
+      representation: row.representation,
+      complete: row.status === 'full',
       readText: sourceText.slice(bodyStart, bodyEnd),
       ...(row.excerpt === undefined ? {} : { excerpt: row.excerpt as WikiSynthesisSource['excerpt'] })
     }
@@ -208,31 +237,33 @@ export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): S
   if (input === undefined) return []
   const reads = new Map(synthesisReadsFromRequest(request).map(read => [read.readRef, read]))
   const references = synthesisField(input, 'Source References')
-  if (references === null || typeof references !== 'object' || Array.isArray(references))
-    throw new Error('Supplied synthesis references are not an index')
+  if (references === null || typeof references !== 'object' || Array.isArray(references)) throw new Error('Supplied synthesis references are not an index')
   const index = references as Record<string, unknown>
   if (index.reads === null || typeof index.reads !== 'object' || Array.isArray(index.reads))
     throw new Error('Supplied synthesis references require a read dictionary')
   return Object.entries(index.reads).map(([sourceRef, row]) => {
-    if (!/^s[A-Za-z0-9_-]{16}$/u.test(sourceRef) ||
-      row === null || typeof row !== 'object' || Array.isArray(row))
+    if (!/^s[A-Za-z0-9_-]{16}$/u.test(sourceRef) || row === null || typeof row !== 'object' || Array.isArray(row))
       throw new Error('Invalid supplied synthesis read reference')
     const source = row as Record<string, unknown>
-    if (typeof source.readRef !== 'string' || typeof source.evidenceId !== 'string' ||
+    if (
+      typeof source.readRef !== 'string' ||
+      typeof source.evidenceId !== 'string' ||
       typeof source.sourceRevision !== 'string' ||
-      Object.keys(source).some(key => !['readRef', 'evidenceId', 'sourceRevision'].includes(key)))
+      Object.keys(source).some(key => !['readRef', 'evidenceId', 'sourceRevision'].includes(key))
+    )
       throw new Error('Invalid supplied synthesis read locator')
     const read = reads.get(source.readRef)
     if (read === undefined || (!read.complete && read.excerpt?.representation !== 'recent-excerpt') || read.sourceRevision !== source.sourceRevision)
       throw new Error('Missing or incompatible supplied synthesis read')
     return {
-      ...read, sourceRef, evidenceId: source.evidenceId,
-      text: read.readText, kind: read.complete ? 'source-read' as const : 'recent-excerpt' as const
+      ...read,
+      sourceRef,
+      evidenceId: source.evidenceId,
+      text: read.readText,
+      kind: read.complete ? ('source-read' as const) : ('recent-excerpt' as const)
     }
   })
 }
-
-
 
 export const synthesisObservationsFromRequest = (request: Readonly<AxChatRequest>): readonly string[] => {
   const input = synthesisInputFromRequest(request)
@@ -245,22 +276,27 @@ export const synthesisObservationsFromRequest = (request: Readonly<AxChatRequest
 
 export const synthesisCollectionControl = (request: Readonly<AxChatRequest>): AxChatResponse | undefined => {
   const native = request.functions?.some(tool => tool.name === 'wiki_finish_collection') === true
-  const prompt = request.chatPrompt.some(message =>
-    message.role === 'system' &&
-    /<wiki-tool-call>\s*\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{\s*\}\s*\}\s*<\/wiki-tool-call>/u.test(message.content) &&
-    /"name"\s*:\s*"wiki_finish_collection"\s*,\s*"description"\s*:\s*"(?:[^"\\]|\\.)*"\s*,\s*"parameters"\s*:\s*\{/u.test(message.content)
+  const prompt = request.chatPrompt.some(
+    message =>
+      message.role === 'system' &&
+      /<wiki-tool-call>\s*\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{\s*\}\s*\}\s*<\/wiki-tool-call>/u.test(message.content) &&
+      /"name"\s*:\s*"wiki_finish_collection"\s*,\s*"description"\s*:\s*"(?:[^"\\]|\\.)*"\s*,\s*"parameters"\s*:\s*\{/u.test(message.content)
   )
   if (!native && !prompt) return undefined
   return {
-    results: [native ? {
-      index: 0,
-      finishReason: 'function_call',
-      functionCalls: [{ id: 'fixture-finish-collection', type: 'function', function: { name: 'wiki_finish_collection', params: '{}' } }]
-    } : {
-      index: 0,
-      finishReason: 'stop',
-      content: '<wiki-tool-call>{"name":"wiki_finish_collection","arguments":{}}</wiki-tool-call>'
-    }],
+    results: [
+      native
+        ? {
+            index: 0,
+            finishReason: 'function_call',
+            functionCalls: [{ id: 'fixture-finish-collection', type: 'function', function: { name: 'wiki_finish_collection', params: '{}' } }]
+          }
+        : {
+            index: 0,
+            finishReason: 'stop',
+            content: '<wiki-tool-call>{"name":"wiki_finish_collection","arguments":{}}</wiki-tool-call>'
+          }
+    ],
     modelUsage: {
       ai: 'Wiki fixture',
       model: String(request.model ?? 'gpt-test'),
@@ -286,10 +322,7 @@ export interface SynthesisFixtureAnswer {
 
 // This producer only changes the output format. Statements and citation choices
 // are independently supplied by each test; source text never becomes an answer.
-export const synthesisFixtureAnswer = (
-  request: Readonly<AxChatRequest>,
-  fixture: string | SynthesisFixtureAnswer
-): string => {
+export const synthesisFixtureAnswer = (request: Readonly<AxChatRequest>, fixture: string | SynthesisFixtureAnswer): string => {
   const input = synthesisInputFromRequest(request)
   if (input === undefined) {
     if (typeof fixture !== 'string') throw new Error('Typed fixture supplied outside the synthesis stage')
@@ -312,19 +345,33 @@ export const synthesisFixtureAnswer = (
   } else answer = fixture
   const claims = answer.claims.map(claim => {
     const revision = claim.sourceRevision ?? /:revision:([^:]+)/u.exec(claim.evidenceId)?.[1]
-    const explicitRef = claim.sourceRef ?? (claim.unitId === undefined ? undefined : wikiSynthesisSourceRef({
-      evidenceId: claim.evidenceId, sourceRevision: revision ?? 'fixture-unknown-revision', unitId: claim.unitId
-    }))
+    const explicitRef =
+      claim.sourceRef ??
+      (claim.unitId === undefined
+        ? undefined
+        : wikiSynthesisSourceRef({
+            evidenceId: claim.evidenceId,
+            sourceRevision: revision ?? 'fixture-unknown-revision',
+            unitId: claim.unitId
+          }))
     const ownerId = claim.evidenceId.replace(/:section:\d+$/u, '')
-    const candidates = sources.filter(source => (source.evidenceId === ownerId || source.evidenceId === claim.evidenceId) &&
-      (revision === undefined || source.sourceRevision === revision) && (explicitRef === undefined || source.sourceRef === explicitRef))
-    if (candidates.length > 1 && explicitRef === undefined)
-      throw new Error(`Select an explicit physical read for fixture citation ${claim.evidenceId}`)
+    const candidates = sources.filter(
+      source =>
+        (source.evidenceId === ownerId || source.evidenceId === claim.evidenceId) &&
+        (revision === undefined || source.sourceRevision === revision) &&
+        (explicitRef === undefined || source.sourceRef === explicitRef)
+    )
+    if (candidates.length > 1 && explicitRef === undefined) throw new Error(`Select an explicit physical read for fixture citation ${claim.evidenceId}`)
     const source = candidates.length === 1 ? candidates[0] : undefined
     return {
-      sourceRef: explicitRef ?? source?.sourceRef ?? wikiSynthesisSourceRef({
-        evidenceId: claim.evidenceId, sourceRevision: revision ?? 'fixture-unknown-revision', unitId: 'fixture-unknown-unit'
-      }),
+      sourceRef:
+        explicitRef ??
+        source?.sourceRef ??
+        wikiSynthesisSourceRef({
+          evidenceId: claim.evidenceId,
+          sourceRevision: revision ?? 'fixture-unknown-revision',
+          unitId: 'fixture-unknown-unit'
+        }),
       statement: claim.statement
     }
   })

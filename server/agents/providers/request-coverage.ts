@@ -24,7 +24,7 @@ export interface RootResponseMetadata {
 }
 
 export const ROOT_REQUEST_COVERAGE_INSTRUCTIONS = `Optional internal root response metadata:
-1. For scope-dependent completeness or evidence gaps, you may prepend <wiki-request-plan>{"facets":[{"start":0,"end":7,"quote":"Example","coverage":"source"}]}</wiki-request-plan> to your FIRST ordinary response only, alongside native calls or before a prompt tool envelope. Use exact current-user request substrings and the host-provided whole-request anchor when needed; example values apply only to a matching request. Use half-open UTF-16 indices with quotes matching their slices, 1–16 nonempty facets, and at most 4 KiB including the envelope. Never truncate or narrow the request to fit. The plan is then frozen.
+1. For scope-dependent completeness or evidence gaps, you may prepend <wiki-request-plan>{"facets":[{"start":0,"end":7,"quote":"Example","coverage":"source"}]}</wiki-request-plan> to your FIRST ordinary response only, alongside native calls or before a prompt tool envelope. Use exact substrings of the original current-user message; example values apply only to a matching request. Use half-open UTF-16 indices with quotes matching their slices, 1–16 nonempty facets, and at most 4 KiB including the envelope. Never truncate or narrow the request to fit. The plan is then frozen.
 2. Use "source" for ordinary content questions, including incidental recent-page research. Use "recent-window" only for a requested bounded recent listing or recap. The next successfully delivered root recent window binds the next such facet in request order; cover every row. Retrieved evidence does not expand the request.
 3. Only for a no-call answer, prepend <wiki-answer-coverage>{"unresolved":[0]}</wiki-answer-coverage> for requested details not established by eligible cited evidence. List only unique unresolved facet indices. Keep all supported requested details in independently cited, source-faithful prose; do not replace them with a limitation. Put unverified requested details in metadata, not unsupported claims that a page or Wiki lacks them. The host separately renders the exact quoted request limitation; never write or imitate its notice prose.
 4. Metadata envelopes must be leading, unique, closed, and ordered plan then coverage. Coverage never accompanies actions. Native calls remain native; for prompt actions, the remainder must be exactly one ordinary wiki-tool-call envelope. Add no notice fields. For answers, place the ordinary answer after metadata.
@@ -35,7 +35,14 @@ const exactKeys = (value: Record<string, unknown>, keys: readonly string[]): boo
   Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key))
 
 const requestPlan = (value: unknown, userRequest: string): readonly RootRequestFacet[] | undefined => {
-  if (!objectValue(value) || !exactKeys(value, ['facets']) || !Array.isArray(value.facets) || value.facets.length < 1 || value.facets.length > MAX_REQUEST_FACETS) return undefined
+  if (
+    !objectValue(value) ||
+    !exactKeys(value, ['facets']) ||
+    !Array.isArray(value.facets) ||
+    value.facets.length < 1 ||
+    value.facets.length > MAX_REQUEST_FACETS
+  )
+    return undefined
   const facets: RootRequestFacet[] = []
   for (const facet of value.facets) {
     if (
@@ -51,7 +58,8 @@ const requestPlan = (value: unknown, userRequest: string): readonly RootRequestF
       typeof facet.quote !== 'string' ||
       userRequest.slice(facet.start, facet.end) !== facet.quote ||
       (facet.coverage !== 'source' && facet.coverage !== 'recent-window')
-    ) return undefined
+    )
+      return undefined
     facets.push(Object.freeze({ start: facet.start, end: facet.end, quote: facet.quote, coverage: facet.coverage }))
   }
   return Object.freeze(facets)
@@ -67,7 +75,8 @@ const answerCoverage = (value: unknown, facetCount: number | undefined): readonl
     !exactKeys(value, ['unresolved']) ||
     !Array.isArray(value.unresolved) ||
     value.unresolved.length > facetCount
-  ) return undefined
+  )
+    return undefined
   const indices = new Set<number>()
   for (const index of value.unresolved) {
     if (typeof index !== 'number' || !Number.isSafeInteger(index) || index < 0 || index >= facetCount || indices.has(index)) return undefined

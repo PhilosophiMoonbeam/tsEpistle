@@ -28,7 +28,13 @@ interface WikiVerificationSourceFields {
 export type WikiVerificationSource = WikiVerificationSourceFields &
   (
     | { readonly kind: SourceUnit['kind'] | 'page-title'; readonly readId?: never; readonly authorText?: never }
-    | { readonly kind: 'source-read' | 'recent-excerpt'; readonly readId: string; readonly authorText: string; readonly closure: null; readonly excerpt?: WikiSynthesisSource['excerpt'] }
+    | {
+        readonly kind: 'source-read' | 'recent-excerpt'
+        readonly readId: string
+        readonly authorText: string
+        readonly closure: null
+        readonly excerpt?: WikiSynthesisSource['excerpt']
+      }
   )
 
 /** Expanded native source, including the existing lightweight narration form. */
@@ -138,7 +144,8 @@ export const decodeWikiVerificationSources = (sources: readonly unknown[], readT
       typeof decoded.complete !== 'boolean'
     )
       invalid('malformed expanded native source')
-    if (decoded.kind === 'source-read' || decoded.kind === 'recent-excerpt' || Object.hasOwn(decoded, 'closure')) validateWikiVerificationSource(decoded as unknown as WikiVerificationSource)
+    if (decoded.kind === 'source-read' || decoded.kind === 'recent-excerpt' || Object.hasOwn(decoded, 'closure'))
+      validateWikiVerificationSource(decoded as unknown as WikiVerificationSource)
     else if (!Object.hasOwn(decoded, 'ownership')) invalid('native source lacks its closure or narration ownership')
     return decoded as unknown as WikiVerificationDecodedSource
   })
@@ -239,15 +246,27 @@ export const validateWikiVerificationSource = (source: WikiVerificationSource): 
       invalid('a read-scoped claim requires its complete exact physical read binding without a unit closure')
     if (source.kind === 'recent-excerpt') {
       const excerpt = source.excerpt!
-      if (!plain(excerpt) || typeof excerpt.representationMetadata !== 'string')
-        invalid('a bounded excerpt requires explicit original representation metadata')
+      if (!plain(excerpt) || typeof excerpt.representationMetadata !== 'string') invalid('a bounded excerpt requires explicit original representation metadata')
       let metadata: unknown
-      try { metadata = JSON.parse(excerpt.representationMetadata) } catch { invalid('a bounded excerpt requires its original representation metadata') }
-      if (excerpt.representation !== 'recent-excerpt' || !plain(metadata) || metadata.contentTruncated !== true ||
-        !Number.isSafeInteger(metadata.sourceContentCharacters) || (metadata.sourceContentCharacters as number) <= source.text.length ||
-        typeof metadata.updatedAt !== 'string' || !Number.isFinite(Date.parse(metadata.updatedAt)) ||
-        !Array.isArray(excerpt.readReceipts) || excerpt.readReceipts.length === 0 ||
-        excerpt.readReceipts.some(receipt => !plain(receipt) || typeof receipt.actionCallId !== 'string' || !receipt.actionCallId || receipt.actionName !== 'pages.listRecent'))
+      try {
+        metadata = JSON.parse(excerpt.representationMetadata)
+      } catch {
+        invalid('a bounded excerpt requires its original representation metadata')
+      }
+      if (
+        excerpt.representation !== 'recent-excerpt' ||
+        !plain(metadata) ||
+        metadata.contentTruncated !== true ||
+        !Number.isSafeInteger(metadata.sourceContentCharacters) ||
+        (metadata.sourceContentCharacters as number) <= source.text.length ||
+        typeof metadata.updatedAt !== 'string' ||
+        !Number.isFinite(Date.parse(metadata.updatedAt)) ||
+        !Array.isArray(excerpt.readReceipts) ||
+        excerpt.readReceipts.length === 0 ||
+        excerpt.readReceipts.some(
+          receipt => !plain(receipt) || typeof receipt.actionCallId !== 'string' || !receipt.actionCallId || receipt.actionName !== 'pages.listRecent'
+        )
+      )
         invalid('a bounded excerpt requires exact truncation metadata and a recent-read receipt')
     }
     return
@@ -539,7 +558,7 @@ export const buildWikiVerificationPlan = (input: WikiVerificationInput): WikiVer
     narration = false
   ): void => {
     const completeRead = !narration && isCompleteReadState(selected, reads)
-    let state: DecisionJson
+    let state: DecisionBatchRequest['state']
     if (completeRead) {
       const source = selected[0]!
       if (source.kind !== 'source-read') invalid('complete-read state lacks its validated source')
@@ -552,7 +571,7 @@ export const buildWikiVerificationPlan = (input: WikiVerificationInput): WikiVer
         evidence: reads.map(({ evidenceId, sourceRevision, readId }) => ({ evidenceId, sourceRevision, readId })),
         policy: completeReadPolicy,
         visibilityPolicy: completeReadVisibilityPolicy
-      })
+      }) as DecisionBatchRequest['state']
     } else {
       const transport = packWikiReadTexts(reads.map(read => read.source))
       const legacyState = json({
@@ -608,7 +627,7 @@ export const buildWikiVerificationPlan = (input: WikiVerificationInput): WikiVer
       internWikiVerificationTexts(legacyState.sources, legacyState.readTexts, legacyState.evidence, legacyState.candidate)
       state = legacyState
     }
-    const request: DecisionBatchRequest = { state: JSON.stringify(state), questions }
+    const request: DecisionBatchRequest = { state, questions }
     try {
       validateDecisionBatchRequest(request)
     } catch (error) {
@@ -708,7 +727,7 @@ candidateExtras retains unchanged observations and recommendations. candidate re
         'Apply attachmentScopePolicy to every attachmentClaims statement and its exact host-bound file in the unchanged original userRequest. Judge scope only, not pixel or document truth.',
       criteria: attachmentScopeCriteria
     }
-    const standalone: DecisionBatchRequest = { state: JSON.stringify({ ...scope, evidence: [] }), questions: { [id]: question } }
+    const standalone: DecisionBatchRequest = { state: json({ ...scope, evidence: [] }) as DecisionBatchRequest['state'], questions: { [id]: question } }
     // Keep the two authority questions in distinct native contexts. Combining
     // Wiki support/framing policy with file scope makes genuine file descriptions
     // compete with a Wiki-only evidence requirement; neither verdict may replace
