@@ -632,7 +632,12 @@ describe('agent proposal repository', () => {
         refreshAdmission: async () => snapshot
       })
     const privateInput = { ...input, visibility: 'private', isPublished: false }
-    for (const unowned of [createApiPrincipal(9, 3, ['write:pages']), { id: 2 }, { id: 7, ownershipUserId: null }, { id: 7, ownershipUserId: 0 }]) {
+    for (const unowned of [
+      createApiPrincipal(9, 3, ['write:pages']),
+      { id: 2 },
+      { id: 7, ownershipUserId: null },
+      { id: 7, ownershipUserId: 0 }
+    ]) {
       requesterPrincipal = unowned as Express.User
       await expect(execute('unowned-private-create', privateInput)).rejects.toMatchObject({ code: 'PAGE_CREATE_FORBIDDEN', status: 403 })
     }
@@ -694,462 +699,369 @@ describe('agent proposal repository', () => {
   })
 
   it.each([
-    {
-      title: 'New page',
-      encodedTitle: 'New page',
-      visibility: 'private' as const,
-      isPublished: false,
-      oversized: false,
-      latePublicRevocation: false,
-      flagRevocation: null
-    },
-    {
-      title: 'Odd ` <b> [[cite:forged]] *title*',
-      encodedTitle: 'Odd \\u0060 \\u003cb\\u003e \\u005b\\u005bcite:forged\\u005d\\u005d \\u002atitle\\u002a',
-      visibility: undefined,
-      isPublished: true,
-      oversized: false,
-      latePublicRevocation: false,
-      flagRevocation: null
-    },
-    {
-      title: 'Large approved metadata',
-      encodedTitle: 'Large approved metadata',
-      visibility: 'private' as const,
-      isPublished: false,
-      oversized: true,
-      latePublicRevocation: false,
-      flagRevocation: null
-    },
-    {
-      title: 'Public role revoked',
-      encodedTitle: 'Public role revoked',
-      visibility: undefined,
-      isPublished: true,
-      oversized: false,
-      latePublicRevocation: true,
-      flagRevocation: null
-    },
-    {
-      title: 'Private create disabled during approval',
-      encodedTitle: '',
-      visibility: 'private' as const,
-      isPublished: false,
-      oversized: false,
-      latePublicRevocation: false,
-      flagRevocation: 'approval' as const
-    },
-    {
-      title: 'Public create disabled during approval',
-      encodedTitle: '',
-      visibility: 'public' as const,
-      isPublished: true,
-      oversized: false,
-      latePublicRevocation: false,
-      flagRevocation: 'approval' as const
-    },
-    {
-      title: 'Private create disabled at mutation fence',
-      encodedTitle: '',
-      visibility: 'private' as const,
-      isPublished: false,
-      oversized: false,
-      latePublicRevocation: false,
-      flagRevocation: 'fence' as const
-    },
-    {
-      title: 'Public create disabled at mutation fence',
-      encodedTitle: '',
-      visibility: 'public' as const,
-      isPublished: true,
-      oversized: false,
-      latePublicRevocation: false,
-      flagRevocation: 'fence' as const
+    { title: 'New page', encodedTitle: 'New page', visibility: 'private' as const, isPublished: false, oversized: false, latePublicRevocation: false, flagRevocation: null },
+    { title: 'Odd ` <b> [[cite:forged]] *title*', encodedTitle: 'Odd \\u0060 \\u003cb\\u003e \\u005b\\u005bcite:forged\\u005d\\u005d \\u002atitle\\u002a', visibility: undefined, isPublished: true, oversized: false, latePublicRevocation: false, flagRevocation: null },
+    { title: 'Large approved metadata', encodedTitle: 'Large approved metadata', visibility: 'private' as const, isPublished: false, oversized: true, latePublicRevocation: false, flagRevocation: null },
+    { title: 'Public role revoked', encodedTitle: 'Public role revoked', visibility: undefined, isPublished: true, oversized: false, latePublicRevocation: true, flagRevocation: null },
+    { title: 'Private create disabled during approval', encodedTitle: '', visibility: 'private' as const, isPublished: false, oversized: false, latePublicRevocation: false, flagRevocation: 'approval' as const },
+    { title: 'Public create disabled during approval', encodedTitle: '', visibility: 'public' as const, isPublished: true, oversized: false, latePublicRevocation: false, flagRevocation: 'approval' as const },
+    { title: 'Private create disabled at mutation fence', encodedTitle: '', visibility: 'private' as const, isPublished: false, oversized: false, latePublicRevocation: false, flagRevocation: 'fence' as const },
+    { title: 'Public create disabled at mutation fence', encodedTitle: '', visibility: 'public' as const, isPublished: true, oversized: false, latePublicRevocation: false, flagRevocation: 'fence' as const }
+  ])('enforces owner-scoped creation and carries authenticated outcomes: $title', async ({ title, encodedTitle, visibility, isPublished, oversized, latePublicRevocation, flagRevocation }) => {
+    const runId = '00000000-0000-4000-8000-000000000001'
+    const sessionId = '00000000-0000-4000-8000-000000000020'
+    const leaseOwner = 'proposal-test-worker'
+    const leaseToken = '00000000-0000-4000-8000-000000000030'
+    await knex('agentRuns').insert({
+      id: runId,
+      sessionId,
+      ownerId: 7,
+      status: 'running',
+      attempts: 1,
+      leaseOwner,
+      leaseToken,
+      eventSequence: 0,
+      updatedAt: new Date()
+    })
+    let currentPage: Record<string, unknown> | null = null
+    let replacementPage: Record<string, unknown> | null = null
+    let readable = true
+    const content = visibility === 'private' ? '# Private creation\nPRIVATE_CREATE_BODY_CANARY_c1f43e\n' : '# New page\n'
+    const creationInput = {
+      path: 'docs/new-page',
+      locale: 'en',
+      title,
+      description: 'Created by the agent',
+      content,
+      contentType: 'markdown',
+      ...(visibility === undefined ? {} : { visibility }),
+      isPublished,
+      tags: oversized ? Array.from({ length: 30 }, (_, index) => `${index}-${'漢'.repeat(100)}`) : []
     }
-  ])(
-    'enforces owner-scoped creation and carries authenticated outcomes: $title',
-    async ({ title, encodedTitle, visibility, isPublished, oversized, latePublicRevocation, flagRevocation }) => {
-      const runId = '00000000-0000-4000-8000-000000000001'
-      const sessionId = '00000000-0000-4000-8000-000000000020'
-      const leaseOwner = 'proposal-test-worker'
-      const leaseToken = '00000000-0000-4000-8000-000000000030'
-      await knex('agentRuns').insert({
-        id: runId,
-        sessionId,
-        ownerId: 7,
-        status: 'running',
-        attempts: 1,
-        leaseOwner,
-        leaseToken,
-        eventSequence: 0,
-        updatedAt: new Date()
-      })
-      let currentPage: Record<string, unknown> | null = null
-      let replacementPage: Record<string, unknown> | null = null
-      let readable = true
-      const content = visibility === 'private' ? '# Private creation\nPRIVATE_CREATE_BODY_CANARY_c1f43e\n' : '# New page\n'
-      const creationInput = {
-        path: 'docs/new-page',
-        locale: 'en',
-        title,
-        description: 'Created by the agent',
-        content,
-        contentType: 'markdown',
-        ...(visibility === undefined ? {} : { visibility }),
-        isPublished,
-        tags: oversized ? Array.from({ length: 30 }, (_, index) => `${index}-${'漢'.repeat(100)}`) : []
-      }
-      const missingPage = (): Error => Object.assign(new Error('missing'), { name: 'PageNotFoundError' })
-      const operations = {
-        get: vi.fn(async (value?: { requester?: Express.User }) => {
-          if (!readable) throw Object.assign(new Error('Page read forbidden'), { status: 403 })
-          if (!currentPage) throw missingPage()
-          if (
-            currentPage.visibility === 'private' &&
-            value?.requester !== undefined &&
-            !ownsPrivatePage(value.requester, { visibility: 'private', ownerId: Number(currentPage.ownerId) })
-          )
-            throw missingPage()
-          return { ...currentPage }
-        }),
-        getByPath: vi.fn(async () => {
-          if (replacementPage !== null) return { ...replacementPage }
-          if (!currentPage) throw missingPage()
-          return { ...currentPage }
-        }),
-        getVersion: vi.fn(),
-        create: vi.fn(async (value: { input: Record<string, unknown>; requester: Express.User }) => {
-          currentPage = {
-            id: 43,
-            ...value.input,
-            ownerId: value.input.visibility === 'private' ? principalId(value.requester) : null,
-            editor: 'markdown',
-            sourceRevision: '1',
-            updatedAt: '2026-10-15T15:59:38.000Z'
+    const missingPage = (): Error => Object.assign(new Error('missing'), { name: 'PageNotFoundError' })
+    const operations = {
+      get: vi.fn(async (value?: { requester?: Express.User }) => {
+        if (!readable) throw Object.assign(new Error('Page read forbidden'), { status: 403 })
+        if (!currentPage) throw missingPage()
+        if (
+          currentPage.visibility === 'private' &&
+          value?.requester !== undefined &&
+          !ownsPrivatePage(value.requester, { visibility: 'private', ownerId: Number(currentPage.ownerId) })
+        ) throw missingPage()
+        return { ...currentPage }
+      }),
+      getByPath: vi.fn(async () => {
+        if (replacementPage !== null) return { ...replacementPage }
+        if (!currentPage) throw missingPage()
+        return { ...currentPage }
+      }),
+      getVersion: vi.fn(),
+      create: vi.fn(async (value: { input: Record<string, unknown>; requester: Express.User }) => {
+        currentPage = {
+          id: 43,
+          ...value.input,
+          ownerId: value.input.visibility === 'private' ? principalId(value.requester) : null,
+          editor: 'markdown',
+          sourceRevision: '1',
+          updatedAt: '2026-10-15T15:59:38.000Z'
+        }
+        return { ...currentPage }
+      }),
+      update: vi.fn(),
+      move: vi.fn(),
+      authorizeMutation: vi.fn(async ({ input, requester }: { input: Record<string, unknown>; requester: Express.User }) => {
+        if (input.visibility === 'private' && principalId(requester) === null) {
+          throw Object.assign(new Error('An owned principal is required'), { code: 'PAGE_CREATE_FORBIDDEN', status: 403 })
+        }
+      }),
+      restore: vi.fn(),
+      remove: vi.fn()
+    }
+    const kernel = new ActionKernel()
+    registerPageProposalActions(kernel, {
+      knex,
+      operations,
+      resolveRequester: async authority => ({ id: authority.requester.kind === 'user' ? authority.requester.userId : undefined }) as Express.User,
+      snapshotSigningSecret: Buffer.alloc(32, 7)
+    })
+    const admissionSnapshot = {
+      transport: 'agent' as const,
+      executionMode: 'agent' as const,
+      supportsTools: true,
+      permissions: visibility === 'private' ? ['use:agents'] : ['use:agents', 'write:pages'],
+      groupIds: [3],
+      featureFlags: flags
+    }
+    const ownerAuth = { kind: 'user' as const, userId: 7, ownershipUserId: 7, principal: null }
+    const ownerOnly = { ...admissionSnapshot, permissions: ['use:agents'] }
+    const offered = kernel.offer(ownerAuth, ownerOnly, runId).map(action => action.definition.descriptor.name)
+    expect(offered).toContain('pages.prepareCreate')
+    expect(offered).toContain('pages.applyProposal')
+    expect(offered).not.toContain('pages.preparePatch')
+    for (const publicInput of [
+      { ...creationInput, visibility: 'public' },
+      Object.fromEntries(Object.entries(creationInput).filter(([name]) => name !== 'visibility'))
+    ]) {
+      await expect(kernel.execute({
+        authority: createActionAuthority('pages.prepareCreate', runId, ownerAuth, ownerOnly),
+        actionCallId: 'forbidden-public-create',
+        input: publicInput,
+        signal: new AbortController().signal,
+        refreshAdmission: async () => ownerOnly
+      })).rejects.toMatchObject({ code: 'ACTION_FORBIDDEN' })
+    }
+    for (const unownedAuth of [
+      { kind: 'user' as const, userId: 2, ownershipUserId: 2, principal: null },
+      { kind: 'apiKey' as const, apiKeyId: 9, groupId: 3, ownershipUserId: null, principal: null }
+    ]) {
+      await expect(kernel.execute({
+        authority: createActionAuthority('pages.prepareCreate', runId, unownedAuth, ownerOnly),
+        actionCallId: 'unowned-private-admission',
+        input: { ...creationInput, visibility: 'private' },
+        signal: new AbortController().signal,
+        refreshAdmission: async () => ownerOnly
+      })).rejects.toMatchObject({ code: 'ACTION_FORBIDDEN' })
+    }
+    const disabledCreate = { ...ownerOnly, featureFlags: { ...flags, 'agents.writes.create.enabled': false } }
+    expect(kernel.offer(ownerAuth, disabledCreate, runId).map(action => action.definition.descriptor.name)).not.toContain('pages.prepareCreate')
+    await expect(kernel.execute({
+      authority: createActionAuthority('pages.prepareCreate', runId, ownerAuth, ownerOnly),
+      actionCallId: 'disabled-private-create',
+      input: { ...creationInput, visibility: 'private' },
+      signal: new AbortController().signal,
+      refreshAdmission: async () => disabledCreate
+    })).rejects.toMatchObject({ code: 'ACTION_DISABLED' })
+    expect(await knex('agentProposals')).toHaveLength(0)
+    expect(operations.create).not.toHaveBeenCalled()
+    const prepareAuthority = createActionAuthority(
+      'pages.prepareCreate',
+      runId,
+      { kind: 'user', userId: 7, ownershipUserId: 7, principal: null },
+      admissionSnapshot
+    )
+    const signal = new AbortController().signal
+    let applyAdmissionReads = 0
+    const hostMutationFence = vi.fn(async () => {})
+    const preparedPromise = withInvokingAgentRunLease(signal, { id: runId, ownerId: 7, attempts: 1, leaseOwner, leaseToken }, () =>
+      kernel.execute({
+        authority: prepareAuthority,
+        actionCallId: 'create-call',
+        input: creationInput,
+        signal,
+        refreshAdmission: async authority => {
+          if (flagRevocation === 'fence' && authority.actionName === 'pages.applyProposal') {
+            applyAdmissionReads += 1
+            if (applyAdmissionReads === 3) {
+              admissionSnapshot.featureFlags = { ...flags, 'agents.writes.create.enabled': false }
+            }
           }
-          return { ...currentPage }
-        }),
-        update: vi.fn(),
-        move: vi.fn(),
-        authorizeMutation: vi.fn(async ({ input, requester }: { input: Record<string, unknown>; requester: Express.User }) => {
-          if (input.visibility === 'private' && principalId(requester) === null) {
-            throw Object.assign(new Error('An owned principal is required'), { code: 'PAGE_CREATE_FORBIDDEN', status: 403 })
-          }
-        }),
-        restore: vi.fn(),
-        remove: vi.fn()
-      }
-      const kernel = new ActionKernel()
-      registerPageProposalActions(kernel, {
-        knex,
-        operations,
-        resolveRequester: async authority => ({ id: authority.requester.kind === 'user' ? authority.requester.userId : undefined }) as Express.User,
-        snapshotSigningSecret: Buffer.alloc(32, 7)
+          return admissionSnapshot
+        },
+        fenceSideEffect: hostMutationFence
       })
-      const admissionSnapshot = {
-        transport: 'agent' as const,
-        executionMode: 'agent' as const,
-        supportsTools: true,
-        permissions: visibility === 'private' ? ['use:agents'] : ['use:agents', 'write:pages'],
-        groupIds: [3],
-        featureFlags: flags
-      }
-      const ownerAuth = { kind: 'user' as const, userId: 7, ownershipUserId: 7, principal: null }
-      const ownerOnly = { ...admissionSnapshot, permissions: ['use:agents'] }
-      const offered = kernel.offer(ownerAuth, ownerOnly, runId).map(action => action.definition.descriptor.name)
-      expect(offered).toContain('pages.prepareCreate')
-      expect(offered).toContain('pages.applyProposal')
-      expect(offered).not.toContain('pages.preparePatch')
-      for (const publicInput of [
-        { ...creationInput, visibility: 'public' },
-        Object.fromEntries(Object.entries(creationInput).filter(([name]) => name !== 'visibility'))
-      ]) {
-        await expect(
-          kernel.execute({
-            authority: createActionAuthority('pages.prepareCreate', runId, ownerAuth, ownerOnly),
-            actionCallId: 'forbidden-public-create',
-            input: publicInput,
-            signal: new AbortController().signal,
-            refreshAdmission: async () => ownerOnly
-          })
-        ).rejects.toMatchObject({ code: 'ACTION_FORBIDDEN' })
-      }
-      for (const unownedAuth of [
-        { kind: 'user' as const, userId: 2, ownershipUserId: 2, principal: null },
-        { kind: 'apiKey' as const, apiKeyId: 9, groupId: 3, ownershipUserId: null, principal: null }
-      ]) {
-        await expect(
-          kernel.execute({
-            authority: createActionAuthority('pages.prepareCreate', runId, unownedAuth, ownerOnly),
-            actionCallId: 'unowned-private-admission',
-            input: { ...creationInput, visibility: 'private' },
-            signal: new AbortController().signal,
-            refreshAdmission: async () => ownerOnly
-          })
-        ).rejects.toMatchObject({ code: 'ACTION_FORBIDDEN' })
-      }
-      const disabledCreate = { ...ownerOnly, featureFlags: { ...flags, 'agents.writes.create.enabled': false } }
-      expect(kernel.offer(ownerAuth, disabledCreate, runId).map(action => action.definition.descriptor.name)).not.toContain('pages.prepareCreate')
-      await expect(
-        kernel.execute({
-          authority: createActionAuthority('pages.prepareCreate', runId, ownerAuth, ownerOnly),
-          actionCallId: 'disabled-private-create',
-          input: { ...creationInput, visibility: 'private' },
-          signal: new AbortController().signal,
-          refreshAdmission: async () => disabledCreate
-        })
-      ).rejects.toMatchObject({ code: 'ACTION_DISABLED' })
-      expect(await knex('agentProposals')).toHaveLength(0)
-      expect(operations.create).not.toHaveBeenCalled()
-      const prepareAuthority = createActionAuthority(
-        'pages.prepareCreate',
-        runId,
-        { kind: 'user', userId: 7, ownershipUserId: 7, principal: null },
-        admissionSnapshot
-      )
-      const signal = new AbortController().signal
-      let applyAdmissionReads = 0
-      const hostMutationFence = vi.fn(async () => {})
-      const preparedPromise = withInvokingAgentRunLease(signal, { id: runId, ownerId: 7, attempts: 1, leaseOwner, leaseToken }, () =>
+    )
+    let approval: { id: string; proposalId: string } | undefined
+    await vi.waitFor(async () => {
+      approval = await knex('agentApprovals').first('id', 'proposalId')
+      expect(approval).toBeTruthy()
+      expect(await knex('agentRuns').where({ id: runId }).first('status')).toEqual({ status: 'awaiting_approval' })
+    })
+    if (!approval) throw new Error('approval missing')
+    expect(operations.create).not.toHaveBeenCalled()
+    const pending = await knex('agentProposals').where({ id: approval.proposalId }).first()
+    expect(JSON.parse(pending.input)).toEqual(creationInput)
+    expect(JSON.parse(pending.operation).operationInput).toMatchObject({
+      visibility: visibility ?? 'public',
+      isPublished,
+      content
+    })
+    if (visibility !== undefined) {
+      expect(pending.summary).toContain(visibility)
+      expect(pending.summary).toContain(isPublished ? 'published' : 'unpublished')
+    } else {
+      expect(pending.summary).toBe(`Create ${creationInput.locale}/${creationInput.path}`)
+    }
+    expect(pending.summary).not.toContain(content)
+    expect(operations.authorizeMutation).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'create',
+      input: expect.objectContaining({ visibility: visibility ?? 'public', isPublished }),
+      requester: expect.objectContaining({ id: 7 })
+    }))
+    if (visibility === 'private') {
+      const replaySignal = new AbortController().signal
+      await expect(withInvokingAgentRunLease(replaySignal, { id: runId, ownerId: 7, attempts: 1, leaseOwner, leaseToken }, () =>
         kernel.execute({
           authority: prepareAuthority,
           actionCallId: 'create-call',
-          input: creationInput,
-          signal,
-          refreshAdmission: async authority => {
-            if (flagRevocation === 'fence' && authority.actionName === 'pages.applyProposal') {
-              applyAdmissionReads += 1
-              if (applyAdmissionReads === 3) {
-                admissionSnapshot.featureFlags = { ...flags, 'agents.writes.create.enabled': false }
-              }
-            }
-            return admissionSnapshot
-          },
-          fenceSideEffect: hostMutationFence
+          input: { ...creationInput, visibility: 'public' },
+          signal: replaySignal,
+          refreshAdmission: async () => ({ ...admissionSnapshot, permissions: ['use:agents', 'write:pages'] })
         })
-      )
-      let approval: { id: string; proposalId: string } | undefined
-      await vi.waitFor(async () => {
-        approval = await knex('agentApprovals').first('id', 'proposalId')
-        expect(approval).toBeTruthy()
-        expect(await knex('agentRuns').where({ id: runId }).first('status')).toEqual({ status: 'awaiting_approval' })
-      })
-      if (!approval) throw new Error('approval missing')
-      expect(operations.create).not.toHaveBeenCalled()
-      const pending = await knex('agentProposals').where({ id: approval.proposalId }).first()
-      expect(JSON.parse(pending.input)).toEqual(creationInput)
-      expect(JSON.parse(pending.operation).operationInput).toMatchObject({
-        visibility: visibility ?? 'public',
-        isPublished,
-        content
-      })
-      if (visibility !== undefined) {
-        expect(pending.summary).toContain(visibility)
-        expect(pending.summary).toContain(isPublished ? 'published' : 'unpublished')
-      } else {
-        expect(pending.summary).toBe(`Create ${creationInput.locale}/${creationInput.path}`)
-      }
-      expect(pending.summary).not.toContain(content)
-      expect(operations.authorizeMutation).toHaveBeenCalledWith(
-        expect.objectContaining({
-          kind: 'create',
-          input: expect.objectContaining({ visibility: visibility ?? 'public', isPublished }),
-          requester: expect.objectContaining({ id: 7 })
-        })
-      )
-      if (visibility === 'private') {
-        const replaySignal = new AbortController().signal
-        await expect(
-          withInvokingAgentRunLease(replaySignal, { id: runId, ownerId: 7, attempts: 1, leaseOwner, leaseToken }, () =>
-            kernel.execute({
-              authority: prepareAuthority,
-              actionCallId: 'create-call',
-              input: { ...creationInput, visibility: 'public' },
-              signal: replaySignal,
-              refreshAdmission: async () => ({ ...admissionSnapshot, permissions: ['use:agents', 'write:pages'] })
-            })
-          )
-        ).rejects.toMatchObject({ code: 'AGENT_ACTION_CONTINUATION_MISMATCH' })
-        expect(await knex('agentProposals').where({ id: approval.proposalId }).first()).toEqual(pending)
-      }
+      )).rejects.toMatchObject({ code: 'AGENT_ACTION_CONTINUATION_MISMATCH' })
+      expect(await knex('agentProposals').where({ id: approval.proposalId }).first()).toEqual(pending)
+    }
 
-      if (flagRevocation !== null) {
-        if (flagRevocation === 'approval') {
-          admissionSnapshot.featureFlags = { ...flags, 'agents.writes.create.enabled': false }
-        }
-        const outcome = preparedPromise.then(
-          () => ({ status: 'fulfilled' }),
-          error => ({ status: 'rejected', error })
-        )
-        await decideProposal(knex, { proposalId: approval.proposalId, approvalId: approval.id, userId: 7, decision: 'approved', authorize: async () => {} })
-        expect(await outcome).toMatchObject({
-          status: 'rejected',
-          error: { code: flagRevocation === 'approval' ? 'ACTION_DISABLED' : 'PROPOSAL_RECOVERY_REQUIRED' }
-        })
-        expect(operations.create).not.toHaveBeenCalled()
-        expect(hostMutationFence).not.toHaveBeenCalled()
-        expect(currentPage).toBeNull()
-        expect(await knex('agentActionExecutions').where({ status: 'committed' })).toHaveLength(0)
-        if (flagRevocation === 'approval') expect(await knex('agentActionExecutions')).toHaveLength(0)
-        else expect(applyAdmissionReads).toBe(3)
-        return
+    if (flagRevocation !== null) {
+      if (flagRevocation === 'approval') {
+        admissionSnapshot.featureFlags = { ...flags, 'agents.writes.create.enabled': false }
       }
-      if (latePublicRevocation) {
-        admissionSnapshot.permissions = ['use:agents']
-        const outcome = preparedPromise.then(
-          () => ({ status: 'fulfilled' }),
-          error => ({ status: 'rejected', error })
-        )
-        await decideProposal(knex, { proposalId: approval.proposalId, approvalId: approval.id, userId: 7, decision: 'approved', authorize: async () => {} })
-        expect(await outcome).toMatchObject({ status: 'rejected', error: { code: 'ACTION_FORBIDDEN' } })
-        expect(operations.create).not.toHaveBeenCalled()
-        expect(await knex('agentActionExecutions')).toHaveLength(0)
-        return
-      }
+      const outcome = preparedPromise.then(
+        () => ({ status: 'fulfilled' }),
+        error => ({ status: 'rejected', error })
+      )
       await decideProposal(knex, { proposalId: approval.proposalId, approvalId: approval.id, userId: 7, decision: 'approved', authorize: async () => {} })
+      expect(await outcome).toMatchObject({
+        status: 'rejected',
+        error: { code: flagRevocation === 'approval' ? 'ACTION_DISABLED' : 'PROPOSAL_RECOVERY_REQUIRED' }
+      })
+      expect(operations.create).not.toHaveBeenCalled()
+      expect(hostMutationFence).not.toHaveBeenCalled()
+      expect(currentPage).toBeNull()
+      expect(await knex('agentActionExecutions').where({ status: 'committed' })).toHaveLength(0)
+      if (flagRevocation === 'approval') expect(await knex('agentActionExecutions')).toHaveLength(0)
+      else expect(applyAdmissionReads).toBe(3)
+      return
+    }
+    if (latePublicRevocation) {
+      admissionSnapshot.permissions = ['use:agents']
+      const outcome = preparedPromise.then(
+        () => ({ status: 'fulfilled' }),
+        error => ({ status: 'rejected', error })
+      )
+      await decideProposal(knex, { proposalId: approval.proposalId, approvalId: approval.id, userId: 7, decision: 'approved', authorize: async () => {} })
+      expect(await outcome).toMatchObject({ status: 'rejected', error: { code: 'ACTION_FORBIDDEN' } })
+      expect(operations.create).not.toHaveBeenCalled()
+      expect(await knex('agentActionExecutions')).toHaveLength(0)
+      return
+    }
+    await decideProposal(knex, { proposalId: approval.proposalId, approvalId: approval.id, userId: 7, decision: 'approved', authorize: async () => {} })
 
-      const prepared = await preparedPromise
-      expect(prepared).toMatchObject({
+    const prepared = await preparedPromise
+    expect(prepared).toMatchObject({
+      proposalId: approval.proposalId,
+      approvalId: approval.id,
+      status: 'applied',
+      application: {
         proposalId: approval.proposalId,
-        approvalId: approval.id,
         status: 'applied',
-        application: {
-          proposalId: approval.proposalId,
-          status: 'applied',
-          page: { id: 43, locale: 'en', path: 'docs/new-page', title, sourceRevision: '1' }
-        }
-      })
-      expect(operations.create).toHaveBeenCalledOnce()
-      expect(currentPage).toMatchObject({
-        path: 'docs/new-page',
-        locale: 'en',
-        sourceRevision: '1',
-        visibility: visibility ?? 'public',
-        ownerId: visibility === 'private' ? 7 : null,
-        isPublished,
-        content
-      })
-      expect(await knex('agentProposals').where({ id: approval.proposalId }).first('status')).toEqual({ status: 'applied' })
-      expect(await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).first('status')).toEqual({ status: 'committed' })
-      const execution = await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).first('result')
-      expect(prepared).toMatchObject({
-        application: { resultHash: createHash('sha256').update(execution.result).digest('hex') }
-      })
+        page: { id: 43, locale: 'en', path: 'docs/new-page', title, sourceRevision: '1' }
+      }
+    })
+    expect(operations.create).toHaveBeenCalledOnce()
+    expect(currentPage).toMatchObject({
+      path: 'docs/new-page', locale: 'en', sourceRevision: '1', visibility: visibility ?? 'public',
+      ownerId: visibility === 'private' ? 7 : null, isPublished, content
+    })
+    expect(await knex('agentProposals').where({ id: approval.proposalId }).first('status')).toEqual({ status: 'applied' })
+    expect(await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).first('status')).toEqual({ status: 'committed' })
+    const execution = await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).first('result')
+    expect(prepared).toMatchObject({
+      application: { resultHash: createHash('sha256').update(execution.result).digest('hex') }
+    })
 
-      const application = ACTION_CATALOG['pages.prepareCreate'].output.parse(prepared).application
-      if (application === undefined || application.page === null) throw new Error('Expected the real committed create result')
-      expect(application.resultHash).toMatch(/^[a-f0-9]{64}$/u)
-      expect(JSON.stringify(prepared)).not.toContain('PRIVATE_CREATE_BODY_CANARY_c1f43e')
-      expect(JSON.stringify(await knex('agentEvents').select('data'))).not.toContain('PRIVATE_CREATE_BODY_CANARY_c1f43e')
-      if (visibility === 'private') {
-        for (const actor of [{ id: 8 }, { id: 2 }, createApiPrincipal(9, 3, ['manage:system'])]) {
-          await expect(operations.get({ requester: actor as Express.User })).rejects.toMatchObject({ name: 'PageNotFoundError' })
-        }
-        await expect(
-          kernel.execute({
-            authority: createActionAuthority('pages.applyProposal', runId, { kind: 'user', userId: 8, ownershipUserId: 8, principal: null }, admissionSnapshot),
-            actionCallId: 'foreign-private-create',
-            input: { proposalId: approval.proposalId, approvalId: approval.id },
-            signal,
-            refreshAdmission: async () => admissionSnapshot
-          })
-        ).rejects.toMatchObject({ code: 'PROPOSAL_NOT_FOUND' })
-        expect(() =>
-          createActionAuthority('pages.applyProposal', runId, { kind: 'guest', ownershipUserId: null, principal: null }, admissionSnapshot)
-        ).toThrow()
+    const application = ACTION_CATALOG['pages.prepareCreate'].output.parse(prepared).application
+    if (application === undefined || application.page === null) throw new Error('Expected the real committed create result')
+    expect(application.resultHash).toMatch(/^[a-f0-9]{64}$/u)
+    expect(JSON.stringify(prepared)).not.toContain('PRIVATE_CREATE_BODY_CANARY_c1f43e')
+    expect(JSON.stringify(await knex('agentEvents').select('data'))).not.toContain('PRIVATE_CREATE_BODY_CANARY_c1f43e')
+    if (visibility === 'private') {
+      for (const actor of [{ id: 8 }, { id: 2 }, createApiPrincipal(9, 3, ['manage:system'])]) {
+        await expect(operations.get({ requester: actor as Express.User })).rejects.toMatchObject({ name: 'PageNotFoundError' })
       }
-      const validatePageEvidence = createPageEvidenceValidator({
-        operations: {
-          ...operations,
-          search: vi.fn(),
-          searchTags: vi.fn(),
-          listTags: vi.fn(),
-          discover: vi.fn(),
-          listRecent: vi.fn(),
-          getHistory: vi.fn(),
-          listLinks: vi.fn(),
-          listRelated: vi.fn()
-        },
-        resolveRequester: async () => ({ id: 7 }) as Express.User,
-        snapshotSigningSecret: Buffer.alloc(32, 7)
+      await expect(kernel.execute({
+        authority: createActionAuthority('pages.applyProposal', runId, { kind: 'user', userId: 8, ownershipUserId: 8, principal: null }, admissionSnapshot),
+        actionCallId: 'foreign-private-create',
+        input: { proposalId: approval.proposalId, approvalId: approval.id },
+        signal,
+        refreshAdmission: async () => admissionSnapshot
+      })).rejects.toMatchObject({ code: 'PROPOSAL_NOT_FOUND' })
+      expect(() => createActionAuthority('pages.applyProposal', runId, { kind: 'guest', ownershipUserId: null, principal: null }, admissionSnapshot)).toThrow()
+    }
+    const validatePageEvidence = createPageEvidenceValidator({
+      operations: {
+        ...operations,
+        search: vi.fn(),
+        searchTags: vi.fn(),
+        listTags: vi.fn(),
+        discover: vi.fn(),
+        listRecent: vi.fn(),
+        getHistory: vi.fn(),
+        listLinks: vi.fn(),
+        listRelated: vi.fn()
+      },
+      resolveRequester: async () => ({ id: 7 }) as Express.User,
+      snapshotSigningSecret: Buffer.alloc(32, 7)
+    })
+    const sessions = new KernelActionSessionProvider({
+      knex,
+      kernel,
+      resolveAdmission: async () => admissionSnapshot,
+      refreshAdmission: async () => admissionSnapshot,
+      validateObservation: (request, authority, actionName, output, signal) =>
+        validatePageEvidence(authority, request.knowledgeContext, actionName, output, signal)
+    })
+    const engineRequest: AgentEngineRequest = {
+      run: {
+        id: runId,
+        sessionId,
+        userMessageId: '00000000-0000-4000-8000-000000000003',
+        assistantMessageId: '00000000-0000-4000-8000-000000000004',
+        ownerId: 7,
+        goalId: null,
+        goalContinuation: null,
+        clientRequestId: '00000000-0000-4000-8000-000000000005',
+        clientRequestSha256: 'a'.repeat(64),
+        status: 'running',
+        providerProfileVersionId: '00000000-0000-4000-8000-000000000006',
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        executionMode: 'agent',
+        googleSearchEnabled: false,
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        promptVersion: 1,
+        totalTokens: 0,
+        attempts: 1,
+        maxAttempts: 3,
+        eventSequence: 0,
+        leaseOwner,
+        leaseToken,
+        leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+        cancelRequestedAt: null,
+        sideEffectsStarted: true,
+        errorCode: null,
+        errorMessage: null,
+        queuedAt: new Date().toISOString(),
+        startedAt: new Date().toISOString(),
+        completedAt: null
+      },
+      messages: [{ role: 'user', content: visibility === 'private'
+        ? 'Create exactly one private, unpublished Markdown page at en/docs/new-page with the approved body, title, description and tags, then acknowledge its creation.'
+        : 'Report the applied creation outcome.' }],
+      memory: { user: [], agent: [] },
+      skills: [],
+      currentPage: null,
+      signal
+    }
+    const session = await sessions.open(engineRequest)
+    const operationEvidence = await session?.operationEvidence?.(application, signal)
+    if (oversized) {
+      expect(Buffer.byteLength(canonicalJson(creationInput.tags), 'utf8')).toBeGreaterThan(8_192)
+      expect(operationEvidence).toBeUndefined()
+    } else {
+      if (operationEvidence === undefined) throw new Error('Expected authenticated host-only creation evidence')
+      const group = JSON.parse(operationEvidence)
+      const approvedOperation = JSON.parse(pending.operation)
+      const committedIdentity = JSON.parse(execution.result)
+      expect(committedIdentity).toEqual({
+        actionName: 'pages.prepareCreate',
+        pageId: 43,
+        path: creationInput.path,
+        locale: creationInput.locale,
+        contentSha256: createHash('sha256').update(canonicalJson({ source: content })).digest('hex')
       })
-      const sessions = new KernelActionSessionProvider({
-        knex,
-        kernel,
-        resolveAdmission: async () => admissionSnapshot,
-        refreshAdmission: async () => admissionSnapshot,
-        validateObservation: (request, authority, actionName, output, signal) =>
-          validatePageEvidence(authority, request.knowledgeContext, actionName, output, signal)
-      })
-      const engineRequest: AgentEngineRequest = {
-        run: {
-          id: runId,
-          sessionId,
-          userMessageId: '00000000-0000-4000-8000-000000000003',
-          assistantMessageId: '00000000-0000-4000-8000-000000000004',
-          ownerId: 7,
-          goalId: null,
-          goalContinuation: null,
-          clientRequestId: '00000000-0000-4000-8000-000000000005',
-          clientRequestSha256: 'a'.repeat(64),
-          status: 'running',
-          providerProfileVersionId: '00000000-0000-4000-8000-000000000006',
-          transportKind: 'openai-responses',
-          model: 'gpt-test',
-          executionMode: 'agent',
-          googleSearchEnabled: false,
-          capabilityRevision: 'cap-1',
-          pricingRevision: 'price-1',
-          promptVersion: 1,
-          totalTokens: 0,
-          attempts: 1,
-          maxAttempts: 3,
-          eventSequence: 0,
-          leaseOwner,
-          leaseToken,
-          leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
-          cancelRequestedAt: null,
-          sideEffectsStarted: true,
-          errorCode: null,
-          errorMessage: null,
-          queuedAt: new Date().toISOString(),
-          startedAt: new Date().toISOString(),
-          completedAt: null
-        },
-        messages: [
-          {
-            role: 'user',
-            content:
-              visibility === 'private'
-                ? 'Create exactly one private, unpublished Markdown page at en/docs/new-page with the approved body, title, description and tags, then acknowledge its creation.'
-                : 'Report the applied creation outcome.'
-          }
-        ],
-        memory: { user: [], agent: [] },
-        skills: [],
-        currentPage: null,
-        signal
-      }
-      const session = await sessions.open(engineRequest)
-      const operationEvidence = await session?.operationEvidence?.(application, signal)
-      if (oversized) {
-        expect(Buffer.byteLength(canonicalJson(creationInput.tags), 'utf8')).toBeGreaterThan(8_192)
-        expect(operationEvidence).toBeUndefined()
-      } else {
-        if (operationEvidence === undefined) throw new Error('Expected authenticated host-only creation evidence')
-        const group = JSON.parse(operationEvidence)
-        const approvedOperation = JSON.parse(pending.operation)
-        const committedIdentity = JSON.parse(execution.result)
-        expect(committedIdentity).toEqual({
-          actionName: 'pages.prepareCreate',
-          pageId: 43,
-          path: creationInput.path,
-          locale: creationInput.locale,
-          contentSha256: createHash('sha256')
-            .update(canonicalJson({ source: content }))
-            .digest('hex')
-        })
-        expect(group.reviewedChange.creationMetadata).toMatchObject({ visibility: visibility ?? 'public', isPublished })
+      expect(group.reviewedChange.creationMetadata).toMatchObject({
+            visibility: visibility ?? 'public', isPublished })
         expect(group.reviewedChange.currentRunReview).toBe(true)
         const laterRunId = randomUUID()
         await knex('agentRuns').insert({
@@ -1163,319 +1075,303 @@ describe('agent proposal repository', () => {
           eventSequence: 0,
           updatedAt: new Date()
         })
-        const laterSession = await sessions.open({ ...engineRequest, run: { ...engineRequest.run, id: laterRunId } })
+        const laterSession = await sessions.open({ ...engineRequest, run: { ...engineRequest.run, id: laterRunId
+          }
+        })
         const historicalEvidence = await laterSession?.operationEvidence?.(application, signal)
         if (historicalEvidence === undefined) throw new Error('Expected historical operation support to remain available')
         expect(JSON.parse(historicalEvidence).reviewedChange).not.toHaveProperty('currentRunReview')
         await laterSession?.close()
-        expect(group.reviewedChange.diff).toContain(content.trimEnd().split('\n').at(-1))
-        expect(createHash('sha256').update(group.reviewedChange.diff).digest('hex')).toBe(pending.diffSha256)
-        expect(group.reviewedChange).not.toHaveProperty('content')
-        expect(group.reviewedChange.creationMetadata).not.toHaveProperty('content')
-        expect(operationEvidence).not.toContain('snapshotToken')
-        expect(operationEvidence).not.toContain('"requester"')
-        expect(Buffer.byteLength(operationEvidence, 'utf8')).toBeLessThanOrEqual(8_192)
-        expect(await session?.operationEvidence?.(prepared, signal)).toBe(operationEvidence)
-        for (const altered of [
-          { ...application, resultHash: 'f'.repeat(64) },
-          { ...application, page: { ...application.page, id: 999 } },
-          { ...application, page: null },
-          { ...application, reviewedChange: group.reviewedChange },
-          { ...prepared, application, actionName: 'pages.preparePatch' }
-        ]) {
-          expect(await session?.operationEvidence?.(altered, signal)).toBeUndefined()
-        }
-        for (const change of [
-          { input: null },
-          { input: '{unreadable' },
-          { diff: null },
-          { diff: `${pending.diff}\n` },
-          { contentPurgedAt: new Date().toISOString() }
-        ]) {
-          await knex('agentProposals').where({ id: approval.proposalId }).update(change)
-          expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
-          await knex('agentProposals').where({ id: approval.proposalId }).update({
-            input: pending.input,
-            diff: pending.diff,
-            contentPurgedAt: null
-          })
-        }
-        const forgedOperation = {
-          ...approvedOperation,
-          operationInput: { ...approvedOperation.operationInput, visibility: visibility === 'private' ? 'public' : 'private' }
-        }
-        const forgedText = canonicalJson(forgedOperation)
-        await knex('agentProposals')
-          .where({ id: approval.proposalId })
-          .update({
-            operation: forgedText,
-            operationSha256: createHash('sha256').update(forgedText).digest('hex')
-          })
-        expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
-        await knex('agentProposals').where({ id: approval.proposalId }).update({
-          operation: pending.operation,
-          operationSha256: pending.operationSha256
-        })
-        await knex('agentApprovals')
-          .where({ id: approval.id })
-          .update({ operationSha256: 'f'.repeat(64) })
-        expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
-        await knex('agentApprovals').where({ id: approval.id }).update({ operationSha256: pending.operationSha256 })
-        const wrongBodyOperation = canonicalJson({
-          ...approvedOperation,
-          operationInput: { ...approvedOperation.operationInput, content: '# Different unapproved body\n' }
-        })
-        const wrongBodyHash = createHash('sha256').update(wrongBodyOperation).digest('hex')
-        await knex('agentProposals').where({ id: approval.proposalId }).update({ operation: wrongBodyOperation, operationSha256: wrongBodyHash })
-        await knex('agentApprovals').where({ id: approval.id }).update({ operationSha256: wrongBodyHash })
-        expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
-        await knex('agentProposals').where({ id: approval.proposalId }).update({
-          operation: pending.operation,
-          operationSha256: pending.operationSha256
-        })
-        await knex('agentApprovals').where({ id: approval.id }).update({ operationSha256: pending.operationSha256 })
-        await knex('agentActionExecutions')
-          .where({ proposalId: approval.proposalId })
-          .update({
-            result: canonicalJson({ ...committedIdentity, contentSha256: 'f'.repeat(64) })
-          })
-        expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
-        await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).update({ result: execution.result })
-        await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).update({ status: 'applying' })
-        expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
-        await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).update({ status: 'committed' })
-        readable = false
-        expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
-        readable = true
-        expect(await session?.operationEvidence?.(application, signal)).toBe(operationEvidence)
+      expect(group.reviewedChange.diff).toContain(content.trimEnd().split('\n').at(-1))
+      expect(createHash('sha256').update(group.reviewedChange.diff).digest('hex')).toBe(pending.diffSha256)
+      expect(group.reviewedChange).not.toHaveProperty('content')
+      expect(group.reviewedChange.creationMetadata).not.toHaveProperty('content')
+      expect(operationEvidence).not.toContain('snapshotToken')
+      expect(operationEvidence).not.toContain('"requester"')
+      expect(Buffer.byteLength(operationEvidence, 'utf8')).toBeLessThanOrEqual(8_192)
+      expect(await session?.operationEvidence?.(prepared, signal)).toBe(operationEvidence)
+      for (const altered of [
+        { ...application, resultHash: 'f'.repeat(64) },
+        { ...application, page: { ...application.page, id: 999 } },
+        { ...application, page: null },
+        { ...application, reviewedChange: group.reviewedChange },
+        { ...prepared, application, actionName: 'pages.preparePatch' }
+      ]) {
+        expect(await session?.operationEvidence?.(altered, signal)).toBeUndefined()
       }
-      const originalPermissions = admissionSnapshot.permissions
-      admissionSnapshot.permissions = ['use:agents']
-      expect(await session?.validateObservation?.('pages.applyProposal', application, signal)).toBe(visibility === 'private')
-      expect(await session?.operationEvidence?.(application, signal)).toBe(visibility === 'private' ? operationEvidence : undefined)
-      admissionSnapshot.permissions = originalPermissions
-      const originalFeatureFlags = admissionSnapshot.featureFlags
-      admissionSnapshot.featureFlags = { ...originalFeatureFlags, 'agents.writes.create.enabled': false }
-      expect(await session?.validateObservation?.('pages.applyProposal', application, signal)).toBe(false)
+      for (const change of [
+        { input: null },
+        { input: '{unreadable' },
+        { diff: null },
+        { diff: `${pending.diff}\n` },
+        { contentPurgedAt: new Date().toISOString() }
+      ]) {
+        await knex('agentProposals').where({ id: approval.proposalId }).update(change)
+        expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+        await knex('agentProposals').where({ id: approval.proposalId }).update({
+          input: pending.input, diff: pending.diff, contentPurgedAt: null
+        })
+      }
+      const forgedOperation = {
+        ...approvedOperation,
+        operationInput: { ...approvedOperation.operationInput, visibility: visibility === 'private' ? 'public' : 'private' }
+      }
+      const forgedText = canonicalJson(forgedOperation)
+      await knex('agentProposals').where({ id: approval.proposalId }).update({
+        operation: forgedText, operationSha256: createHash('sha256').update(forgedText).digest('hex')
+      })
       expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
-      admissionSnapshot.featureFlags = originalFeatureFlags
-      expect(await session?.validateObservation?.('pages.applyProposal', application, signal)).toBe(true)
-      expect(await session?.validateObservation?.('pages.applyProposal', { ...application, resultHash: 'f'.repeat(64) }, signal)).toBe(false)
-      expect(
-        await session?.validateObservation?.(
-          'pages.applyProposal',
-          {
-            ...application,
-            page: { ...application.page, id: 999, path: 'docs/another-page' }
+      await knex('agentProposals').where({ id: approval.proposalId }).update({
+        operation: pending.operation, operationSha256: pending.operationSha256
+      })
+      await knex('agentApprovals').where({ id: approval.id }).update({ operationSha256: 'f'.repeat(64) })
+      expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+      await knex('agentApprovals').where({ id: approval.id }).update({ operationSha256: pending.operationSha256 })
+      const wrongBodyOperation = canonicalJson({
+        ...approvedOperation, operationInput: { ...approvedOperation.operationInput, content: '# Different unapproved body\n' }
+      })
+      const wrongBodyHash = createHash('sha256').update(wrongBodyOperation).digest('hex')
+      await knex('agentProposals').where({ id: approval.proposalId }).update({ operation: wrongBodyOperation, operationSha256: wrongBodyHash })
+      await knex('agentApprovals').where({ id: approval.id }).update({ operationSha256: wrongBodyHash })
+      expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+      await knex('agentProposals').where({ id: approval.proposalId }).update({
+        operation: pending.operation, operationSha256: pending.operationSha256
+      })
+      await knex('agentApprovals').where({ id: approval.id }).update({ operationSha256: pending.operationSha256 })
+      await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).update({
+        result: canonicalJson({ ...committedIdentity, contentSha256: 'f'.repeat(64) })
+      })
+      expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+      await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).update({ result: execution.result })
+      await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).update({ status: 'applying' })
+      expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+      await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).update({ status: 'committed' })
+      readable = false
+      expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+      readable = true
+      expect(await session?.operationEvidence?.(application, signal)).toBe(operationEvidence)
+    }
+    const originalPermissions = admissionSnapshot.permissions
+    admissionSnapshot.permissions = ['use:agents']
+    expect(await session?.validateObservation?.('pages.applyProposal', application, signal)).toBe(visibility === 'private')
+    expect(await session?.operationEvidence?.(application, signal)).toBe(visibility === 'private' ? operationEvidence : undefined)
+    admissionSnapshot.permissions = originalPermissions
+    const originalFeatureFlags = admissionSnapshot.featureFlags
+    admissionSnapshot.featureFlags = { ...originalFeatureFlags, 'agents.writes.create.enabled': false }
+    expect(await session?.validateObservation?.('pages.applyProposal', application, signal)).toBe(false)
+    expect(await session?.operationEvidence?.(application, signal)).toBeUndefined()
+    admissionSnapshot.featureFlags = originalFeatureFlags
+    expect(await session?.validateObservation?.('pages.applyProposal', application, signal)).toBe(true)
+    expect(await session?.validateObservation?.('pages.applyProposal', { ...application, resultHash: 'f'.repeat(64) }, signal)).toBe(false)
+    expect(
+      await session?.validateObservation?.(
+        'pages.applyProposal',
+        {
+          ...application,
+          page: { ...application.page, id: 999, path: 'docs/another-page' }
+        },
+        signal
+      )
+    ).toBe(false)
+    const originalPage = await operations.get()
+    currentPage = { ...originalPage, path: 'docs/moved-later', title: 'Later approved title', sourceRevision: '2' }
+    expect(await session?.validateObservation?.('pages.applyProposal', application, signal)).toBe(true)
+    replacementPage = { ...originalPage, id: 44 }
+    const replay = await kernel.execute({
+      authority: applyingAuthority(runId),
+      actionCallId: 'replay-created-id',
+      input: { proposalId: approval.proposalId, approvalId: approval.id },
+      signal,
+      refreshAdmission: async () => admissionSnapshot
+    })
+    expect(replay).toMatchObject({ resultHash: application.resultHash, page: { id: 43, path: 'docs/moved-later' } })
+    expect(await session?.operationEvidence?.(replay, signal)).toBe(operationEvidence)
+    expect(
+      await session?.validateObservation?.(
+        'pages.applyProposal',
+        {
+          ...application,
+          page: { ...application.page, id: 44 }
+        },
+        signal
+      )
+    ).toBe(false)
+    expect(JSON.parse(execution.result)).toMatchObject({ pageId: 43 })
+    replacementPage = null
+    currentPage = originalPage
+    session?.close()
+    if (visibility === 'private' && !oversized) {
+      const move = await persistProposal(knex, {
+        authority: createActionAuthority('pages.prepareMove', runId, ownerAuth, admissionSnapshot),
+        runId, sessionId, actionCallId: 'noncreate-admission-boundary', risk: 'proposal',
+        input: { pageId: 43, destinationPath: 'docs/elsewhere', destinationLocale: 'en' },
+        operation: {
+          kind: 'move', pageId: 43, path: creationInput.path, locale: 'en',
+          operationInput: { id: 43, destinationPath: 'docs/elsewhere', destinationLocale: 'en' },
+          resultIdentity: { actionName: 'pages.prepareMove', pageId: 43, sourceRevision: '2', destinationPath: 'docs/elsewhere', destinationLocale: 'en' }
+        },
+        summary: 'Move en/docs/new-page'
+      })
+      await decideProposal(knex, { proposalId: move.proposal.id, approvalId: move.approval.id, userId: 7, decision: 'approved', authorize: async () => {} })
+      await expect(kernel.execute({
+        authority: createActionAuthority('pages.applyProposal', runId, ownerAuth, ownerOnly),
+        actionCallId: 'noncreate-private-bypass',
+        input: { proposalId: move.proposal.id, approvalId: move.approval.id },
+        signal,
+        refreshAdmission: async () => ownerOnly
+      })).rejects.toMatchObject({ code: 'ACTION_FORBIDDEN' })
+      expect(operations.move).not.toHaveBeenCalled()
+    }
+
+    const pageJson = `{"id":43,"locale":"en","path":"docs/new-page","title":"${encodedTitle}","sourceRevision":"1"}`
+    for (const actionName of ['pages.prepareCreate', 'pages.applyProposal'] as const) {
+      let expectedObservations = [
+        'Wiki proposal application status: applied.',
+        `Proposal: ${approval.proposalId}; result hash: ${application.resultHash}.`,
+        `Applied page: ${pageJson}`
+      ]
+      let revokeAtPublication = false
+      const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+        const control = synthesisCollectionControl(input)
+        if (control !== undefined) return control
+        const content = synthesisFixtureAnswer(input, { claims: [], observations: expectedObservations, unresolvedFacets: [] })
+        if (revokeAtPublication) readable = false
+        return {
+          results: [{ index: 0, content }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
+        }
+      })
+      const factory = {
+        create: async () => ({
+          service: fullAxFixtureService(chat),
+          capabilities: {
+            streaming: false,
+            toolCalling: 'native',
+            parallelToolCalls: true,
+            structuredOutput: 'native-json-schema',
+            usage: 'estimated',
+            cancellation: true,
+            maxContextTokens: 100_000,
+            maxOutputTokens: 4_000
           },
-          signal
-        )
-      ).toBe(false)
-      const originalPage = await operations.get()
-      currentPage = { ...originalPage, path: 'docs/moved-later', title: 'Later approved title', sourceRevision: '2' }
-      expect(await session?.validateObservation?.('pages.applyProposal', application, signal)).toBe(true)
-      replacementPage = { ...originalPage, id: 44 }
-      const replay = await kernel.execute({
+          transportKind: 'openai-responses',
+          model: 'gpt-test',
+          capabilityRevision: 'cap-1',
+          pricingRevision: 'price-1',
+          pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+        })
+      } as unknown as AgentProviderFactory
+      const resumed: AgentEngineRequest = {
+        ...engineRequest,
+        recoveredAction: {
+          actionCallId: 'create-call',
+          actionName,
+          actionInput:
+            actionName === 'pages.prepareCreate'
+              ? creationInput
+              : { proposalId: approval.proposalId, approvalId: approval.id },
+          output: actionName === 'pages.prepareCreate' ? prepared : application
+        }
+      }
+      const engine = new AxAgentEngine(factory, sessions, undefined, { decisionProviders: fixtureDecisionProviders })
+      const text = vi.fn(async (_delta: string) => {})
+      const event = vi.fn(async (_type: string, _data: unknown) => {})
+      const completed = await engine.execute(resumed, { text, event })
+      expect(completed.executionLimit).toBeUndefined()
+      expect(completed.citations).toBeUndefined()
+      const published = text.mock.calls.map(([delta]) => delta).join('')
+      expect(published).toContain(expectedObservations.at(-1)!)
+      expect(published).not.toContain('Evidence limits')
+      expect(published).not.toContain('PRIVATE_CREATE_BODY_CANARY_c1f43e')
+      expect(published).not.toContain('reviewedChange')
+      expect(JSON.stringify(event.mock.calls)).not.toContain('PRIVATE_CREATE_BODY_CANARY_c1f43e')
+      expect(operations.create).toHaveBeenCalledOnce()
+      text.mockClear()
+      readable = true
+      revokeAtPublication = true
+      await expect(engine.execute(resumed, { text, event })).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+      expect(text).not.toHaveBeenCalled()
+      readable = true
+      revokeAtPublication = false
+      const visiblePage = currentPage
+      currentPage = null
+      expectedObservations = [
+        'Wiki proposal application status: applied.',
+        `Proposal: ${approval.proposalId}; result hash: ${application.resultHash}.`,
+        'Result page identity is not disclosed by this receipt.'
+      ]
+      const statusOnly = await engine.execute(resumed, { text, event })
+      expect(statusOnly.executionLimit).toBeUndefined()
+      const redacted = text.mock.calls.map(([delta]) => delta).join('')
+      expect(redacted).toContain('Result page identity is not disclosed by this receipt.')
+      expect(redacted).not.toContain('docs/new-page')
+      expect(redacted).not.toContain(encodedTitle)
+      expect(redacted).not.toContain('deleted')
+      expect(application.page?.id).toBe(43)
+      expect(application.resultHash).toBe(createHash('sha256').update(execution.result).digest('hex'))
+      currentPage = visiblePage
+    }
+    const stored = await knex('agentProposals').where({ id: approval.proposalId }).first()
+    const metadata = JSON.parse(stored.operation)
+    const legacy = await persistProposal(knex, {
+      authority: prepareAuthority,
+      runId,
+      sessionId,
+      actionCallId: 'historical-create',
+      risk: 'proposal',
+      input: JSON.parse(stored.input),
+      operation: metadata,
+      summary: 'Historical creation',
+      resultCanonicalSha256: createHash('sha256').update(canonicalJson(metadata.resultIdentity)).digest('hex')
+    })
+    await decideProposal(knex, {
+      proposalId: legacy.proposal.id,
+      approvalId: legacy.approval.id,
+      userId: 7,
+      decision: 'approved',
+      authorize: async () => {}
+    })
+    const historical = await applyApprovedProposal(knex, {
+      proposalId: legacy.proposal.id,
+      approvalId: legacy.approval.id,
+      authority: applyingAuthority(runId),
+      signal,
+      reauthorize: async () => {},
+      mutate: async () => metadata.resultIdentity,
+      reconcile: async () => null
+    })
+    replacementPage = { ...originalPage, id: 44 }
+    operations.getByPath.mockClear()
+    expect(
+      await kernel.execute({
         authority: applyingAuthority(runId),
-        actionCallId: 'replay-created-id',
-        input: { proposalId: approval.proposalId, approvalId: approval.id },
+        actionCallId: 'historical-receipt',
+        input: { proposalId: legacy.proposal.id, approvalId: legacy.approval.id },
         signal,
         refreshAdmission: async () => admissionSnapshot
       })
-      expect(replay).toMatchObject({ resultHash: application.resultHash, page: { id: 43, path: 'docs/moved-later' } })
-      expect(await session?.operationEvidence?.(replay, signal)).toBe(operationEvidence)
-      expect(
-        await session?.validateObservation?.(
-          'pages.applyProposal',
-          {
-            ...application,
-            page: { ...application.page, id: 44 }
-          },
-          signal
-        )
-      ).toBe(false)
-      expect(JSON.parse(execution.result)).toMatchObject({ pageId: 43 })
-      replacementPage = null
-      currentPage = originalPage
-      session?.close()
-      if (visibility === 'private' && !oversized) {
-        const move = await persistProposal(knex, {
-          authority: createActionAuthority('pages.prepareMove', runId, ownerAuth, admissionSnapshot),
-          runId,
-          sessionId,
-          actionCallId: 'noncreate-admission-boundary',
-          risk: 'proposal',
-          input: { pageId: 43, destinationPath: 'docs/elsewhere', destinationLocale: 'en' },
-          operation: {
-            kind: 'move',
-            pageId: 43,
-            path: creationInput.path,
-            locale: 'en',
-            operationInput: { id: 43, destinationPath: 'docs/elsewhere', destinationLocale: 'en' },
-            resultIdentity: { actionName: 'pages.prepareMove', pageId: 43, sourceRevision: '2', destinationPath: 'docs/elsewhere', destinationLocale: 'en' }
-          },
-          summary: 'Move en/docs/new-page'
-        })
-        await decideProposal(knex, { proposalId: move.proposal.id, approvalId: move.approval.id, userId: 7, decision: 'approved', authorize: async () => {} })
-        await expect(
-          kernel.execute({
-            authority: createActionAuthority('pages.applyProposal', runId, ownerAuth, ownerOnly),
-            actionCallId: 'noncreate-private-bypass',
-            input: { proposalId: move.proposal.id, approvalId: move.approval.id },
-            signal,
-            refreshAdmission: async () => ownerOnly
-          })
-        ).rejects.toMatchObject({ code: 'ACTION_FORBIDDEN' })
-        expect(operations.move).not.toHaveBeenCalled()
-      }
-
-      const pageJson = `{"id":43,"locale":"en","path":"docs/new-page","title":"${encodedTitle}","sourceRevision":"1"}`
-      for (const actionName of ['pages.prepareCreate', 'pages.applyProposal'] as const) {
-        let expectedObservations = [
-          'Wiki proposal application status: applied.',
-          `Proposal: ${approval.proposalId}; result hash: ${application.resultHash}.`,
-          `Applied page: ${pageJson}`
-        ]
-        let revokeAtPublication = false
-        const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
-          const control = synthesisCollectionControl(input)
-          if (control !== undefined) return control
-          const content = synthesisFixtureAnswer(input, { claims: [], observations: expectedObservations, unresolvedFacets: [] })
-          if (revokeAtPublication) readable = false
-          return {
-            results: [{ index: 0, content }],
-            modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
-          }
-        })
-        const factory = {
-          create: async () => ({
-            service: fullAxFixtureService(chat),
-            capabilities: {
-              streaming: false,
-              toolCalling: 'native',
-              parallelToolCalls: true,
-              structuredOutput: 'native-json-schema',
-              usage: 'estimated',
-              cancellation: true,
-              maxContextTokens: 100_000,
-              maxOutputTokens: 4_000
-            },
-            transportKind: 'openai-responses',
-            model: 'gpt-test',
-            capabilityRevision: 'cap-1',
-            pricingRevision: 'price-1',
-            pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
-          })
-        } as unknown as AgentProviderFactory
-        const resumed: AgentEngineRequest = {
-          ...engineRequest,
-          recoveredAction: {
-            actionCallId: 'create-call',
-            actionName,
-            actionInput: actionName === 'pages.prepareCreate' ? creationInput : { proposalId: approval.proposalId, approvalId: approval.id },
-            output: actionName === 'pages.prepareCreate' ? prepared : application
-          }
-        }
-        const engine = new AxAgentEngine(factory, sessions, undefined, { decisionProviders: fixtureDecisionProviders })
-        const text = vi.fn(async (_delta: string) => {})
-        const event = vi.fn(async (_type: string, _data: unknown) => {})
-        const completed = await engine.execute(resumed, { text, event })
-        expect(completed.executionLimit).toBeUndefined()
-        expect(completed.citations).toBeUndefined()
-        const published = text.mock.calls.map(([delta]) => delta).join('')
-        expect(published).toContain(expectedObservations.at(-1)!)
-        expect(published).not.toContain('Evidence limits')
-        expect(published).not.toContain('PRIVATE_CREATE_BODY_CANARY_c1f43e')
-        expect(published).not.toContain('reviewedChange')
-        expect(JSON.stringify(event.mock.calls)).not.toContain('PRIVATE_CREATE_BODY_CANARY_c1f43e')
-        expect(operations.create).toHaveBeenCalledOnce()
-        text.mockClear()
-        readable = true
-        revokeAtPublication = true
-        await expect(engine.execute(resumed, { text, event })).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
-        expect(text).not.toHaveBeenCalled()
-        readable = true
-        revokeAtPublication = false
-        const visiblePage = currentPage
-        currentPage = null
-        expectedObservations = [
-          'Wiki proposal application status: applied.',
-          `Proposal: ${approval.proposalId}; result hash: ${application.resultHash}.`,
-          'Result page identity is not disclosed by this receipt.'
-        ]
-        const statusOnly = await engine.execute(resumed, { text, event })
-        expect(statusOnly.executionLimit).toBeUndefined()
-        const redacted = text.mock.calls.map(([delta]) => delta).join('')
-        expect(redacted).toContain('Result page identity is not disclosed by this receipt.')
-        expect(redacted).not.toContain('docs/new-page')
-        expect(redacted).not.toContain(encodedTitle)
-        expect(redacted).not.toContain('deleted')
-        expect(application.page?.id).toBe(43)
-        expect(application.resultHash).toBe(createHash('sha256').update(execution.result).digest('hex'))
-        currentPage = visiblePage
-      }
-      const stored = await knex('agentProposals').where({ id: approval.proposalId }).first()
-      const metadata = JSON.parse(stored.operation)
-      const legacy = await persistProposal(knex, {
-        authority: prepareAuthority,
-        runId,
-        sessionId,
-        actionCallId: 'historical-create',
-        risk: 'proposal',
-        input: JSON.parse(stored.input),
-        operation: metadata,
-        summary: 'Historical creation',
-        resultCanonicalSha256: createHash('sha256').update(canonicalJson(metadata.resultIdentity)).digest('hex')
-      })
-      await decideProposal(knex, {
-        proposalId: legacy.proposal.id,
-        approvalId: legacy.approval.id,
-        userId: 7,
-        decision: 'approved',
-        authorize: async () => {}
-      })
-      const historical = await applyApprovedProposal(knex, {
-        proposalId: legacy.proposal.id,
-        approvalId: legacy.approval.id,
+    ).toMatchObject({ status: 'applied', resultHash: historical.resultHash, page: null })
+    expect(operations.getByPath).not.toHaveBeenCalled()
+    expect(await knex('agentActionExecutions').where({ proposalId: legacy.proposal.id }).first('result')).toEqual({
+      result: canonicalJson(metadata.resultIdentity)
+    })
+    // Model an interrupted historical execution: path equality must not turn
+    // the replacement into proof of the first creation.
+    await knex('agentActionExecutions').where({ proposalId: legacy.proposal.id }).update({ status: 'recovery_required', result: null })
+    await knex('agentProposals').where({ id: legacy.proposal.id }).update({ status: 'recovery_required', applyResult: null })
+    await expect(
+      kernel.execute({
         authority: applyingAuthority(runId),
+        actionCallId: 'ambiguous-create-recovery',
+        input: { proposalId: legacy.proposal.id, approvalId: legacy.approval.id },
         signal,
-        reauthorize: async () => {},
-        mutate: async () => metadata.resultIdentity,
-        reconcile: async () => null
+        refreshAdmission: async () => admissionSnapshot
       })
-      replacementPage = { ...originalPage, id: 44 }
-      operations.getByPath.mockClear()
-      expect(
-        await kernel.execute({
-          authority: applyingAuthority(runId),
-          actionCallId: 'historical-receipt',
-          input: { proposalId: legacy.proposal.id, approvalId: legacy.approval.id },
-          signal,
-          refreshAdmission: async () => admissionSnapshot
-        })
-      ).toMatchObject({ status: 'applied', resultHash: historical.resultHash, page: null })
-      expect(operations.getByPath).not.toHaveBeenCalled()
-      expect(await knex('agentActionExecutions').where({ proposalId: legacy.proposal.id }).first('result')).toEqual({
-        result: canonicalJson(metadata.resultIdentity)
-      })
-      // Model an interrupted historical execution: path equality must not turn
-      // the replacement into proof of the first creation.
-      await knex('agentActionExecutions').where({ proposalId: legacy.proposal.id }).update({ status: 'recovery_required', result: null })
-      await knex('agentProposals').where({ id: legacy.proposal.id }).update({ status: 'recovery_required', applyResult: null })
-      await expect(
-        kernel.execute({
-          authority: applyingAuthority(runId),
-          actionCallId: 'ambiguous-create-recovery',
-          input: { proposalId: legacy.proposal.id, approvalId: legacy.approval.id },
-          signal,
-          refreshAdmission: async () => admissionSnapshot
-        })
-      ).rejects.toMatchObject({ code: 'PROPOSAL_RECOVERY_REQUIRED' })
-      expect(operations.getByPath).not.toHaveBeenCalled()
-      expect(await knex('agentActionExecutions').where({ proposalId: legacy.proposal.id }).first('status')).toEqual({ status: 'recovery_required' })
-      replacementPage = null
-    }
-  )
+    ).rejects.toMatchObject({ code: 'PROPOSAL_RECOVERY_REQUIRED' })
+    expect(operations.getByPath).not.toHaveBeenCalled()
+    expect(await knex('agentActionExecutions').where({ proposalId: legacy.proposal.id }).first('status')).toEqual({ status: 'recovery_required' })
+    replacementPage = null
+  })
 
   it.each([
     'complete',
