@@ -174,7 +174,7 @@ const synthesisFieldText = (input: string, title: string): string => {
   const end =
     title === 'Source Text'
       ? value.lastIndexOf('\n\nSource References: ')
-      : value.search(/\n\n(?:Input Media References|Conversation Context|User Request|Request Facets|Available Observations|Repair Feedback): /u)
+      : value.search(/\n\n(?:Input Media References|Conversation Context|User Request|Request Facets|Available Observations|Operation Evidence|Repair Feedback): /u)
   return end < 0 ? value : value.slice(0, end)
 }
 

@@ -218,9 +218,7 @@ const readCommittedApplication = async (knex: Knex, authority: ActionAuthority, 
   // private create. That potential offer must not authorize historical receipts
   // for patches, public creates, or other approved operations.
   const ownedPrivateCreate =
-    proposal.actionName === 'pages.prepareCreate' &&
-    metadata.data.kind === 'create' &&
-    metadata.data.operationInput?.visibility === 'private'
+    proposal.actionName === 'pages.prepareCreate' && metadata.data.kind === 'create' && metadata.data.operationInput?.visibility === 'private'
   if (
     !ownedPrivateCreate &&
     !authority.permissions.some(permission => permission === 'write:pages' || permission === 'delete:pages' || permission === 'manage:system')
@@ -401,8 +399,8 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
       ...(admission.allowedActions === undefined ? {} : { allowedActions: admission.allowedActions }),
       ...(this.#dependencies.validateObservation
         ? {
-            // Host-only coverage evidence. Never register this reader in the
-            // runtime harness, action catalog, result events, or snapshots.
+            // Host-only operation support for the writer and coverage audit.
+            // Never register this reader in the harness, catalog, events or snapshots.
             operationEvidence: async (output: unknown, signal: AbortSignal): Promise<string | undefined> => {
               if (signal.aborted || !offered.some(action => hasWikiApplicationCapability(action.definition.descriptor.name, action.definition.capability)))
                 return undefined
@@ -447,15 +445,15 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
                   return undefined
                 }
                 const identity =
-                  proposal.actionName === 'pages.preparePatch'
-                    ? PatchCommittedIdentity.safeParse(committed)
-                    : CreateCommittedIdentity.safeParse(committed)
+                  proposal.actionName === 'pages.preparePatch' ? PatchCommittedIdentity.safeParse(committed) : CreateCommittedIdentity.safeParse(committed)
                 if (
                   !identity.success ||
                   canonicalJson(identity.data) !== canonicalJson(committed) ||
                   identity.data.pageId !== receipt.page.id ||
                   identity.data.contentSha256 !==
-                    createHash('sha256').update(canonicalJson({ source: operationInput.content.replace(/\r\n?/g, '\n') })).digest('hex')
+                    createHash('sha256')
+                      .update(canonicalJson({ source: operationInput.content.replace(/\r\n?/g, '\n') }))
+                      .digest('hex')
                 )
                   return undefined
                 let creationMetadata: z.infer<typeof ApprovedCreationMetadata> | undefined
@@ -500,6 +498,7 @@ export class KernelActionSessionProvider implements AgentActionSessionProvider {
                     operationSha256: proposal.operationSha256,
                     diffSha256: proposal.diffSha256,
                     diff: proposal.diff,
+                    ...(proposal.runId === request.run.id ? { currentRunReview: true } : {}),
                     resultIdentity: identity.data,
                     ...(creationMetadata === undefined ? {} : { creationMetadata }),
                     inputFields: Object.keys(operationInput).sort()
