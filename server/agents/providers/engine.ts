@@ -121,7 +121,6 @@ import {
 } from './tool-discovery.ts'
 import { initialToolCategoriesFor } from './tool-intent.ts'
 import { type AgentProviderUsage, acceptCumulativeAgentProviderUsage, assertAgentTokenUsage, readAgentProviderUsage } from './usage.ts'
-import { assessWikiContextReadiness, buildWikiContextReadinessRequest } from './wiki-context-readiness.ts'
 import {
   createWikiCoverageProgram,
   encodeWikiCoverageInput,
@@ -7857,9 +7856,9 @@ export class AxAgentEngine implements AgentEngine {
           throw new AgentRepositoryError('WIKI_VERIFICATION_PRICING_INVALID', 'Wiki verification pricing cannot establish bounded exposure', 503)
         const decide = async (
           nativeRequest: DecisionBatchRequest,
-          phase: 'semantic' | 'context_readiness',
+          phase: 'semantic',
           literalSupportCount = 0
-        ): Promise<DecisionBatchResult | null> => {
+        ): Promise<DecisionBatchResult> => {
           const state = asRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state)
           if (state === null || !Array.isArray(state.evidence))
             throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires its exact issued source reads', 409)
@@ -7882,25 +7881,15 @@ export class AxAgentEngine implements AgentEngine {
           // conservative exposure and settlement before the next phase.
           await authorizeSourceInputs?.()
           await requireLiveWikiVerification(outgoingEvidence)
-          // Readiness is optional: keep the existing publication hold intact and
-          // reserve only this additional native exposure from the parent budget.
-          if (phase === 'context_readiness' && maxTokens !== undefined && maximum.tokens > maxTokens - totalTokens - reservedFinalizationTokens) return null
           let reservation: AgentDispatchBudgetReservation | undefined
           try {
             reservation = await request.dispatchBudget?.reserve(maximum)
           } catch (error) {
             request.signal.throwIfAborted()
-            if (
-              phase === 'context_readiness' &&
-              error instanceof AgentRepositoryError &&
-              ['AGENT_TOKEN_BUDGET_LIMITED', 'AGENT_QUOTA_EXHAUSTED'].includes(error.code)
-            )
-              return null
             throw error
           }
           if (reservation && (reservation.tokens < maximum.tokens || reservation.costMicros < maximum.costMicros)) {
             await request.dispatchBudget?.release(reservation)
-            if (phase === 'context_readiness') return null
             throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Wiki verification exposure was not reserved', 503)
           }
           const authorizeOutgoingEvidence = async (): Promise<void> => {
@@ -7995,30 +7984,6 @@ export class AxAgentEngine implements AgentEngine {
                 : null
             }
           })
-          if (
-            phase === 'context_readiness' &&
-            predispatchFailure &&
-            !sourceFenceRejected &&
-            failure instanceof AgentRepositoryError &&
-            failure.code === 'DECISION_BATCH_UNSUPPORTED'
-          )
-            return null
-          // Readiness is optional. A malformed choice may fall back only after
-          // its measured, pinned receipt settled successfully; paid uncertainty
-          // or a settlement/fence failure still blocks continuation.
-          if (
-            phase === 'context_readiness' &&
-            failed?.code === 'INVALID_DECISION_RESPONSE' &&
-            failure === failed &&
-            nativeDispatched &&
-            !sourceFenceRejected &&
-            usage !== null &&
-            knownCost !== null &&
-            failed.providerId === runtime.id &&
-            failed.providerRevision === runtime.revision &&
-            (maxTokens === undefined || totalTokens <= maxTokens)
-          )
-            return null
           if (failure) {
             if (failure instanceof DecisionProviderFailure || (failure instanceof AgentRepositoryError && failure.code.startsWith('DECISION_')))
               throw new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Jev verification could not be completed; Wiki facts were not published', 503)
@@ -8122,7 +8087,6 @@ export class AxAgentEngine implements AgentEngine {
             return cached
           }
           const result = await nativeDecision(...args)
-          if (result === null) throw new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Required Wiki verification was not dispatched', 503)
           if (key !== undefined && key === createHash('sha256').update(providerBinding).update(canonicalJson(nativeRequest)).digest('hex')) {
             const answers = asRecord(result.answers)
             if (answers !== null && Object.getPrototypeOf(answers) === Object.prototype && Object.keys(answers).length === entries.length) {
@@ -9212,71 +9176,7 @@ export class AxAgentEngine implements AgentEngine {
         }
       }
       if (initialPublicationLimit !== undefined) return await publishExecutionLimit(initialPublicationLimit)
-      let warmReadinessEvidence: ReadonlyMap<string, CitationEvidence> | undefined
-      let readinessCheckedRequestSha256: string | undefined
-      const checkReadiness = async (): Promise<void> => {
-        if (
-          phase !== 'collecting' ||
-          !completeReadCollection ||
-          !verificationProvider ||
-          maxTurns < 2 ||
-          !contextPlan.intent.trim() ||
-          request.recoveredAction !== undefined ||
-          citationRegistry.size === 0 ||
-          recentBodyReadIds(true) !== undefined
-        )
-          return
-        const readinessValidations: EvidenceValidationCache = new Map()
-        await reauthorizeEvidencePrompt(readinessValidations)
-        const restored = await restoreEvidenceContext(null, systemMessageFor(null), finalizationMaxOutputTokens, readinessValidations, true)
-        const readinessEvidence = new Map<string, CitationEvidence>()
-        const physicalReadIds = new WeakMap<ParsedSourceDocument, string>()
-        const reads = [...admittedWikiReadBindings(restored ?? new Map())]
-          .filter(
-            ([, { representation }]) =>
-              representation.binding.representation !== 'recent-excerpt' ||
-              metadataRecord(representation.binding.representationMetadata)?.contentTruncated === false
-          )
-          .map(([readId, { evidenceId, representation }]) => {
-            readinessEvidence.set(evidenceId, representation)
-            physicalReadIds.set(representation.document, readId)
-            return {
-              evidenceId,
-              sourceRevision: representation.binding.sourceRevision,
-              readId,
-              source: representation.binding.retrievedSource,
-              authorText: readLiteralSnapshot(representation).authorText,
-              context: representation.authoritativeTitle ?? ''
-            }
-          })
-        const readinessContext = await prepareProviderSourceContext(conversation, true)
-        const nativeRequest = buildWikiContextReadinessRequest({
-          userRequest: contextPlan.intent,
-          conversationContext: wikiConversationContext(readinessContext.messages) ?? '',
-          requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [contextPlan.intent],
-          scope: { ...contextPlan.scope, selectedPageIds: contextPlan.selectedPageIds, currentPage: request.currentPage ?? null },
-          reads
-        })
-        if (nativeRequest !== null) {
-          // Citation aliases and truncated excerpts can grow the registry without
-          // changing this decision. Fresh authorization still runs above; only
-          // an identical paid readiness request is skipped.
-          const requestSha256 = createHash('sha256').update(canonicalJson(nativeRequest)).digest('hex')
-          if (requestSha256 === readinessCheckedRequestSha256) return
-          readinessCheckedRequestSha256 = requestSha256
-          const readiness = await createWikiDecision(readinessEvidence, physicalReadIds, readinessContext.authorize)(nativeRequest, 'context_readiness')
-          if (readiness !== null && assessWikiContextReadiness(readiness)) {
-            const synthesisEvidence = restored ?? readinessEvidence
-            await requireLiveWikiVerification(synthesisEvidence)
-            warmReadinessEvidence = synthesisEvidence
-            phase = 'synthesizing'
-            discoveryTurn = null
-            tools = null
-          }
-        }
-      }
       for (let turn = 0; turn < maxTurns; turn++) {
-        if (turn === 0 || turn < Math.max(1, maxTurns - 2)) await checkReadiness()
         let remainingTokens = maxTokens === undefined ? Number.MAX_SAFE_INTEGER : maxTokens - totalTokens
         if (remainingTokens < 1) {
           if ((request.purpose ?? 'root') === 'root' && request.run.goalId === null) return await publishExecutionLimit('tokens')
@@ -9330,12 +9230,7 @@ export class AxAgentEngine implements AgentEngine {
         try {
           if (typedFinalization) {
             await reauthorizeEvidencePrompt(promptValidationResults)
-            if (warmReadinessEvidence !== undefined) {
-              // Preserve the positively judged snapshot. A changed source must
-              // fail before synthesis, not become a newly empty paid frame.
-              await requireLiveWikiVerification(warmReadinessEvidence)
-              typedEvidence = warmReadinessEvidence
-            } else typedEvidence = await restoreEvidenceContext(null, systemMessage, requestedMaxOutputTokens, promptValidationResults, true)
+            typedEvidence = await restoreEvidenceContext(null, systemMessage, requestedMaxOutputTokens, promptValidationResults, true)
             bounded = {
               chatPrompt: [systemMessage, ...conversation, ...activePrompt],
               maxOutputTokens: Math.min(requestedMaxOutputTokens, finalizationMaxOutputTokens)
@@ -9486,7 +9381,6 @@ export class AxAgentEngine implements AgentEngine {
               ...deliveredBrowserAttributions.flatMap(observation => [...observation.quotedUnits].map(unit => `${observation.prefix}${unit}`))
             ]
             const externalSynthesis = await prepareProviderSourceContext(externalMcpSynthesisContext(activePrompt))
-            const dispatchReadinessEvidence = warmReadinessEvidence
             const synthesisResult = await this.#synthesisTurn(
               synthesisProvider,
               request,
@@ -9517,9 +9411,7 @@ export class AxAgentEngine implements AgentEngine {
                   // that are not part of the typed Wiki evidence snapshot.
                   if (await reauthorizeEvidencePrompt(new Map()))
                     throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Native synthesis context is no longer authorized', 409)
-                  await (dispatchReadinessEvidence === undefined
-                    ? requireFreshRegisteredEvidence(dispatchEvidence)
-                    : requireFreshWikiVerificationEvidence(dispatchReadinessEvidence))
+                  await requireFreshRegisteredEvidence(dispatchEvidence)
                   await requireFreshApplicationReceipts()
                   await externalSynthesis.authorize()
                 }
@@ -10615,6 +10507,11 @@ export class AxAgentEngine implements AgentEngine {
               })
               if (missingBodyReads !== undefined) rememberRecentBodyNudge(missingBodyReads)
             } else {
+              await requireLiveWikiVerification(dispatchEvidence)
+              if (callIndex > 0)
+                await requireFreshWikiVerificationEvidence(
+                  evidenceSnapshotForPrompt(citationRegistry, activePrompt, trackedEvidenceMessages, excludedEvidenceIds)
+                )
               providerResultMessage(activePrompt, mode, call.id, call.providerName, { status: 'collection_finished' })
               phase = 'synthesizing'
               discoveryTurn = null
@@ -11174,7 +11071,6 @@ export class AxAgentEngine implements AgentEngine {
           // An optional collector plan is not required to preserve unfinished
           // user work: audit receipt-only completion against the whole request.
           appliedPageContinuationInvalidated = true
-          warmReadinessEvidence = undefined
           phase = 'synthesizing'
           discoveryTurn = null
           tools = null

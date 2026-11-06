@@ -1,16 +1,13 @@
 import { axGlobals, type AxAIServiceOptions, type AxChatRequest, type AxChatResponse } from '@ax-llm/ax'
 import { ProxyTracerProvider } from '@opentelemetry/api'
 import { AGENT_TOOL_NAMES } from '../../../shared/agents/contracts.ts'
-import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import { renderSafeMarkdown } from '../../../client/helpers/safe-markdown.ts'
 import { AgentChildBudgetReservations, type AgentOrchestrationLimits } from '../../agents/orchestration.ts'
-import { DecisionProviderFailure } from '../../agents/decision-providers.ts'
 
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import { AgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import { AgentProviderAttemptError, type AgentProviderFactory, type AgentProviderService } from '../../agents/providers/factory.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
-import { unpackWikiReadTexts, type WikiReadTextReference } from '../../agents/providers/wiki-read-transport.ts'
 import type {
   AgentDispatchBudget,
   AgentDispatchBudgetReservation,
@@ -139,29 +136,6 @@ const finishCollectionResponse = {
 const offersCollectionFinish = (request: Readonly<AxChatRequest<unknown>>): boolean =>
   request.functions?.some(fn => fn.name === 'wiki_finish_collection') ?? false
 
-const readinessFixtureReceipt = async (choice: 'answerable' | 'collect' | 'not_established', probability = 1, confidence = 1): Promise<DecisionBatchResult> => {
-  const runtime = await fixtureDecisionProviders.selectRuntime()
-  return {
-    providerId: runtime.id,
-    providerRevision: runtime.revision,
-    model: runtime.config.model,
-    answers: {
-      context_readiness: {
-        choice,
-        confidence,
-        probabilities: {
-          answerable: choice === 'answerable' ? probability : 0,
-          collect: choice === 'collect' ? 1 : 0,
-          not_established: choice === 'not_established' ? 1 : choice === 'answerable' ? 1 - probability : 0
-        }
-      }
-    },
-    usage: { inputTokens: 7, outputTokens: 2, totalTokens: 9, totalTokensSource: 'derived' },
-    latencyMs: 0,
-    estimatedCost: null,
-    estimatedCostMicros: 0
-  }
-}
 const pageEvidenceActions = (
   validateObservation?: (actionName: string, output: unknown, signal: AbortSignal) => Promise<boolean>
 ): AgentActionSessionProvider =>
@@ -393,25 +367,7 @@ describe('Ax orchestration stages', () => {
           close: () => undefined
         })
       }
-      const readinessRequests: DecisionBatchRequest[] = []
-      const supportReadIds: string[] = []
-      const decisions: typeof fixtureDecisionProviders = {
-        ...fixtureDecisionProviders,
-        async decideBatch(input, options) {
-          if (!Object.hasOwn(input.questions, 'context_readiness')) {
-            if (followup) {
-              const state = input.state as { evidence: { readId: string }[] }
-              supportReadIds.push(...state.evidence.map(read => read.readId))
-            }
-            return fixtureDecisionProviders.decideBatch(input, options)
-          }
-          await options?.onPreDispatch?.()
-          options?.onRequestDispatched?.()
-          readinessRequests.push(input)
-          return readinessFixtureReceipt('answerable')
-        }
-      }
-      const engine = new AxAgentEngine(factoryFor(chat), actions, undefined, { decisionProviders: decisions })
+      const engine = new AxAgentEngine(factoryFor(chat), actions, undefined, { decisionProviders: fixtureDecisionProviders })
       const initialText = vi.fn(async (_delta: string) => {})
       await engine.execute(
         {
@@ -441,13 +397,11 @@ describe('Ax orchestration stages', () => {
       )
       expect(visibleWikiText(initialText.mock.calls.flat().join(''))).toContain(firstFact)
       expect(invoke).toHaveBeenCalledTimes(1)
-      readinessRequests.length = 0
       const retainedRead = retained.read
       if (retainedRead === undefined) throw new Error('The initial run must record its complete canonical page read')
       expect(retainedRead.output.content).toBe(content)
       followup = true
-      requestedRead = false
-      const followupCallStart = chat.mock.calls.length
+      requestedRead = true
       if (authority === 'stale') currentRevision = '2'
       if (authority === 'changed content hash') currentContent += '\n\nA changed source requirement.'
       if (authority === 'expired') unexpired = false
@@ -468,7 +422,7 @@ describe('Ax orchestration stages', () => {
         },
         { text: followupText, event: async () => {} }
       )
-      // The native readiness optimization never creates another physical read.
+      // Reusing a retained read must not invoke the page action again.
       expect(invoke).toHaveBeenCalledTimes(1)
       expect(validateObservation).toHaveBeenCalledWith('pages.get', page, expect.any(AbortSignal))
       const published = visibleWikiText(followupText.mock.calls.flat().join(''))
@@ -478,45 +432,20 @@ describe('Ax orchestration stages', () => {
         expect(published).not.toContain(firstFact)
         expect(result.citations).toEqual([expect.objectContaining({ evidenceId })])
         expect(delivered).toEqual([expect.objectContaining({ readText: content, complete: true })])
-        expect(chat.mock.calls.slice(followupCallStart)).toHaveLength(1)
-        expect(readinessRequests).toHaveLength(1)
-        const state = readinessRequests[0]!.state as {
-          evidence: { evidenceId: string; sourceRevision: string; readId: string; source: WikiReadTextReference; authorText: WikiReadTextReference }[]
-          readTexts: string[]
-          conversationContext: string
-          userRequest: string
-        }
-        expect(state.userRequest).toBe('And when does Cedar warehouse close on Fridays?')
-        expect(state.conversationContext).toContain(firstFact)
-        expect(state.conversationContext).not.toContain(state.userRequest)
-        expect(state.evidence).toHaveLength(1)
-        expect(state.evidence[0]).toMatchObject({ evidenceId, sourceRevision: '1' })
-        expect(unpackWikiReadTexts({ texts: state.readTexts, sources: state.evidence.flatMap(read => [read.source, read.authorText]) })).toEqual([
-          content,
-          content
-        ])
-        expect(supportReadIds).toContain(state.evidence[0]!.readId)
       } else {
         expect(published).not.toContain(followupFact)
         expect(result.citations).toBeUndefined()
         expect(delivered).toEqual([])
         expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
-        expect(readinessRequests).toHaveLength(0)
       }
     }
   )
 
-  interface WarmReadinessOptions {
-    readonly dispatchBudget?: boolean
-    readonly maxTokens?: number
-    readonly coverageTokens?: number
-    readonly cold?: boolean
-    readonly collectionRead?: 'truncated recent' | 'new complete read'
-  }
-
-  const warmReadinessFixture = (mode: string, userRequest = 'What does it require?', options: WarmReadinessOptions = {}) => {
+  const publicationGateFixture = (
+    mode: 'provider changed after semantic' | 'coverage token overrun' | 'source changed before synthesis' | 'provider changed before synthesis',
+    options: { readonly dispatchBudget?: boolean; readonly maxTokens?: number; readonly coverageTokens?: number } = {}
+  ) => {
     const fact = 'Falcon dispatch requires a signed manifest.'
-    const content = `# Supplier operations\n\n${fact}${mode === 'native capacity' ? `\n\n${'x'.repeat(130_000)}` : ''}`
     const page = {
       id: 42,
       locale: 'en',
@@ -524,148 +453,34 @@ describe('Ax orchestration stages', () => {
       title: 'Supplier operations',
       contentType: 'markdown',
       sourceRevision: '1',
-      content,
+      content: `# Supplier operations\n\n${fact}`,
       citation: { evidenceId: 'page:42:revision:1', label: 'Supplier operations', href: '/en/suppliers' },
       citationSections: []
     }
-    const companion = {
-      ...page,
-      id: 43,
-      path: 'warehouse',
-      title: 'Warehouse rules',
-      content: '# Warehouse rules\n\nInspection precedes entry.',
-      citation: { evidenceId: 'page:43:revision:1', label: 'Warehouse rules', href: '/en/warehouse' }
-    }
-    const collectionPage = {
-      ...companion,
-      id: 44,
-      path: 'receiving',
-      title: 'Receiving',
-      content: '# Receiving\n\nThe receiving desk checks incoming deliveries.',
-      citation: { evidenceId: 'page:44:revision:1', label: 'Receiving', href: '/en/receiving' }
-    }
-    const collectionRead =
-      options.collectionRead === 'truncated recent'
-        ? {
-            kind: 'recent-page-evidence',
-            requestedLimit: 1,
-            exhausted: true,
-            pages: [
-              {
-                ...collectionPage,
-                content: '# Receiving\n\nThe receiving desk',
-                updatedAt: '2026-09-20T09:00:00.000Z',
-                contentTruncated: true,
-                sourceContentCharacters: collectionPage.content.length
-              }
-            ]
-          }
-        : options.collectionRead === 'new complete read'
-          ? collectionPage
-          : page
     let providerRevision = 1
     let sourceAuthorized = true
-    const nativeRequests: DecisionBatchRequest[] = []
-    const collected: Readonly<AxChatRequest>[] = []
     const synthesized: Readonly<AxChatRequest>[] = []
-    const paidReadiness: DecisionBatchRequest[] = []
     const budget = new PublicationBudgetLedger(2_000_000)
-    const reserve = budget.reserve.bind(budget)
-    const release = vi.fn(budget.release.bind(budget))
-    budget.release = release
     const reserveSequence = vi.fn(budget.reserveSequence.bind(budget))
     budget.reserveSequence = reserveSequence
-    budget.reserve = async maximum => {
-      if (maximum.tokens === 64_000 && mode === 'admission denied')
-        throw new AgentRepositoryError('AGENT_QUOTA_EXHAUSTED', 'The optional native exposure cannot be admitted', 429)
-      if (maximum.tokens === 64_000 && mode === 'undersized admission') return reserve({ ...maximum, tokens: maximum.tokens - 1 })
-      const reservation = await reserve(maximum)
-      if (maximum.tokens === 64_000 && mode === 'native source fence') sourceAuthorized = false
-      if (maximum.tokens === 64_000 && mode === 'native provider fence') providerRevision++
-      return reservation
-    }
-    const reconcile = budget.reconcile.bind(budget)
-    budget.reconcile = async (reservation, usage) => {
-      if (reservation.tokens === 64_000 && mode === 'settlement failed')
-        throw new AgentRepositoryError('DISPATCH_SETTLEMENT_FAILED', 'The native receipt could not be settled', 503)
-      await reconcile(reservation, usage)
-    }
     const decisions: typeof fixtureDecisionProviders = {
       ...fixtureDecisionProviders,
       async selectRuntime() {
         const runtime = await fixtureDecisionProviders.selectRuntime()
-        return {
-          ...runtime,
-          revision: providerRevision,
-          config: { ...runtime.config, pricing: { ...runtime.config.pricing!, inputPerMillion: 1, outputPerMillion: 1, perRequest: 0.25 } }
-        }
-      },
-      async decideBatch(input, options) {
-        if (!Object.hasOwn(input.questions, 'context_readiness')) {
-          const result = await fixtureDecisionProviders.decideBatch(input, options)
-          return { ...result, estimatedCostMicros: 250_000 }
-        }
-        nativeRequests.push(input)
-        if (mode === 'native pre-admission denied')
-          throw new AgentRepositoryError('DECISION_BATCH_UNSUPPORTED', 'Optional native request capacity is unavailable', 400)
-        await options?.onPreDispatch?.()
-        options?.onRequestDispatched?.()
-        paidReadiness.push(input)
-        if (mode === 'paid timeout') throw new AgentRepositoryError('DECISION_TIMEOUT', 'A dispatched readiness call timed out', 503)
-        const result = await readinessFixtureReceipt(
-          ['missing', 'new topic', 'linked lookup', 'action', 'exhaustive'].includes(mode) ? 'collect' : 'answerable',
-          mode === 'uncertain probability' ? 0.8 : 1,
-          mode === 'uncertain confidence' ? 0.8 : 1
-        )
-        if (mode === 'unmeasured usage') return { ...result, usage: { ...result.usage, inputTokens: Number.NaN }, estimatedCostMicros: null }
-        if (mode === 'malformed judgment') throw new DecisionProviderFailure('INVALID_DECISION_RESPONSE', await decisions.selectRuntime(), result.usage, 1)
-        return { ...result, estimatedCostMicros: 250_009 }
+        return { ...runtime, revision: providerRevision }
       }
     }
     const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
-      if (synthesisInputFromRequest(input) !== undefined) {
-        synthesized.push(input)
-        const sources = synthesisSourcesFromRequest(input)
-        return {
-          results: [
-            {
-              index: 0,
-              content: synthesisFixtureAnswer(
-                input,
-                ['answerable', 'provider changed after semantic', 'coverage token overrun'].includes(mode)
-                  ? {
-                      claims: [{ ...sources.find(source => source.evidenceId === page.citation.evidenceId)!, statement: fact }]
-                    }
-                  : { claims: [], unresolvedFacets: [0] }
-              )
-            }
-          ]
-        }
+      if (synthesisInputFromRequest(input) === undefined) {
+        if (mode === 'source changed before synthesis') sourceAuthorized = false
+        if (mode === 'provider changed before synthesis') providerRevision++
+        return finishCollectionResponse
       }
-      collected.push(input)
-      if (options.collectionRead && collected.length === 1)
-        return {
-          results: [
-            {
-              index: 0,
-              functionCalls: [
-                {
-                  id: 'read-collection-source',
-                  type: 'function',
-                  function:
-                    options.collectionRead === 'truncated recent'
-                      ? { name: 'wiki_list_recent_pages', params: { limit: 1 } }
-                      : { name: 'wiki_get_page', params: { id: collectionPage.id } }
-                }
-              ]
-            }
-          ]
-        }
-      if (options.cold && collected.length === 1)
-        return {
-          results: [{ index: 0, functionCalls: [{ id: 'read-falcon', type: 'function', function: { name: 'wiki_get_page', params: { id: 42 } } }] }]
-        }
-      return finishCollectionResponse
+      synthesized.push(input)
+      const source = synthesisSourcesFromRequest(input).find(source => source.evidenceId === page.citation.evidenceId)!
+      return {
+        results: [{ index: 0, content: synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fact }] }) }]
+      }
     })
     const coverage = vi.fn(
       async (): Promise<AxChatResponse> => ({
@@ -684,47 +499,19 @@ describe('Ax orchestration stages', () => {
     const text = vi.fn(async (_delta: string) => {})
     const event = vi.fn(async (type: string, data: unknown) => {
       if (
-        type !== 'model.turn' ||
-        data === null ||
-        typeof data !== 'object' ||
-        !('verification' in data) ||
-        data.verification === null ||
-        typeof data.verification !== 'object' ||
-        !('phase' in data.verification)
+        type === 'model.turn' &&
+        data !== null &&
+        typeof data === 'object' &&
+        'verification' in data &&
+        data.verification !== null &&
+        typeof data.verification === 'object' &&
+        'phase' in data.verification &&
+        data.verification.phase === 'semantic' &&
+        mode === 'provider changed after semantic'
       )
-        return
-      if (data.verification.phase === 'semantic' && mode === 'provider changed after semantic') providerRevision++
-      if (data.verification.phase !== 'context_readiness') return
-      if (mode === 'source changed before synthesis') sourceAuthorized = false
-      if (mode === 'provider changed before synthesis') providerRevision++
+        providerRevision++
     })
-    const retainedActions = pageEvidenceActions(
-      async (_name, output) => sourceAuthorized && [page, companion, collectionRead].some(source => JSON.stringify(source) === JSON.stringify(output))
-    )
-    const read = vi.fn(async () => collectionRead)
-    const actions: AgentActionSessionProvider = {
-      ...retainedActions,
-      open: async (...args) => {
-        const session = await retainedActions.open(...args)
-        return {
-          ...session,
-          invoke: read,
-          functions:
-            options.collectionRead === 'truncated recent'
-              ? [
-                  ...session.functions,
-                  {
-                    name: 'pages.listRecent' as const,
-                    title: 'Read recent pages',
-                    description: 'Read recent page excerpts',
-                    parameters: { type: 'object', properties: { limit: { type: 'integer' } } },
-                    risk: 'read' as const
-                  }
-                ]
-              : session.functions
-        }
-      }
-    }
+    const actions = pageEvidenceActions(async (_name, output) => sourceAuthorized && JSON.stringify(page) === JSON.stringify(output))
     const engine = new AxAgentEngine(factoryFor(chat, { maxContextTokens: 1_000_000, coverage }), actions, undefined, { decisionProviders: decisions })
     const execute = () =>
       engine.execute(
@@ -732,147 +519,35 @@ describe('Ax orchestration stages', () => {
           ...baseRequest(new AbortController().signal),
           memory: { user: [], agent: [] },
           currentPage: null,
-          messages: options.cold
-            ? [{ role: 'user', content: userRequest }]
-            : [
-                { role: 'user', content: 'What does Falcon dispatch require?' },
-                { role: 'assistant', content: 'The previous response discussed Falcon dispatch.' },
-                { role: 'user', content: userRequest }
-              ],
-          retainedPageReads: options.cold
-            ? []
-            : [
-                { actionCallId: 'original-falcon-read', actionName: 'pages.get', output: page },
-                { actionCallId: 'original-warehouse-read', actionName: 'pages.get', output: companion }
-              ],
+          messages: [
+            { role: 'user', content: 'What does Falcon dispatch require?' },
+            { role: 'assistant', content: 'The previous response discussed Falcon dispatch.' },
+            { role: 'user', content: 'What does it require?' }
+          ],
+          retainedPageReads: [{ actionCallId: 'original-falcon-read', actionName: 'pages.get', output: page }],
           ...(options.dispatchBudget === false ? {} : { dispatchBudget: budget }),
-          limits: { maxTurns: 5, maxTokens: options.maxTokens ?? (mode === 'run allowance' ? 60_000 : 2_000_000) }
+          limits: { maxTurns: 5, maxTokens: options.maxTokens ?? 2_000_000 }
         },
         { text, event }
       )
-    return { execute, text, event, coverage, read, nativeRequests, paidReadiness, collected, synthesized, budget, reserveSequence, release, content, companion }
+    return { execute, text, event, coverage, synthesized, budget, reserveSequence }
   }
 
-  it('skips exactly the collector acknowledgement for an answerable warm pronoun follow-up while preserving all complete reads', async () => {
-    const fixture = warmReadinessFixture('answerable')
-    const result = await fixture.execute()
-    expect(fixture.collected).toHaveLength(0)
-    expect(fixture.paidReadiness).toHaveLength(1)
-    expect(fixture.synthesized).toHaveLength(1)
-    expect(fixture.synthesized[0]?.functions?.some(fn => fn.name !== '__axOutput') ?? false).toBe(false)
-    expect(synthesisReadsFromRequest(fixture.synthesized[0]!).map(read => read.readText)).toEqual([fixture.content, fixture.companion.content])
-    expect(result.citations).toContainEqual(expect.objectContaining({ evidenceId: 'page:42:revision:1' }))
-    expect(
-      fixture.event.mock.calls.filter(
-        ([type, data]) =>
-          type === 'model.turn' &&
-          typeof data === 'object' &&
-          data !== null &&
-          'verification' in data &&
-          typeof data.verification === 'object' &&
-          data.verification !== null &&
-          'phase' in data.verification &&
-          data.verification.phase === 'semantic'
-      ).length
-    ).toBeGreaterThan(0)
-    expect(fixture.budget.consumedTokens).toBe(result.totalTokens)
-    expect(fixture.budget.consumedCostMicros).toBe(result.costMicros)
-    expect(fixture.budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
-    expect(fixture.reserveSequence).toHaveBeenCalledOnce()
-  })
-
-  it('transitions a newly delivered sufficient full read to synthesis without a collector acknowledgement', async () => {
-    const fixture = warmReadinessFixture('answerable', 'What does Falcon dispatch require?', { cold: true })
-    const result = await fixture.execute()
-    expect(fixture.read).toHaveBeenCalledOnce()
-    expect(fixture.collected).toHaveLength(1)
-    expect(fixture.paidReadiness).toHaveLength(1)
-    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).toContain('requires a signed manifest')
-    expect(result.citations).toContainEqual(expect.objectContaining({ evidenceId: 'page:42:revision:1' }))
-    expect(fixture.budget.consumedTokens).toBe(result.totalTokens)
-    expect(fixture.budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
-  })
-
-  it.each(['truncated recent', 'new complete read'] as const)(
-    'rechecks collection readiness only for changed complete-read input: %s',
-    async collectionRead => {
-      const fixture = warmReadinessFixture('new topic', 'Summarize the receiving requirements.', { collectionRead })
-      const result = await fixture.execute()
-      expect(fixture.read).toHaveBeenCalledOnce()
-      expect(fixture.collected).toHaveLength(2)
-      if (collectionRead === 'truncated recent') expect(new Set(fixture.paidReadiness.map(request => JSON.stringify(request))).size).toBe(1)
-      expect(fixture.paidReadiness).toHaveLength(collectionRead === 'truncated recent' ? 1 : 2)
-      if (collectionRead === 'new complete read') {
-        const state = fixture.paidReadiness[1]!.state as { evidence: { evidenceId: string }[] }
-        expect(state.evidence.map(read => read.evidenceId)).toContain('page:44:revision:1')
-      }
-      expect(fixture.budget.consumedTokens).toBe(result.totalTokens)
-      expect(fixture.budget.consumedCostMicros).toBe(result.costMicros)
-      expect(fixture.budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
-    }
-  )
-
-  it('blocks synthesis when a newly delivered read is revoked after positive readiness', async () => {
-    const fixture = warmReadinessFixture('source changed before synthesis', 'What does Falcon dispatch require?', { cold: true })
-    await expect(fixture.execute()).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
-    expect(fixture.read).toHaveBeenCalledOnce()
-    expect(fixture.paidReadiness).toHaveLength(1)
-    expect(fixture.synthesized).toHaveLength(0)
-    expect(fixture.text).not.toHaveBeenCalled()
-  })
-
-  it.each([
-    ['missing', 'What insurance coverage does Falcon have?'],
-    ['new topic', 'What is the maple export policy?'],
-    ['linked lookup', 'What are the contact details on its linked escalation page?'],
-    ['action', 'Explain its manifest requirement and update the page title.'],
-    ['exhaustive', 'Which requirements apply across every Wiki page?'],
-    ['uncertain probability', 'What does it require?'],
-    ['uncertain confidence', 'What does it require?'],
-    ['malformed judgment', 'What does it require?']
-  ])('keeps the collector active when warm readiness is %s', async (mode, userRequest) => {
-    const fixture = warmReadinessFixture(mode!, userRequest)
-    await fixture.execute()
-    expect(fixture.paidReadiness).toHaveLength(1)
-    expect(fixture.collected).toHaveLength(1)
-    expect(offersCollectionFinish(fixture.collected[0]!)).toBe(true)
-    expect(fixture.collected[0]?.functions).toContainEqual(expect.objectContaining({ name: 'wiki_get_page' }))
-    expect(fixture.budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
-    expect(fixture.reserveSequence).toHaveBeenCalledOnce()
-  })
-
-  it.each(['native capacity', 'run allowance', 'admission denied', 'undersized admission', 'native pre-admission denied'])(
-    'falls back to ordinary collection without paying readiness after %s',
+  it.each(['source changed before synthesis', 'provider changed before synthesis'] as const)(
+    'fails closed after explicit collection finish when the %s',
     async mode => {
-      const fixture = warmReadinessFixture(mode)
-      await fixture.execute()
-      expect(fixture.paidReadiness).toHaveLength(0)
-      expect(fixture.collected).toHaveLength(1)
-      expect(offersCollectionFinish(fixture.collected[0]!)).toBe(true)
-      expect(fixture.budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
-      expect(fixture.reserveSequence).toHaveBeenCalledOnce()
-      if (mode === 'native pre-admission denied') expect(fixture.release).toHaveBeenCalledWith(expect.objectContaining({ tokens: 64_000 }))
-    }
-  )
-
-  it.each(['native source fence', 'native provider fence', 'source changed before synthesis', 'provider changed before synthesis'])(
-    'fails closed without paying for stale synthesis at the warm %s',
-    async mode => {
-      const fixture = warmReadinessFixture(mode)
-      await expect(fixture.execute()).rejects.toMatchObject({ code: mode.includes('provider') ? 'WIKI_VERIFICATION_FAILED' : 'AGENT_EVIDENCE_INVALID' })
-      expect(fixture.collected).toHaveLength(0)
+      const fixture = publicationGateFixture(mode)
+      await expect(fixture.execute()).rejects.toMatchObject({ code: mode.startsWith('provider') ? 'WIKI_VERIFICATION_FAILED' : 'AGENT_EVIDENCE_INVALID' })
       expect(fixture.synthesized).toHaveLength(0)
+      expect(fixture.coverage).not.toHaveBeenCalled()
       expect(fixture.text).not.toHaveBeenCalled()
-      expect(fixture.paidReadiness).toHaveLength(mode.startsWith('native') ? 0 : 1)
       expect(fixture.budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
-      if (mode.startsWith('native')) expect(fixture.release).toHaveBeenCalledWith(expect.objectContaining({ tokens: 64_000 }))
     }
   )
 
   it('blocks the paid coverage audit and factual publication when the pinned Jev revision changes after semantic verification', async () => {
-    const fixture = warmReadinessFixture('provider changed after semantic')
+    const fixture = publicationGateFixture('provider changed after semantic')
     await expect(fixture.execute()).rejects.toMatchObject({ code: 'WIKI_VERIFICATION_FAILED' })
-    expect(fixture.paidReadiness).toHaveLength(1)
     expect(fixture.synthesized).toHaveLength(1)
     expect(fixture.event.mock.calls).toContainEqual([
       'model.turn',
@@ -889,7 +564,7 @@ describe('Ax orchestration stages', () => {
 
   it('retains the measured coverage receipt but blocks factual publication when aggregate tokens exceed the run limit without a dispatch budget', async () => {
     const maxTokens = 2_000_000
-    const fixture = warmReadinessFixture('coverage token overrun', 'What does it require?', {
+    const fixture = publicationGateFixture('coverage token overrun', {
       dispatchBudget: false,
       maxTokens,
       coverageTokens: maxTokens
@@ -907,39 +582,10 @@ describe('Ax orchestration stages', () => {
         verification: expect.objectContaining({ phase: 'coverage_audit', verdict: 'complete' })
       })
     ])
-    expect(fixture.event.mock.calls).toContainEqual([
-      'model.turn',
-      expect.objectContaining({
-        totalTokens: 9,
-        verification: expect.objectContaining({ phase: 'context_readiness' })
-      })
-    ])
     expect(fixture.text).not.toHaveBeenCalled()
     expect(fixture.event.mock.calls).not.toContainEqual(['model.turn', expect.objectContaining({ outcome: 'answer_accepted' })])
     expect(fixture.reserveSequence).not.toHaveBeenCalled()
   })
-
-  it.each(['paid timeout', 'unmeasured usage', 'settlement failed'])(
-    'retains conservative readiness exposure and does not resume collection after %s',
-    async mode => {
-      const fixture = warmReadinessFixture(mode)
-      await expect(fixture.execute()).rejects.toThrow()
-      expect(fixture.paidReadiness).toHaveLength(1)
-      expect(fixture.collected).toHaveLength(0)
-      expect(fixture.synthesized).toHaveLength(0)
-      expect(fixture.text).not.toHaveBeenCalled()
-      expect(fixture.budget.unsettledExposure.tokens).toBe(64_000)
-      expect(fixture.release).not.toHaveBeenCalled()
-      if (mode !== 'settlement failed')
-        expect(fixture.event.mock.calls).toContainEqual([
-          'model.turn',
-          expect.objectContaining({
-            usageSource: 'unmeasured-exposure',
-            unknownExposure: { tokens: 64_000, costMicros: 314_000 }
-          })
-        ])
-    }
-  )
 
   it('uses the same bounded root output exposure for preflight and actual generation on large provider profiles', async () => {
     const chat = vi.fn(

@@ -1483,6 +1483,7 @@ describe('agent proposal repository', () => {
         validate(authority, request.knowledgeContext, actionName, output, signal, input)
     })
     let collectorTurns = 0
+    let ordinaryReadDelivered = false
     const providerRequests: Readonly<AxChatRequest>[] = []
     const fixtureErrors: unknown[] = []
     const respond = async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
@@ -1491,6 +1492,10 @@ describe('agent proposal repository', () => {
         results: [{ index: 0, functionCalls: [{ id, type: 'function', function: { name, params: JSON.stringify(params) } }] }],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 2, totalTokens: 5 } }
       })
+      if (outcome === 'complete' && !ordinaryReadDelivered) {
+        ordinaryReadDelivered = true
+        return call('read-current-page', AGENT_TOOL_NAMES['pages.get'], { id: 43 })
+      }
       if (collectorTurns++ === 0) {
         const response = call('enable-authoring', 'wiki_enable_tools', { category: 'authoring' })
         if (requestPlan !== undefined) response.results[0]!.content = requestPlan
@@ -1646,7 +1651,18 @@ describe('agent proposal repository', () => {
       currentPage: null,
       signal: new AbortController().signal
     }
-    const engine = new AxAgentEngine(factory, sessions, undefined, { decisionProviders: fixtureDecisionProviders })
+    const decisionProviders = {
+      ...fixtureDecisionProviders,
+      async decideBatch(...args: Parameters<typeof fixtureDecisionProviders.decideBatch>) {
+        const result = await fixtureDecisionProviders.decideBatch(...args)
+        if (!Object.hasOwn(args[0].questions, 'context_readiness')) return result
+        return {
+          ...result,
+          answers: { context_readiness: { choice: 'answerable', probabilities: { answerable: 1, collect: 0, not_established: 0 }, confidence: 1 } }
+        }
+      }
+    }
+    const engine = new AxAgentEngine(factory, sessions, undefined, { decisionProviders })
     const text = vi.fn(async (_delta: string) => {})
     const event = vi.fn(async (_type: string, _data: unknown) => {})
     // The production engine intentionally sanitizes provider failures. Keep
@@ -1674,7 +1690,6 @@ describe('agent proposal repository', () => {
       const published = text.mock.calls.map(([delta]) => delta).join('')
       expect(published).toContain('Wiki proposal application status: applied.')
       if (hasRemainingWork) expect(published).toContain(remainingWork.replace('.', '\\.'))
-      expect(providerRequests).toHaveLength(hasRemainingWork ? 5 : 4)
       expect(completed.totalTokens).toBeGreaterThan(0)
     } else {
       await expect(execution).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })

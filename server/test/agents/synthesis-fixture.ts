@@ -8,8 +8,7 @@ import { wikiSynthesisSourceRef, type WikiSynthesisSource } from '../../agents/p
  * Test-only Jev decision judge for engine fixtures. It is a mock dependency,
  * never a production fallback and carries no semantic-accuracy claim:
  * applicability resolves to `other`; support resolves to `supports`, and
- * narration to `bounded`. Warm readiness conservatively resolves to `collect`;
- * transition fixtures explicitly supply positive readiness verdicts.
+ * narration to `bounded`.
  * The separate answer-profile coverage mock defaults to `complete`; rejection
  * fixtures explicitly provide their independent audit result.
  */
@@ -42,9 +41,7 @@ export const fixtureDecisionProviders = {
     await options.onPreDispatch?.()
     const answers: Record<string, DecisionBatchResult['answers'][string]> = {}
     for (const [id, question] of Object.entries(request.questions)) {
-      const label = Object.keys(question.criteria).find(
-        label => label === 'collect' || label === 'other' || label === 'supports' || label === 'complete' || label === 'bounded'
-      )
+      const label = Object.keys(question.criteria).find(label => label === 'other' || label === 'supports' || label === 'complete' || label === 'bounded')
       if (label === undefined) throw new Error(`Fixture decision provider has no supported mock criterion for question ${id}`)
       const probabilities: Record<string, number> = Object.fromEntries(Object.keys(question.criteria).map(key => [key, key === label ? 1 : 0]))
       answers[id] = { choice: label, probabilities, confidence: 1 }

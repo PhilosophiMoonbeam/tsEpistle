@@ -10530,7 +10530,6 @@ describe('request-derived evidence coverage', () => {
         selectRuntime: async () => ({ ...(await fixtureDecisionProviders.selectRuntime()), revision }),
         decideBatch: async (nativeRequest: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]) => {
           const result = await fixtureDecisionProviders.decideBatch(nativeRequest, options)
-          if (Object.hasOwn(nativeRequest.questions, 'context_readiness')) return result
           const state = questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state)
           groups.push(canonicalJson(state.candidate))
           const answers = { ...result.answers }
@@ -10789,7 +10788,6 @@ describe('request-derived evidence coverage', () => {
         nativeRequest: DecisionBatchRequest,
         options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]
       ): Promise<DecisionBatchResult> => {
-        if (Object.hasOwn(nativeRequest.questions, 'context_readiness')) return fixtureDecisionProviders.decideBatch(nativeRequest, options)
         await options?.onPreDispatch?.()
         const metadataState = questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state)
         options?.onRequestDispatched?.()
@@ -11114,7 +11112,6 @@ describe('request-derived evidence coverage', () => {
             nativeDispatches.push({ sourceInvalidated: sourceAuthority.invalidated, reservationId: [...outstanding.keys()][0] })
           }
         }
-        if (Object.hasOwn(nativeRequest.questions, 'context_readiness')) return fixtureDecisionProviders.decideBatch(nativeRequest, observedOptions)
         await observedOptions.onPreDispatch?.()
         const state = questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state)
         let nativeCall: (typeof nativeCalls)[number]
@@ -11835,8 +11832,6 @@ describe('request-derived evidence coverage', () => {
   it.each([
     ['native', 'recent facet'],
     ['prompt', 'recent facet'],
-    ['native', 'positive readiness'],
-    ['prompt', 'positive readiness'],
     ['native', 'same batch finish'],
     ['prompt', 'same batch finish'],
     ['native', 'no plan'],
@@ -11888,34 +11883,14 @@ describe('request-derived evidence coverage', () => {
         name => {
           if (name !== 'pages.listRecent') throw new Error(`Unexpected full-page reread: ${name}`)
           return { kind: 'recent-page-evidence', requestedLimit: 10, exhausted: false, pages: rows }
-        },
-        [],
-        {},
-        {},
-        {
-          ...fixtureDecisionProviders,
-          async decideBatch(input, options) {
-            const result = await fixtureDecisionProviders.decideBatch(input, options)
-            if (metadataKind !== 'positive readiness' || !Object.hasOwn(input.questions, 'context_readiness')) return result
-            return {
-              ...result,
-              answers: {
-                context_readiness: {
-                  choice: 'answerable',
-                  probabilities: { answerable: 1, collect: 0, not_established: 0 },
-                  confidence: 1
-                }
-              }
-            }
-          }
         }
       )
-      const result = await fixture.execute(userRequest, { maxTurns: 4, maxToolCalls: metadataKind === 'positive readiness' ? 2 : 1, maxOutputTokens: 2_048 })
+      const result = await fixture.execute(userRequest, { maxTurns: 4, maxToolCalls: 1, maxOutputTokens: 2_048 })
       expect(result.executionLimit).toBeUndefined()
       expect(result.citations?.map(citation => citation.evidenceId)).toEqual(rows.map(row => row.citation.evidenceId))
       expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.listRecent'])
       const published = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
-      if (metadataKind === 'positive readiness' || metadataKind === 'same batch finish') expect(fixture.providerCalls).toHaveLength(2)
+      if (metadataKind === 'same batch finish') expect(fixture.providerCalls).toHaveLength(2)
       for (const fact of facts) expect(published).toContain(fact)
       expect(published.indexOf(facts[0]!)).toBeLessThan(published.indexOf(facts[9]!))
       expect(published).not.toContain('Evidence limits')
@@ -11929,8 +11904,6 @@ describe('request-derived evidence coverage', () => {
     ['prompt', 'standalone finish'],
     ['native', 'collector prose'],
     ['prompt', 'collector prose'],
-    ['native', 'positive readiness'],
-    ['prompt', 'positive readiness'],
     ['native', 'penultimate slot'],
     ['prompt', 'penultimate slot'],
     ['native', 'no plan'],
@@ -12010,25 +11983,7 @@ describe('request-derived evidence coverage', () => {
         throw new Error(`Unexpected acquisition: ${name}`)
       },
       [],
-      { automaticCollectionControl: handoff !== 'collector prose' },
-      {},
-      {
-        ...fixtureDecisionProviders,
-        async decideBatch(input, options) {
-          const result = await fixtureDecisionProviders.decideBatch(input, options)
-          if (handoff !== 'positive readiness' || !Object.hasOwn(input.questions, 'context_readiness')) return result
-          return {
-            ...result,
-            answers: {
-              context_readiness: {
-                choice: 'answerable',
-                probabilities: { answerable: 1, collect: 0, not_established: 0 },
-                confidence: 1
-              }
-            }
-          }
-        }
-      }
+      { automaticCollectionControl: handoff !== 'collector prose' }
     )
     const result = await fixture.execute(userRequest, { maxTurns: handoff === 'penultimate slot' ? 3 : 6, maxToolCalls: 2, maxOutputTokens: 2_048 })
     expect(result.executionLimit).toBeUndefined()
