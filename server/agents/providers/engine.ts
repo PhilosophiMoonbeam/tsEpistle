@@ -8106,12 +8106,13 @@ export class AxAgentEngine implements AgentEngine {
         if (windows.length === 0) return contextPlan.intent
         return `${contextPlan.intent}\n\nHost-observed recent-page collection scope (not page facts or additional request obligations):\n${canonicalJson(windows)}\nFor a requested bounded recent listing or recap, requestedLimit is an upper bound. Only windowComplete:true certifies that the eligible accessible action window reached that limit or actual exhaustion with all returned rows available. A smaller exhausted complete window is not by itself an unresolved request facet. Cover every returned page with an available exact read; disclose missing requested evidence or unread content. Incidental recent research does not expand an ordinary question. This scope establishes no Wiki-wide absence, exclusivity, revision differences or unread-suffix coverage. Keep every other unsupported request facet unresolved.`
       }
-      const recentBodyReadIds = (): readonly string[] | undefined => {
+      const nudgedRecentBodyReads = new Set<string>()
+      const recentBodyReadIds = (includeNudged = false): readonly string[] | undefined => {
         let missing: string[] | undefined
         for (const evidence of citationRegistry.values()) {
           if (
             excludedEvidenceIds.has(evidence.citation.evidenceId) ||
-            !recentGroups.some(group => group.evidenceIds.includes(evidence.citation.evidenceId)) ||
+            !recentWindows.some(window => window.evidenceIds.includes(evidence.citation.evidenceId)) ||
             evidence.binding.representation !== 'recent-excerpt' ||
             metadataRecord(evidence.binding.representationMetadata)?.contentTruncated !== true
           )
@@ -8127,12 +8128,18 @@ export class AxAgentEngine implements AgentEngine {
               unit.kind !== 'list' &&
               unit.kind !== 'table'
           )
-          if (!hasBody) (missing ??= []).push(evidence.citation.evidenceId)
+          if (!hasBody && (includeNudged || !nudgedRecentBodyReads.has(citationPhysicalReadId(evidence)))) (missing ??= []).push(evidence.citation.evidenceId)
         }
         return missing
       }
-      const recentBodyReadFeedback = (ids: readonly string[]): string =>
-        `These recent-page excerpts have no parser-admitted body content: ${ids.join(', ')}. Use pages.get for only those pages before finishing the requested recap; retain the other usable recent reads. Do not infer facts from opaque markup or an unseen suffix.`
+      const nudgeRecentBodyReads = (ids: readonly string[]): string =>
+        `These recent-page excerpts have no parser-admitted body content: ${ids.join(', ')}. If their body is needed for the original request and the user permits full-page reads, use pages.get only for those pages; retain the other usable reads. Do not fetch outside the requested scope or contrary to a user restriction. Otherwise finish with supported requested content and leave unavailable requested content unresolved. Never infer facts from opaque markup or an unseen suffix.`
+      const rememberRecentBodyNudge = (ids: readonly string[]): void => {
+        for (const id of ids) {
+          const evidence = citationRegistry.get(id)
+          if (evidence !== undefined) nudgedRecentBodyReads.add(citationPhysicalReadId(evidence))
+        }
+      }
       const pageReadCache = new Map<string, { readonly actionCallId: string; readonly output: unknown }>()
       if (specialistContinuation) {
         for (const stored of specialistContinuation.evidenceMessages) {
@@ -9056,7 +9063,7 @@ export class AxAgentEngine implements AgentEngine {
           !contextPlan.intent.trim() ||
           request.recoveredAction !== undefined ||
           citationRegistry.size === 0 ||
-          recentBodyReadIds() !== undefined
+          recentBodyReadIds(true) !== undefined
         )
           return
         const readinessValidations: EvidenceValidationCache = new Map()
@@ -9129,7 +9136,7 @@ export class AxAgentEngine implements AgentEngine {
           turn < maxTurns - 1 &&
           phase === 'collecting' &&
           ((citationRegistry.size === 0 && (seenCandidateIdentities.size > 0 || contextPlan.selectedPageIds.length > 0 || request.currentPage !== undefined)) ||
-            recentBodyReadIds() !== undefined)
+            recentBodyReadIds(true) !== undefined)
         if ((request.purpose ?? 'root') === 'root' && (turn >= maxTurns - 1 || (publicationWindow && !requiredSourceRead))) {
           phase = 'synthesizing'
           discoveryTurn = null
@@ -9440,8 +9447,9 @@ export class AxAgentEngine implements AgentEngine {
             }
             activePrompt.push(assistant)
             trackedAssistantSourceInputs.set(assistant, providerSourceInputs(bounded.chatPrompt))
-            const feedback: ChatPromptMessage = { role: 'user', content: recentBodyReadFeedback(missingBodyReads) }
+            const feedback: ChatPromptMessage = { role: 'user', content: nudgeRecentBodyReads(missingBodyReads) }
             activePrompt.push(feedback)
+            rememberRecentBodyNudge(missingBodyReads)
             sourceIndependentControlResponses.add(feedback)
             activeBatchEnds.push(activePrompt.length)
             continue
@@ -9456,10 +9464,9 @@ export class AxAgentEngine implements AgentEngine {
           const assessmentStartedAt = performance.now()
           const unestablishedCoverage =
             (request.purpose ?? 'root') === 'root' &&
-            ((contextPlan.requestFacets === undefined && contextPlan.observedRecentEvidence) ||
-              contextPlan.requestFacets?.some(
-                (facet, index) => facet.coverage === 'recent-window' && contextPlan.recentWindows.get(index)?.windowComplete !== true
-              ) === true)
+            contextPlan.requestFacets?.some(
+              (facet, index) => facet.coverage === 'recent-window' && contextPlan.recentWindows.get(index)?.windowComplete !== true
+            ) === true
           let requestDisclosure = requestEvidenceDisclosure(contextPlan.requestFacets, result.rootUnresolvedFacets ?? [], unestablishedCoverage)
           let assessableContent = assessableActionStatusContent(result.content, deliveredAttributedLines, deliveredBrowserAttributions)
           let assessmentEvidence: ReadonlyMap<string, CitationEvidence> = dispatchEvidence
@@ -9659,9 +9666,14 @@ export class AxAgentEngine implements AgentEngine {
                 (contextPlan.explicitContentFacets || appliedPageContinuationInvalidated) &&
                 !nativeDraft.allRequestFacetsUnresolved &&
                 operationObservations.length > 0
+              const coverageObservations = recentWindows.length > 0 ? nativeDraft.answer.observations : operationObservations
+              const requiresRecentObservationCoverage = recentWindows.length > 0 && !nativeDraft.allRequestFacetsUnresolved && coverageObservations.length > 0
               if (
                 (semantic.valid || selectedRecentPartial) &&
-                (nativeDraft.answer.claims.length > 0 || (nativeDraft.answer.attachmentClaims?.length ?? 0) > 0 || requiresOperationCoverage)
+                (nativeDraft.answer.claims.length > 0 ||
+                  (nativeDraft.answer.attachmentClaims?.length ?? 0) > 0 ||
+                  requiresOperationCoverage ||
+                  requiresRecentObservationCoverage)
               ) {
                 const conversationContext = wikiConversationContext(conversation)
                 const coverageInput = encodeWikiCoverageInput({
@@ -9669,7 +9681,7 @@ export class AxAgentEngine implements AgentEngine {
                   ...(conversationContext === undefined ? {} : { conversationContext }),
                   requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [contextPlan.intent],
                   unresolvedFacets: nativeDraft.answer.unresolvedFacets,
-                  ...(operationObservations.length === 0 ? {} : { observations: operationObservations }),
+                  ...(coverageObservations.length === 0 ? {} : { observations: coverageObservations }),
                   ...(nativeDraft.inputMediaSources === undefined ? {} : { inputMediaSources: nativeDraft.inputMediaSources }),
                   ...(nativeDraft.answer.attachmentClaims === undefined ? {} : { attachmentClaims: nativeDraft.answer.attachmentClaims }),
                   reads: [...nativeDraft.readSources.values()].map(source => {
@@ -10347,8 +10359,9 @@ export class AxAgentEngine implements AgentEngine {
                 reason:
                   missingBodyReads === undefined
                     ? 'Source reads did not all deliver complete citable evidence. Inspect their results and continue collection.'
-                    : recentBodyReadFeedback(missingBodyReads)
+                    : nudgeRecentBodyReads(missingBodyReads)
               })
+              if (missingBodyReads !== undefined) rememberRecentBodyNudge(missingBodyReads)
             } else {
               providerResultMessage(activePrompt, mode, call.id, call.providerName, { status: 'collection_finished' })
               phase = 'synthesizing'
@@ -10913,6 +10926,16 @@ export class AxAgentEngine implements AgentEngine {
           phase = 'synthesizing'
           discoveryTurn = null
           tools = null
+        }
+        if (phase === 'collecting' && (request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent') {
+          const missingBodyReads = recentBodyReadIds()
+          if (missingBodyReads !== undefined) {
+            const feedback: ChatPromptMessage = { role: 'user', content: nudgeRecentBodyReads(missingBodyReads) }
+            activePrompt.push(feedback)
+            rememberRecentBodyNudge(missingBodyReads)
+            sourceIndependentControlResponses.add(feedback)
+            activeBatchEnds.push(activePrompt.length)
+          }
         }
         if (deliveredSourceReadThisTurn && (request.purpose ?? 'root') === 'root' && request.run.executionMode === 'agent') {
           // Capture Ax's actual schema and generated messages before paying for
