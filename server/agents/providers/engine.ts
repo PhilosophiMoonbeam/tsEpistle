@@ -26,7 +26,7 @@ import {
   TOOL_DISCOVERY_CONTROL_NAME
 } from '../../../shared/agents/contracts.ts'
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
-import { DecisionUsageSchema } from '../../../shared/agents/decision-providers.ts'
+import { DecisionUsageSchema, hasKnownJevContextLimits } from '../../../shared/agents/decision-providers.ts'
 import { type AgentMediaKind, agentMediaToolInputs } from '../../../shared/agents/media-providers.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { ACTION_CATALOG } from '../actions/catalog.ts'
@@ -135,6 +135,7 @@ import {
   type WikiSynthesisAnswer,
   type WikiSynthesisInputMedia,
   type WikiSynthesisRead,
+  type WikiSynthesisReferenceIndex,
   type WikiSynthesisSource,
   wikiSynthesisSourceRef
 } from './wiki-synthesis.ts'
@@ -1842,8 +1843,6 @@ const currentClaimSlice = (prefix: string): { readonly claim: string; readonly s
   }
 }
 
-const currentClaim = (prefix: string): string => currentClaimSlice(prefix).claim
-
 const substantiveUnboundText = (value: string): boolean => {
   const presentationStripped = value
     .replace(/^\s{0,3}#{1,6}\s+[^\n]+$/gmu, ' ')
@@ -3543,6 +3542,16 @@ interface NativeDraft {
   readonly operationObservations: ReadonlySet<string>
   /** Canonical claims supported by globally well-formed source-local Jev results. */
   readonly semanticSupport?: ReadonlySet<string>
+}
+
+interface SynthesisRepairFeedback {
+  readonly context: {
+    readonly issues: string
+    readonly coverageFeedback?: string
+    readonly rejectedDraft?: unknown
+  }
+  readonly verifiedReadIds?: ReadonlySet<string>
+  readonly authorize: AgentSourceAuthorizer
 }
 
 /**
@@ -6734,7 +6743,7 @@ export class AxAgentEngine implements AgentEngine {
       readonly explicitContentFacets: boolean
       readonly observations: readonly string[]
       readonly operationObservations: readonly string[]
-      readonly repairFeedback: { readonly content: string; readonly authorize: AgentSourceAuthorizer } | undefined
+      readonly repairFeedback: SynthesisRepairFeedback | undefined
       readonly coverage: Parameters<typeof assessDraft>[2]
       readonly assessableContent: (content: string) => string
       readonly reserveRepair: boolean
@@ -6918,6 +6927,20 @@ export class AxAgentEngine implements AgentEngine {
       }
     })
     const encodedSources = encodeWikiSynthesisSources(sources, sourceReads)
+    let repairFeedback = input.repairFeedback === undefined ? '' : canonicalJson(input.repairFeedback.context)
+    if (input.repairFeedback?.verifiedReadIds !== undefined) {
+      const references = JSON.parse(encodedSources.sourceReferences) as WikiSynthesisReferenceIndex
+      const verifiedReadRefs = new Set<string>()
+      for (const source of sources) {
+        if (!input.repairFeedback.verifiedReadIds.has(source.readId)) continue
+        const reference = references.reads[wikiSynthesisSourceRef(source)]
+        if (reference !== undefined) verifiedReadRefs.add(reference.readRef)
+      }
+      if (verifiedReadRefs.size > 0) {
+        const withProgress = canonicalJson({ ...input.repairFeedback.context, verifiedReadRefs: [...verifiedReadRefs] })
+        if (Buffer.byteLength(withProgress, 'utf8') <= SYNTHESIS_RESERVE_CHARACTERS) repairFeedback = withProgress
+      }
+    }
     const originalSourceBytes = sourceReads.reduce((sum, read) => sum + Buffer.byteLength(read.source, 'utf8'), 0)
     const conversationContext = wikiConversationContext(input.conversation)
     const preflightComplete = new Error('Typed synthesis preflight complete')
@@ -7149,7 +7172,7 @@ export class AxAgentEngine implements AgentEngine {
           ...(inputMediaSources.length === 0 ? {} : { inputMediaReferences: JSON.stringify(inputMediaSources) }),
           requestFacets: [...input.requestFacets],
           availableObservations: [...input.observations],
-          repairFeedback: input.repairFeedback?.content ?? ''
+          repairFeedback
         },
         {
           ...wikiProviderCacheOptions(provider, request, 'synthesis'),
@@ -7334,7 +7357,7 @@ export class AxAgentEngine implements AgentEngine {
         verificationProvider = await this.#decisionProviders.selectRuntime()
         if (
           verificationProvider.config.kind !== 'typesafe' ||
-          !['jev-1.13.0', 'jev-latest', 'jev-preview'].includes(verificationProvider.config.model) ||
+          !hasKnownJevContextLimits(verificationProvider.config.model) ||
           !verificationProvider.config.pricing
         )
           throw new AgentRepositoryError('WIKI_VERIFICATION_UNAVAILABLE', 'Wiki verification requires an enabled, priced Jev decision provider', 503)
@@ -7748,7 +7771,7 @@ export class AxAgentEngine implements AgentEngine {
       let cacheHitCount = 0
       let rejectedDraftCount = 0
       let retainedRecentDraft: NativeDraft | undefined
-      let repairFeedback: { readonly content: string; readonly authorize: AgentSourceAuthorizer } | undefined
+      let repairFeedback: SynthesisRepairFeedback | undefined
       // Complete native support requests are run-local proofs, not another
       // dispatch: reuse must never add the original receipt to usage twice.
       const settledWikiSupport = new Map<string, DecisionBatchResult>()
@@ -10089,9 +10112,10 @@ export class AxAgentEngine implements AgentEngine {
           }
           if (!assessment.valid) {
             await publishAssessmentEvents()
-            const correctionIssues = evidenceCorrectionIssues(assessment.issues)
-            let correctionFeedback =
-              coverageAuditFeedback === undefined ? correctionIssues : canonicalJson({ issues: correctionIssues, coverageFeedback: coverageAuditFeedback })
+            let correctionContext: SynthesisRepairFeedback['context'] = {
+              issues: evidenceCorrectionIssues(assessment.issues),
+              ...(coverageAuditFeedback === undefined ? {} : { coverageFeedback: coverageAuditFeedback })
+            }
             if (result.rootRejectedDraft !== undefined) {
               let rejectedDraft: unknown = result.rootRejectedDraft
               try {
@@ -10099,15 +10123,28 @@ export class AxAgentEngine implements AgentEngine {
               } catch {
                 /* Preserve malformed output as quoted data. */
               }
-              const correctionContext = canonicalJson({ issues: correctionFeedback, rejectedDraft })
-              if (Buffer.byteLength(correctionContext, 'utf8') <= SYNTHESIS_RESERVE_CHARACTERS) correctionFeedback = correctionContext
+              const withRejectedDraft = { ...correctionContext, rejectedDraft }
+              if (Buffer.byteLength(canonicalJson(withRejectedDraft), 'utf8') <= SYNTHESIS_RESERVE_CHARACTERS) correctionContext = withRejectedDraft
             }
             const draftSourceInputs = result.rootAuthorizeSourceInputs ?? result.rootNativeDraft?.authorizeSourceInputs ?? collectorContext?.authorize
             const feedbackEvidence = new Map(dispatchEvidence)
+            // Retention already excludes every read with any unsupported sibling.
+            // Progress uses those same exact physical bindings, never sampled issues.
+            const verifiedRecentDraft = retainedRecentDraft
+            let verifiedReadIds: Set<string> | undefined
+            if (verifiedRecentDraft !== undefined) {
+              verifiedReadIds = new Set<string>()
+              for (const claim of verifiedRecentDraft.answer.claims) {
+                const source = verifiedRecentDraft.readSources.get(canonicalJson([claim.evidenceId, claim.sourceRevision, claim.unitId]))
+                if (source?.kind === 'source-read' || source?.kind === 'recent-excerpt') verifiedReadIds.add(source.readId)
+              }
+            }
             repairFeedback = {
-              content: correctionFeedback,
+              context: correctionContext,
+              ...(verifiedReadIds?.size ? { verifiedReadIds } : {}),
               authorize: async () => {
                 await draftSourceInputs?.()
+                if (verifiedRecentDraft?.authorizeSourceInputs !== draftSourceInputs) await verifiedRecentDraft?.authorizeSourceInputs()
                 await requireFreshRegisteredEvidence(feedbackEvidence)
                 await requireFreshApplicationReceipts()
               }

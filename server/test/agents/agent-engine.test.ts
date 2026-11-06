@@ -10397,18 +10397,35 @@ describe('request-derived evidence coverage', () => {
     })
   }
 
-  it.each(['revoked', 'revised', 'late egress'] as const)('never re-egresses source-derived repair feedback after authority is %s', async change => {
+  it.each([
+    ['revoked', false],
+    ['revised', false],
+    ['late egress', false],
+    ['revoked', true],
+    ['revised', true],
+    ['late egress', true]
+  ] as const)('never re-egresses source-derived repair feedback after authority is %s (recent: %s)', async (change, recent) => {
     const secret = 'REPAIR_AUTHORITY_SENTINEL_7c2a'
     const fact = `The release requires supervisor approval: ${secret}.`
     const page = questionReadPage(42, '1', 'Release', 'release', 'Rules', 'rules', fact)
-    const owned = ownedReadFixture(() => page)
+    const recentPage = { ...page, contentTruncated: false, sourceContentCharacters: page.content.length }
+    const owned = ownedReadFixture(() =>
+      recent
+        ? {
+            kind: 'recent-page-evidence',
+            requestedLimit: 10,
+            exhausted: true,
+            pages: [recentPage]
+          }
+        : page
+    )
     let authorized = true
     let rejected = false
     let repairEgresses = 0
     const fixture = questionFixture(
       'native',
       [
-        { calls: [{ id: 'repair-authority-read', name: 'pages.get', arguments: { id: 42 } }] },
+        { calls: [{ id: 'repair-authority-read', name: recent ? 'pages.listRecent' : 'pages.get', arguments: recent ? { limit: 10 } : { id: 42 } }] },
         { answer: input => sourceBoundAnswer(input, [{ evidenceId: page.citation.evidenceId, sourceText: fact, statement: fact }]) },
         { answer: input => synthesisFixtureAnswer(input, { claims: [], unresolvedFacets: [0] }) }
       ],
@@ -10425,7 +10442,8 @@ describe('request-derived evidence coverage', () => {
           if (!rejected) return
           if (change === 'late egress') authorized = false
           await currentAgentSourceAuthorization()?.()
-          if (JSON.stringify(input.chatPrompt).includes(secret)) repairEgresses++
+          const payload = JSON.stringify(input.chatPrompt)
+          if (payload.includes(secret) || payload.includes(page.citation.evidenceId)) repairEgresses++
         }
       }
     )
@@ -10433,14 +10451,25 @@ describe('request-derived evidence coverage', () => {
       if (type !== 'evidence.provenance' || questionRecord(data).accepted !== false) return
       rejected = true
       if (change === 'revoked') authorized = false
-      if (change === 'revised') page.sourceRevision = '2'
+      if (change === 'revised') (recent ? recentPage : page).sourceRevision = '2'
     })
-    await expect(fixture.execute('Describe the release and name its owner.', { maxTurns: 4, maxToolCalls: 1 })).rejects.toMatchObject({
-      code: 'AGENT_EVIDENCE_INVALID'
-    })
+    let result: AgentEngineResult | undefined
+    let failure: unknown
+    try {
+      result = await fixture.execute('Describe the release and name its owner.', { maxTurns: 4, maxToolCalls: 1 })
+    } catch (error) {
+      failure = error
+    }
+    if (failure !== undefined) expect(failure).toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+    else {
+      expect(result?.executionLimit?.reason).toBe('evidence')
+      expect(result?.citations).toBeUndefined()
+    }
     expect(rejected).toBe(true)
     expect(repairEgresses).toBe(0)
-    expect(fixture.text).not.toHaveBeenCalled()
+    const published = fixture.text.mock.calls.map(([delta]) => delta).join('')
+    expect(published).not.toContain(secret)
+    expect(published).not.toContain(page.citation.evidenceId)
   })
 
   it.each(['unchanged', 'changed qualifier', 'uncertain', 'malformed', 'source changed', 'provider changed'] as const)(
@@ -10547,6 +10576,9 @@ describe('request-derived evidence coverage', () => {
       expect(result.executionLimit).toBeUndefined()
       expect(result.totalTokens).toBe(settledTokens)
       expect(result.costMicros).toBe(settledCostMicros)
+      const repairRequest = fixture.providerCalls.filter(input => synthesisInputFromRequest(input) !== undefined)[1]!
+      // Ordinary source reads do not acquire recent-recap progress authority.
+      expect(synthesisRepairFeedback(repairRequest).value.verifiedReadRefs).toBeUndefined()
       expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(change === 'changed qualifier' ? revised : first)
     }
   )
@@ -11646,6 +11678,122 @@ describe('request-derived evidence coverage', () => {
       citation: { evidenceId: `page:${id}:revision:7`, label: `Release ${id}`, href: `/en/releases/${id}` }
     }
   })
+
+  const synthesisRepairFeedback = (input: Readonly<AxChatRequest>) => {
+    const synthesis = synthesisInputFromRequest(input)
+    const marker = '\n\nRepair Feedback: '
+    const start = synthesis?.lastIndexOf(marker) ?? -1
+    if (synthesis === undefined || start < 0) throw new Error('Expected a typed repair feedback field.')
+    const wire = synthesis.slice(start + marker.length).trim()
+    return { wire, value: questionRecord(JSON.parse(wire)) }
+  }
+
+  it.each(['uncertain', 'malformed', 'truncated', 'unmentioned'] as const)(
+    'labels only genuinely supported contributions for %s recent reads',
+    async failure => {
+      const userRequest = 'Summarize the most recently updated Wiki pages.'
+      const rows = recentRows.map((row, index) => ({
+        ...row,
+        ...(failure === 'truncated' && index === 0 ? { contentTruncated: true, sourceContentCharacters: row.content.length + 100 } : {})
+      }))
+      const answer = (input: Readonly<AxChatRequest>) =>
+        synthesisFixtureAnswer(input, {
+          claims: (failure === 'unmentioned' ? rows.slice(1) : rows).map(row => ({ evidenceId: row.citation.evidenceId, statement: row.content })),
+          unresolvedFacets: []
+        })
+      const decisions = {
+        ...fixtureDecisionProviders,
+        decideBatch: async (...args: Parameters<typeof fixtureDecisionProviders.decideBatch>) => {
+          const result = await fixtureDecisionProviders.decideBatch(...args)
+          const state = questionRecord(typeof args[0].state === 'string' ? JSON.parse(args[0].state) : args[0].state)
+          if (failure === 'truncated' || failure === 'unmentioned' || !JSON.stringify(state.evidence).includes(rows[0]!.citation.evidenceId)) return result
+          const answers = { ...result.answers }
+          for (const id of Object.keys(answers)) {
+            if (!id.startsWith('support_')) continue
+            answers[id] = failure === 'uncertain' ? { ...answers[id]!, confidence: 0.8 } : { ...answers[id]!, probabilities: { supports: 1 } }
+          }
+          return { ...result, answers }
+        }
+      }
+      const fixture = questionFixture(
+        'native',
+        [
+          {
+            metadata: `<wiki-request-plan>${JSON.stringify({
+              facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'recent-window' }]
+            })}</wiki-request-plan>`,
+            calls: [{ id: 'incomplete-proof-progress', name: 'pages.listRecent', arguments: { limit: 10 } }]
+          },
+          { answer },
+          { answer }
+        ],
+        () => ({ kind: 'recent-page-evidence', requestedLimit: 10, exhausted: true, pages: rows }),
+        [],
+        {
+          coverage: async () => ({
+            results: [
+              { index: 0, content: JSON.stringify({ verdict: 'incomplete', feedback: 'The requested review owners remain missing.' }), finishReason: 'stop' }
+            ]
+          })
+        },
+        {},
+        decisions
+      )
+      await fixture.execute(userRequest, { maxTurns: 4, maxToolCalls: 1, maxOutputTokens: 2_048 })
+      const repairRequest = fixture.providerCalls.filter(input => synthesisInputFromRequest(input) !== undefined)[1]!
+      const reads = synthesisReadsFromRequest(repairRequest)
+      expect(synthesisRepairFeedback(repairRequest).value.verifiedReadRefs).toEqual(
+        failure === 'malformed'
+          ? undefined
+          : reads.filter(read => failure === 'truncated' || read.evidenceId === rows[1]!.citation.evidenceId).map(read => read.readRef)
+      )
+      expect(reads.find(read => read.evidenceId === rows[0]!.citation.evidenceId)!.complete).toBe(failure !== 'truncated')
+    }
+  )
+
+  it('omits optional verified-read progress atomically at the UTF-8 repair bound without losing coverage or the rejected candidate', async () => {
+    const userRequest = 'Summarize the most recently updated Wiki pages and name their review owners.'
+    const fact = `${recentRows[0]!.content} ${'界'.repeat(1_999 - recentRows[0]!.content.length)}`
+    const row = { ...recentRows[0]!, content: fact, sourceContentCharacters: fact.length }
+    const run = async (feedback: string) => {
+      const answer = (input: Readonly<AxChatRequest>) =>
+        synthesisFixtureAnswer(input, { claims: [{ evidenceId: row.citation.evidenceId, statement: fact }], unresolvedFacets: [] })
+      const fixture = questionFixture(
+        'native',
+        [
+          {
+            metadata: `<wiki-request-plan>${JSON.stringify({
+              facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'recent-window' }]
+            })}</wiki-request-plan>`,
+            calls: [{ id: 'bounded-progress-read', name: 'pages.listRecent', arguments: { limit: 10 } }]
+          },
+          { answer },
+          { answer }
+        ],
+        () => ({ kind: 'recent-page-evidence', requestedLimit: 10, exhausted: true, pages: [row] }),
+        [],
+        {
+          coverage: async () => ({
+            results: [{ index: 0, content: JSON.stringify({ verdict: 'incomplete', feedback }), finishReason: 'stop' }]
+          })
+        }
+      )
+      await fixture.execute(userRequest, { maxTurns: 4, maxToolCalls: 1, maxOutputTokens: 8_192 })
+      const repairRequest = fixture.providerCalls.filter(input => synthesisInputFromRequest(input) !== undefined)[1]!
+      expect(synthesisReadsFromRequest(repairRequest)[0]!.readText).toBe(fact)
+      return synthesisRepairFeedback(repairRequest)
+    }
+    const baseline = await run('The requested review owner is missing.')
+    expect(baseline.value.verifiedReadRefs).toEqual(['d0'])
+    const { verifiedReadRefs, ...required } = baseline.value
+    const available = 8_000 - Buffer.byteLength(canonicalJson({ ...required, coverageFeedback: '' }), 'utf8') - 1
+    const feedback = `${'界'.repeat(Math.floor(available / 3))}${'x'.repeat(available % 3)}`
+    expect(Buffer.byteLength(feedback, 'utf8')).toBeLessThanOrEqual(2_000)
+    expect(Buffer.byteLength(canonicalJson({ ...required, coverageFeedback: feedback, verifiedReadRefs }), 'utf8')).toBeGreaterThan(8_000)
+    const bounded = await run(feedback)
+    expect(bounded.value).toEqual({ ...required, coverageFeedback: feedback })
+    expect(Buffer.byteLength(bounded.wire, 'utf8')).toBe(7_999)
+  })
   it.each([
     ['native', 'recent facet'],
     ['prompt', 'recent facet'],
@@ -12302,6 +12450,20 @@ describe('request-derived evidence coverage', () => {
     expect(auditInput).not.toContain(unsupported)
     expect(synthesisCallCounts).toHaveLength(2)
     expect(fixture.providerCalls).toHaveLength(synthesisCallCounts[0]! + 1)
+    if (mode === 'native' && selection === 'split-read' && auditVerdict === 'incomplete' && auditFinish === 'stop') {
+      const repairRequest = fixture.providerCalls.filter(input => synthesisInputFromRequest(input) !== undefined)[1]!
+      const repair = synthesisRepairFeedback(repairRequest)
+      const retainedRead = synthesisReadsFromRequest(repairRequest).find(read => read.evidenceId === retained.citation.evidenceId)!
+      // Progress describes the entire contribution, not its one good sibling,
+      // nor an omitted read that happened not to produce a sampled error.
+      expect(repair.value.verifiedReadRefs).toEqual([retainedRead.readRef])
+      expect(synthesisSourcesFromRequest(repairRequest).filter(source => source.readRef === retainedRead.readRef)).not.toHaveLength(0)
+      expect(repair.value.issues).toEqual(expect.any(String))
+      expect(String(repair.value.issues).startsWith('{')).toBe(false)
+      expect(repair.value.coverageFeedback).toBeUndefined()
+      expect(questionRecord(repair.value.rejectedDraft).claims).toEqual(expect.any(Array))
+      expect(Buffer.byteLength(repair.wire, 'utf8')).toBeLessThanOrEqual(8_000)
+    }
     expect(fixture.event.mock.calls.filter(([type, data]) => type === 'evidence.provenance' && questionRecord(data).accepted === true)).toHaveLength(
       publishes ? 1 : 0
     )

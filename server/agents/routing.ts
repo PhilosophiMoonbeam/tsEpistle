@@ -1,6 +1,6 @@
 import type { Knex } from 'knex'
 import { z } from 'zod'
-import { type DecisionRequest, type DecisionResult, DecisionUsageSchema } from '../../shared/agents/decision-providers.ts'
+import { type DecisionRequest, type DecisionResult, DecisionUsageSchema, hasKnownJevContextLimits } from '../../shared/agents/decision-providers.ts'
 import {
   ROUTING_COMPLEXITIES,
   ROUTING_TASK_CLASSES,
@@ -554,8 +554,7 @@ export class AgentTurnRouter {
     } catch {
       return finish('decision-provider-unavailable')
     }
-    if (provider.config.kind === 'typesafe' && !['jev-1.13.0', 'jev-latest', 'jev-preview'].includes(provider.config.model))
-      return finish('unknown-classifier-limits')
+    if (provider.config.kind === 'typesafe' && !hasKnownJevContextLimits(provider.config.model)) return finish('unknown-classifier-limits')
     const pricing = provider.config.pricing
     if (!pricing) return finish('unknown-classifier-pricing')
     // Native exposure is the documented whole-request context bound. Compatible

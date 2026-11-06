@@ -19,7 +19,7 @@ import { AgentTurnRouter } from '../../agents/routing.ts'
 import { describe, expect, it } from '../bun-test.mts'
 import { createRoutingTables, routingFixture as registryFixture } from './runtime-routing.fixture.ts'
 
-const fixture = () => {
+const fixture = (nativeModel = 'jev-1.13.0') => {
   const candidate = (inputPrice: number): RoutingCandidate => ({
     profileId: randomUUID(),
     profileVersionId: randomUUID(),
@@ -48,7 +48,7 @@ const fixture = () => {
   const provider: DecisionProviderRuntime = {
     id: randomUUID(),
     revision: 1,
-    config: { kind: 'typesafe', model: 'jev-1.13.0', timeoutMs: 1_000, pricing: TYPESAFE_JEV_PRICING }
+    config: { kind: 'typesafe', model: nativeModel, timeoutMs: 1_000, pricing: TYPESAFE_JEV_PRICING }
   }
   const view: RoutingAdminView = {
     policy: { ...DEFAULT_ROUTING_POLICY, enabled: true, revision: 1, updatedAt: null },
@@ -78,7 +78,7 @@ const fixture = () => {
   const answer: DecisionResult = {
     providerId: provider.id,
     providerRevision: provider.revision,
-    model: 'jev-1.13.0',
+    model: nativeModel,
     choice: 'writing:simple',
     probabilities: Object.fromEntries(
       ROUTING_TASK_CLASSES.flatMap(task =>
@@ -357,6 +357,21 @@ describe('automatic stay/swap routing with historical specialist policies', () =
 })
 
 describe('eligible, confidence-gated per-turn routing', () => {
+  it('routes with the documented stable Jev 1.14 pin and settles its measured classifier usage', async () => {
+    const f = fixture('jev-1.14.0')
+    const result = await f.router.routeTurn(f.input, f.hooks)
+    expect(result).toMatchObject({ strategy: 'swap', switched: true, profileId: f.alternate.profileId })
+    expect(f.reconciliations).toEqual([{ inputTokens: 300, outputTokens: 20, totalTokens: 320, costMicros: 13 }])
+  })
+
+  it('keeps the selected model without spending on an unknown Jev context bound', async () => {
+    const f = fixture('jev-99.0.0')
+    const result = await f.router.routeTurn(f.input, f.hooks)
+    expect(result).toMatchObject({ strategy: 'stay', switched: false, profileId: f.current.profileId, reason: 'unknown-classifier-limits' })
+    expect(f.requests).toHaveLength(0)
+    expect(f.reservations).toHaveLength(0)
+  })
+
   it('compares compacted incumbent and canonical alternate input, output, classifier and switching costs', async () => {
     const f = fixture()
     const result = await f.router.routeTurn(f.input, f.hooks)

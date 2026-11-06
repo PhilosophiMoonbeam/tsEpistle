@@ -128,15 +128,19 @@ export interface DecisionProviderCheck {
   readonly estimatedCost: DecisionResult['estimatedCost']
 }
 export const TYPESAFE_DECISION_PROVIDER_ID = '00000000-0000-4000-8000-000000000001'
-/** Official Jev 1.13 pricing, reviewed 2026-10-04; not inherited by arbitrary/custom models. */
+/** Documented default 64k/request and 32k/question Choice bounds; aliases follow the vendor. */
+export const hasKnownJevContextLimits = (model: string): boolean =>
+  model === 'jev-1.13.0' || model === 'jev-1.14.0' || model === 'jev-latest' || model === 'jev-preview'
+
+/** Official Jev 1.13/1.14 pricing, reviewed 2026-11-06; not inherited by arbitrary/custom models. */
 export const TYPESAFE_JEV_PRICING: DecisionProviderPricing = {
   currency: 'USD',
   inputPerMillion: 0.042,
   outputPerMillion: 0,
   perRequest: 0,
-  revision: 'typesafe-jev-1.13.0-2026-10-04',
+  revision: 'typesafe-jev-1.13.0-1.14.0-2026-11-06',
   source: 'https://docs.typesafe.ai/models',
-  verifiedAt: '2026-10-04'
+  verifiedAt: '2026-11-06'
 }
 
 export interface DecisionProviderActor {

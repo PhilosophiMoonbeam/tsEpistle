@@ -5,7 +5,7 @@
     <v-alert type="info" variant="tonal">{{ t('nativeTypeSafeJevUsesItsNativeDecision') }}</v-alert>
     <v-progress-linear v-if="loading" indeterminate color="primary" :aria-label="t('loadingDecisionProviders')" />
     <p v-if="loaded && !providers.length">{{ t('noDecisionProvidersConfiguredAddAProvider') }}</p>
-    <v-alert v-if="loaded && !providers.some(p => p.isDefault && p.enabled && p.secretConfigured && p.checkedAt && p.config.kind === 'typesafe' && p.config.pricing && ['jev-1.13.0', 'jev-latest', 'jev-preview'].includes(p.config.model))" type="warning" variant="tonal">{{ t('noReadyDecisionDefaultIsConfiguredAutomatic') }}</v-alert>
+    <v-alert v-if="loaded && !providers.some(p => p.isDefault && p.enabled && p.secretConfigured && p.checkedAt && p.config.kind === 'typesafe' && p.config.pricing && hasKnownJevContextLimits(p.config.model))" type="warning" variant="tonal">{{ t('noReadyDecisionDefaultIsConfiguredAutomatic') }}</v-alert>
     <article v-for="p in providers" :key="p.id" class="entry">
       <h3>{{ p.displayName }} <v-chip v-if="p.isDefault" size="small" color="primary">{{ t('default') }}</v-chip></h3>
       <p>{{ t('revision', { dialect: p.config.kind === 'typesafe' ? t('nativeTypeSafeJev') : t('customDialect', { dialect: p.config.dialect, interpolation: { escapeValue: false } }), model: p.config.model, revision: p.revision, Disabled: p.enabled ? t('enabled') : t('disabled'), interpolation: { escapeValue: false } }) }}</p>
@@ -39,7 +39,7 @@ import { useTranslate } from '../../helpers/use-translate.ts'
 import type { BrowserFetch } from '../../helpers/json-transport.ts'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { AgentApiError } from '../../helpers/agents-api.ts'
-import { DecisionProviderWriteSchema } from '../../../shared/agents/decision-providers.ts'
+import { DecisionProviderWriteSchema, hasKnownJevContextLimits } from '../../../shared/agents/decision-providers.ts'
 import { listDecisionProviders,createDecisionProvider,updateDecisionProvider,deleteDecisionProvider,enableDecisionProvider,defaultDecisionProvider,checkDecisionProvider,type DecisionProviderView } from '../../helpers/agent-control-api.ts'
 const {csrfToken,refreshKey=0}=defineProps<{csrfToken:string;refreshKey?:number}>()
 const emit=defineEmits<{state:[providers:DecisionProviderView[]|null]}>()

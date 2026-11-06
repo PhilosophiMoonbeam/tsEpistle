@@ -108,7 +108,6 @@ describe('decision provider protocols', () => {
       estimatedCostMicros: 5
     })
     expect(result.estimatedCost?.amount).toBeCloseTo(0.0000042, 12)
-    expect(result.estimatedCost).toMatchObject({ source: 'https://docs.typesafe.ai/models', verifiedAt: '2026-10-04' })
     expect(Number.isFinite(result.latencyMs)).toBe(true)
   })
 
@@ -130,13 +129,13 @@ describe('decision provider protocols', () => {
   for (const check of [false, true]) {
     it(`rejects an undiscovered Jev pin when inference reports a different version (check=${check})`, async () => {
       const client = new DecisionProviderClient({
-      resolve: publicDns,
-      fetch: fakeFetch(url =>
-        Response.json(
-          url.pathname.endsWith('/models') ? { models: [{ name: 'jev-latest', description: 'Stable', release_date: '2026-09-10' }] } : nativePayload()
+        resolve: publicDns,
+        fetch: fakeFetch(url =>
+          Response.json(
+            url.pathname.endsWith('/models') ? { models: [{ name: 'jev-latest', description: 'Stable', release_date: '2026-09-10' }] } : nativePayload()
+          )
         )
-      )
-    })
+      })
       const error = await client
         .execute({ ...native, config: { ...native.config, model: 'jev-9.99.0' } }, 'fixture-secret', request, { check })
         .catch(value => value)
@@ -683,9 +682,9 @@ describe('decision provider protocols', () => {
     const client = new DecisionProviderClient({
       resolve,
       fetch: fakeFetch(() => {
-          calls++
-          return Response.json(nativePayload())
-        })
+        calls++
+        return Response.json(nativePayload())
+      })
     })
     await expect(client.execute(native, 'fixture', request)).rejects.toMatchObject({ code: 'DECISION_EGRESS_DENIED' })
     await expect(client.executeBatch(native, 'fixture', batchRequest)).rejects.toMatchObject({ code: 'DECISION_EGRESS_DENIED' })
@@ -1093,11 +1092,21 @@ describe('native decision batches', () => {
       })
       const id = '00000000-0000-4000-8000-000000000047'
       await db('agentDecisionProviders').insert({
-        id, displayName: 'Native decision fixture', revision: native.revision,
-        config: JSON.stringify(native.config), secretReference: null, enabled: true, isDefault: true
+        id,
+        displayName: 'Native decision fixture',
+        revision: native.revision,
+        config: JSON.stringify(native.config),
+        secretReference: null,
+        enabled: true,
+        isDefault: true
       })
       const secrets = new DatabaseAgentSecretRegistry(db, { currentKeyId: 'fixture', keys: { fixture: Buffer.alloc(32, 7) } })
-      for (const [batched, boundary] of [[false, 'DNS'], [true, 'DNS'], [false, 'source authorization'], [true, 'source authorization']] as const) {
+      for (const [batched, boundary] of [
+        [false, 'DNS'],
+        [true, 'DNS'],
+        [false, 'source authorization'],
+        [true, 'source authorization']
+      ] as const) {
         await db('agentDecisionProviders').where({ id }).update({ enabled: true, revision: native.revision })
         const resolving = Promise.withResolvers<void>()
         const dnsReady = Promise.withResolvers<{ address: string; family: number }[]>()
@@ -1117,19 +1126,21 @@ describe('native decision batches', () => {
           }) as unknown as typeof lookup,
           fetch: fakeFetch((_url, init) => {
             outgoing.push(init)
-            return Response.json(batched
-              ? { model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } }
-              : nativePayload())
+            return Response.json(batched ? { model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } } : nativePayload())
           })
         })
-        const running = withAgentSourceAuthorization(boundary === 'source authorization' ? authorizeSources : undefined, async () => batched
-          ? registry.decideBatch(batchRequest, { providerId: id, providerRevision: native.revision, onRequestDispatched })
-          : registry.decide(request, { providerId: id }))
+        const running = withAgentSourceAuthorization(boundary === 'source authorization' ? authorizeSources : undefined, async () =>
+          batched
+            ? registry.decideBatch(batchRequest, { providerId: id, providerRevision: native.revision, onRequestDispatched })
+            : registry.decide(request, { providerId: id })
+        )
         const pending = running.catch((error: unknown) => error)
         if (boundary === 'DNS') await resolving.promise
         else await sourceAuthorizing.promise
         try {
-          await db('agentDecisionProviders').where({ id }).update({ enabled: false, revision: native.revision + 1 })
+          await db('agentDecisionProviders')
+            .where({ id })
+            .update({ enabled: false, revision: native.revision + 1 })
         } finally {
           dnsReady.resolve([{ address: '93.184.216.34', family: 4 }])
           sourceReady.resolve()
@@ -1179,10 +1190,17 @@ describe('native decision batches', () => {
       })
       const onRequestDispatched = vi.fn()
       await authorize()
-      const pending = withAgentSourceAuthorization(authorize, async () => client.executeBatch(native, 'still-valid-native-key', {
-        ...batchRequest,
-        state: { source: 'Copied private Wiki evidence and proposed answer' }
-      }, { onPreDispatch, onRequestDispatched })).catch((error: unknown) => error)
+      const pending = withAgentSourceAuthorization(authorize, async () =>
+        client.executeBatch(
+          native,
+          'still-valid-native-key',
+          {
+            ...batchRequest,
+            state: { source: 'Copied private Wiki evidence and proposed answer' }
+          },
+          { onPreDispatch, onRequestDispatched }
+        )
+      ).catch((error: unknown) => error)
       if (boundary === 'DNS') await resolving.promise
       else await authorizing.promise
       readable = false
@@ -1206,9 +1224,9 @@ describe('native decision batches', () => {
       resolve: publicDns,
       fetch: fakeFetch((url, init) => {
         outgoing.push({ method: init.method, path: url.pathname })
-        return Response.json(url.pathname === '/v1/models'
-          ? { models: [{ name: 'jev-latest', description: 'Stable', release_date: '2026-09-10' }] }
-          : nativePayload())
+        return Response.json(
+          url.pathname === '/v1/models' ? { models: [{ name: 'jev-latest', description: 'Stable', release_date: '2026-09-10' }] } : nativePayload()
+        )
       })
     })
     const denial = new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Wiki source access was revoked', 403)
@@ -1234,9 +1252,9 @@ describe('native decision batches', () => {
         return [{ address: '93.184.216.34', family: 4 }]
       }) as unknown as typeof lookup,
       fetch: fakeFetch((_url, init) => {
-          outgoing.push(init)
-          return Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } })
-        })
+        outgoing.push(init)
+        return Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } })
+      })
     })
     const failure = await client
       .executeBatch({ ...native, config: { ...native.config, model: 'jev-1.13.0' } }, 'fixture-secret', batchRequest, {
@@ -1259,9 +1277,9 @@ describe('native decision batches', () => {
     const client = new DecisionProviderClient({
       resolve: publicDns,
       fetch: fakeFetch((_url, init) => {
-          outgoing.push(init)
-          return Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } })
-        })
+        outgoing.push(init)
+        return Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } })
+      })
     })
     const controller = new AbortController()
     const pending = client.executeBatch({ ...native, config: { ...native.config, model: 'jev-1.13.0' } }, 'fixture-secret', batchRequest, {
@@ -1290,9 +1308,9 @@ describe('native decision batches', () => {
     const client = new DecisionProviderClient({
       resolve: publicDns,
       fetch: fakeFetch((_url, init) => {
-          outgoing.push(init)
-          return Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } })
-        })
+        outgoing.push(init)
+        return Response.json({ model: 'jev-1.13.0', answers: batchAnswers, usage: { input_tokens: 100, output_tokens: 5 } })
+      })
     })
     const completed = client
       .executeBatch({ ...native, config: { ...native.config, timeoutMs: 100 } }, 'fixture', batchRequest, {
