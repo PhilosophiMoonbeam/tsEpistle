@@ -3758,6 +3758,7 @@ interface TurnResult extends AgentTokenUsage {
   readonly costMicros: number
   readonly deniedToolCall?: true
   readonly finishReason?: AxChatResponseResult['finishReason']
+  readonly responseDiagnostics?: AgentExecutionFailureDiagnostics['response']
   readonly rootRequestPlan?: readonly RootRequestFacet[]
   readonly rootUnresolvedFacets?: readonly number[]
   readonly rootHasVerifiedContent?: boolean
@@ -3799,6 +3800,7 @@ const modelTurnData = (
   contentTruncated: result.content.length > MAX_DIAGNOSTIC_TURN_CHARACTERS,
   actionCallIds: result.calls.map(call => call.id),
   ...(result.finishReason === undefined ? {} : { finishReason: result.finishReason }),
+  ...(result.responseDiagnostics === undefined ? {} : { diagnostics: { responseIssue: 'length', response: result.responseDiagnostics } }),
   ...(result.performance === undefined ? {} : { performance: result.performance })
 })
 
@@ -6375,6 +6377,8 @@ export class AxAgentEngine implements AgentEngine {
         return
       accumulator.finishReason = finishReason
     }
+    const responsePhase =
+      cachePhase === 'compaction' ? undefined : cachePhase === 'synthesis' ? 'wiki_synthesis' : cachePhase === 'coverage' ? 'wiki_coverage' : 'collection'
     const responseFailure = (error: unknown, stage: AgentExecutionFailureStage): AgentExecutionFailure => {
       const failure = classifyProviderResponseFailure(error, stage)
       if (failure.code !== 'INVALID_PROVIDER_RESPONSE' || failure.stage === 'usage_reconciliation' || failure.stage === 'host_persistence') return failure
@@ -6392,9 +6396,7 @@ export class AxAgentEngine implements AgentEngine {
         transportKind: provider.transportKind,
         ...(responseAccepted && completeUsage !== undefined ? { current: completeUsage } : {}),
         response: {
-          ...(cachePhase === 'compaction'
-            ? {}
-            : { phase: cachePhase === 'synthesis' ? 'wiki_synthesis' : cachePhase === 'coverage' ? 'wiki_coverage' : 'collection' }),
+          ...(responsePhase === undefined ? {} : { phase: responsePhase }),
           outputTokenLimit: maxOutputTokens,
           ...(reasoningTokens === undefined ? {} : { reasoningTokens })
         }
@@ -6764,6 +6766,15 @@ export class AxAgentEngine implements AgentEngine {
         outputTokens,
         totalTokens,
         costMicros,
+        ...(accumulator.finishReason !== 'length'
+          ? {}
+          : {
+              responseDiagnostics: {
+                ...(responsePhase === undefined ? {} : { phase: responsePhase }),
+                outputTokenLimit: maxOutputTokens,
+                ...(reasoningTokens === undefined ? {} : { reasoningTokens })
+              }
+            }),
         performance: {
           serializedRequestBytes: exposure.serializedRequestBytes,
           serializationMs,
@@ -9817,6 +9828,7 @@ export class AxAgentEngine implements AgentEngine {
           }
           let publicationVerificationEvidence: ReadonlyMap<string, CitationEvidence> | undefined
           let coverageOutputLimited = false
+          let coverageResponseDiagnostics: TurnResult['responseDiagnostics']
           let coverageAuditFeedback: string | undefined
           let selectedRecentPartial = false
           const hostInvalidBeforeSemanticVerification = !assessment.valid
@@ -10054,6 +10066,7 @@ export class AxAgentEngine implements AgentEngine {
                 if (maxTokens !== undefined && totalTokens > maxTokens)
                   throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Coverage exceeded the admitted run token limit', 429)
                 coverageOutputLimited = audit.turn.finishReason === 'length'
+                if (coverageOutputLimited) coverageResponseDiagnostics = audit.turn.responseDiagnostics
                 if (
                   !coverageOutputLimited &&
                   audit.verdict === 'incomplete' &&
@@ -10180,6 +10193,7 @@ export class AxAgentEngine implements AgentEngine {
           }
           if (result.finishReason === 'length' || coverageOutputLimited) {
             if (request.specialist) throw new AgentRepositoryError('AGENT_CHILD_BUDGET_EXCEEDED', 'Specialist report exceeded its output allowance', 409)
+            const responseDiagnostics = result.finishReason === 'length' ? result.responseDiagnostics : coverageResponseDiagnostics
             const publishFragment = assessment.valid && result.content.trim().length > 0
             const authoritySha256 = actionSession?.authoritySha256
             if (request.purpose !== 'subagent' && actionSession && this.#actions?.saveSnapshot)
@@ -10214,6 +10228,7 @@ export class AxAgentEngine implements AgentEngine {
               totalTokens,
               costMicros,
               outputLimited: true,
+              ...(responseDiagnostics === undefined ? {} : { responseDiagnostics }),
               ...(!structured ? { suggestions: [CONTINUE_SUGGESTION] } : {}),
               ...(publishFragment && requestDisclosure.length > 0 ? { executionLimit: { reason: 'evidence' as const, publication: 'partial' as const } } : {}),
               ...(citations.length === 0 ? {} : { citations }),

@@ -2283,6 +2283,7 @@ describe('Ax agent engine', () => {
     it.each([
       { itemStatus: 'incomplete', reason: 'max_output_tokens', issue: 'length' },
       { itemStatus: 'completed', reason: 'max_output_tokens', issue: 'length' },
+      { itemStatus: 'incomplete', reason: 'max_output_tokens', issue: 'length', noMessage: true },
       { itemStatus: 'incomplete', reason: 'content_filter', issue: 'refusal' },
       { itemStatus: 'incomplete', reason: 'unknown_provider_reason', issue: 'provider_error' },
       { itemStatus: 'failed', reason: 'max_output_tokens', issue: 'provider_error' },
@@ -2293,6 +2294,8 @@ describe('Ax agent engine', () => {
     ] as const)(`preserves real ${entrypoint} Responses item/terminal semantics ($itemStatus, $reason, $issue)`, async scenario => {
       const { itemStatus, reason, issue } = scenario
       const priorReason = 'priorReason' in scenario ? scenario.priorReason : undefined
+      const noMessage = 'noMessage' in scenario && scenario.noMessage
+      const reasoningTokens = noMessage ? 9 : 5
       const sdk =
         entrypoint === 'esm'
           ? { ai, AxAIOpenAIResponsesModel }
@@ -2300,23 +2303,27 @@ describe('Ax agent engine', () => {
       const partial = '{"claims":['
       const frames = [
         { type: 'response.created', response: { id: 'response_fixture', object: 'response', status: 'in_progress', output: [] } },
-        {
-          type: 'response.output_item.added',
-          output_index: 0,
-          item: { id: 'message_fixture', type: 'message', status: 'in_progress', role: 'assistant', content: [] }
-        },
-        { type: 'response.output_text.delta', item_id: 'message_fixture', output_index: 0, content_index: 0, delta: partial },
-        {
-          type: 'response.output_item.done',
-          output_index: 0,
-          item: {
-            id: 'message_fixture',
-            type: 'message',
-            status: itemStatus,
-            role: 'assistant',
-            content: [{ type: 'output_text', text: partial, annotations: [] }]
-          }
-        },
+        ...(noMessage
+          ? []
+          : [
+              {
+                type: 'response.output_item.added',
+                output_index: 0,
+                item: { id: 'message_fixture', type: 'message', status: 'in_progress', role: 'assistant', content: [] }
+              },
+              { type: 'response.output_text.delta', item_id: 'message_fixture', output_index: 0, content_index: 0, delta: partial },
+              {
+                type: 'response.output_item.done',
+                output_index: 0,
+                item: {
+                  id: 'message_fixture',
+                  type: 'message',
+                  status: itemStatus,
+                  role: 'assistant',
+                  content: [{ type: 'output_text', text: partial, annotations: [] }]
+                }
+              }
+            ]),
         ...(priorReason === undefined
           ? []
           : [
@@ -2328,7 +2335,7 @@ describe('Ax agent engine', () => {
                   status: 'incomplete',
                   incomplete_details: { reason: priorReason },
                   output: [],
-                  usage: { input_tokens: 13, output_tokens: 9, total_tokens: 22, output_tokens_details: { reasoning_tokens: 5 } }
+                  usage: { input_tokens: 13, output_tokens: 9, total_tokens: 22, output_tokens_details: { reasoning_tokens: reasoningTokens } }
                 }
               }
             ]),
@@ -2345,7 +2352,7 @@ describe('Ax agent engine', () => {
                   output: [],
                   ...(issue === 'missing_usage'
                     ? {}
-                    : { usage: { input_tokens: 13, output_tokens: 9, total_tokens: 22, output_tokens_details: { reasoning_tokens: 5 } } })
+                    : { usage: { input_tokens: 13, output_tokens: 9, total_tokens: 22, output_tokens_details: { reasoning_tokens: reasoningTokens } } })
                 }
               }
             ])
@@ -2366,9 +2373,17 @@ describe('Ax agent engine', () => {
       if (issue === 'length') {
         const result = await fixture.execute()
         expect(result.outputLimited).toBe(true)
+        expect(result.responseDiagnostics).toEqual({ phase: 'wiki_synthesis', outputTokenLimit: 4_000, reasoningTokens })
         expect(result.citations).toBeUndefined()
         expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(partial)
-        expect(fixture.event).toHaveBeenCalledWith('model.turn', expect.objectContaining({ finishReason: 'length', outputTokens: 9 }))
+        expect(fixture.event).toHaveBeenCalledWith(
+          'model.turn',
+          expect.objectContaining({
+            finishReason: 'length',
+            outputTokens: 9,
+            diagnostics: { responseIssue: 'length', response: { phase: 'wiki_synthesis', outputTokenLimit: 4_000, reasoningTokens } }
+          })
+        )
       } else if (issue === undefined || issue === 'missing_usage') {
         await expect(fixture.execute()).rejects.toMatchObject({ code: 'PROVIDER_USAGE_INVALID' })
         expect(fixture.settled.filter(usage => usage.totalTokens === 22)).toHaveLength(0)

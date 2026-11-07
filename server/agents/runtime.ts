@@ -110,7 +110,7 @@ import {
   subagentPrompt,
   validateChildEvidencePacket
 } from './orchestration.ts'
-import { AgentExecutionFailure, classifyAgentExecutionFailure, normalizeAgentExecutionFailureDiagnostics } from './providers/execution-failure.ts'
+import { AgentExecutionFailure, classifyAgentExecutionFailure, normalizeAgentExecutionFailureDiagnostics, type AgentExecutionFailureDiagnostics } from './providers/execution-failure.ts'
 import {
   type AgentProviderContinuationDialect,
   type AgentProviderContinuationEnvelope,
@@ -988,6 +988,7 @@ export interface AgentEngineSink {
 
 export interface AgentEngineResult {
   readonly outputLimited?: true
+  readonly responseDiagnostics?: AgentExecutionFailureDiagnostics['response']
   readonly citations?: readonly Readonly<Record<string, unknown>>[]
   readonly googleSearchGrounding?: AgentGoogleSearchGrounding
   readonly suggestions?: readonly Readonly<Record<string, unknown>>[]
@@ -4566,6 +4567,8 @@ export class AgentProductRuntime {
       })
       assertGroundedContextFresh()
       const partial = completion.outcome !== 'complete'
+      const responseDiagnostics =
+        outputLimited === true ? normalizeAgentExecutionFailureDiagnostics({ responseIssue: 'length', response: result.responseDiagnostics }) : undefined
       await persistAgentRunQuotaSettlementIntent(this.#knex, {
         runId: claim.id,
         ownerId: claim.ownerId,
@@ -4587,7 +4590,7 @@ export class AgentProductRuntime {
           providerStateCiphertext: providerStateJson === null ? null : Buffer.from(providerStateJson),
           providerStateSha256: providerStateJson === null ? null : sha256(providerStateJson)
         },
-        eventData: {},
+        eventData: responseDiagnostics === undefined ? {} : { diagnostics: responseDiagnostics as Readonly<Record<string, unknown>> },
         quota: {
           consumedTokens,
           consumedCostMicros,
