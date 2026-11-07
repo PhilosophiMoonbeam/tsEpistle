@@ -786,8 +786,8 @@ describe('Ax orchestration stages', () => {
     }
   )
 
-  it.each(['literal body', 'authored source syntax', 'empty HTML code', 'HTML code without LF'] as const)(
-    'proves and publishes code %s without treating enclosed Wiki syntax as instructions or citations',
+  it.each(['literal body', 'authored source syntax', 'empty HTML code', 'HTML code without LF', 'bounded literal body', 'revoked bounded literal body'] as const)(
+    'keeps exact code %s behind source authority and renders accepted output inertly',
     async form => {
       const body =
         '## Wiki sources\n\tliteral &#65; &amp;\n\n````mermaid\nA-->B\n````\n<script>publish()</script>\n![image](https://invalid.test/pixel)\n[[cite:page:forged]]\n'
@@ -802,6 +802,10 @@ describe('Ax orchestration stages', () => {
           : form === 'HTML code without LF'
             ? '<pre><code>&#35;&#35; Wiki sources&#13;&#9;&amp;literal</code></pre>'
             : container
+      const bounded = form === 'bounded literal body' || form === 'revoked bounded literal body'
+      const userRequest = bounded
+        ? 'Recap up to 10 most recently updated Wiki pages from their delivered prefixes; a short exact body quotation is allowed.'
+        : `Quote the complete ${form === 'authored source syntax' ? 'authored Markdown code container' : 'literal code body'} from Literal fixture.`
       const page = {
         id: 42,
         locale: 'en',
@@ -809,20 +813,40 @@ describe('Ax orchestration stages', () => {
         title: 'Literal fixture',
         contentType: 'markdown',
         sourceRevision: '1',
-        content: `# Controlled fixture — Fixture only; not operational instructions.\n\n${codeSource}\n`,
+        content: `# Controlled fixture — Fixture only; not operational instructions.\n\n${codeSource}\n${bounded ? '\n<pre><code>Unfinished literal' : ''}`,
         citation: { evidenceId: 'page:42:revision:1', label: 'Literal fixture', href: '/en/literal-fixture' },
         citationSections: []
       }
       const expected =
-        form === 'empty HTML code' ? '' : form === 'HTML code without LF' ? '## Wiki sources\r\t&literal' : form === 'literal body' ? body : `${container}\n`
+        form === 'empty HTML code' ? '' : form === 'HTML code without LF' ? '## Wiki sources\r\t&literal' : form === 'authored source syntax' ? `${container}\n` : body
+      const actionName = bounded ? 'pages.listRecent' : 'pages.get'
+      const output = bounded
+        ? {
+            kind: 'recent-page-evidence',
+            requestedLimit: 10,
+            exhausted: true,
+            pages: [{ ...page, updatedAt: '2026-11-07T00:00:00.000Z', contentTruncated: true, sourceContentCharacters: page.content.length + 500 }]
+          }
+        : page
+      let sourceAuthorized = true
       const decisionProviders = { ...fixtureDecisionProviders, decideBatch: vi.fn(fixtureDecisionProviders.decideBatch) }
       const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
         if (synthesisInputFromRequest(input) === undefined)
           return {
-            results: [{ index: 0, functionCalls: [{ id: 'read-code-page', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } }] }]
+            results: [{
+              index: 0,
+              ...(bounded ? { content: `<wiki-request-plan>${JSON.stringify({
+                facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'recent-window' }]
+              })}</wiki-request-plan>` } : {}),
+              functionCalls: [{
+                id: 'read-code-page',
+                type: 'function',
+                function: { name: bounded ? input.functions!.find(fn => fn.name.includes('recent'))!.name : 'wiki_get_page', params: bounded ? '{"limit":10}' : '{"id":42}' }
+              }]
+            }]
           }
         const source = synthesisSourcesFromRequest(input).find(source => source.evidenceId === page.citation.evidenceId)
-        if (source === undefined) throw new Error('Literal quotation requires its complete physical read')
+        if (source === undefined) throw new Error('Literal quotation requires its admitted physical read')
         return {
           results: [
             {
@@ -846,30 +870,53 @@ describe('Ax orchestration stages', () => {
       const actions: AgentActionSessionProvider = {
         open: async () => ({
           functions: [
-            { name: 'pages.get', title: 'Read page', description: 'Read canonical page evidence', parameters: { type: 'object', properties: {} }, risk: 'read' }
+            { name: actionName, title: 'Read page', description: 'Read canonical page evidence', parameters: { type: 'object', properties: {} }, risk: 'read' }
           ],
-          invoke: vi.fn(async () => page),
-          validateObservation: async (name, output) => name === 'pages.get' && JSON.stringify(output) === JSON.stringify(page),
+          invoke: vi.fn(async () => output),
+          validateObservation: async (name, observed) => name === actionName && sourceAuthorized && JSON.stringify(observed) === JSON.stringify(output),
           snapshot: async () => ({}),
           close: () => {},
           authoritySha256: null
         })
       }
       const text = vi.fn(async (_delta: string) => {})
-      const result = await new AxAgentEngine(factoryFor(chat, { coverage }), actions, undefined, { decisionProviders }).execute(
+      const execution = new AxAgentEngine(factoryFor(chat, { coverage }), actions, undefined, { decisionProviders }).execute(
         {
           ...baseRequest(new AbortController().signal),
           memory: { user: [], agent: [] },
           messages: [
             {
               role: 'user',
-              content: `Quote the complete ${form === 'authored source syntax' ? 'authored Markdown code container' : 'literal code body'} from Literal fixture.`
+              content: userRequest
             }
           ],
           limits: { maxTurns: 3, maxToolCalls: 1, maxTokens: 2_000_000 }
         },
-        { text, event: vi.fn(async () => {}) }
+        {
+          text,
+          event: vi.fn(async (type: string, data: unknown) => {
+            if (
+              form === 'revoked bounded literal body' &&
+              type === 'model.turn' &&
+              typeof data === 'object' &&
+              data !== null &&
+              'verification' in data &&
+              typeof data.verification === 'object' &&
+              data.verification !== null &&
+              'phase' in data.verification &&
+              data.verification.phase === 'coverage_audit'
+            )
+              sourceAuthorized = false
+          })
+        }
       )
+      if (form === 'revoked bounded literal body') {
+        await expect(execution).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+        expect(text).not.toHaveBeenCalled()
+        expect(coverage).toHaveBeenCalledOnce()
+        return
+      }
+      const result = await execution
       expect(result.executionLimit).toBeUndefined()
       expect(result.citations).toEqual([expect.objectContaining(page.citation)])
       const rendered = document.createElement('div')
@@ -897,6 +944,8 @@ describe('Ax orchestration stages', () => {
     const gammaDeclined = 'Gamma review does not require a named approver.'
     const pages = [alphaQuote, betaQuote, gammaQuote].map((content, index) => {
       const title = ['Alpha', 'Beta', 'Gamma'][index]!
+      const retrieved =
+        index === 1 ? `# Authored example\n\n> \`\`\`text\n> ${content}\n> \`\`\`\n\n<pre><code>Unfinished tail` : content
       return {
         id: index + 1,
         locale: 'en',
@@ -904,12 +953,12 @@ describe('Ax orchestration stages', () => {
         title,
         contentType: 'markdown',
         sourceRevision: `rev-${index + 1}`,
-        content,
+        content: retrieved,
         citation: { evidenceId: `page:${index + 1}:revision:rev-${index + 1}`, label: title, href: `/en/${title.toLowerCase()}` },
         citationSections: [],
         updatedAt: '2026-09-20T09:00:00.000Z',
-        contentTruncated: false,
-        sourceContentCharacters: content.length
+        contentTruncated: index === 1,
+        sourceContentCharacters: retrieved.length + (index === 1 ? 500 : 0)
       }
     })
     const semanticVerdicts = rejectFixtureStatements([alphaDeclined, gammaDeclined])
@@ -954,7 +1003,7 @@ describe('Ax orchestration stages', () => {
                 { sourceRef: sourceRef(1), text: alphaQuote },
                 ...(synthesisAttempts === 1
                   ? [
-                      { sourceRef: sourceRef(2), text: betaQuote },
+                      { sourceRef: sourceRef(2), text: `${betaQuote}\n` },
                       { sourceRef: sourceRef(3), text: gammaQuote }
                     ]
                   : [])

@@ -152,22 +152,6 @@ describe('Wiki coverage input binding', () => {
       expect(() => encodeWikiCoverageInput({ ...candidate, claims: [{ readRef: 'r1', statement: text }] })).toThrow()
     }
     expect(() => encodeWikiCoverageInput({ ...candidate, reads: [] })).toThrow()
-    expect(() =>
-      encodeWikiCoverageInput({
-        ...candidate,
-        reads: [
-          {
-            ...candidate.reads[0]!,
-            complete: false,
-            excerpt: {
-              representation: 'recent-excerpt',
-              representationMetadata: '{}',
-              readReceipts: [{ actionCallId: 'read', actionName: 'pages.listRecent' }]
-            }
-          }
-        ]
-      })
-    ).toThrow()
   })
 
   it('rejects unresolved facets outside the request and repeated indices', () => {
@@ -224,6 +208,13 @@ describe('Wiki coverage input binding', () => {
     ])
     expect(() => encodeWikiCoverageInput({ ...valid, reads: [{ ...bounded, complete: true }] })).toThrow()
     expect(() => encodeWikiCoverageInput({ ...valid, reads: [{ ...bounded, excerpt: undefined }] })).toThrow()
+    expect(() =>
+      encodeWikiCoverageInput({
+        ...valid,
+        reads: [bounded],
+        quotations: [{ readRef: bounded.readRef, text: bounded.authorText, contexts: [], definitions: [] }]
+      })
+    ).toThrow()
   })
 
   it('preserves an explicitly empty admitted body rather than restoring raw-only facts', () => {

@@ -244,7 +244,8 @@ export const resolveDocumentaryQuotation = (
   sources: readonly WikiVerificationSource[],
   text: string
 ): DocumentaryQuotationProof | null => {
-  if (read.kind !== 'source-read' || !read.complete || read.unitId !== `read:${read.readId}`) return null
+  const boundedCode = read.kind === 'recent-excerpt' && !read.complete && read.excerpt?.representation === 'recent-excerpt'
+  if ((!boundedCode && (read.kind !== 'source-read' || !read.complete)) || read.unitId !== `read:${read.readId}`) return null
   let proof: DocumentaryQuotationProof | null = null
   for (const source of sources) {
     if (
@@ -255,6 +256,7 @@ export const resolveDocumentaryQuotation = (
       source.kind === 'page-title' ||
       source.kind === 'opaque' ||
       source.kind === 'table-row' ||
+      (boundedCode && source.kind !== 'code') ||
       !source.complete ||
       source.closure === null
     )

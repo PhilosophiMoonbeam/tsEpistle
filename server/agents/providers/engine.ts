@@ -3076,8 +3076,7 @@ const assessDraft = (
     const documentarySupported =
       quotationProof !== undefined &&
       boundQuotation !== undefined &&
-      readSource?.kind === 'source-read' &&
-      readSource.complete &&
+      hasDocumentaryReadScope(readSource, boundQuotation, quotationProof) &&
       quotationProof.text === boundQuotation.text &&
       quotationProof.contexts === boundQuotation.contexts &&
       quotationProof.definitions === boundQuotation.definitions &&
@@ -3585,6 +3584,18 @@ interface NativeDraft {
   readonly semanticSupport?: ReadonlySet<string>
 }
 
+const hasDocumentaryReadScope = (
+  source: WikiVerificationSource | undefined,
+  quotation: WikiSynthesisQuotation,
+  proof: DocumentaryQuotationProof | undefined
+): source is Extract<WikiVerificationSource, { kind: 'source-read' | 'recent-excerpt' }> =>
+  (source?.kind === 'source-read' && source.complete) ||
+  (source?.kind === 'recent-excerpt' &&
+    !source.complete &&
+    quotation.literalCode === true &&
+    proof?.source.kind === 'code' &&
+    proof.source.complete)
+
 interface SynthesisRepairFeedback {
   readonly context: {
     readonly issues: string
@@ -3715,7 +3726,7 @@ const selectVerifiedRecentDraft = (
   const quotationReadIds: string[] = []
   for (const quotation of draft.answer.quotations ?? []) {
     const source = draft.readSources.get(canonicalJson([quotation.evidenceId, quotation.sourceRevision, quotation.unitId]))
-    if (source?.kind !== 'source-read' || !source.complete) return undefined
+    if (!hasDocumentaryReadScope(source, quotation, draft.quotationProofs?.get(quotation))) return undefined
     quotationReadIds.push(source.readId)
     if (!draft.quotationProofs?.has(quotation)) declinedReads.add(source.readId)
   }
@@ -10007,10 +10018,10 @@ export class AxAgentEngine implements AgentEngine {
                         quotations: nativeDraft.answer.quotations.map(quotation => {
                           const source = nativeDraft.readSources.get(canonicalJson([quotation.evidenceId, quotation.sourceRevision, quotation.unitId]))
                           const proof = nativeDraft.quotationProofs?.get(quotation)
-                          if (source?.kind !== 'source-read' || !source.complete || proof === undefined)
+                          if (proof === undefined || !hasDocumentaryReadScope(source, quotation, proof))
                             throw new AgentRepositoryError(
                               'WIKI_VERIFICATION_BINDING_INVALID',
-                              'Coverage quotation lacks its complete host-proved physical read',
+                              'Coverage quotation lacks its exact host-proved read-scoped unit',
                               409
                             )
                           return {

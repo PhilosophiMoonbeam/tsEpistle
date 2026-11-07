@@ -184,6 +184,34 @@ describe('documentary quotation resolution', () => {
     expect(resolveDocumentaryQuotation(quotationRead(raw), fixture(raw), `${body}\n`)).toBeNull()
   })
 
+  it('quotes only a closed parser-owned literal code unit from a bounded prefix, never its prose or unfinished tail', () => {
+    const body = 'Synthetic sample; not operational guidance.\n'
+    const raw = `# Training only\n\nA brief author paragraph.\n\n> \`\`\`text\n> ${body}> \`\`\`\n\n<pre><code>Unfinished literal`
+    const read: WikiSynthesisSource = {
+      ...quotationRead(raw, false),
+      kind: 'recent-excerpt',
+      excerpt: {
+        representation: 'recent-excerpt',
+        representationMetadata: JSON.stringify({ contentTruncated: true, sourceContentCharacters: raw.length + 500, updatedAt: '2026-11-07T00:00:00.000Z' }),
+        readReceipts: [{ actionCallId: 'recent-code', actionName: 'pages.listRecent' }]
+      }
+    }
+    const sources = fixture(raw, { representation: 'recent-excerpt', truncated: true })
+    expect(resolveDocumentaryQuotation(read, sources, body)).toMatchObject({
+      text: body,
+      contexts: ['Training only'],
+      definitions: [],
+      source: { kind: 'code', complete: true }
+    })
+    for (const text of ['A brief author paragraph.', body.trimEnd(), 'Unfinished literal'])
+      expect(resolveDocumentaryQuotation(read, sources, text)).toBeNull()
+    expect(resolveDocumentaryQuotation({ ...read, excerpt: undefined }, sources, body)).toBeNull()
+    const clipped = '# Training only\n\n```text\nSynthetic sample; not operational guidance.\n'
+    expect(
+      resolveDocumentaryQuotation({ ...read, text: clipped }, fixture(clipped, { representation: 'recent-excerpt', truncated: true }), body)
+    ).toBeNull()
+  })
+
   it('rejects foreign reads, cloned units, mutated spans and incomplete code closures', () => {
     const raw = '# Fixture\n\n> ```\n> alpha\n> ```\n'
     const read = quotationRead(raw)

@@ -369,6 +369,39 @@ export const parseSourceDocument = (
     }
     return result
   })
+  if (cut) {
+    // CommonMark may close code at EOF. An excerpt cut is not an authored EOF.
+    for (const name of ['fence', 'code'] as const) {
+      const rule = originalRules.find(entry => entry.name === name)
+      if (!rule) throw new TypeError(`markdown-it ${name} rule is unavailable`)
+      markdown.block.ruler.at(name, (state, start, end, silent) => {
+        const accepted = rule(state, start, end, silent)
+        if (accepted && !silent) {
+          const token = state.tokens.at(-1)!
+          let closed: boolean
+          if (name === 'fence') {
+            const line = state.line - 1
+            const begin = state.bMarks[line]! + state.tShift[line]!
+            const finish = state.eMarks[line]!
+            const markerEnd = state.skipChars(begin, token.markup.charCodeAt(0))
+            closed =
+              line > start &&
+              state.sCount[line]! >= state.blkIndent &&
+              state.sCount[line]! - state.blkIndent < 4 &&
+              markerEnd - begin >= token.markup.length &&
+              state.skipSpaces(markerEnd) >= finish &&
+              state.src.charCodeAt(finish) === 10
+          } else {
+            let next = state.line
+            while (next < end && state.isEmpty(next)) next++
+            closed = next < end && state.sCount[next]! - state.blkIndent < 4
+          }
+          token.meta = { closedSourceCode: closed }
+        }
+        return accepted
+      })
+    }
+  }
   const linkRule = markdown.inline.ruler.getRules('').find(rule => rule.name === 'link')
   if (!linkRule) throw new TypeError('markdown-it link rule is unavailable')
   markdown.inline.ruler.at('link', (state, silent) => {
@@ -579,7 +612,14 @@ export const parseSourceDocument = (
           result.push(...htmlBlocks(source.slice(span.start + column, span.end), span.start + column, token.level === 0))
         } else if (token.type === 'fence' || token.type === 'code_block') {
           const span = range(token, enclosing)
-          result.push({ type: 'code', span, text: source.slice(span.start, span.end), literalCode: token.content, children: [], complete: bounded(span) })
+          result.push({
+            type: 'code',
+            span,
+            text: source.slice(span.start, span.end),
+            literalCode: token.content,
+            children: [],
+            complete: !cut || (token.meta as { closedSourceCode?: boolean } | null)?.closedSourceCode === true
+          })
         } else if (token.nesting === 1) {
           const span = range(token, enclosing)
           const children = group(token.type.replace(/_open$/u, '_close'), span)

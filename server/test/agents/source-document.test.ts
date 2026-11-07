@@ -411,11 +411,19 @@ describe('source document private literal code bodies', () => {
   })
 
   it('does not register truncated, hidden, masked, or repaired HTML bodies', () => {
-    const raw = '```\nalpha\n'
-    const cut = parseSourceDocument(raw, { representation: 'recent-excerpt', truncated: true }).units[0]!
-    expect(getSourceCodeLiteral(cut, raw)).toBeNull()
-    Object.assign(cut, { complete: true })
-    expect(getSourceCodeLiteral(cut, raw)).toBeNull()
+    for (const [raw, literal] of [
+      ['```\nalpha\n', 'alpha\n'],
+      ['```\nalpha\n\n', 'alpha\n\n'],
+      ['    alpha\n\n', 'alpha\n'],
+      ['```\nalpha\n```', 'alpha\n']
+    ]) {
+      const whole = parse(raw).units.find(unit => unit.kind === 'code')!
+      expect(getSourceCodeLiteral(whole, raw)).toBe(literal)
+      const cut = parseSourceDocument(raw, { representation: 'recent-excerpt', truncated: true }).units.find(unit => unit.kind === 'code')!
+      expect(getSourceCodeLiteral(cut, raw)).toBeNull()
+      Object.assign(cut, { complete: true })
+      expect(getSourceCodeLiteral(cut, raw)).toBeNull()
+    }
     for (const source of [
       '<pre hidden><code>secret</code></pre>',
       '<div style="display:none"><pre>secret</pre></div>',
@@ -430,6 +438,13 @@ describe('source document private literal code bodies', () => {
     }
     const prose = parse('alpha\n').units[0]!
     expect(getSourceCodeLiteral(prose, 'alpha\n')).toBeNull()
+  })
+
+  it('proves a recent code boundary from a terminated closing fence or an observed dedent', () => {
+    for (const raw of ['```\nalpha\n```\n', '~~~text\nalpha\n~~~~\n', '    alpha\n\nVisible next paragraph.']) {
+      const code = parseSourceDocument(raw, { representation: 'recent-excerpt', truncated: true }).units.find(unit => unit.kind === 'code')!
+      expect(getSourceCodeLiteral(code, raw)).toBe('alpha\n')
+    }
   })
 })
 
