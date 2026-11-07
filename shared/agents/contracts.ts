@@ -818,12 +818,11 @@ export type AgentRunStreamReady = z.infer<typeof AgentRunStreamReadySchema>
  * response, with matching owner/session and a new entryVersion, never a list GET.
  * Neither event contents nor manual responses may overwrite frozen metadata.
  */
-export const AgentMemoryReceiptDeliverySchema = z.strictObject({
-  generation: z.number().int().nonnegative(),
-  phase: z.enum(['bootstrap', 'replay', 'live']),
-  receipt: z.union([AgentMemoryReceiptEventSchema, AgentManualMemorySavedReceiptSchema])
-})
-export type AgentMemoryReceiptDelivery = z.infer<typeof AgentMemoryReceiptDeliverySchema>
+export interface AgentMemoryReceiptDelivery {
+  generation: number
+  phase: 'bootstrap' | 'replay' | 'live'
+  receipt: AgentMemoryReceiptEvent | AgentManualMemorySavedReceipt
+}
 
 export interface AgentRoutingDecisionView {
   readonly runId: string

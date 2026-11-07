@@ -1072,3 +1072,27 @@ Only an explicitly activated official beta, production release, or compliance mi
 - **Lease or queue growth:** stop new admission, drain healthy workers, inspect expired leases and `recovery_required`, then run bounded maintenance. Never manually replay a run after an ambiguous side effect.
 - **SSE pressure:** reduce per-user connection bounds or disable agent admission; reconnect uses durable `Last-Event-ID`.
 - **Rollback:** select the Sprint or Enterprise/material-state rollback path from the actual compatibility and persistence risk. Disable the smallest failing capability when safe; use broad drains, backups, or historical compatibility paths only when their stated preconditions apply.
+
+## Wiki evidence MAYA qualification — 2026-11-07
+
+The selected Wiki evidence contract uses one Native Choice decision: the expected label must win with probability strictly greater than `0.8`. Confidence is still validated and retained for diagnosis, but is not a second veto. This does not change generic routing thresholds. The Native frame supplies the unchanged claim, a short support policy, and the admitted source's title, scope and original structure; a different admitted body is included only when necessary. Read/revision identities, authorization, hashes, pins and settlement remain sealed host authority rather than repeated model context.
+
+Selection used the frozen synthetic selection corpus plus the controlled page-161/page-75 positives and paired foils. The independent holdout remained unopened until selection was frozen. The committed selection and holdout hashes are `908fe165c216eb6ba9a1271723367573ab18eb9e8d1e2cff328936462b51ff14` and `6d2279725efb33ca4ceb1ebf4941b8734e313c19e9a9ed265ae29af8851eb8cd`. Coverage includes direct evidence, conditions, ownership, bounded excerpts, compound claims and untrusted instructions. The credential-like Home case was excluded from operator inference.
+
+Both framing arms used the same canonical admitted source view. This isolates framing and acceptance policy; it is not a complete replay of the old engine's source projection, a reconstruction of historical scores, or universal probability calibration. Old/new policy rows replay the same measured response vectors rather than making additional paid calls.
+
+| Native framing | Acceptance policy | Supported claims accepted | Unsupported foils accepted |
+| --- | --- | ---: | ---: |
+| Previous | Previous probability-and-confidence gates | 24 / 26 | 0 / 26 |
+| Previous | Selected-label probability only | 25 / 26 | 0 / 26 |
+| Direct source | Previous probability-and-confidence gates | 25 / 26 | 0 / 26 |
+| Direct source | Selected-label probability only | 26 / 26 | 0 / 26 |
+
+| Measured Native input | Previous framing | Direct source | Reduction |
+| --- | ---: | ---: | ---: |
+| Wire bytes | 150,677 | 100,754 | 33.13% |
+| Provider input tokens | 43,576 | 31,859 | 26.89% |
+
+The actual operator ledger reconciled 52 Native calls, 75,435 tokens and 3,011 cost micros ($0.003011), with no retry, unknown exposure or pending allocation. These are Native qualification receipts, not the separately metered owner-UI generation totals. Synthetic gold review used a separate Jevify model and made no synthetic gold-label changes.
+
+The qualification freeze is source `3d4202ab8b38b0244230e6805fedacf07d1eb623`, image `sha256:a05aaaf4dd7c17f16d01d10f605e2483953802026c225ba155d8f8c421abecb4`, actual Native model `jev-1.13.0`, policy `wiki-evidence-probability-v2`, and Native runtime SHA-256 `8167797774eab9e2f942893b8eaba1c63cca282b2c724b651b8b5747bf4f7231`. Frozen holdout request hashes and compact numeric/hash-only results are retained under the owner-only `xuq-maya-evidence-20261107-xuh6515c` directory until 2026-11-13; this is ordinary Sprint evidence, not a release attestation.
