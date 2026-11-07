@@ -25,7 +25,6 @@ const operationMocks = vi.hoisted(() => ({
   }
 }))
 
-vi.mockModule('../../operations/users.ts', import.meta.url, () => ({ default: operationMocks.users }))
 vi.mockModule('../../operations/groups.ts', import.meta.url, () => ({ default: operationMocks.groups }))
 vi.mockModule('../../operations/pages.ts', import.meta.url, () => ({ default: operationMocks.pages }))
 vi.mockModule('../../operations/comments.ts', import.meta.url, () => ({ default: operationMocks.comments }))
@@ -193,6 +192,11 @@ beforeAll(async () => {
       loadPageRuleAuthority: vi.fn(async requester => authorityFor(requester))
     }
   }
+  const { ProfilePreferencesInputSchema } = await import('../../operations/users.ts')
+  vi.mockModule('../../operations/users.ts', import.meta.url, () => ({
+    ProfilePreferencesInputSchema,
+    default: operationMocks.users
+  }))
 
   const [
     usersController,

@@ -712,7 +712,9 @@ describe('external MCP in the admitted native host loop', () => {
         : authorized && (name !== 'pages.listHistory' || z.object({ pageId: z.literal(42), limit: z.literal(10) }).safeParse(originalInput).success)
     )
     const redacted = revoked || revocation === 'collector' || !hasValidator || !projectionAuthorized
-    const failsClosed = (echoSource && revoked) || (typeof revocation === 'string' && revocation !== 'collector')
+    // A citable page is already pinned when finish_collection rechecks live
+    // verification authority; revocation rejects rather than redacting that read.
+    const failsClosed = (revoked && (echoSource || actionName === 'pages.get')) || (typeof revocation === 'string' && revocation !== 'collector')
     const wikiActions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [{
@@ -737,6 +739,7 @@ describe('external MCP in the admitted native host loop', () => {
     const remove = vi.fn(async () => {})
     let mixedBatchComplete = false
     let validatedBeforeCollectorRevocation = false
+    let revokedBeforePreflight = false
     let derivedFromDeliveredSource = false
     let externalFenceEntered = false
     let externalInspectionsAfterFence = 0
@@ -871,7 +874,12 @@ describe('external MCP in the admitted native host loop', () => {
           validatedBeforeCollectorRevocation = validateObservation.mock.calls.some(([name, observed]) => name === actionName && observed === output)
           authorized = false
         }
-        if (revocation === 'preflight' && collectionSteps >= 2) authorized = false
+        // The completed mixed batch now goes straight to the real typed-frame
+        // preflight, before another collector acknowledgement is requested.
+        if (revocation === 'preflight' && mixedBatchComplete && countRequests.length === 0) {
+          revokedBeforePreflight = true
+          authorized = false
+        }
         if (revocation === 'synthesis' && collectionSteps >= 2 && countRequests.length > 0) authorized = false
       }
     }
@@ -886,6 +894,19 @@ describe('external MCP in the admitted native host loop', () => {
     }
     if (failsClosed) {
       await expect(f.engine.execute(executionRequest, { text: f.text, event })).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID', status: 409 })
+      if (revocation === 'preflight') {
+        expect(revokedBeforePreflight).toBe(true)
+        expect(collectionSteps).toBe(1)
+        expect(requests).toHaveLength(1)
+        expect(wireRequests).toHaveLength(1)
+        expect(authorized).toBe(false)
+      }
+      if (revoked && actionName === 'pages.get') {
+        expect(authorized).toBe(false)
+        expect(requests).toHaveLength(2)
+        expect(wireRequests).toHaveLength(2)
+        expect(synthesisSourcesFromRequest(countRequests[0]!).some(source => source.readText.includes(privateFact))).toBe(true)
+      }
       if (revocation === 'collector-dispatch') {
         expect(requests).toHaveLength(1)
         expect(wireRequests).toHaveLength(1)
@@ -923,10 +944,11 @@ describe('external MCP in the admitted native host loop', () => {
         expect(f.request.dispatchBudget!.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
       }
       expect(requests.filter(request => synthesisInputFromRequest(request) !== undefined)).toHaveLength(0)
-      expect(countRequests).toHaveLength(revocation === 'count' || revocation === 'synthesis' || revocation === 'derivative' ? 1 : 0)
+      expect(countRequests).toHaveLength(revocation === 'count' || revocation === 'synthesis' || revocation === 'derivative' || (revoked && actionName === 'pages.get') ? 1 : 0)
       expect(invoke).toHaveBeenCalledTimes(revocation === 'compaction' ? collectionSteps : revocation === 'derivative' ? 2 : 1)
       expect(f.protocolCalls.filter(call => call.method === 'tools/call')).toHaveLength(revocation === 'external-dispatch' ? 0 : 1)
       expect(f.request.beforeExternalTool).toHaveBeenCalledOnce()
+      expect(f.text).not.toHaveBeenCalled()
       expect(f.closed).toBe(1)
       return
     }

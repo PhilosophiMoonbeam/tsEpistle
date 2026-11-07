@@ -5,7 +5,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from '../bu
 const store = { list: vi.fn(), creationOptions: vi.fn(), create: vi.fn(), inspect: vi.fn(), updateProfile: vi.fn(), act: vi.fn(), setPassword: vi.fn(), remove: vi.fn() }
 const welcome = vi.fn()
 vi.mockModule('../../operations/account-administration.ts', import.meta.url, () => ({ accountAdministration: () => store }))
-vi.mockModule('../../operations/users.ts', import.meta.url, () => ({ default: { sendWelcomeEmail: welcome } }))
 let server: Server
 let origin: string
 const previousWiki = Reflect.get(globalThis, 'WIKI')
@@ -16,6 +15,12 @@ const request = (method: string, path: string, body?: unknown) => fetch(`${origi
   ...(body === undefined ? {} : { body: JSON.stringify(body) })
 })
 beforeAll(async () => {
+  Reflect.set(globalThis, 'WIKI', { auth: { checkAccess } })
+  const { ProfilePreferencesInputSchema } = await import('../../operations/users.ts')
+  vi.mockModule('../../operations/users.ts', import.meta.url, () => ({
+    ProfilePreferencesInputSchema,
+    default: { sendWelcomeEmail: welcome }
+  }))
   const { default: router } = await vi.importFresh('../../controllers/api/users.ts', import.meta.url) as { default: express.Router }
   const app = express()
   app.use(express.json())

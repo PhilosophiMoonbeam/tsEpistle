@@ -446,8 +446,21 @@ describe('mandatory Wiki verification publication and accounting', () => {
     }
   )
 
-  it('withholds an uncertain candidate until the existing single repair passes independent verification', async () => {
+  it('withholds a candidate at the support probability cutoff until its single repair passes independent verification', async () => {
     let checks = 0
+    let nextId = 0
+    const held = new Map<number, { tokens: number; costMicros: number }>()
+    const reconciled: { inputTokens: number; outputTokens: number; totalTokens: number; costMicros: number }[] = []
+    const budget: AgentDispatchBudget = {
+      reserve: async maximum => { const id = ++nextId; held.set(id, maximum); return { id, ...maximum } },
+      reconcile: async (reservation, actual) => {
+        expect(held.delete(reservation.id)).toBe(true)
+        reconciled.push(actual)
+      },
+      release: async reservation => { expect(held.delete(reservation.id)).toBe(true) },
+      consumeTool: async () => {},
+      get unsettledExposure() { return [...held.values()].reduce((sum, entry) => ({ tokens: sum.tokens + entry.tokens, costMicros: sum.costMicros + entry.costMicros }), { tokens: 0, costMicros: 0 }) }
+    }
     const decisionProviders = {
       ...fixtureDecisionProviders,
       async decideBatch(input: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]) {
@@ -455,13 +468,41 @@ describe('mandatory Wiki verification publication and accounting', () => {
         const result = await fixtureDecisionProviders.decideBatch(input, options)
         if (!Object.values(input.questions).some(question => Object.hasOwn(question.criteria, 'supports'))) return result
         checks++
-        if (checks === 1) return { ...result, answers: Object.fromEntries(Object.entries(result.answers).map(([key, answer]) => [key, { ...answer, confidence: 0.8 }])) }
-        return result
+        return {
+          ...result,
+          answers: Object.fromEntries(Object.entries(result.answers).map(([key, answer]) => [key, answer.choice === 'supports' ? {
+            ...answer,
+            probabilities: checks === 1 ? { supports: 0.8, contradicts: 0, not_supported: 0.2 } : answer.probabilities,
+            confidence: checks === 1 ? 1 : 0.8
+          } : answer])),
+          usage: { inputTokens: 100, outputTokens: 2, totalTokens: 102, totalTokensSource: 'reported' as const }
+        }
       }
     }
-    const fixture = groundingFixture(verificationSource, 'These recipes', verificationFact, undefined, 'native', { decisionProviders })
+    const fixture = groundingFixture(verificationSource, 'These recipes', verificationFact, undefined, 'native', { decisionProviders, dispatchBudget: budget })
     await expectPublication(fixture, verificationFact, 2)
     expect(checks).toBe(2)
+    const declined = fixture.events.filter(event => event.purpose === 'verification' && event.outcome === 'verification_declined')
+    expect(declined).toHaveLength(1)
+    expect(declined[0]).toMatchObject({
+      verification: {
+        resultFrame: {
+          status: 'semantic_rejection',
+          questions: expect.arrayContaining([expect.objectContaining({
+            kind: 'support', choice: 'supports', probabilities: { supports: 0.8, contradicts: 0, not_supported: 0.2 },
+            confidence: 1, accepted: false, reason: 'insufficient_probability'
+          })])
+        }
+      }
+    })
+    const rejected = fixture.events.filter(event => event.outcome === 'answer_rejected')
+    expect(rejected).toHaveLength(1)
+    expect(readAgentUsageEvent(rejected[0]!)).toMatchObject({ inputTokens: 10, outputTokens: 2, totalTokens: 12 })
+    expect(reconciled.filter(usage => usage.totalTokens === 102)).toEqual([
+      { inputTokens: 100, outputTokens: 2, totalTokens: 102, totalTokensSource: 'reported', costMicros: 0 },
+      { inputTokens: 100, outputTokens: 2, totalTokens: 102, totalTokensSource: 'reported', costMicros: 0 }
+    ])
+    expect(budget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
   })
 
   it('fails before paid generation when the configured decision complement is unavailable', async () => {
