@@ -1996,7 +1996,7 @@ export class AgentProductRuntime {
               ) ||
             Number(daily.consumedCostMicros) + Number(daily.reservedCostMicros) > live.quotaLimits.dailyCostMicros
           )
-            throw new AgentRepositoryError('AGENT_QUOTA_EXCEEDED', 'Specialist profile daily quota is exhausted', 429)
+            throw new AgentRepositoryError('AGENT_QUOTA_EXHAUSTED', 'Specialist profile daily quota is exhausted', 429)
         })
       },
       specialist: {
@@ -2476,10 +2476,15 @@ export class AgentProductRuntime {
       const daily = await transaction('agentQuotaDaily').where({ ownerId: claim.ownerId, day: reservation.day }).forUpdate().first()
       if (
         !daily ||
-        Number(daily.consumedTokens) + Number(daily.reservedTokens) > selected.quotaLimits.dailyTokens ||
+        Number(daily.consumedTokens) + Number(daily.reservedTokens) >
+          safeUsageSum(
+            selected.quotaLimits.dailyTokens,
+            nonNegativeUsage(Number(daily.tokenResetCredit), 'Stored token reset credit'),
+            'Routed daily quota'
+          ) ||
         Number(daily.consumedCostMicros) + Number(daily.reservedCostMicros) > selected.quotaLimits.dailyCostMicros
       )
-        throw new AgentRepositoryError('AGENT_QUOTA_EXCEEDED', 'Selected profile daily quota is exhausted', 429)
+        throw new AgentRepositoryError('AGENT_QUOTA_EXHAUSTED', 'Selected profile daily quota is exhausted', 429)
       await ensureAgentRunQuota(
         transaction,
         claim.id,

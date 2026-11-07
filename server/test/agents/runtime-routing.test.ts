@@ -8,7 +8,7 @@ import { AgentProductRuntime, type SubmitAgentMessageInput } from '../../agents/
 import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
 import { DecisionProviderFailure } from '../../agents/decision-providers.ts'
 import { AgentRepositoryError, appendAgentMessage } from '../../agents/repository.ts'
-import { admitAgentRunInTransaction, persistAgentApprovalContinuation } from '../../agents/coordinator.ts'
+import { admitAgentRunInTransaction, persistAgentApprovalContinuation, resetAgentDailyTokenQuota } from '../../agents/coordinator.ts'
 import { agentCompactionSha256, type AgentCompactionReceipt } from '../../agents/compaction.ts'
 import { getOwnedAgentGoal, insertAgentGoal } from '../../agents/goals.ts'
 import { storeAgentMedia } from '../../agents/media.ts'
@@ -287,6 +287,77 @@ describe('admitted automatic conversation routing', () => {
       .find(event => event.purpose === 'routing')
     expect(nextRouting.routingDecision).toMatchObject({ profileVersionId: f.alternate.versionId, strategy: 'stay', switched: false })
     expect(Number((await db('agentQuotaDaily').where({ ownerId: 7 }).first()).consumedTokens)).toBe(396)
+  })
+
+  it.each([false, true])('preserves reset token allowance and billed history through routing with classifier enabled=%s', async enabled => {
+    f.view.policy.enabled = enabled
+    const consumedTokens = 1_028_245
+    const consumedCostMicros = 1_202_694
+    await db('agentQuotaDaily').insert({
+      ownerId: 7,
+      day: new Date().toISOString().slice(0, 10),
+      consumedTokens,
+      consumedCostMicros,
+      reservedTokens: 0,
+      reservedCostMicros: 0,
+      tokenResetCredit: 0,
+      updatedAt: new Date()
+    })
+    await resetAgentDailyTokenQuota(db, 7)
+    const submitted = await f.submit(await f.session())
+
+    expect(await f.runtime.runOnce()).toBe(true)
+
+    expect(f.requests).toHaveLength(1)
+    expect(f.classifications()).toBe(enabled ? 1 : 0)
+    const totalTokens = enabled ? 198 : 8
+    const costMicros = enabled ? 23 : 10
+    expect(await db('agentRuns').where({ id: submitted.run.id }).first()).toMatchObject({
+      status: 'succeeded',
+      totalTokens,
+      estimatedCostMicros: costMicros
+    })
+    expect(await db('agentQuotaDaily').where({ ownerId: 7 }).first()).toMatchObject({
+      consumedTokens: consumedTokens + totalTokens,
+      tokenResetCredit: consumedTokens,
+      consumedCostMicros: consumedCostMicros + costMicros,
+      reservedTokens: 0,
+      reservedCostMicros: 0
+    })
+  })
+
+  it.each(['tokens', 'cost'] as const)('reports quota exhaustion before root dispatch when held reservations exceed the selected %s allowance', async quota => {
+    f.duringClassification(async () => {
+      await db('agentQuotaDaily')
+        .where({ ownerId: 7 })
+        .update(quota === 'tokens' ? { consumedTokens: 995_000 } : { consumedCostMicros: 9_950_000 })
+    })
+    const submitted = await f.submit(await f.session())
+
+    expect(await f.runtime.runOnce()).toBe(true)
+
+    expect(f.requests).toHaveLength(0)
+    expect(f.classifications()).toBe(1)
+    expect(await db('agentRuns').where({ id: submitted.run.id }).first()).toMatchObject({
+      status: 'failed',
+      errorCode: 'AGENT_QUOTA_EXHAUSTED',
+      totalTokens: 190,
+      estimatedCostMicros: 13
+    })
+    const failure = await db('agentEvents').where({ runId: submitted.run.id, type: 'run.failed' }).first('data')
+    expect(JSON.parse(failure.data)).toMatchObject({ errorCode: 'AGENT_QUOTA_EXHAUSTED', failureStage: 'setup' })
+    expect(await db('agentQuotaReservations').where({ runId: submitted.run.id }).first()).toMatchObject({
+      status: 'consumed',
+      consumedTokens: 190,
+      consumedCostMicros: 13
+    })
+    expect(await db('agentQuotaDaily').where({ ownerId: 7 }).first()).toMatchObject({
+      consumedTokens: (quota === 'tokens' ? 995_000 : 0) + 190,
+      consumedCostMicros: (quota === 'cost' ? 9_950_000 : 0) + 13,
+      tokenResetCredit: 0,
+      reservedTokens: 0,
+      reservedCostMicros: 0
+    })
   })
 
   it('keeps a derived classifier total and its provenance through journal and quota settlement', async () => {
