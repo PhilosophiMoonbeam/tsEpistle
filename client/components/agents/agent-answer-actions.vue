@@ -63,6 +63,7 @@ import { wikiStore } from '../../store/index.ts'
 import { pwaState } from '../../helpers/pwa.ts'
 import { copyTextToClipboard } from '../../helpers/clipboard.ts'
 import { createAgentCitationResolver, formatAgentCitationMarkers } from './agent-citations.ts'
+import { exportAgentQuotationMarkdown } from '../../helpers/safe-markdown.ts'
 import AgentMarkdown from './agent-markdown.vue'
 import { useTranslate } from '../../helpers/use-translate.ts'
 import type { BrowserFetch } from '../../helpers/json-transport.ts'
@@ -130,7 +131,8 @@ const exportedAnswer = (): string => {
     try { return { ...citation, href: new URL(citation.href, window.location.origin).href } }
     catch { return { ...citation, href: null } }
   }
-  const body = formatAgentCitationMarkers(props.content, resolveExportCitation)
+  // Resolve genuine markers before decoded source syntax can enter the export.
+  const body = exportAgentQuotationMarkdown(formatAgentCitationMarkers(props.content, resolveExportCitation))
   const referencedIds = new Set<string>()
   const wikiReferences = props.citations.flatMap(citation => {
     if (referencedIds.has(citation.evidenceId)) return []

@@ -4,6 +4,7 @@ import { ProxyTracerProvider } from '@opentelemetry/api'
 import type { MarkdownIt, MarkdownItOptions } from 'markdown-it'
 import * as markdownItModule from 'markdown-it'
 import { z } from 'zod'
+import { mapEncodedAgentQuotationParagraphs } from '../../../shared/agents/quotation-markdown.ts'
 import { deriveAgentProviderResourceLimits } from './factory.ts'
 
 // An isolated official provider with no delegate stays non-recording. Ax's
@@ -563,24 +564,12 @@ export const renderWikiSynthesisQuotation = (quotation: WikiSynthesisQuotation):
   ...(quotation.definitions.length === 0 ? [] : [`Source reference syntax:\n\n${inertQuotation(quotation.definitions.join('\n'))}`])
 ].join('\n\n')
 
+// JSON quoting retains decoded directives and line boundaries as untrusted data.
+const compactQuotation = (text: string): string => `> ${JSON.stringify(text)}`
+
 /** Lossless model-only quotation view; never source evidence or publication Markdown. */
-export const compactWikiQuotationContext = (content: string): string => {
-  if (!content.includes('> &#')) return content
-  const lines = content.split('\n')
-  let changed = false
-  for (const token of markdown.parse(content, {})) {
-    if (token.type !== 'inline' || token.map === null || token.map[1] !== token.map[0] + 1 ||
-      !/^(?:&#[0-9]+;)+$/u.test(token.content) || token.children?.length !== 1 || token.children[0]?.type !== 'text') continue
-    const index = token.map[0]
-    const line = lines[index]
-    if (line !== `> ${token.content}` && line !== `> ${token.content}\r`) continue
-    // JSON quoting keeps decoded directives, entity-looking literals and line
-    // boundaries as untrusted data. Markdown parsing excludes literal code.
-    lines[index] = `> ${JSON.stringify(token.children[0].content)}${line.endsWith('\r') ? '\r' : ''}`
-    changed = true
-  }
-  return changed ? lines.join('\n') : content
-}
+export const compactWikiQuotationContext = (content: string): string =>
+  mapEncodedAgentQuotationParagraphs(content, markdown, compactQuotation)
 
 /** Source channels share presentation order, never proof or semantic authority. */
 export function* wikiSynthesisContributions(

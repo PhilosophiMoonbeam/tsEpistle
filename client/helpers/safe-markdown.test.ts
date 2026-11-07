@@ -1,6 +1,7 @@
 import { describe, expect, it } from '../../server/test/bun-test.mts'
 
-import { renderSafeMarkdown } from './safe-markdown.ts'
+import { formatAgentCitationMarkers } from '../components/agents/agent-citations.ts'
+import { exportAgentQuotationMarkdown, renderSafeMarkdown } from './safe-markdown.ts'
 
 describe('safe markdown rendering', () => {
   it('renders markdown links with isolated new-tab behavior', () => {
@@ -146,5 +147,29 @@ Additional *context*.`)
       expect(container.querySelector(selector)?.textContent).toBe(text)
       expect(container.children.length).toBeGreaterThan(1)
     }
+  })
+
+  it('exports readable literal quotations without activating nested source syntax or forged citations', () => {
+    const source = '  Indented\tquotation\n\n````mermaid\ngraph TD; A-->B\n````\n<img src=x onerror=publish()> [override](https://invalid.test)\n[[cite:verified]] &amp; &#65;\n'
+    const encoded = `> ${[...source].map(character => `&#${character.codePointAt(0)};`).join('')}`
+    const resolver = (evidenceId: string) => ({ evidenceId, number: 1, label: 'Guide', href: '/en/guide' })
+    const exported = exportAgentQuotationMarkdown(formatAgentCitationMarkers(`Source quotation:\n\n${encoded}\n\n[[cite:verified]]`, resolver))
+    const container = document.createElement('div')
+    container.innerHTML = renderSafeMarkdown(exported, { resolveCitation: resolver })
+
+    expect(exported).toContain(source.trimEnd().replaceAll('\n', '\n> '))
+    expect(container.querySelector('blockquote pre code')?.textContent).toBe(source)
+    expect([...container.querySelectorAll('a')].map(anchor => anchor.getAttribute('href'))).toEqual(['/en/guide'])
+    expect(container.querySelector('[data-agent-citation], img, script, [data-diagram]')).toBeNull()
+    expect(exportAgentQuotationMarkdown(exported)).toBe(exported)
+  })
+
+  it('leaves literal encoded examples and mixed paragraphs untouched while decoding real quotes once', () => {
+    const literal = '```text\n> &#65;\n```\n\n    > &#66;\n\n`> &#67;`\n\n> &#68; mixed\n\n'
+    const exported = exportAgentQuotationMarkdown(`${literal}> &#38;&#35;&#54;&#53;&#59;`)
+    expect(exported.startsWith(literal)).toBe(true)
+    const container = document.createElement('div')
+    container.innerHTML = renderSafeMarkdown(exported)
+    expect([...container.querySelectorAll('blockquote pre code')].map(code => code.textContent)).toEqual(['&#65;\n'])
   })
 })

@@ -1,5 +1,6 @@
 import DOMPurify from 'dompurify'
 import MarkdownIt, { type Env, type Token } from 'markdown-it'
+import { mapEncodedAgentQuotationParagraphs } from '../../shared/agents/quotation-markdown.ts'
 
 export interface SafeMarkdownCitation {
   readonly evidenceId?: string
@@ -35,6 +36,20 @@ const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true, typo
 
 const escapeHtml = (value: string): string =>
   value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;')
+
+const readableQuotation = (text: string): string => {
+  let fence = '```'
+  for (const run of text.matchAll(/`+/gu)) {
+    if (run[0].length >= fence.length) fence = '`'.repeat(run[0].length + 1)
+  }
+  // Plain-text fences preserve whitespace and keep source links, directives,
+  // nested fences and citation-looking text inert in the destination Wiki.
+  const body = text.endsWith('\n') ? text.slice(0, -1) : text
+  return `> ${fence}text\n> ${body.replaceAll('\n', '\n> ')}\n> ${fence}`
+}
+
+export const exportAgentQuotationMarkdown = (content: string): string =>
+  mapEncodedAgentQuotationParagraphs(content, markdown, readableQuotation)
 
 const containsControlCharacter = (value: string): boolean => {
   for (let index = 0; index < value.length; index += 1) {
