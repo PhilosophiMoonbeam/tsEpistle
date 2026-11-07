@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
-import { DeveloperFlagsSaveInputSchema, DeveloperFlagsWorkspaceSchema, developerFlagChangedFields } from './developer-flags.ts'
+import { DeveloperFlagsWorkspaceSchema, developerFlagChangedFields } from './developer-flags.ts'
+import { DeveloperFlagsSaveInputSchema } from '../server/operations/developer-flags.ts'
 
 describe('developer flag workspace contract', () => {
   it('accepts only the two grounded diagnostics in a reviewed save', () => {

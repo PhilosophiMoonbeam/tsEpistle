@@ -53,15 +53,6 @@ export const DeveloperFlagsWorkspaceSchema = z
   .strict()
 export type DeveloperFlagsWorkspace = z.infer<typeof DeveloperFlagsWorkspaceSchema>
 
-export const DeveloperFlagsSaveInputSchema = z
-  .object({
-    policy: DeveloperFlagsSchema,
-    fingerprint: z.string().length(64),
-    reason: z.string().trim().min(3).max(1000)
-  })
-  .strict()
-export type DeveloperFlagsSaveInput = z.infer<typeof DeveloperFlagsSaveInputSchema>
-
 export const DeveloperFlagsSaveResultSchema = z
   .object({
     revision: z.string().uuid(),
@@ -70,13 +61,6 @@ export const DeveloperFlagsSaveResultSchema = z
   })
   .strict()
 export type DeveloperFlagsSaveResult = z.infer<typeof DeveloperFlagsSaveResultSchema>
-
-export const DeveloperFlagsApplyInputSchema = z
-  .object({
-    fingerprint: z.string().length(64)
-  })
-  .strict()
-export type DeveloperFlagsApplyInput = z.infer<typeof DeveloperFlagsApplyInputSchema>
 
 export const DeveloperFlagsApplyResultSchema = z
   .object({

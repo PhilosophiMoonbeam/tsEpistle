@@ -4,11 +4,9 @@ import { DecisionProviderWriteSchema } from '../../shared/agents/decision-provid
 import {
   CreateAdminExternalMcpServerSchema,
   ExternalMcpServerInputSchema,
-  ExternalMcpGroupPolicyInputSchema,
-  ExternalMcpGrantsInputSchema
 } from '../../shared/agents/external-mcp.ts'
 import type { DecisionProviderRegistry } from '../agents/decision-providers.ts'
-import type { ExternalMcpService } from '../agents/external-mcp.ts'
+import { ExternalMcpGroupPolicyInputSchema, ExternalMcpGrantsInputSchema, type ExternalMcpService } from '../agents/external-mcp.ts'
 import { AgentRepositoryError } from '../agents/repository.ts'
 import type { AgentRoutingPolicyRegistry } from '../agents/routing.ts'
 import { RoutingPolicyInputSchema, RoutingModelPolicyInputSchema } from '../../shared/agents/routing.ts'

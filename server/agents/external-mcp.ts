@@ -14,13 +14,12 @@ import {
   type AxMCPTask
 } from '@ax-llm/ax'
 import type { Knex } from 'knex'
+import { z } from 'zod'
 // Bun's built-in fetch ignores Undici dispatchers; the explicit entry point is required for DNS pinning.
 import { Agent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from 'undici/index.js'
 import {
   CreateAdminExternalMcpServerSchema,
   ExternalMcpServerInputSchema,
-  ExternalMcpGroupPolicyInputSchema,
-  ExternalMcpGrantsInputSchema,
   GOOGLE_WORKSPACE_MCP_SERVICES,
   type CreateAdminExternalMcpServerInput,
   type ExternalMcpOAuthInput,
@@ -40,6 +39,8 @@ import {
   type ExternalMcpOAuthContext
 } from './external-mcp-oauth.ts'
 
+export const ExternalMcpGroupPolicyInputSchema = z.strictObject({ allowPersonalEndpoints: z.boolean() })
+export const ExternalMcpGrantsInputSchema = z.strictObject({ groupIds: z.array(z.number().int().positive()).max(1_000) })
 export const EXTERNAL_MCP_LIMITS = Object.freeze({
   timeoutMs: 30_000,
   cleanupMs: 1_000,

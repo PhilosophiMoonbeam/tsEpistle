@@ -19,29 +19,13 @@ export const installAgentCodeQuotationRule = (markdown: MarkdownIt): void => {
     const tokens = state.tokens
     for (let index = 1; index + 1 < tokens.length; index++) {
       const open = tokens[index]!
-      if (
-        tokens[index - 1]!.type === 'blockquote_open' &&
-        open.type === 'html_block' &&
-        open.map !== null &&
-        open.map[1] === open.map[0] + 1 &&
-        tokens[index + 1]!.type === 'blockquote_close'
-      ) {
-        const text = decodeCodeQuotation(open.content.replace(/\n$/u, ''))
-        if (text !== null) {
-          open.type = 'fence'
-          open.tag = 'code'
-          open.nesting = 0
-          open.content = text
-          open.info = 'text'
-          open.markup = '```'
-          open.hidden = false
-        }
-        continue
-      }
-      if (index + 3 >= tokens.length) continue
       const inline = tokens[index + 1]!
-      if (
-        tokens[index - 1]!.type !== 'blockquote_open' ||
+      const htmlBlock = open.type === 'html_block'
+      if (tokens[index - 1]!.type !== 'blockquote_open') continue
+      if (htmlBlock) {
+        if (open.map === null || open.map[1] !== open.map[0] + 1 || inline.type !== 'blockquote_close') continue
+      } else if (
+        index + 3 >= tokens.length ||
         open.type !== 'paragraph_open' ||
         inline.type !== 'inline' ||
         inline.map === null ||
@@ -50,7 +34,7 @@ export const installAgentCodeQuotationRule = (markdown: MarkdownIt): void => {
         tokens[index + 3]!.type !== 'blockquote_close'
       )
         continue
-      const text = decodeCodeQuotation(inline.content)
+      const text = decodeCodeQuotation(htmlBlock ? open.content.replace(/\n$/u, '') : inline.content)
       if (text === null) continue
       open.type = 'fence'
       open.tag = 'code'
@@ -59,7 +43,7 @@ export const installAgentCodeQuotationRule = (markdown: MarkdownIt): void => {
       open.info = 'text'
       open.markup = '```'
       open.hidden = false
-      tokens.splice(index + 1, 2)
+      if (!htmlBlock) tokens.splice(index + 1, 2)
     }
   })
 }

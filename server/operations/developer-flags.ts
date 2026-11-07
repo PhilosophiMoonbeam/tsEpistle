@@ -1,9 +1,8 @@
 import { createHmac, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
+import { z } from 'zod'
 import {
   DeveloperFlagEventSchema,
-  DeveloperFlagsApplyInputSchema,
-  DeveloperFlagsSaveInputSchema,
   DeveloperFlagsRevisionSchema,
   DeveloperFlagsSchema,
   developerFlagChangedFields,
@@ -16,6 +15,18 @@ import {
 import { requireSystemAuthority, type SystemRequester } from '../helpers/system-authority.ts'
 import errors from './errors.ts'
 
+export const DeveloperFlagsSaveInputSchema = z
+  .object({
+    policy: DeveloperFlagsSchema,
+    fingerprint: z.string().length(64),
+    reason: z.string().trim().min(3).max(1000)
+  })
+  .strict()
+export const DeveloperFlagsApplyInputSchema = z
+  .object({
+    fingerprint: z.string().length(64)
+  })
+  .strict()
 const { ApplicationError } = errors
 const SETTINGS_LOCK_NAMESPACE = 73412011
 declare const WIKI: Record<string, unknown>

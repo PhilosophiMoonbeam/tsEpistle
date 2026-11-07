@@ -72,8 +72,6 @@ export const ExternalMcpServerInputSchema = z.strictObject({
 export const CreateAdminExternalMcpServerSchema = ExternalMcpServerInputSchema.extend({
   groupIds: z.array(z.number().int().positive()).max(1_000)
 }).strict()
-export const ExternalMcpGroupPolicyInputSchema = z.strictObject({ allowPersonalEndpoints: z.boolean() })
-export const ExternalMcpGrantsInputSchema = z.strictObject({ groupIds: z.array(z.number().int().positive()).max(1_000) })
 export type ExternalMcpServerInput = z.infer<typeof ExternalMcpServerInputSchema>
 export type CreateAdminExternalMcpServerInput = z.infer<typeof CreateAdminExternalMcpServerSchema>
 
