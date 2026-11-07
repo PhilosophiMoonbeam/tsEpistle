@@ -2,30 +2,29 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import type { Knex } from 'knex'
 import { z } from 'zod'
 import {
-  LocalePolicySchema,
-  LocaleCatalogSchema,
-  LocaleCatalogEntrySchema,
-  LocaleCodeSchema,
-  LocaleFileReviewSchema,
-  MAX_LOCALE_FILE_BYTES,
-  localePolicyFromConfiguration,
-  localeChangedFields,
   type LocaleCatalogEntry,
+  LocaleCodeSchema,
+  type LocaleEvent,
   type LocaleFileReview,
+  LocaleFileReviewSchema,
+  type LocaleOperation,
+  LocalePolicySchema,
   type LocaleUninstallBlocker,
   type LocaleUninstallReview,
   type LocaleWorkspace,
-  type LocaleEvent,
-  type LocaleOperation,
-  type LocaleWriteResult
+  type LocaleWriteResult,
+  localeChangedFields,
+  localePolicyFromConfiguration,
+  MAX_LOCALE_FILE_BYTES
 } from '../../shared/locale-policy.ts'
-import { flattenLocaleStrings, mergeLocaleCatalog, type LocaleStrings } from '../helpers/locale-package.ts'
-import { parseLocaleFileBytes, type ParsedLocaleFile } from '../repositories/locale-packages.ts'
-import { readForkLocaleKeys, installedLocaleCoverage } from './locale-coverage.ts'
+import { type DurableJob, DurableJobStore } from '../core/durable-jobs.ts'
 import { accountSessionIsCurrent } from '../helpers/account-session.ts'
-import { principalId, type PagePrincipal } from '../helpers/page-access.ts'
-import { DurableJobStore, type DurableJob } from '../core/durable-jobs.ts'
+import { flattenLocaleStrings, LocaleCatalogEntrySchema, LocaleCatalogSchema, type LocaleStrings, mergeLocaleCatalog } from '../helpers/locale-package.ts'
+import { type PagePrincipal, principalId } from '../helpers/page-access.ts'
+import { type ParsedLocaleFile, parseLocaleFileBytes } from '../repositories/locale-packages.ts'
 import errors from './errors.ts'
+import { installedLocaleCoverage, readForkLocaleKeys } from './locale-coverage.ts'
+
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 const stable = (value: unknown): string =>

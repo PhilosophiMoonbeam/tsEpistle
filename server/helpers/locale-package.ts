@@ -1,6 +1,21 @@
 import { z } from 'zod'
-import { LocaleCatalogSchema, type LocaleCatalogEntry } from '../../shared/locale-policy.ts'
+import { type LocaleCatalogEntry, LocaleCodeSchema } from '../../shared/locale-policy.ts'
 
+export const LocaleCatalogEntrySchema = z.object({
+  code: LocaleCodeSchema,
+  name: z.string().trim().min(1).max(160),
+  nativeName: z.string().trim().min(1).max(160),
+  isRTL: z.boolean(),
+  availability: z.number().int().min(0).max(100),
+  createdAt: z.string().max(100).optional(),
+  updatedAt: z.string().max(100).optional()
+})
+export const LocaleCatalogSchema = z
+  .array(LocaleCatalogEntrySchema)
+  .max(300)
+  .superRefine((rows, context) => {
+    if (new Set(rows.map(row => row.code)).size !== rows.length) context.addIssue({ code: 'custom', message: 'The language catalog contains duplicate codes.' })
+  })
 export const LocaleCatalogResponseSchema = z.object({ data: z.object({ localization: z.object({ locales: LocaleCatalogSchema }) }) })
 const LocaleStringsResponseSchema = z.object({ data: z.object({ localization: z.object({ strings: z.array(z.object({ key: z.string().max(500), value: z.string().max(100_000) })).min(1).max(30_000) }) }) })
 const forbidden = new Set(['__proto__', 'prototype', 'constructor'])

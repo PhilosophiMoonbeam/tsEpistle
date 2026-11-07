@@ -1,12 +1,36 @@
 import type { Knex } from 'knex'
 import { z } from 'zod'
-import { MAIL_TEMPLATES, MailCheckRequestSchema, mailRecord, type MailCheck, type MailWorkspace, type MailTemplateData, type MailTemplateKey, type MailTemplatePreview } from '../../shared/mail-workspace.ts'
+import {
+  isMailAddress,
+  MAIL_TEMPLATES,
+  type MailCheck,
+  type MailTemplateData,
+  type MailTemplateKey,
+  type MailTemplatePreview,
+  type MailWorkspace,
+  mailRecord
+} from '../../shared/mail-workspace.ts'
 import type { MailRuntime } from '../core/mail.ts'
 import type { PagePrincipal } from '../helpers/page-access.ts'
 import { mailConfigurationKey, mailDkimPublicRecord } from '../repositories/mail-configuration.ts'
-import { resolveMailDkimTxt, mailDkimDnsMatches, mailDiagnosticFailure } from '../repositories/mail-diagnostics.ts'
-import { createMailConfigurationStore } from './mail-configuration.ts'
+import { mailDiagnosticFailure, mailDkimDnsMatches, resolveMailDkimTxt } from '../repositories/mail-diagnostics.ts'
 import errors from './errors.ts'
+import { createMailConfigurationStore } from './mail-configuration.ts'
+
+export const MailCheckRequestSchema = z.discriminatedUnion('kind', [
+  z.object({ id: z.string().uuid(), kind: z.literal('connection'), fingerprint: z.string().length(64) }).strict(),
+  z.object({ id: z.string().uuid(), kind: z.literal('dkim'), fingerprint: z.string().length(64) }).strict(),
+  z
+    .object({
+      id: z.string().uuid(),
+      kind: z.literal('test'),
+      fingerprint: z.string().length(64),
+      recipient: z.string().trim().refine(isMailAddress, 'Enter a single recipient email address.'),
+      confirmSend: z.literal(true),
+      acknowledgedUncertainId: z.string().uuid().optional()
+    })
+    .strict()
+])
 
 interface CheckRow extends Omit<MailCheck, 'createdAt' | 'completedAt'> {
   createdAt: Date | string

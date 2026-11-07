@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
-import { LocaleCatalogSchema, type LocaleCatalogEntry, type LocaleEvent } from '../../shared/locale-policy.ts'
-import type { LocaleStrings } from '../helpers/locale-package.ts'
+import type { LocaleCatalogEntry, LocaleEvent } from '../../shared/locale-policy.ts'
+import { LocaleCatalogSchema, type LocaleStrings } from '../helpers/locale-package.ts'
+
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 const stable = (value: unknown): string =>

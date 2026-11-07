@@ -40,16 +40,15 @@ export const localeNavCacheKey = (revision: unknown): string => (typeof revision
 export const localeReadingPath = (policy: LocalePolicy, locale = policy.locale, path = 'home'): string =>
   `/${policy.namespacing || locale !== policy.locale ? locale + '/' : ''}${path}`
 
-export const LocaleCatalogEntrySchema = z.object({
-  code: LocaleCodeSchema,
-  name: z.string().trim().min(1).max(160),
-  nativeName: z.string().trim().min(1).max(160),
-  isRTL: z.boolean(),
-  availability: z.number().int().min(0).max(100),
-  createdAt: z.string().max(100).optional(),
-  updatedAt: z.string().max(100).optional()
-})
-export type LocaleCatalogEntry = z.output<typeof LocaleCatalogEntrySchema>
+export type LocaleCatalogEntry = {
+  code: string
+  name: string
+  nativeName: string
+  isRTL: boolean
+  availability: number
+  createdAt?: string | undefined
+  updatedAt?: string | undefined
+}
 export const MAX_LOCALE_FILE_BYTES = 8 * 1024 * 1024
 export const LocaleFileChangesSchema = z
   .object({
@@ -93,12 +92,6 @@ export const LocaleUninstallReviewSchema = z
   .strict()
 export type LocaleUninstallReview = z.output<typeof LocaleUninstallReviewSchema>
 
-export const LocaleCatalogSchema = z
-  .array(LocaleCatalogEntrySchema)
-  .max(300)
-  .superRefine((rows, context) => {
-    if (new Set(rows.map(row => row.code)).size !== rows.length) context.addIssue({ code: 'custom', message: 'The language catalog contains duplicate codes.' })
-  })
 export interface LocalePackage extends LocaleCatalogEntry {
   isInstalled: boolean
   installDate: string | null

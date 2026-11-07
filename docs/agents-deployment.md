@@ -1088,10 +1088,10 @@ Both framing arms used the same canonical admitted source view. This isolates fr
 | Direct source | Previous probability-and-confidence gates | 25 / 26 | 0 / 26 |
 | Direct source | Selected-label probability only | 26 / 26 | 0 / 26 |
 
-| Measured Native input | Previous framing | Direct source | Reduction |
+| Measured Native metric | Previous framing | Direct source | Reduction |
 | --- | ---: | ---: | ---: |
 | Wire bytes | 150,677 | 100,754 | 33.13% |
-| Provider input tokens | 43,576 | 31,859 | 26.89% |
+| Provider-reported tokens | 43,576 | 31,859 | 26.89% |
 
 The actual operator ledger reconciled 52 Native calls, 75,435 tokens and 3,011 cost micros ($0.003011), with no retry, unknown exposure or pending allocation. These are Native qualification receipts, not the separately metered owner-UI generation totals. Synthetic gold review used a separate Jevify model and made no synthetic gold-label changes.
 

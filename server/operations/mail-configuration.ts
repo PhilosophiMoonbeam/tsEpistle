@@ -2,17 +2,35 @@ import { createHmac, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { z } from 'zod'
 import {
-  MailDraftSchema,
-  MailConfigurationEventSchema,
-  mailPolicyFromConfiguration,
-  mailRecord,
   type MailConfigurationEvent,
-  type MailConfigurationWorkspace
+  type MailConfigurationWorkspace,
+  MailPolicySchema,
+  mailPolicyFromConfiguration,
+  mailRecord
 } from '../../shared/mail-workspace.ts'
-import { mailRuntimeConfiguration, mailRuntimeIssues, mailDkimPublicRecord } from '../repositories/mail-configuration.ts'
 import { accountSessionIsCurrent } from '../helpers/account-session.ts'
-import { principalId, type PagePrincipal } from '../helpers/page-access.ts'
+import { type PagePrincipal, principalId } from '../helpers/page-access.ts'
+import { mailDkimPublicRecord, mailRuntimeConfiguration, mailRuntimeIssues } from '../repositories/mail-configuration.ts'
 import errors from './errors.ts'
+
+export const MailSecretChangeSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('keep') }).strict(),
+  z.object({ action: z.literal('clear') }).strict(),
+  z.object({ action: z.literal('replace'), value: z.string().min(1).max(65536) }).strict()
+])
+export const MailDraftSchema = z
+  .object({
+    policy: MailPolicySchema,
+    secrets: z.object({ pass: MailSecretChangeSchema, dkimPrivateKey: MailSecretChangeSchema }).strict()
+  })
+  .strict()
+export const MailConfigurationEventSchema = z.object({
+  id: z.string().uuid(),
+  createdAt: z.string(),
+  actorId: z.number().int().positive().nullable(),
+  reason: z.string().max(1000),
+  fields: z.array(z.string().max(100)).max(30)
+})
 
 const stable = (value: unknown): string =>
   JSON.stringify(value, (_key, item) =>

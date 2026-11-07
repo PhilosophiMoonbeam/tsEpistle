@@ -26,18 +26,13 @@ export const MailPolicySchema = z
   })
   .strict()
 export type MailPolicy = z.infer<typeof MailPolicySchema>
-export const MailSecretChangeSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('keep') }).strict(),
-  z.object({ action: z.literal('clear') }).strict(),
-  z.object({ action: z.literal('replace'), value: z.string().min(1).max(65536) }).strict()
-])
-export const MailDraftSchema = z
-  .object({
-    policy: MailPolicySchema,
-    secrets: z.object({ pass: MailSecretChangeSchema, dkimPrivateKey: MailSecretChangeSchema }).strict()
-  })
-  .strict()
-export type MailDraft = z.infer<typeof MailDraftSchema>
+export type MailDraft = {
+  policy: MailPolicy
+  secrets: {
+    pass: { action: 'keep' } | { action: 'clear' } | { action: 'replace'; value: string }
+    dkimPrivateKey: { action: 'keep' } | { action: 'clear' } | { action: 'replace'; value: string }
+  }
+}
 export type MailSecretPresence = { pass: boolean; dkimPrivateKey: boolean }
 export const mailRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -243,14 +238,13 @@ export interface MailTemplatePreview {
   subject: string
 }
 
-export const MailConfigurationEventSchema = z.object({
-  id: z.string().uuid(),
-  createdAt: z.string(),
-  actorId: z.number().int().positive().nullable(),
-  reason: z.string().max(1000),
-  fields: z.array(z.string().max(100)).max(30)
-})
-export type MailConfigurationEvent = z.infer<typeof MailConfigurationEventSchema>
+export type MailConfigurationEvent = {
+  id: string
+  createdAt: string
+  actorId: number | null
+  reason: string
+  fields: string[]
+}
 export interface MailConfigurationWorkspace {
   policy: MailPolicy
   secrets: MailSecretPresence
@@ -286,18 +280,14 @@ export interface MailWorkspace extends MailConfigurationWorkspace {
   }
   checks: MailCheck[]
 }
-export const MailCheckRequestSchema = z.discriminatedUnion('kind', [
-  z.object({ id: z.string().uuid(), kind: z.literal('connection'), fingerprint: z.string().length(64) }).strict(),
-  z.object({ id: z.string().uuid(), kind: z.literal('dkim'), fingerprint: z.string().length(64) }).strict(),
-  z
-    .object({
-      id: z.string().uuid(),
-      kind: z.literal('test'),
-      fingerprint: z.string().length(64),
-      recipient: z.string().trim().refine(isMailAddress, 'Enter a single recipient email address.'),
-      confirmSend: z.literal(true),
-      acknowledgedUncertainId: z.string().uuid().optional()
-    })
-    .strict()
-])
-export type MailCheckRequest = z.infer<typeof MailCheckRequestSchema>
+export type MailCheckRequest =
+  | { id: string; kind: 'connection'; fingerprint: string }
+  | { id: string; kind: 'dkim'; fingerprint: string }
+  | {
+      id: string
+      kind: 'test'
+      fingerprint: string
+      recipient: string
+      confirmSend: true
+      acknowledgedUncertainId?: string | undefined
+    }

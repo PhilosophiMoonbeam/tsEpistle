@@ -1,5 +1,7 @@
-import { describe, it, expect } from '../server/test/bun-test.mts'
-import { MailDraftSchema, mailPolicyFromConfiguration, mailConfigurationIssues, isMailAddress } from './mail-workspace.ts'
+import { MailDraftSchema } from '../server/operations/mail-configuration.ts'
+import { describe, expect, it } from '../server/test/bun-test.mts'
+import { isMailAddress, mailConfigurationIssues, mailPolicyFromConfiguration } from './mail-workspace.ts'
+
 describe('Mail policy and credential contracts', () => {
   it('retains legacy transport behavior and supports pausing without removing a configured host', () => {
     expect(mailPolicyFromConfiguration({ host: 'smtp.example.test', secure: true })).toMatchObject({ enabled: true, tlsMode: 'implicit', port: 465 })
