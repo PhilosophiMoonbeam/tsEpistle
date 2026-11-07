@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
 import { afterEach, describe, expect, it } from '../bun-test.mts'
 
+import type { WikiVerificationDiagnostic, WikiVerificationQuestionDiagnostic } from '../../../shared/agents/contracts.ts'
 import { exportAgentSessionDiagnostics } from '../../agents/diagnostics.ts'
 
 const sessionId = '00000000-0000-4000-8000-000000000101'
@@ -10,6 +11,7 @@ interface DiagnosticExportView {
   readonly totals: Readonly<Record<string, number>>
   readonly messages: readonly Readonly<Record<string, unknown>>[]
   readonly runs: readonly {
+    readonly failureContext?: Readonly<Record<string, unknown>>
     readonly usage: Readonly<{
       readonly inputTokens: number
       readonly outputTokens: number
@@ -19,6 +21,13 @@ interface DiagnosticExportView {
     readonly diagnostics: {
       readonly toolCalls: readonly Readonly<Record<string, unknown>>[]
       readonly findings: readonly Readonly<Record<string, unknown>>[]
+      readonly verifications: readonly {
+        readonly sequence: number
+        readonly attempt: number
+        readonly transportOutcome: 'completed' | 'failed' | 'unknown'
+        readonly availability: 'recorded' | 'not-recorded' | 'invalid' | 'future-version'
+        readonly resultFrame: WikiVerificationDiagnostic | null
+      }[]
     }
     readonly timeline: readonly {
       readonly type: string
@@ -229,14 +238,14 @@ const insertUsageRun = async (database: Knex, id: string, usage: DiagnosticUsage
   })
 }
 
-const appendEvent = async (db: Knex, sequence: number, type: string, data: Record<string, unknown>): Promise<void> => {
+const appendEvent = async (db: Knex, sequence: number, type: string, data: Record<string, unknown>, attempt = 1): Promise<void> => {
   const encoded = JSON.stringify(data)
   await db('agentEvents').insert({
     id: `00000000-0000-4000-8000-${String(200 + sequence).padStart(12, '0')}`,
     runId,
     sequence,
     type,
-    attempt: 1,
+    attempt,
     schemaVersion: 1,
     dataSha256: createHash('sha256').update(encoded).digest('hex'),
     data: encoded,
@@ -247,10 +256,203 @@ const expectDiagnosticFailure = async (database: Knex, code: string, message: st
   await expect(Promise.resolve(exportAgentSessionDiagnostics(database, sessionId))).rejects.toMatchObject({ code, message, status: 500 })
 }
 
+const wikiQuestion = (overrides: Partial<WikiVerificationQuestionDiagnostic> = {}): WikiVerificationQuestionDiagnostic => ({
+  questionIndex: 0,
+  kind: 'support',
+  claimIndex: 0,
+  expected: 'supports',
+  choice: 'supports',
+  probabilities: { supports: 0.9, contradicts: 0.05, not_supported: 0.05 },
+  confidence: 0.1,
+  accepted: true,
+  reason: 'accepted',
+  ...overrides
+})
+const wikiFrame = (overrides: Partial<WikiVerificationDiagnostic> = {}): WikiVerificationDiagnostic => ({
+  version: 1,
+  policy: 'wiki-evidence-probability-v2',
+  minProbability: 0.8,
+  requestSha256: 'a'.repeat(64),
+  sourceScopes: ['complete-read'],
+  status: 'accepted',
+  questions: [wikiQuestion()],
+  omittedQuestions: 0,
+  ...overrides
+})
+
 describe('agent conversation diagnostics', () => {
   let db: Knex | undefined
 
   afterEach(async () => db?.destroy())
+  it('exports the current error-bearing terminal Partial context instead of a previous failed attempt', async () => {
+    db = await createUsageDatabase()
+    await insertUsageRun(db, runId, { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostMicros: null })
+    await db('agentRuns').where({ id: runId }).update({ status: 'partial', attempts: 2 })
+    await appendEvent(db, 1, 'run.failed', { errorCode: 'OLD_FAILURE', diagnostics: { failureStage: 'old-attempt' } })
+    await appendEvent(
+      db,
+      2,
+      'run.partial',
+      {
+        errorCode: 'AGENT_EVIDENCE_REJECTED',
+        diagnostics: { failureStage: 'verification', safeErrorId: 'wiki-rejected' }
+      },
+      2
+    )
+    const exported = (await exportAgentSessionDiagnostics(db, sessionId)) as unknown as DiagnosticExportView
+    expect(exported.runs[0]!.failureContext).toEqual({ failureStage: 'verification', safeErrorId: 'wiki-rejected' })
+  })
+
+  it('separates completed transport with semantic rejection from accepted answers and execution failure', async () => {
+    db = await createUsageDatabase()
+    await insertUsageRun(db, runId, { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostMicros: null })
+    const rejected = wikiFrame({
+      status: 'semantic_rejection',
+      questions: [
+        wikiQuestion({
+          probabilities: { supports: 0.8, contradicts: 0.1, not_supported: 0.1 },
+          confidence: 1,
+          accepted: false,
+          reason: 'insufficient_probability'
+        })
+      ]
+    })
+    await appendEvent(db, 1, 'model.turn', {
+      purpose: 'verification',
+      outcome: 'verification_completed',
+      verification: { phase: 'semantic', resultFrame: rejected }
+    })
+    const accepted = wikiFrame({
+      sourceScopes: ['complete-read', 'recent-excerpt', 'attachment'],
+      questions: [
+        wikiQuestion(),
+        wikiQuestion({
+          questionIndex: 1,
+          kind: 'narration',
+          claimIndex: null,
+          expected: 'bounded',
+          choice: 'bounded',
+          probabilities: { bounded: 0.81, unbound: 0.1, not_established: 0.09 },
+          confidence: 0
+        }),
+        wikiQuestion({
+          questionIndex: 2,
+          kind: 'attachment-scope',
+          claimIndex: null,
+          expected: 'bounded',
+          choice: 'bounded',
+          probabilities: { bounded: 0.9, unbound: 0.05, not_established: 0.05 }
+        })
+      ]
+    })
+    await appendEvent(db, 2, 'model.turn', {
+      purpose: 'verification',
+      outcome: 'verification_completed',
+      verification: { phase: 'semantic', resultFrame: accepted }
+    })
+    await appendEvent(db, 3, 'model.turn', {
+      purpose: 'verification',
+      outcome: 'verification_failed',
+      verification: { phase: 'semantic', resultFrame: wikiFrame({ status: 'transport_failure', questions: [] }) }
+    })
+    const exported = (await exportAgentSessionDiagnostics(db, sessionId)) as unknown as DiagnosticExportView
+    const diagnostic = exported.runs[0]!.diagnostics
+    expect(diagnostic.verifications.map(row => ({ availability: row.availability, transport: row.transportOutcome, status: row.resultFrame?.status }))).toEqual(
+      [
+        { availability: 'recorded', transport: 'completed', status: 'semantic_rejection' },
+        { availability: 'recorded', transport: 'completed', status: 'accepted' },
+        { availability: 'recorded', transport: 'failed', status: 'transport_failure' }
+      ]
+    )
+    expect(diagnostic.verifications[1]!.resultFrame!.questions[0]!.confidence).toBe(0.1)
+    expect(diagnostic.verifications[1]!.resultFrame).toEqual(accepted)
+    expect(diagnostic.findings).toEqual([
+      expect.objectContaining({
+        kind: 'wiki_verification_rejected',
+        status: 'semantic_rejection',
+        transportOutcome: 'completed',
+        policy: 'wiki-evidence-probability-v2',
+        minProbability: 0.8,
+        rejectedQuestions: rejected.questions
+      }),
+      expect.objectContaining({ kind: 'wiki_verification_rejected', status: 'transport_failure', transportOutcome: 'failed' })
+    ])
+  })
+
+  it('preserves only observed safe values for an integrity-invalid response without filling missing probabilities', async () => {
+    db = await createUsageDatabase()
+    await insertUsageRun(db, runId, { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostMicros: null })
+    const resultFrame = wikiFrame({
+      status: 'invalid_response',
+      questions: [wikiQuestion({ choice: null, probabilities: { supports: 0.4 }, confidence: null, accepted: false, reason: 'invalid_response' })]
+    })
+    await appendEvent(db, 1, 'model.turn', { purpose: 'verification', outcome: 'verification_completed', verification: { phase: 'semantic', resultFrame } })
+    const exported = (await exportAgentSessionDiagnostics(db, sessionId)) as unknown as DiagnosticExportView
+    expect(exported.runs[0]!.diagnostics.verifications[0]).toMatchObject({ availability: 'recorded', resultFrame })
+    expect(exported.runs[0]!.diagnostics.findings).toEqual([
+      expect.objectContaining({ kind: 'wiki_verification_rejected', status: 'invalid_response', rejectedQuestions: resultFrame.questions })
+    ])
+  })
+
+  it('keeps absent, malformed and future-version historical frames unavailable rather than accepted', async () => {
+    db = await createUsageDatabase()
+    await insertUsageRun(db, runId, { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostMicros: null })
+    for (const [index, metadata] of [
+      { phase: 'semantic' },
+      { phase: 'semantic', resultFrame: { status: 'accepted' } },
+      { phase: 'semantic', resultFrame: { ...wikiFrame(), version: 2 } }
+    ].entries())
+      await appendEvent(db, index + 1, 'model.turn', { purpose: 'verification', outcome: 'verification_completed', verification: metadata })
+    const exported = (await exportAgentSessionDiagnostics(db, sessionId)) as unknown as DiagnosticExportView
+    expect(exported.runs[0]!.diagnostics.verifications.map(row => [row.availability, row.resultFrame])).toEqual([
+      ['not-recorded', null],
+      ['invalid', null],
+      ['future-version', null]
+    ])
+    expect(exported.runs[0]!.diagnostics.findings).toHaveLength(3)
+    expect(exported.runs[0]!.timeline).toHaveLength(3)
+  })
+
+  it('never interprets hostile labels, numbers or inconsistent diagnostic relationships as accepted', async () => {
+    db = await createUsageDatabase()
+    await insertUsageRun(db, runId, { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostMicros: null })
+    const malformed: readonly unknown[] = [
+      { ...wikiFrame(), policy: 'provider-controlled policy' },
+      { ...wikiFrame(), source: 'raw private source' },
+      { ...wikiFrame(), minProbability: 0.2 },
+      { ...wikiFrame(), sourceScopes: ['complete-read', 'complete-read'] },
+      { ...wikiFrame(), omittedQuestions: Number.MAX_SAFE_INTEGER + 1 },
+      { ...wikiFrame(), questions: Array.from({ length: 65 }, (_, questionIndex) => wikiQuestion({ questionIndex })) },
+      { ...wikiFrame(), questions: [wikiQuestion({ questionIndex: 1 })] },
+      { ...wikiFrame(), questions: [{ ...wikiQuestion(), choice: 'provider-controlled label' }] },
+      { ...wikiFrame(), questions: [wikiQuestion({ probabilities: { supports: 0.9, contradicts: 0.05, secret: 0.05 } })] },
+      { ...wikiFrame(), questions: [wikiQuestion({ probabilities: { bounded: 0.9, unbound: 0.05, not_established: 0.05 } })] },
+      { ...wikiFrame(), questions: [wikiQuestion({ probabilities: { supports: 0.9, contradicts: 0.9, not_supported: 0.9 } })] },
+      { ...wikiFrame(), questions: [wikiQuestion({ probabilities: { supports: 1 } })] },
+      {
+        ...wikiFrame({ status: 'invalid_response' }),
+        questions: [wikiQuestion({ probabilities: { bounded: 0.4 }, accepted: false, reason: 'invalid_response' })]
+      },
+      { ...wikiFrame(), questions: [wikiQuestion({ confidence: Number.POSITIVE_INFINITY })] },
+      { ...wikiFrame(), questions: [wikiQuestion({ confidence: -0.1 })] },
+      { ...wikiFrame(), questions: [wikiQuestion({ claimIndex: -1 })] },
+      { ...wikiFrame(), questions: [wikiQuestion({ accepted: false, reason: 'invalid_response' })] },
+      { ...wikiFrame(), questions: [wikiQuestion({ probabilities: { supports: 0.8, contradicts: 0.1, not_supported: 0.1 } })] },
+      { ...wikiFrame(), questions: [wikiQuestion({ choice: 'contradicts' })] }
+    ]
+    for (const [index, resultFrame] of malformed.entries())
+      await appendEvent(db, index + 1, 'model.turn', {
+        purpose: 'verification',
+        outcome: 'verification_completed',
+        verification: { phase: 'semantic', resultFrame }
+      })
+    const exported = (await exportAgentSessionDiagnostics(db, sessionId)) as unknown as DiagnosticExportView
+    expect(exported.runs[0]!.diagnostics.verifications).toHaveLength(malformed.length)
+    for (const diagnostic of exported.runs[0]!.diagnostics.verifications) {
+      expect(diagnostic.availability).toBe('invalid')
+      expect(diagnostic.resultFrame).toBeNull()
+    }
+  })
 
   it('exports complete turns and derives evidence retries and duplicate historical page reads', async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })

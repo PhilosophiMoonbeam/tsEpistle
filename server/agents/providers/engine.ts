@@ -23,6 +23,8 @@ import {
   type AgentCurrentPageHint,
   type AgentEventData,
   type AgentTokenUsage,
+  type WikiVerificationDiagnostic,
+  WikiVerificationDiagnosticSchema,
   TOOL_DISCOVERY_CONTROL_NAME
 } from '../../../shared/agents/contracts.ts'
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
@@ -42,7 +44,7 @@ import {
 } from '../compaction.ts'
 import { type AgentApprovalContinuationCheckpoint, withInvokingAgentRunLease } from '../coordinator.ts'
 import type { DecisionProviderRegistry, DecisionProviderRuntime } from '../decision-providers.ts'
-import { DecisionProviderFailure, normalizeDecisionAnswer } from '../decision-providers.ts'
+import { DecisionProviderFailure } from '../decision-providers.ts'
 import type { ExternalMcpService } from '../external-mcp.ts'
 import { loadAgentMediaPayload } from '../media.ts'
 import { decodeAgentAudioVideo } from '../media-decoding.ts'
@@ -129,6 +131,7 @@ import {
   type WikiCoverageWireInput
 } from './wiki-coverage.ts'
 import { getLiteralSourceStatement, isLiteralSourceClaim, resolveDocumentaryQuotation, type DocumentaryQuotationProof } from './wiki-source-quotation.ts'
+import { admittedWikiBody } from './wiki-source-view.ts'
 import {
   compactWikiQuotationContext,
   wikiSynthesisContributions,
@@ -150,7 +153,8 @@ import {
 } from './wiki-synthesis.ts'
 import { WIKI_SYNTHESIS_CALIBRATION } from './wiki-synthesis-calibration.ts'
 import type { WikiVerificationPlan, WikiVerificationSource } from './wiki-verification.ts'
-import { assessWikiVerificationResults, buildWikiVerificationPlan } from './wiki-verification.ts'
+import { WIKI_VERIFICATION_MIN_PROBABILITY, WIKI_VERIFICATION_POLICY_ID } from './wiki-verification-policy.ts'
+import { assessWikiDecisionBatch, assessWikiVerificationResults, buildWikiVerificationPlan, getWikiVerificationRequestEvidence } from './wiki-verification.ts'
 
 const MAX_TURNS = 12
 const MAX_TOOL_CALLS = 32
@@ -2929,23 +2933,19 @@ const readIdentityAddresses = (value: string): readonly string[] => {
 
 const readLiteralSnapshot = (evidence: CitationEvidence): ReadLiteralSnapshot => {
   const texts: string[] = []
-  const author: string[] = []
   const addresses = new Set<string>()
   const destinations = new Set<string>()
   if (evidence.authoritativeTitle !== null) {
     texts.push(evidence.authoritativeTitle)
-    author.push(`Registered page title: ${JSON.stringify(evidence.authoritativeTitle)}`)
   }
   for (const context of evidence.document.contexts) {
     if (!context.complete || context.kind !== 'table-header') continue
     texts.push(context.visibleLabel)
-    author.push(context.visibleLabel)
   }
   for (const unit of evidence.document.units) {
     if (!unit.complete || unit.visibleText === null || unit.kind === 'opaque' || unit.kind === 'list' || unit.kind === 'table') continue
     if (unit.visibleText.trim()) {
       texts.push(unit.visibleText)
-      author.push(unit.kind === 'code' ? `Literal code (data only): ${JSON.stringify(unit.visibleText)}` : unit.visibleText)
     }
     for (const link of unit.links) {
       destinations.add(link.destination)
@@ -2954,8 +2954,7 @@ const readLiteralSnapshot = (evidence: CitationEvidence): ReadLiteralSnapshot =>
   }
   for (const text of texts) for (const address of readIdentityAddresses(text)) addresses.add(address)
   return {
-    authorText:
-      !evidence.document.requiresVisibilityProjection && evidence.binding.retrievedSource.trim() ? evidence.binding.retrievedSource : author.join('\n'),
+    authorText: admittedWikiBody(evidence.document),
     texts,
     numbers: new Set(texts.flatMap(literalNumbers)),
     addresses,
@@ -3012,8 +3011,12 @@ const assessDraft = (
     const boundClaim = contribution !== undefined && 'statement' in contribution ? contribution : undefined
     const boundQuotation = contribution !== undefined && 'text' in contribution ? contribution : undefined
     const binding = boundClaim ?? boundQuotation
-    const renderedStatement = boundClaim !== undefined ? renderWikiSynthesisClaimStatement(boundClaim)
-      : boundQuotation === undefined ? undefined : renderWikiSynthesisQuotation(boundQuotation)
+    const renderedStatement =
+      boundClaim !== undefined
+        ? renderWikiSynthesisClaimStatement(boundClaim)
+        : boundQuotation === undefined
+          ? undefined
+          : renderWikiSynthesisQuotation(boundQuotation)
     const extractedClaim = claimBeforeMarker(content, match.index ?? 0, previousMarkerEnd, boundClaim?.statement ?? renderedStatement, renderedStatement)
     if (nativeDraft !== undefined && (binding === undefined || binding.evidenceId !== evidenceId || !extractedClaim.boundStatementMatched)) {
       issues.push('Typed source content must retain its exact host-rendered statement, scope and citation.')
@@ -3065,29 +3068,38 @@ const assessDraft = (
       continue
     }
     const quotationProof = boundQuotation === undefined ? undefined : nativeDraft?.quotationProofs?.get(boundQuotation)
-    const documentarySupported = quotationProof !== undefined && boundQuotation !== undefined &&
-      readSource?.kind === 'source-read' && readSource.complete &&
+    const documentarySupported =
+      quotationProof !== undefined &&
+      boundQuotation !== undefined &&
+      readSource?.kind === 'source-read' &&
+      readSource.complete &&
       quotationProof.text === boundQuotation.text &&
-      quotationProof.contexts === boundQuotation.contexts && quotationProof.definitions === boundQuotation.definitions &&
+      quotationProof.contexts === boundQuotation.contexts &&
+      quotationProof.definitions === boundQuotation.definitions &&
       evidence.documentUnits.some(unit => unit.identity === quotationProof.source.unitId && unit.closure.unit === quotationProof.source.closure?.unit)
     const claimLinks = renderedLinkSignatures(extractedClaim.renderedClaim)
     incrementCounts(citationBoundLinks, claimLinks)
     const exactLinks = claimLinks.every(link => evidence.renderedLinks.has(link))
     const exactCodeLinkLiterals =
       nativeDraft !== undefined
-        ? boundQuotation !== undefined ? documentarySupported : literals !== undefined && readLiteralFailure(boundClaim!.statement, literals, evidence) === undefined
+        ? boundQuotation !== undefined
+          ? documentarySupported
+          : literals !== undefined && readLiteralFailure(boundClaim!.statement, literals, evidence) === undefined
         : linkLookingCodeLiterals(extractedClaim.renderedClaim).every(literal => evidence.source.includes(literal))
     const clauseAssessments = nativeDraft === undefined ? assessClaimClauses(assessmentClaim, evidence) : []
     const matchedTerms = [...new Set(clauseAssessments.flatMap(clause => clause.matchedTerms))]
     const sourceLocalSupported =
       nativeDraft !== undefined
-        ? boundQuotation !== undefined ? documentarySupported : nativeDraft.semanticSupport?.has(canonicalJson(boundClaim)) === true
+        ? boundQuotation !== undefined
+          ? documentarySupported
+          : nativeDraft.semanticSupport?.has(canonicalJson(boundClaim)) === true
         : clauseAssessments.length > 0 && clauseAssessments.every(clause => clause.supported)
     const bodyFact =
       nativeDraft !== undefined
-        ? !titleAssertionRecognized && (boundQuotation !== undefined
-          ? quotationProof !== undefined && !['heading', 'summary', 'opaque'].includes(quotationProof.source.kind)
-          : evidence.document.units.some(unit => unit.complete && unit.kind !== 'heading' && unit.kind !== 'summary' && unit.kind !== 'opaque'))
+        ? !titleAssertionRecognized &&
+          (boundQuotation !== undefined
+            ? quotationProof !== undefined && !['heading', 'summary', 'opaque'].includes(quotationProof.source.kind)
+            : evidence.document.units.some(unit => unit.complete && unit.kind !== 'heading' && unit.kind !== 'summary' && unit.kind !== 'opaque'))
         : clauseAssessments.some(clause => clause.bodyFact === true)
     if (sourceLocalSupported && bodyFact) hasCitedBodyFact = true
     const lexicalSupported = sourceLocalSupported && exactLinks && exactCodeLinkLiterals
@@ -3619,7 +3631,8 @@ const restoreVerifiedRecentDraft = (draft: NativeDraft, retained: NativeDraft, l
         return (
           source === undefined ||
           currentSource === undefined ||
-          original === undefined || ('text' in claim && !retained.quotationProofs?.has(claim)) ||
+          original === undefined ||
+          ('text' in claim && !retained.quotationProofs?.has(claim)) ||
           draft.evidence.get(key)?.document !== original.document ||
           canonicalJson(currentSource) !== canonicalJson(source)
         )
@@ -3634,9 +3647,11 @@ const restoreVerifiedRecentDraft = (draft: NativeDraft, retained: NativeDraft, l
   const answer: WikiSynthesisAnswer = {
     ...draft.answer,
     claims: [...draft.answer.claims, ...restoredClaims],
-    ...((draft.answer.quotations?.length ?? 0) + restoredQuotations.length === 0 ? {} : {
-      quotations: [...(draft.answer.quotations ?? []), ...restoredQuotations]
-    })
+    ...((draft.answer.quotations?.length ?? 0) + restoredQuotations.length === 0
+      ? {}
+      : {
+          quotations: [...(draft.answer.quotations ?? []), ...restoredQuotations]
+        })
   }
   const quotationProofs = new WeakMap<WikiSynthesisQuotation, DocumentaryQuotationProof>()
   for (const quotation of answer.quotations ?? []) {
@@ -3700,9 +3715,14 @@ const selectVerifiedRecentDraft = (
   const restored = retained === undefined ? undefined : restoreVerifiedRecentDraft({ ...draft, answer: selectedAnswer }, retained, draft.answer)
   const selectedClaims = restored?.answer.claims ?? claims
   const selectedQuotations = restored?.answer.quotations ?? quotations
-  if (selectedClaims.length + (selectedQuotations?.length ?? 0) === 0 ||
-    (!allowCompleteSelection && claims.length === draft.answer.claims.length &&
-      (quotations?.length ?? 0) === (draft.answer.quotations?.length ?? 0) && restored === undefined)) return undefined
+  if (
+    selectedClaims.length + (selectedQuotations?.length ?? 0) === 0 ||
+    (!allowCompleteSelection &&
+      claims.length === draft.answer.claims.length &&
+      (quotations?.length ?? 0) === (draft.answer.quotations?.length ?? 0) &&
+      restored === undefined)
+  )
+    return undefined
   const answer: WikiSynthesisAnswer = {
     ...draft.answer,
     claims: selectedClaims,
@@ -3722,7 +3742,7 @@ const selectVerifiedRecentDraft = (
 interface WikiVerificationContext {
   readonly plan: WikiVerificationPlan | null
   readonly evidence: ReadonlyMap<string, CitationEvidence>
-  readonly decide: (request: DecisionBatchRequest, phase: 'semantic', literalSupportCount?: number) => Promise<DecisionBatchResult>
+  readonly decide: (request: DecisionBatchRequest, phase: 'semantic') => Promise<DecisionBatchResult>
 }
 
 interface TurnResult extends AgentTokenUsage {
@@ -4496,7 +4516,8 @@ const conversationFor = (
             role: 'assistant',
             content,
             ...(content === message.content && message.providerState?.thoughtBlocks
-              ? { thoughtBlocks: message.providerState.thoughtBlocks.map(block => ({ ...block })) } : {})
+              ? { thoughtBlocks: message.providerState.thoughtBlocks.map(block => ({ ...block })) }
+              : {})
           }
         : {
             role: 'user',
@@ -6881,7 +6902,8 @@ export class AxAgentEngine implements AgentEngine {
         representation: representation.binding.representation,
         complete: source.complete,
         ...(excerpt === undefined ? {} : { excerpt }),
-        source: source.text
+        source: source.text,
+        authorText: literals.authorText
       })
     }
     let rejection: string | undefined
@@ -6911,22 +6933,43 @@ export class AxAgentEngine implements AgentEngine {
     const quotationProofs = new WeakMap<WikiSynthesisQuotation, DocumentaryQuotationProof>()
     const resolveQuotation = (text: string, source: WikiSynthesisSource): WikiSynthesisQuotation | null => {
       const bound = sourceEvidence.get(canonicalJson([source.evidenceId, source.sourceRevision, source.unitId]))
-      if (bound === undefined || source.text !== bound.binding.retrievedSource || bound.document.source !== source.text ||
-        source.sourceRevision !== bound.binding.sourceRevision) return null
+      if (
+        bound === undefined ||
+        source.text !== bound.binding.retrievedSource ||
+        bound.document.source !== source.text ||
+        source.sourceRevision !== bound.binding.sourceRevision
+      )
+        return null
       const candidates = bound.documentUnits
-        .filter(unit => (unit.text === text || unit.kind === 'code' && unit.closure.unit.visibleText === text) &&
-          bound.document.units.includes(unit.closure.unit) && unit.closure.units.every(member => bound.document.units.includes(member)) &&
-          unit.closure.contexts.every(context => bound.document.contexts.includes(context)) &&
-          (unit.closure.record === null || bound.document.records.includes(unit.closure.record)))
-        .map((unit): WikiVerificationSource => ({
-          evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: unit.identity,
-          context: unit.context, text: unit.text, kind: unit.kind, complete: unit.complete, closure: unit.closure
-        }))
+        .filter(
+          unit =>
+            (unit.text === text || (unit.kind === 'code' && unit.closure.unit.visibleText === text)) &&
+            bound.document.units.includes(unit.closure.unit) &&
+            unit.closure.units.every(member => bound.document.units.includes(member)) &&
+            unit.closure.contexts.every(context => bound.document.contexts.includes(context)) &&
+            (unit.closure.record === null || bound.document.records.includes(unit.closure.record))
+        )
+        .map(
+          (unit): WikiVerificationSource => ({
+            evidenceId: source.evidenceId,
+            sourceRevision: source.sourceRevision,
+            unitId: unit.identity,
+            context: unit.context,
+            text: unit.text,
+            kind: unit.kind,
+            complete: unit.complete,
+            closure: unit.closure
+          })
+        )
       const proof = resolveDocumentaryQuotation(source, candidates, text)
       if (proof === null) return null
       const quotation: WikiSynthesisQuotation = {
-        evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId,
-        text: proof.text, contexts: proof.contexts, definitions: proof.definitions
+        evidenceId: source.evidenceId,
+        sourceRevision: source.sourceRevision,
+        unitId: source.unitId,
+        text: proof.text,
+        contexts: proof.contexts,
+        definitions: proof.definitions
       }
       quotationProofs.set(quotation, proof)
       return quotation
@@ -7293,7 +7336,8 @@ export class AxAgentEngine implements AgentEngine {
       rootAuthorizeSourceInputs: authorizeSourceInputs,
       rootNativeDraft: nativeDraft,
       rootUnresolvedFacets: answer.unresolvedFacets,
-      rootHasVerifiedContent: answer.claims.length > 0 || (answer.quotations?.length ?? 0) > 0 || (answer.attachmentClaims?.length ?? 0) > 0 || answer.observations.length > 0
+      rootHasVerifiedContent:
+        answer.claims.length > 0 || (answer.quotations?.length ?? 0) > 0 || (answer.attachmentClaims?.length ?? 0) > 0 || answer.observations.length > 0
     }
   }
 
@@ -7869,6 +7913,7 @@ export class AxAgentEngine implements AgentEngine {
       // Complete native support requests are run-local proofs, not another
       // dispatch: reuse must never add the original receipt to usage twice.
       const settledWikiSupport = new Map<string, DecisionBatchResult>()
+      let wikiVerificationAttempt = 0
       let synthesisProvider: AgentProviderService | undefined
       let invalidatedEvidenceCount = 0
       const invalidLiveEvidenceIds = async (
@@ -7914,6 +7959,7 @@ export class AxAgentEngine implements AgentEngine {
       const createWikiDecision = (
         verificationEvidence: ReadonlyMap<string, CitationEvidence>,
         physicalReadIds: WeakMap<ParsedSourceDocument, string>,
+        plan: WikiVerificationPlan | null,
         authorizeSourceInputs?: AgentSourceAuthorizer
       ) => {
         const decisionProviders = this.#decisionProviders
@@ -7927,29 +7973,51 @@ export class AxAgentEngine implements AgentEngine {
         }
         if (!Number.isSafeInteger(maximum.costMicros))
           throw new AgentRepositoryError('WIKI_VERIFICATION_PRICING_INVALID', 'Wiki verification pricing cannot establish bounded exposure', 503)
-        const decide = async (
-          nativeRequest: DecisionBatchRequest,
-          phase: 'semantic',
-          literalSupportCount = 0
-        ): Promise<DecisionBatchResult> => {
-          const state = asRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state)
-          if (state === null || !Array.isArray(state.evidence))
-            throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires its exact issued source reads', 409)
-          const outgoingEvidence = new Map<string, CitationEvidence>()
-          for (const value of state.evidence) {
-            const read = asRecord(value)
-            const source = typeof read?.evidenceId === 'string' ? verificationEvidence.get(read.evidenceId) : undefined
-            if (
-              read === null ||
-              source === undefined ||
-              read.sourceRevision !== source.binding.sourceRevision ||
-              read.readId !== physicalReadIds.get(source.document)
-            )
-              throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification changed an issued source read binding', 409)
-            // The POST carries this selected representation, not every older
-            // representation retained under the same citation identity.
-            outgoingEvidence.set(source.citation.evidenceId, { ...source, representations: [source] })
+        const decide = async (nativeRequest: DecisionBatchRequest, phase: 'semantic'): Promise<DecisionBatchResult> => {
+          const issuedEvidence = () => {
+            const sidecar = plan === null ? null : getWikiVerificationRequestEvidence(plan, nativeRequest)
+            if (sidecar === null)
+              throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires its exact issued source reads', 409)
+            return sidecar
           }
+          const sidecar = issuedEvidence()
+          const outgoingEvidence = new Map<string, CitationEvidence>()
+          const requireIssuedEvidence = (): void => {
+            for (const read of issuedEvidence()) {
+              const source = verificationEvidence.get(read.evidenceId)
+              if (
+                source === undefined ||
+                read.sourceRevision !== source.binding.sourceRevision ||
+                read.readId !== physicalReadIds.get(source.document) ||
+                read.scope !==
+                  (source.binding.representation === 'recent-excerpt' && metadataRecord(source.binding.representationMetadata)?.contentTruncated === true
+                    ? 'recent-excerpt'
+                    : 'complete-read')
+              )
+                throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification changed an issued source read binding', 409)
+              // Only the selected physical representation enters this POST.
+              outgoingEvidence.set(source.citation.evidenceId, { ...source, representations: [source] })
+            }
+          }
+          requireIssuedEvidence()
+          const sourceScopes = [
+            ...new Set([
+              ...sidecar.map(read => read.scope),
+              ...(Object.keys(nativeRequest.questions).some(id => plan!.checks[id]?.kind === 'attachment-scope') ? ['attachment' as const] : [])
+            ])
+          ]
+          const requestSha256 = createHash('sha256')
+            .update(
+              canonicalJson({
+                runId: request.run.id,
+                attempt: request.run.attempts,
+                verificationAttempt: ++wikiVerificationAttempt,
+                provider: [runtime.id, runtime.revision, runtime.config],
+                request: nativeRequest,
+                evidence: sidecar
+              })
+            )
+            .digest('hex')
           // Every paid phase retains fresh authorization, pinned revision,
           // conservative exposure and settlement before the next phase.
           await authorizeSourceInputs?.()
@@ -7966,8 +8034,10 @@ export class AxAgentEngine implements AgentEngine {
             throw new AgentRepositoryError('DISPATCH_RESERVATION_INVALID', 'Wiki verification exposure was not reserved', 503)
           }
           const authorizeOutgoingEvidence = async (): Promise<void> => {
+            requireIssuedEvidence()
             await authorizeSourceInputs?.()
             await requireFreshWikiVerificationEvidence(outgoingEvidence)
+            requireIssuedEvidence()
             assertCompactionContextFresh(request)
             request.signal.throwIfAborted()
           }
@@ -7984,7 +8054,9 @@ export class AxAgentEngine implements AgentEngine {
                 signal: request.signal,
                 onPreDispatch: async () => {
                   try {
+                    requireIssuedEvidence()
                     await requireLiveWikiVerification(outgoingEvidence)
+                    requireIssuedEvidence()
                     assertCompactionContextFresh(request)
                     request.signal.throwIfAborted()
                   } catch (error) {
@@ -8010,19 +8082,62 @@ export class AxAgentEngine implements AgentEngine {
           const estimated = predispatchFailure ? null : (verified?.estimatedCostMicros ?? failed?.estimatedCostMicros)
           const knownCost = estimated !== undefined && estimated !== null && Number.isSafeInteger(estimated) && estimated >= 0 ? estimated : null
           const unknownExposure = predispatchFailure ? null : usage ? (knownCost === null ? { tokens: 0, costMicros: maximum.costMicros } : null) : maximum
-          if (usage) {
-            inputTokens = safeUsageAddition(inputTokens, usage.inputTokens, 'Aggregate verification input token usage')
-            outputTokens = safeUsageAddition(outputTokens, usage.outputTokens, 'Aggregate verification output token usage')
-            totalTokens = safeUsageAddition(totalTokens, usage.totalTokens, 'Aggregate verification total token usage')
-            costMicros = safeUsageAddition(costMicros, knownCost ?? maximum.costMicros, 'Aggregate verification cost')
-            if (reservation) {
-              try {
-                await request.dispatchBudget?.reconcile(reservation, { ...usage, costMicros: knownCost ?? maximum.costMicros })
-              } catch (error) {
-                failure = error
-              }
+          let settlementFailed = false
+          try {
+            if (usage) {
+              inputTokens = safeUsageAddition(inputTokens, usage.inputTokens, 'Aggregate verification input token usage')
+              outputTokens = safeUsageAddition(outputTokens, usage.outputTokens, 'Aggregate verification output token usage')
+              totalTokens = safeUsageAddition(totalTokens, usage.totalTokens, 'Aggregate verification total token usage')
+              costMicros = safeUsageAddition(costMicros, knownCost ?? maximum.costMicros, 'Aggregate verification cost')
+              if (reservation) await request.dispatchBudget?.reconcile(reservation, { ...usage, costMicros: knownCost ?? maximum.costMicros })
+            } else if (predispatchFailure && reservation) await request.dispatchBudget?.release(reservation)
+          } catch (error) {
+            settlementFailed = true
+            failure = error
+          }
+          let status: WikiVerificationDiagnostic['status']
+          const batch = assessWikiDecisionBatch(nativeRequest, plan!.checks, verified?.answers)
+          if (failure !== undefined) {
+            status =
+              request.signal.aborted || failed?.code === 'DECISION_ABORTED'
+                ? 'cancelled'
+                : settlementFailed
+                  ? 'execution_failure'
+                  : predispatchFailure
+                    ? 'host_rejection'
+                    : failed?.code === 'INVALID_DECISION_RESPONSE'
+                      ? 'invalid_response'
+                      : failed
+                        ? 'transport_failure'
+                        : 'execution_failure'
+          } else if (!verified || !usage || knownCost === null || verified.providerId !== runtime.id || verified.providerRevision !== runtime.revision) {
+            status = 'receipt_rejection'
+            failure = new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Wiki verification did not return a valid pinned usage receipt', 503)
+          } else if (maxTokens !== undefined && totalTokens > maxTokens) {
+            status = 'execution_failure'
+            failure = new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Wiki verification exceeded the admitted run token limit', 429)
+          } else if (getWikiVerificationRequestEvidence(plan!, nativeRequest) === null) {
+            status = 'host_rejection'
+          } else {
+            try {
+              requireIssuedEvidence()
+              await requireLiveWikiVerification(outgoingEvidence)
+              status = !batch.integrityValid ? 'invalid_response' : batch.accepted ? 'accepted' : 'semantic_rejection'
+            } catch (error) {
+              status = request.signal.aborted ? 'cancelled' : 'host_rejection'
+              failure = error
             }
-          } else if (predispatchFailure && reservation) await request.dispatchBudget?.release(reservation)
+          }
+          const resultFrame = WikiVerificationDiagnosticSchema.parse({
+            version: 1,
+            policy: WIKI_VERIFICATION_POLICY_ID,
+            minProbability: WIKI_VERIFICATION_MIN_PROBABILITY,
+            requestSha256,
+            sourceScopes,
+            status,
+            questions: batch.questions.slice(0, 64),
+            omittedQuestions: Math.max(0, batch.questions.length - 64)
+          })
           await sink.event('model.turn', {
             purpose: 'verification',
             providerId: runtime.id,
@@ -8040,13 +8155,12 @@ export class AxAgentEngine implements AgentEngine {
             estimatedCostMicros: knownCost,
             latencyMs: verified?.latencyMs ?? failed?.latencyMs ?? null,
             unknownExposure,
-            outcome: failure ? 'verification_failed' : 'verification_completed',
+            outcome: status === 'accepted' ? 'verification_completed' : status === 'semantic_rejection' ? 'verification_declined' : 'verification_failed',
             verification: {
               phase,
               checks: Object.keys(nativeRequest.questions).length,
               requestBytes: Buffer.byteLength(JSON.stringify(nativeRequest)),
-              confidenceFloor: 0.8,
-              literalSupportCount,
+              resultFrame,
               failure: failed
                 ? {
                     code: failed.code,
@@ -8062,11 +8176,7 @@ export class AxAgentEngine implements AgentEngine {
               throw new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Jev verification could not be completed; Wiki facts were not published', 503)
             throw failure
           }
-          if (!verified || !usage || knownCost === null || verified.providerId !== runtime.id || verified.providerRevision !== runtime.revision)
-            throw new AgentRepositoryError('WIKI_VERIFICATION_FAILED', 'Wiki verification did not return a valid pinned usage receipt', 503)
-          if (maxTokens !== undefined && totalTokens > maxTokens)
-            throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Wiki verification exceeded the admitted run token limit', 429)
-          return verified
+          return verified!
         }
         return decide
       }
@@ -8145,41 +8255,39 @@ export class AxAgentEngine implements AgentEngine {
         }
         const plan = prepareVerification(draft)
         await requireLiveWikiVerification(verificationEvidence)
-        const nativeDecision = createWikiDecision(verificationEvidence, physicalReadIds, draft.authorizeSourceInputs)
+        const nativeDecision = createWikiDecision(verificationEvidence, physicalReadIds, plan, draft.authorizeSourceInputs)
         const providerBinding = canonicalJson([verificationProvider!.id, verificationProvider!.revision, verificationProvider!.config])
         const decide: WikiVerificationContext['decide'] = async (...args) => {
           const [nativeRequest] = args
           const entries = Object.entries(nativeRequest.questions)
-          const supportRequest =
-            plan?.requests.includes(nativeRequest) === true && entries.length > 0 && entries.every(([id]) => plan?.checks[id]?.kind === 'support')
-          const key = supportRequest ? createHash('sha256').update(providerBinding).update(canonicalJson(nativeRequest)).digest('hex') : undefined
+          const sidecar = plan === null ? null : getWikiVerificationRequestEvidence(plan, nativeRequest)
+          if (sidecar === null)
+            throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification requires its exact issued source reads', 409)
+          const supportRequest = entries.length > 0 && entries.every(([id]) => plan!.checks[id]?.kind === 'support')
+          const supportKey = () => {
+            const current = getWikiVerificationRequestEvidence(plan!, nativeRequest)
+            return current === null
+              ? undefined
+              : createHash('sha256')
+                  .update(canonicalJson([providerBinding, nativeRequest, current]))
+                  .digest('hex')
+          }
+          const key = supportRequest ? supportKey() : undefined
           const cached = key === undefined ? undefined : settledWikiSupport.get(key)
           if (cached !== undefined) {
             await draft.authorizeSourceInputs()
             await requireLiveWikiVerification(verificationEvidence)
+            assertCompactionContextFresh(request)
+            request.signal.throwIfAborted()
+            if (key !== supportKey())
+              throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Wiki verification changed an issued source read binding', 409)
             return cached
           }
           const result = await nativeDecision(...args)
-          if (key !== undefined && key === createHash('sha256').update(providerBinding).update(canonicalJson(nativeRequest)).digest('hex')) {
-            const answers = asRecord(result.answers)
-            if (answers !== null && Object.getPrototypeOf(answers) === Object.prototype && Object.keys(answers).length === entries.length) {
-              const normalized: Record<string, DecisionBatchResult['answers'][string]> = {}
-              let complete = true
-              for (const [id, question] of entries) {
-                try {
-                  const answer = normalizeDecisionAnswer(answers[id], question.criteria)
-                  if (!Object.hasOwn(answers, id) || answer.choice !== 'supports' || answer.confidence <= 0.8 || answer.probabilities.supports! <= 0.8) {
-                    complete = false
-                    break
-                  }
-                  normalized[id] = answer
-                } catch {
-                  complete = false
-                  break
-                }
-              }
-              if (complete) settledWikiSupport.set(key, { ...result, answers: normalized })
-            }
+          if (key !== undefined && key === supportKey()) {
+            const assessment = assessWikiDecisionBatch(nativeRequest, plan!.checks, result.answers)
+            if (assessment.integrityValid && assessment.accepted && assessment.normalizedAnswers !== null)
+              settledWikiSupport.set(key, { ...result, answers: assessment.normalizedAnswers })
           }
           return result
         }
@@ -9734,7 +9842,12 @@ export class AxAgentEngine implements AgentEngine {
                   [...nativeDraft.readSources.values()].every(source => recentWindows.some(window => window.evidenceIds.includes(source.evidenceId))))
               const { plan, evidence, decide } = await prepareWikiVerification(nativeDraft)
               const semanticResults: DecisionBatchResult[] = []
-              for (const nativeRequest of plan?.requests ?? []) semanticResults.push(await decide(nativeRequest, 'semantic', plan!.literalSupportCount))
+              for (const nativeRequest of plan?.requests ?? []) {
+                semanticResults.push(await decide(nativeRequest, 'semantic'))
+                // A provider-mutated issuance invalidates the entire plan. Do
+                // not dispatch its remaining requests or retain sibling proof.
+                if (getWikiVerificationRequestEvidence(plan!, nativeRequest) === null) break
+              }
               const semantic =
                 plan === null ? { valid: true, issues: [], nativeSupportedClaimIndexes: [] } : assessWikiVerificationResults(plan, semanticResults)
               if (plan !== null || (nativeDraft.answer.quotations?.length ?? 0) > 0) publicationVerificationEvidence = evidence
@@ -9800,7 +9913,8 @@ export class AxAgentEngine implements AgentEngine {
               }
               const verifiedDraft =
                 recentPublication || selectedDraft !== undefined || restoredDraft !== undefined
-                  ? orderVerifiedRecentDraft(restoredDraft ?? supportedDraft) : supportedDraft
+                  ? orderVerifiedRecentDraft(restoredDraft ?? supportedDraft)
+                  : supportedDraft
               if (restoredDraft !== undefined) publicationVerificationEvidence = evidence
               const adoptVerifiedRecentDraft = (partial: NativeDraft, partialSelection = true): void => {
                 selectedRecentPartial = partialSelection
@@ -9869,12 +9983,20 @@ export class AxAgentEngine implements AgentEngine {
                   ...(operationEvidence === undefined ? {} : { operationEvidence }),
                   ...(nativeDraft.inputMediaSources === undefined ? {} : { inputMediaSources: nativeDraft.inputMediaSources }),
                   ...(nativeDraft.answer.attachmentClaims === undefined ? {} : { attachmentClaims: nativeDraft.answer.attachmentClaims }),
-                  ...(nativeDraft.answer.quotations === undefined ? {} : { quotations: nativeDraft.answer.quotations.map(quotation => {
-                    const source = nativeDraft.readSources.get(canonicalJson([quotation.evidenceId, quotation.sourceRevision, quotation.unitId]))
-                    if (source?.kind !== 'source-read' || !source.complete || !nativeDraft.quotationProofs?.has(quotation))
-                      throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Coverage quotation lacks its complete host-proved physical read', 409)
-                    return { readRef: source.readId, text: quotation.text, contexts: quotation.contexts, definitions: quotation.definitions }
-                  }) }),
+                  ...(nativeDraft.answer.quotations === undefined
+                    ? {}
+                    : {
+                        quotations: nativeDraft.answer.quotations.map(quotation => {
+                          const source = nativeDraft.readSources.get(canonicalJson([quotation.evidenceId, quotation.sourceRevision, quotation.unitId]))
+                          if (source?.kind !== 'source-read' || !source.complete || !nativeDraft.quotationProofs?.has(quotation))
+                            throw new AgentRepositoryError(
+                              'WIKI_VERIFICATION_BINDING_INVALID',
+                              'Coverage quotation lacks its complete host-proved physical read',
+                              409
+                            )
+                          return { readRef: source.readId, text: quotation.text, contexts: quotation.contexts, definitions: quotation.definitions }
+                        })
+                      }),
                   reads: [...nativeDraft.readSources.values()].map(source => {
                     if (source.kind !== 'source-read' && source.kind !== 'recent-excerpt')
                       throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Coverage requires unchanged admitted physical reads', 409)

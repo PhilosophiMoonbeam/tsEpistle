@@ -443,7 +443,14 @@ describe('Ax orchestration stages', () => {
   )
 
   const publicationGateFixture = (
-    mode: 'provider changed after semantic' | 'coverage token overrun' | 'source changed before synthesis' | 'provider changed before synthesis',
+    mode:
+      | 'provider changed after semantic'
+      | 'coverage token overrun'
+      | 'source changed before synthesis'
+      | 'provider changed before synthesis'
+      | 'native token overrun'
+      | 'native receipt mismatch'
+      | 'native settlement failure',
     options: { readonly dispatchBudget?: boolean; readonly maxTokens?: number; readonly coverageTokens?: number } = {}
   ) => {
     const fact = 'Falcon dispatch requires a signed manifest.'
@@ -464,11 +471,27 @@ describe('Ax orchestration stages', () => {
     const budget = new PublicationBudgetLedger(2_000_000)
     const reserveSequence = vi.fn(budget.reserveSequence.bind(budget))
     budget.reserveSequence = reserveSequence
+    const reconcile = budget.reconcile.bind(budget)
+    budget.reconcile = async (reservation, actual) => {
+      if (mode === 'native settlement failure' && actual.totalTokens === 9) throw new Error('Native settlement failed')
+      await reconcile(reservation, actual)
+    }
     const decisions: typeof fixtureDecisionProviders = {
       ...fixtureDecisionProviders,
       async selectRuntime() {
         const runtime = await fixtureDecisionProviders.selectRuntime()
         return { ...runtime, revision: providerRevision }
+      },
+      async decideBatch(input, dispatchOptions) {
+        const result = await fixtureDecisionProviders.decideBatch(input, dispatchOptions)
+        if (!mode.startsWith('native ')) return result
+        const totalTokens = mode === 'native token overrun' ? (options.maxTokens ?? 2_000_000) + 1 : 9
+        return {
+          ...result,
+          providerRevision: mode === 'native receipt mismatch' ? result.providerRevision + 1 : result.providerRevision,
+          usage: { inputTokens: totalTokens - 2, outputTokens: 2, totalTokens, totalTokensSource: 'derived' },
+          estimatedCostMicros: 0
+        }
       }
     }
     const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
@@ -554,7 +577,10 @@ describe('Ax orchestration stages', () => {
       'model.turn',
       expect.objectContaining({
         outcome: 'verification_completed',
-        verification: expect.objectContaining({ phase: 'semantic' })
+        verification: expect.objectContaining({
+          phase: 'semantic',
+          resultFrame: expect.objectContaining({ status: 'accepted', sourceScopes: ['complete-read'] })
+        })
       })
     ])
     expect(fixture.coverage).not.toHaveBeenCalled()
@@ -588,6 +614,32 @@ describe('Ax orchestration stages', () => {
     expect(fixture.reserveSequence).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['native token overrun', 'execution_failure'],
+    ['native receipt mismatch', 'receipt_rejection'],
+    ['native settlement failure', 'execution_failure']
+  ] as const)('records the final %s outcome rather than a premature accepted proof', async (mode, status) => {
+    const fixture = publicationGateFixture(mode, { dispatchBudget: mode === 'native settlement failure' })
+    await expect(fixture.execute()).rejects.toThrow()
+    expect(fixture.event.mock.calls).toContainEqual([
+      'model.turn',
+      expect.objectContaining({
+        purpose: 'verification',
+        outcome: 'verification_failed',
+        verification: expect.objectContaining({
+          phase: 'semantic',
+          resultFrame: expect.objectContaining({
+            status,
+            questions: [expect.objectContaining({ choice: 'supports', accepted: true })]
+          })
+        })
+      })
+    ])
+    expect(fixture.coverage).not.toHaveBeenCalled()
+    expect(fixture.text).not.toHaveBeenCalled()
+    if (mode === 'native settlement failure') expect(fixture.budget.unsettledExposure.tokens).toBe(64_000)
+  })
+
   it.each(['authorized', 'revoked after coverage'] as const)(
     'publishes host-scoped documentary opening and whole labelled marker only while the source remains %s',
     async authority => {
@@ -596,14 +648,22 @@ describe('Ax orchestration stages', () => {
       const definition = '[pilot-policy]: /en/pilot-policy "Pilot scope only"'
       const historicalContent = renderWikiSynthesisAnswer({
         claims: [],
-        quotations: [{
-          evidenceId: 'page:42:revision:0', sourceRevision: '0', unitId: 'read:prior-supplier',
-          text: 'Earlier marker: obsolete-ledger.', contexts: ['Prior unverified source'], definitions: []
-        }],
-        unresolvedFacets: [], observations: []
+        quotations: [
+          {
+            evidenceId: 'page:42:revision:0',
+            sourceRevision: '0',
+            unitId: 'read:prior-supplier',
+            text: 'Earlier marker: obsolete-ledger.',
+            contexts: ['Prior unverified source'],
+            definitions: []
+          }
+        ],
+        unresolvedFacets: [],
+        observations: []
       })
       const historicalAssistant = Object.freeze({
-        role: 'assistant' as const, content: historicalContent,
+        role: 'assistant' as const,
+        content: historicalContent,
         providerState: { thoughtBlocks: [{ data: 'opaque-prior-reasoning', encrypted: true as const }] }
       })
       const page = {
@@ -643,9 +703,11 @@ describe('Ax orchestration stages', () => {
           ]
         }
       })
-      const coverage = vi.fn(async (): Promise<AxChatResponse> => ({
-        results: [{ index: 0, content: JSON.stringify({ verdict: 'complete', feedback: '' }), finishReason: 'stop' }]
-      }))
+      const coverage = vi.fn(
+        async (): Promise<AxChatResponse> => ({
+          results: [{ index: 0, content: JSON.stringify({ verdict: 'complete', feedback: '' }), finishReason: 'stop' }]
+        })
+      )
       const invoke = vi.fn(async () => page)
       const validateObservation = vi.fn(
         async (name: string, output: unknown) => name === 'pages.get' && sourceAuthorized && JSON.stringify(output) === JSON.stringify(page)
@@ -791,7 +853,10 @@ describe('Ax orchestration stages', () => {
               quotations: [
                 { sourceRef: sourceRef(1), text: alphaQuote },
                 ...(synthesisAttempts === 1
-                  ? [{ sourceRef: sourceRef(2), text: betaQuote }, { sourceRef: sourceRef(3), text: gammaQuote }]
+                  ? [
+                      { sourceRef: sourceRef(2), text: betaQuote },
+                      { sourceRef: sourceRef(3), text: gammaQuote }
+                    ]
                   : [])
               ],
               unresolvedFacets: [],
@@ -807,7 +872,13 @@ describe('Ax orchestration stages', () => {
     const actions: AgentActionSessionProvider = {
       open: async () => ({
         functions: [
-          { name: 'pages.listRecent', title: 'Read recent pages', description: 'Read recent pages', parameters: { type: 'object', properties: {} }, risk: 'read' }
+          {
+            name: 'pages.listRecent',
+            title: 'Read recent pages',
+            description: 'Read recent pages',
+            parameters: { type: 'object', properties: {} },
+            risk: 'read'
+          }
         ],
         invoke,
         validateObservation: async (name, output) => name === 'pages.listRecent' && JSON.stringify(output) === JSON.stringify(recentOutput),
@@ -817,9 +888,13 @@ describe('Ax orchestration stages', () => {
       })
     }
     const text = vi.fn(async (_delta: string) => {})
-    const coverage = vi.fn(async (): Promise<AxChatResponse> => ({
-      results: [{ index: 0, content: JSON.stringify({ verdict: 'incomplete', feedback: 'Alpha and Gamma have no verified contribution.' }), finishReason: 'stop' }]
-    }))
+    const coverage = vi.fn(
+      async (): Promise<AxChatResponse> => ({
+        results: [
+          { index: 0, content: JSON.stringify({ verdict: 'incomplete', feedback: 'Alpha and Gamma have no verified contribution.' }), finishReason: 'stop' }
+        ]
+      })
+    )
     const result = await new AxAgentEngine(factoryFor(chat, { coverage }), actions, undefined, { decisionProviders }).execute(
       {
         ...baseRequest(new AbortController().signal),
@@ -1444,7 +1519,12 @@ describe('Ax orchestration stages', () => {
     expect(event.mock.calls).toContainEqual(['model.turn', expect.objectContaining({ outcome: 'answer_rejected', turn: 2, totalTokens: 2 })])
     expect(event.mock.calls).toContainEqual([
       'model.turn',
-      expect.objectContaining({ purpose: 'verification', outcome: 'verification_completed', totalTokens: 0 })
+      expect.objectContaining({
+        purpose: 'verification',
+        outcome: 'verification_declined',
+        totalTokens: 0,
+        verification: expect.objectContaining({ resultFrame: expect.objectContaining({ status: 'semantic_rejection' }) })
+      })
     ])
   })
 

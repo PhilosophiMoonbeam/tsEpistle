@@ -82,7 +82,8 @@ const factory = (module: unknown): Factory => {
 const literalMarkdown = factory(markdownItModule)({ html: false, linkify: false })
 const whitespace = (text: string): string => text.replace(/\s+/gu, ' ').trim()
 const identity = (text: string): string => whitespace(text).normalize('NFKC').toLowerCase()
-const presentationAttributes = /\{(?:[.#][\w-]+|(?:id|class|target)=(?:"[^"]*"|'[^']*'|[^\s}]+))(?:\s+(?:[.#][\w-]+|(?:id|class|target)=(?:"[^"]*"|'[^']*'|[^\s}]+)))*\}/gu
+const presentationAttributes =
+  /\{(?:[.#][\w-]+|(?:id|class|target)=(?:"[^"]*"|'[^']*'|[^\s}]+))(?:\s+(?:[.#][\w-]+|(?:id|class|target)=(?:"[^"]*"|'[^']*'|[^\s}]+)))*\}/gu
 const labelField = (text: string): { label: string; value: string } | null => {
   const match = /^([^:\n]{1,80}):\s*(\S[\s\S]*)$/u.exec(text)
   if (!match || /[.!?]|:\/\//u.test(match[1]!)) return null
@@ -190,6 +191,32 @@ interface HtmlNode {
   children?: HtmlNode[]
   sourceCodeLocation?: Location
 }
+
+// Only explicit inline hiding declarations participate in admission; no selector
+// cascade or layout is inferred. Cheerio supplies the parsed HTML/CSS attributes.
+// Its declaration map drops repeated properties and their priority: conservatively
+// retain any explicit hiding declaration, even if a later declaration overrides it.
+const hiddenHtml = (attributes: Record<string, string> | undefined, styles: Record<string, string> | undefined): boolean =>
+  attributes?.hidden !== undefined ||
+  /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse)|content-visibility\s*:\s*hidden)\s*(?:!\s*important\s*)?(?:;|$)/iu.test(
+    attributes?.style ?? ''
+  ) ||
+  Object.entries(styles ?? {}).some(([property, raw]) => {
+    const value = raw
+      .replace(/\s*!\s*important\s*$/iu, '')
+      .trim()
+      .toLowerCase()
+    switch (property.trim().toLowerCase()) {
+      case 'display':
+        return value === 'none'
+      case 'visibility':
+        return value === 'hidden' || value === 'collapse'
+      case 'content-visibility':
+        return value === 'hidden'
+      default:
+        return false
+    }
+  })
 interface InlineProjection {
   text: string
   links: Array<Omit<SourceLink, 'unitId' | 'sourceSpans'>>
@@ -382,6 +409,9 @@ export const parseSourceDocument = (
   const htmlProjection = (raw: string): string => {
     const $ = load(raw, {}, false)
     $('script,style,template,[hidden]').remove()
+    $('[style]')
+      .filter((_, node) => hiddenHtml(node.attribs, $(node).css()))
+      .remove()
     $('br').replaceWith('\n')
     return $.root().text()
   }
@@ -412,16 +442,15 @@ export const parseSourceDocument = (
         const visibleText = token.content.replace(presentationAttributes, '')
         if (visibleText !== token.content) requiresVisibilityProjection = true
         text += visibleText
-      }
-      else if (token.type === 'softbreak' || token.type === 'hardbreak') text += '\n'
+      } else if (token.type === 'softbreak' || token.type === 'hardbreak') text += '\n'
       else if (token.type === 'image') text += token.content
       else if (token.type === 'html_inline') {
         requiresVisibilityProjection = true
         const opening = /^<([a-z][\w:-]*)\b/iu.exec(token.content)
         const name = opening?.[1]?.toLowerCase()
-        const suppressed = name !== undefined && (
-          ['script', 'style', 'template'].includes(name) ||
-          /hidden/iu.test(token.content) && load(token.content, {}, false).root().children().first().attr('hidden') !== undefined)
+        const element = name === undefined ? null : load(token.content, {}, false).root().children().first()
+        const suppressed =
+          name !== undefined && (['script', 'style', 'template'].includes(name) || (element !== null && hiddenHtml(element[0]?.attribs, element.css())))
         if (suppressed) {
           let depth = 1
           const sameTag = new RegExp(`^<(\\/?)${name}(?:\\s|>)`, 'iu')
@@ -438,8 +467,13 @@ export const parseSourceDocument = (
           const name = /^<([a-z]+)/iu.exec(token.content)![1]!
           const literal: string[] = []
           index += 1
-          for (; index < tokens.length && !new RegExp(`^<\\/${name}\\s*>`, 'iu').test(tokens[index]!.content); index += 1) literal.push(tokens[index]!.content)
-          text += `\`${htmlProjection(literal.join(''))}\``
+          for (; index < tokens.length && !new RegExp(`^<\\/${name}\\s*>`, 'iu').test(tokens[index]!.content); index += 1) {
+            const child = tokens[index]!
+            // Text tokens have already decoded entities. Keep their literal
+            // delimiters inert when decoding the surrounding HTML code wrapper.
+            literal.push(child.type === 'text' ? child.content.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;') : child.content)
+          }
+          text += `\`${load(literal.join(''), {}, false).root().text()}\``
         } else if (/^<a\b/iu.test(token.content)) {
           const anchor: Token[] = []
           index += 1
@@ -463,12 +497,20 @@ export const parseSourceDocument = (
     const fragments: Token[][] = [[]]
     let linkDepth = 0
     let anchorDepth = 0
+    // HTML code wrappers yield text tokens, not code_inline tokens. Their
+    // literal punctuation must not become record separators or field labels.
+    let literalDepth = 0
     for (const token of tokens) {
       if (token.type === 'link_open') linkDepth += 1
       if (token.type === 'html_inline' && /^<a\b/iu.test(token.content)) anchorDepth += 1
-      if (breakLines && (token.type === 'softbreak' || token.type === 'hardbreak' || (token.type === 'html_inline' && /^<br\b/iu.test(token.content))))
+      if (token.type === 'html_inline' && /^<(?:pre|code)\b/iu.test(token.content)) literalDepth += 1
+      if (
+        literalDepth === 0 &&
+        breakLines &&
+        (token.type === 'softbreak' || token.type === 'hardbreak' || (token.type === 'html_inline' && /^<br\b/iu.test(token.content)))
+      )
         fragments.push([])
-      else if (token.type === 'text' && linkDepth === 0 && anchorDepth === 0 && separators.test(token.content)) {
+      else if (token.type === 'text' && linkDepth === 0 && anchorDepth === 0 && literalDepth === 0 && separators.test(token.content)) {
         const parts = token.content.split(separators)
         for (let index = 0; index < parts.length; index += 1) {
           if (index > 0) fragments.push([])
@@ -477,6 +519,7 @@ export const parseSourceDocument = (
       } else fragments.at(-1)!.push(token)
       if (token.type === 'link_close') linkDepth -= 1
       if (token.type === 'html_inline' && /^<\/a\s*>/iu.test(token.content)) anchorDepth -= 1
+      if (token.type === 'html_inline' && /^<\/(?:pre|code)\s*>/iu.test(token.content)) literalDepth = Math.max(0, literalDepth - 1)
     }
     return fragments
   }
@@ -536,6 +579,11 @@ export const parseSourceDocument = (
   }
   const htmlBlocks = (raw: string, offset: number): Block[] => {
     const $ = load(maskHtmlCode(raw), { sourceCodeLocationInfo: true }, false)
+    const hidden = new Set(
+      $('[hidden],[style]')
+        .filter((_, node) => hiddenHtml(node.attribs, $(node).css()))
+        .toArray() as unknown as HtmlNode[]
+    )
     const opaque = (span: SourceSpan): Block => ({ type: 'opaque', span, text: '', children: [], complete: false })
     const decodeText = (value: string): string => load(value, {}, false).root().text()
     const nodes = (children: HtmlNode[]): Block[] => {
@@ -547,7 +595,7 @@ export const parseSourceDocument = (
       }
       for (const node of children) {
         const location = node.sourceCodeLocation
-        if (node.attribs?.hidden !== undefined) {
+        if (hidden.has(node)) {
           flush()
           continue
         }
@@ -701,7 +749,7 @@ export const parseSourceDocument = (
       kind,
       sourceSpans: [block.span],
       normalizedText,
-      visibleText: kind === 'table-row' ? text ?? value.text : value.text,
+      visibleText: kind === 'table-row' ? (text ?? value.text) : value.text,
       contextIds: activeContextIds,
       recordId: owner?.id ?? null,
       structuralLabels: [...new Set([localLabel, ...declarationLabels, ...localLinkLabels].filter(Boolean))],
@@ -870,9 +918,12 @@ export const parseSourceDocument = (
   }
   const displayedEmailLink = (tokens: readonly Token[], index: number): boolean => {
     const label = tokens[index + 1]
-    return label?.type === 'text' && tokens[index + 2]?.type === 'link_close' &&
+    return (
+      label?.type === 'text' &&
+      tokens[index + 2]?.type === 'link_close' &&
       /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(label.content) &&
       tokens[index]!.attrGet('href') === `mailto:${label.content}`
+    )
   }
   // Containers are issued only after all original identities, including fields,
   // so adding a selectable container never changes an existing binding or owner.
@@ -883,11 +934,18 @@ export const parseSourceDocument = (
     } else if (block.type !== 'list_item' && block.type !== 'paragraph') return false
     // Exact raw quotations must not expose text that the visible projection
     // masks: HTML attributes/hidden content, code, images or bare destinations.
-    if (block.syntax === 'html' || block.inline?.some((token, index, tokens) =>
-      token.type === 'html_inline' || token.type === 'code_inline' || token.type === 'image' ||
-      token.type === 'link_open' && (token.info === 'auto' || token.markup === 'linkify') && !displayedEmailLink(tokens, index) ||
-      token.type === 'text' && token.content.search(presentationAttributes) !== -1
-    )) return false
+    if (
+      block.syntax === 'html' ||
+      block.inline?.some(
+        (token, index, tokens) =>
+          token.type === 'html_inline' ||
+          token.type === 'code_inline' ||
+          token.type === 'image' ||
+          (token.type === 'link_open' && (token.info === 'auto' || token.markup === 'linkify') && !displayedEmailLink(tokens, index)) ||
+          (token.type === 'text' && token.content.search(presentationAttributes) !== -1)
+      )
+    )
+      return false
     let end = block.span.start
     for (const child of block.children) {
       if (child.span.start < end || !ownedList(child, block.span)) return false
@@ -897,13 +955,19 @@ export const parseSourceDocument = (
   }
   const ownedTable = (block: Block, rows: readonly Block[]): boolean => {
     const visibleBlock = (item: Block): boolean =>
-      item.complete && item.syntax !== 'html' &&
-      item.span.start >= block.span.start && item.span.end <= block.span.end &&
-      !item.inline?.some((token, index, tokens) =>
-        token.type === 'html_inline' || token.type === 'code_inline' || token.type === 'image' ||
-        token.type === 'link_open' && (token.info === 'auto' || token.markup === 'linkify') && !displayedEmailLink(tokens, index) ||
-        token.type === 'text' && (token.content.search(presentationAttributes) !== -1 || /\[[^\]\n]+\]\[[^\]\n]*\]/u.test(token.content))
-      ) && item.children.every(visibleBlock)
+      item.complete &&
+      item.syntax !== 'html' &&
+      item.span.start >= block.span.start &&
+      item.span.end <= block.span.end &&
+      !item.inline?.some(
+        (token, index, tokens) =>
+          token.type === 'html_inline' ||
+          token.type === 'code_inline' ||
+          token.type === 'image' ||
+          (token.type === 'link_open' && (token.info === 'auto' || token.markup === 'linkify') && !displayedEmailLink(tokens, index)) ||
+          (token.type === 'text' && (token.content.search(presentationAttributes) !== -1 || /\[[^\]\n]+\]\[[^\]\n]*\]/u.test(token.content)))
+      ) &&
+      item.children.every(visibleBlock)
     if (!visibleBlock(block) || rows.length < 2) return false
     // Markdown parsers pad missing cells and discard extra cells. The authored
     // physical rows, not that repaired projection, must form a complete matrix.
@@ -924,13 +988,20 @@ export const parseSourceDocument = (
       if (parts.at(-1) === '') parts.pop()
       return parts
     }
-    const lines = source.slice(block.span.start, block.span.end).replace(/\r?\n$/u, '').split(/\r?\n/u)
+    const lines = source
+      .slice(block.span.start, block.span.end)
+      .replace(/\r?\n$/u, '')
+      .split(/\r?\n/u)
     if (lines.length !== rows.length + 1) return false
     const header = cells(lines[0]!)
     const separator = cells(lines[1]!)
-    return header.length === rows[0]!.children.length && header.every(Boolean) &&
-      separator.length === header.length && separator.every(cell => /^:?-+:?$/u.test(cell)) &&
+    return (
+      header.length === rows[0]!.children.length &&
+      header.every(Boolean) &&
+      separator.length === header.length &&
+      separator.every(cell => /^:?-+:?$/u.test(cell)) &&
       lines.slice(2).every(line => cells(line).length === header.length)
+    )
   }
   const selectedSections = sections.map(section => ({ ...section, endOffset: source.length, unitIds: [] as string[] }))
   const openSections: number[] = []
@@ -958,14 +1029,18 @@ export const parseSourceDocument = (
   const recordsById = new Map(records.map(record => [record.id, record]))
   for (const { block, contextIds: parentContextIds, start, end } of lists) {
     // Definitions are link syntax, not visible authored list entries.
-    if (!ownedList(block) || start === end ||
+    if (
+      !ownedList(block) ||
+      start === end ||
       parentContextIds.some(key => !contextIndex.get(key)!.context.complete) ||
       referenceDefinitionSpans.some(span => span.start >= block.span.start && span.end <= block.span.end) ||
-      htmlStarts.some(offset => offset >= block.span.start && offset < block.span.end)) continue
+      htmlStarts.some(offset => offset >= block.span.start && offset < block.span.end)
+    )
+      continue
     let complete = true
     for (let index = start; index < end; index++) {
       const member = units[index]!
-      if (!member.complete || member.recordId !== null && !recordsById.get(member.recordId)?.complete) {
+      if (!member.complete || (member.recordId !== null && !recordsById.get(member.recordId)?.complete)) {
         complete = false
         break
       }
@@ -997,10 +1072,14 @@ export const parseSourceDocument = (
     }
   }
   for (const { block, rows, contextIds: parentContextIds, start, end } of tables) {
-    if (!ownedTable(block, rows) || start === end ||
+    if (
+      !ownedTable(block, rows) ||
+      start === end ||
       parentContextIds.some(key => !contextIndex.get(key)!.context.complete) ||
       referenceDefinitionSpans.some(span => span.start >= block.span.start && span.end <= block.span.end) ||
-      htmlStarts.some(offset => offset >= block.span.start && offset < block.span.end)) continue
+      htmlStarts.some(offset => offset >= block.span.start && offset < block.span.end)
+    )
+      continue
     let complete = true
     for (let index = start; index < end; index++) {
       const member = units[index]!
@@ -1037,7 +1116,16 @@ export const parseSourceDocument = (
       if (block.span.start >= section.startOffset && block.span.end <= section.endOffset) section.unitIds.push(unitId)
     }
   }
-  return { source, units, contexts, records, sections: selectedSections,
-    requiresVisibilityProjection: requiresVisibilityProjection || htmlStarts.length > 0 ||
-      referenceDefinitionSpans.length > 0 || units.some(unit => !unit.complete || unit.kind === 'opaque') }
+  return {
+    source,
+    units,
+    contexts,
+    records,
+    sections: selectedSections,
+    requiresVisibilityProjection:
+      requiresVisibilityProjection ||
+      htmlStarts.length > 0 ||
+      referenceDefinitionSpans.length > 0 ||
+      units.some(unit => !unit.complete || unit.kind === 'opaque')
+  }
 }

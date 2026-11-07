@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 
-import type { AgentToolContextExclusion } from '../../shared/agents/contracts.ts'
+import { WikiVerificationDiagnosticSchema, type AgentToolContextExclusion, type WikiVerificationDiagnostic } from '../../shared/agents/contracts.ts'
 import { decodeAgentMemorySnapshot } from './memory.ts'
 import { AgentRepositoryError } from './repository.ts'
 
@@ -315,6 +315,72 @@ const analyzeTools = (
   return { toolCalls: tools, findings }
 }
 
+const analyzeWikiVerifications = (
+  events: readonly { readonly sequence: number; readonly attempt: number; readonly type: string; readonly data: Record<string, unknown> }[]
+) => {
+  const verifications = events.flatMap(event => {
+    if (event.type !== 'model.turn' || event.data.purpose !== 'verification') return []
+    const verification = event.data.verification
+    if (typeof verification !== 'object' || verification === null || Array.isArray(verification)) return []
+    const metadata = verification as Record<string, unknown>
+    if (metadata.phase !== 'semantic') return []
+    let availability: 'recorded' | 'not-recorded' | 'invalid' | 'future-version' = 'not-recorded'
+    let resultFrame: WikiVerificationDiagnostic | null = null
+    if (Object.hasOwn(metadata, 'resultFrame')) {
+      const parsed = WikiVerificationDiagnosticSchema.safeParse(metadata.resultFrame)
+      if (parsed.success) {
+        availability = 'recorded'
+        resultFrame = parsed.data
+      } else {
+        const frame = metadata.resultFrame
+        availability =
+          typeof frame === 'object' &&
+          frame !== null &&
+          !Array.isArray(frame) &&
+          Number.isSafeInteger((frame as Record<string, unknown>).version) &&
+          Number((frame as Record<string, unknown>).version) > 1
+            ? 'future-version'
+            : 'invalid'
+      }
+    }
+    return [
+      {
+        sequence: event.sequence,
+        attempt: event.attempt,
+        transportOutcome: event.data.outcome === 'verification_completed' ? 'completed' : event.data.outcome === 'verification_failed' ? 'failed' : 'unknown',
+        availability,
+        resultFrame
+      }
+    ]
+  })
+  const findings: Readonly<Record<string, unknown>>[] = []
+  for (const verification of verifications) {
+    if (verification.resultFrame === null) {
+      findings.push({
+        kind: 'wiki_verification_unavailable',
+        sequence: verification.sequence,
+        attempt: verification.attempt,
+        reason: verification.availability
+      })
+      continue
+    }
+    const frame = verification.resultFrame
+    if (frame.status !== 'accepted')
+      findings.push({
+        kind: 'wiki_verification_rejected',
+        sequence: verification.sequence,
+        attempt: verification.attempt,
+        status: frame.status,
+        transportOutcome: verification.transportOutcome,
+        policy: frame.policy,
+        minProbability: frame.minProbability,
+        rejectedQuestions: frame.questions.filter(question => !question.accepted),
+        omittedQuestions: frame.omittedQuestions
+      })
+  }
+  return { verifications, findings }
+}
+
 export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: string): Promise<Readonly<Record<string, unknown>>> => {
   const session = (await knex('agentSessions')
     .where({ id: sessionId })
@@ -491,9 +557,14 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
     const usage = readDiagnosticUsage(row)
     const id = String(row.id)
     const timeline = eventsByRun.get(id) ?? []
-    const diagnostics = analyzeTools(timeline)
-    const terminalFailure = timeline.find(event => event.type === 'run.failed')
-    const failureContext = terminalFailure === undefined ? undefined : terminalFailure.data.diagnostics
+    const tools = analyzeTools(timeline)
+    const verification = analyzeWikiVerifications(timeline)
+    const diagnostics = { ...tools, verifications: verification.verifications, findings: [...tools.findings, ...verification.findings] }
+    const terminalFailure = timeline.findLast(
+      event =>
+        event.attempt === Number(row.attempts) && (event.type === 'run.failed' || (event.type === 'run.partial' && typeof event.data.errorCode === 'string'))
+    )
+    const failureContext = terminalFailure?.data.diagnostics
     const run = {
       id,
       userMessageId: row.userMessageId,
@@ -529,7 +600,9 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
               sha256: row.completionAssessmentSha256
             },
       error: row.errorCode === null ? null : { code: row.errorCode, message: row.errorMessage },
-      ...(failureContext === undefined || typeof failureContext !== 'object' ? {} : { failureContext }),
+      ...(failureContext === undefined || typeof failureContext !== 'object' || failureContext === null || Array.isArray(failureContext)
+        ? {}
+        : { failureContext }),
       queuedAt: iso(row.queuedAt as Date | string),
       startedAt: nullableIso(row.startedAt as Date | string | null),
       updatedAt: iso(row.updatedAt as Date | string),
@@ -553,7 +626,9 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
       modelRationale: 'Private chain-of-thought is neither retained nor exported. Tool reasons identify observable control-flow context only.',
       historicalToolInputs:
         'Tool inputs are available for runs created after diagnostic input capture was enabled. Older selectors may be inferred from successful outputs.',
-      intermediateContent: 'Model turn content is capped at 32,000 characters per turn; final assistant messages are complete in messages.'
+      intermediateContent: 'Model turn content is capped at 32,000 characters per turn; final assistant messages are complete in messages.',
+      wikiVerification:
+        'Only validated optional result frames explain semantic acceptance or rejection. Historical missing, malformed and future-version frames are unavailable, not accepted. Confidence is diagnostic; the selected expected-label probability must exceed 0.8, without a calibration claim.'
     },
     session: {
       id: session.id,

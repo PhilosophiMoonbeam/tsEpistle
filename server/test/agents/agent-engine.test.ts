@@ -19,8 +19,6 @@ import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/pro
 import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/providers/factory.ts'
 import { preserveGeminiContinuation } from '../../agents/providers/gemini.ts'
 import type { AxHarnessFunction } from '../../agents/providers/session-harness.ts'
-import { unpackWikiReadTexts } from '../../agents/providers/wiki-read-transport.ts'
-import { decodeWikiVerificationSources } from '../../agents/providers/wiki-verification.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import type { AgentEngineRequest, AgentEngineResult, AgentEngineSink } from '../../agents/runtime.ts'
 import { currentAgentSourceAuthorization } from '../../agents/source-authorization.ts'
@@ -624,29 +622,29 @@ describe('Ax agent engine', () => {
         },
         {
           answer: input => {
-            const source = synthesisSourcesFromRequest(input).find(
-              source =>
-                source.evidenceId === 'page:42:revision:2' &&
-                source.sourceRevision === '2' &&
-                source.complete &&
-                source.text.includes(page.content) &&
-                source.readText.includes('Falcon account representative') &&
-                source.readText.includes('morgan.vale@example.invalid') &&
-                source.readText.includes('+1 202 555 0147')
-            )
+            const sources = synthesisSourcesFromRequest(input)
+            expect(sources).toHaveLength(1)
+            const source = sources[0]!
+            expect(source).toMatchObject({
+              evidenceId: 'page:42:revision:2',
+              sourceRevision: '2',
+              complete: true,
+              readText: page.content
+            })
+            // Original bytes retain structure; the admitted body must retain
+            // every requested contact field without matching raw markup.
+            for (const value of ['Morgan Vale', 'Falcon account representative', 'morgan.vale@example.invalid', '+1 202 555 0147']) {
+              expect(source.text).toContain(value)
+            }
             return synthesisFixtureAnswer(input, {
-              claims:
-                source === undefined
-                  ? []
-                  : [
-                      {
-                        evidenceId: source.evidenceId,
-                        sourceRevision: source.sourceRevision,
-                        sourceRef: source.sourceRef,
-                        statement:
-                          'Falcon: Name: Morgan Vale | Role: Falcon account representative | Email: morgan.vale@example.invalid | Phone: +1 202 555 0147.'
-                      }
-                    ]
+              claims: [
+                {
+                  evidenceId: source.evidenceId,
+                  sourceRevision: source.sourceRevision,
+                  sourceRef: source.sourceRef,
+                  statement: 'Falcon: Name: Morgan Vale | Role: Falcon account representative | Email: morgan.vale@example.invalid | Phone: +1 202 555 0147.'
+                }
+              ]
             })
           }
         }
@@ -769,11 +767,11 @@ describe('Ax agent engine', () => {
         answers[id] = {
           choice,
           probabilities: {
-            supports: choice === 'supports' ? (selected === 'uncertain probability' ? 0.8 : selected === 'supports above floor' ? 0.81 : 1) : 0,
+            supports: choice === 'supports' ? (selected === 'uncertain probability' ? 0.8 : selected === 'supports above floor' ? 0.85 : 1) : 0,
             contradicts: choice === 'contradicts' ? 1 : 0,
-            not_supported: choice === 'not_supported' ? 1 : selected === 'uncertain probability' ? 0.2 : selected === 'supports above floor' ? 0.19 : 0
+            not_supported: choice === 'not_supported' ? 1 : selected === 'uncertain probability' ? 0.2 : selected === 'supports above floor' ? 0.15 : 0
           },
-          confidence: selected === 'uncertain confidence' ? 0.8 : selected === 'supports above floor' ? 0.81 : 1
+          confidence: selected === 'uncertain confidence' ? 0.8 : selected === 'supports above floor' ? 0.775 : 1
         }
       }
       return { ...decision, answers }
@@ -807,17 +805,9 @@ describe('Ax agent engine', () => {
     const page = questionReadPage(79, '3', 'Meridian dense QA policies — fictional and non-operative', 'owned79', 'Policies', 'policies', '')
     page.content = content
     let supportRequests = 0
-    const decisions = sourceReadDecisions('supports above floor', input => {
+    const decisions = sourceReadDecisions('supports above floor', () => {
       expect(fixture.text.mock.calls).toHaveLength(0)
       supportRequests++
-      const state = questionRecord(typeof input.state === 'string' ? JSON.parse(input.state) : input.state)
-      expect(state.evidence).toEqual([
-        expect.objectContaining({
-          evidenceId: 'page:79:revision:3',
-          sourceRevision: '3'
-        })
-      ])
-      expect(state.candidate).toEqual([statement])
     })
     const fixture = questionFixture(
       'native',
@@ -855,7 +845,7 @@ describe('Ax agent engine', () => {
     expect(fixture.invoke.mock.calls.map(([name]) => name)).toEqual(['pages.get'])
   })
 
-  it.each(['contradicts', 'not_supported', 'uncertain probability', 'uncertain confidence', 'missing', 'unavailable'] as const)(
+  it.each(['contradicts', 'not_supported', 'uncertain probability', 'missing', 'unavailable'] as const)(
     'withholds complete-read publication when native proof is %s',
     async verdict => {
       const statement = 'In this fictional, non-operative routing example, Morgan Vale serves as Falcon’s account liaison.'
@@ -869,16 +859,9 @@ describe('Ax agent engine', () => {
         '- Name: Morgan Vale; Role: Falcon account representative; Email: morgan.vale@example.invalid; Phone: +1 202 555 0147.'
       )
       let supportRequests = 0
-      const decisions = sourceReadDecisions(verdict, input => {
+      const decisions = sourceReadDecisions(verdict, () => {
         expect(fixture.text.mock.calls).toHaveLength(0)
         supportRequests++
-        const state = questionRecord(typeof input.state === 'string' ? JSON.parse(input.state) : input.state)
-        expect(state.evidence).toEqual([
-          expect.objectContaining({
-            evidenceId: 'page:76:revision:1',
-            sourceRevision: '1'
-          })
-        ])
       })
       const answer = (input: Readonly<AxChatRequest>) =>
         synthesisFixtureAnswer(input, {
@@ -950,7 +933,7 @@ describe('Ax agent engine', () => {
     expect(supportRequests).toBe(2)
   })
 
-  it.each(['contradicts', 'missing', 'uncertain probability', 'uncertain confidence'] as const)(
+  it.each(['contradicts', 'missing', 'uncertain probability'] as const)(
     'withholds the entire mixed-claim read batch when one native claim is %s',
     async verdict => {
       const page = questionReadPage(
@@ -965,11 +948,9 @@ describe('Ax agent engine', () => {
       const supported = 'Morgan Vale serves as the account liaison.'
       const rejected = 'Avery Moss serves as the account representative.'
       let supportRequests = 0
-      const decisions = sourceReadDecisions(['supports', verdict], input => {
+      const decisions = sourceReadDecisions(['supports', verdict], () => {
         expect(fixture.text.mock.calls).toHaveLength(0)
         supportRequests++
-        const state = questionRecord(typeof input.state === 'string' ? JSON.parse(input.state) : input.state)
-        expect(state.candidate).toEqual([supported, rejected])
       })
       const answer = (input: Readonly<AxChatRequest>) => {
         const source = synthesisSourcesFromRequest(input)[0]!
@@ -2304,7 +2285,7 @@ describe('Ax agent engine', () => {
     ['Homepage |🏠', 'supports', false],
     ['Homepage |🏘️', 'not_supported', false],
     ['Homepage |🏘️', 'uncertain probability', false],
-    ['Homepage |🏘️', 'uncertain confidence', false],
+    ['Homepage |🏘️', 'uncertain confidence', true],
     ['Homepage |🏘️', 'supports above floor', true]
   ] as const)('requires exact Unicode title identity and independent native proof: %s / %s', async (reported, verdict, accepted) => {
     const title = 'Homepage |🏘️'
@@ -6998,13 +6979,10 @@ describe('Ax agent engine', () => {
           .filter(([, question]) => Object.hasOwn(question.criteria, 'supports'))
           .map(([id]) => id)
         if (supportIds.length === 0) return decision
-        const state = (typeof input.state === 'string' ? JSON.parse(input.state) : input.state) as {
-          candidate: readonly (string | { evidenceId: string; statement: string })[]
-          evidence: readonly { evidenceId: string }[]
-        }
+        const state = questionRecord(typeof input.state === 'string' ? JSON.parse(input.state) : input.state)
         if (
-          !state.evidence.some(read => read.evidenceId === 'page:42:revision:30') ||
-          !state.candidate.some(claim => (typeof claim === 'string' ? claim : claim.statement) === 'Quartz migration was approved.')
+          !String(questionRecord(state.source).original).includes('Cobalt rollout is active.') ||
+          !supportIds.some(id => questionRecord(input.questions[id]!.instructions).claim === 'Quartz migration was approved.')
         )
           return decision
         const answers = { ...decision.answers }
@@ -10510,115 +10488,163 @@ describe('request-derived evidence coverage', () => {
     expect(published).not.toContain(page.citation.evidenceId)
   })
 
-  it.each(['unchanged', 'changed qualifier', 'uncertain', 'malformed', 'source changed', 'provider changed'] as const)(
-    'reuses only complete settled canonical native support groups across a %s repair',
-    async change => {
-      const first = 'The release may ship only after safety approval.'
-      const revised = 'Safety approval is required before the release may ship.'
-      const second = 'The maintenance owner reviews the ledger.'
-      const pages = [
-        questionReadPage(42, '1', 'Release', 'release', 'Rules', 'rules', first),
-        questionReadPage(44, '1', 'Ledger', 'ledger', 'Review', 'review', second)
-      ]
-      const owned = ownedReadFixture((_name, input) => pages.find(page => page.id === questionRecord(input).id)!)
-      let revision = 1
-      let attempt = 0
-      let audits = 0
-      const groups: string[] = []
-      const settledNative: number[] = []
-      const decisionProviders = {
-        selectRuntime: async () => ({ ...(await fixtureDecisionProviders.selectRuntime()), revision }),
-        decideBatch: async (nativeRequest: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]) => {
-          const result = await fixtureDecisionProviders.decideBatch(nativeRequest, options)
-          const state = questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state)
-          groups.push(canonicalJson(state.candidate))
-          const answers = { ...result.answers }
-          if (attempt === 1 && (change === 'uncertain' || change === 'malformed')) {
-            const id = Object.keys(nativeRequest.questions)[0]!
-            answers[id] = change === 'uncertain' ? { ...answers[id]!, confidence: 0.8 } : { ...answers[id]!, probabilities: { supports: 1 } }
-          }
-          return {
-            ...result,
-            providerRevision: revision,
-            answers,
-            usage: { inputTokens: 7, outputTokens: 2, totalTokens: 9, totalTokensSource: 'derived' as const },
-            estimatedCostMicros: 2
-          }
+  it.each([
+    'unchanged',
+    'changed qualifier',
+    'read identity changed',
+    'uncertain',
+    'malformed',
+    'source changed',
+    'revision changed',
+    'authority revoked',
+    'provider changed',
+    'provider config changed'
+  ] as const)('reuses only complete settled canonical native support groups across a %s repair', async change => {
+    const first = 'The release may ship only after safety approval.'
+    const revised = 'Safety approval is required before the release may ship.'
+    const second = 'The maintenance owner reviews the ledger.'
+    const pages = [
+      questionReadPage(42, '1', 'Release', 'release', 'Rules', 'rules', first),
+      questionReadPage(44, '1', 'Ledger', 'ledger', 'Review', 'review', second),
+      ...(change === 'read identity changed' ? [questionReadPage(46, '1', 'Release', 'release-copy', 'Rules', 'rules', first)] : [])
+    ]
+    const owned = ownedReadFixture((_name, input) => pages.find(page => page.id === questionRecord(input).id)!)
+    let revision = 1
+    let providerChanged = false
+    let authorized = true
+    let attempt = 0
+    let audits = 0
+    let groups = 0
+    const settledNative: number[] = []
+    const decisionProviders = {
+      selectRuntime: async () => {
+        const runtime = await fixtureDecisionProviders.selectRuntime()
+        return { ...runtime, revision, config: { ...runtime.config, model: providerChanged ? `${runtime.config.model}-changed` : runtime.config.model } }
+      },
+      decideBatch: async (nativeRequest: DecisionBatchRequest, options: Parameters<typeof fixtureDecisionProviders.decideBatch>[1]) => {
+        const result = await fixtureDecisionProviders.decideBatch(nativeRequest, options)
+        groups++
+        const answers: Record<string, DecisionBatchResult['answers'][string]> = Object.fromEntries(
+          Object.entries(result.answers).map(([id, answer]) => [
+            id,
+            { ...answer, confidence: 0.775, probabilities: { supports: 0.85, contradicts: 0, not_supported: 0.15 } }
+          ])
+        )
+        if (attempt === 1 && (change === 'uncertain' || change === 'malformed')) {
+          const id = Object.keys(nativeRequest.questions)[0]!
+          answers[id] =
+            change === 'uncertain'
+              ? { ...answers[id]!, probabilities: { supports: 0.8, contradicts: 0, not_supported: 0.2 } }
+              : { ...answers[id]!, probabilities: { supports: 1 } }
+        }
+        return {
+          ...result,
+          providerRevision: revision,
+          answers,
+          usage: { inputTokens: 7, outputTokens: 2, totalTokens: 9, totalTokensSource: 'derived' as const },
+          estimatedCostMicros: 2
         }
       }
-      const answer = (input: Readonly<AxChatRequest>) => {
-        attempt++
-        return sourceBoundAnswer(input, [
-          { evidenceId: pages[0]!.citation.evidenceId, sourceText: first, statement: attempt > 1 && change === 'changed qualifier' ? revised : first },
-          { evidenceId: pages[1]!.citation.evidenceId, sourceText: second, statement: second }
-        ])
-      }
-      const fixture = questionFixture(
-        'native',
-        [{ calls: pages.map(page => ({ id: `reuse-read-${page.id}`, name: 'pages.get' as const, arguments: { id: page.id } })) }, { answer }, { answer }],
-        owned.invoke,
-        [],
-        {
-          validateObservation: owned.validateObservation,
-          coverage: async () => {
-            const incomplete = audits++ === 0 && change !== 'uncertain' && change !== 'malformed'
-            return {
-              results: [
-                {
-                  index: 0,
-                  content: JSON.stringify({ verdict: incomplete ? 'incomplete' : 'complete', feedback: incomplete ? 'Retain both source contributions.' : '' }),
-                  finishReason: 'stop'
-                }
-              ]
-            }
-          }
-        },
-        {},
-        decisionProviders
-      )
-      fixture.event.mockImplementation(async (type, data) => {
-        if (type !== 'evidence.provenance' || questionRecord(data).accepted !== false) return
-        if (change === 'source changed') pages[0]!.content += '\nThe source was revised.'
-        if (change === 'provider changed') revision++
-      })
-      let reservationId = 0
-      let settledTokens = 0
-      let settledCostMicros = 0
-      const dispatchBudget = {
-        reserve: vi.fn(async maximum => ({ id: ++reservationId, ...maximum })),
-        release: vi.fn(async () => {}),
-        consumeTool: vi.fn(async () => {}),
-        reconcile: vi.fn(async (_reservation, actual) => {
-          settledTokens += actual.totalTokens
-          settledCostMicros += actual.costMicros
-          if (actual.totalTokens === 9 && actual.costMicros === 2) settledNative.push(actual.totalTokens)
-        })
-      } satisfies NonNullable<AgentEngineRequest['dispatchBudget']>
-      const execution = fixture.execute('Describe the release restriction and the ledger review.', { maxTurns: 4, maxToolCalls: 2 }, dispatchBudget)
-      if (change === 'source changed' || change === 'provider changed') {
-        await expect(execution).rejects.toMatchObject({ code: change === 'source changed' ? 'AGENT_EVIDENCE_INVALID' : 'WIKI_VERIFICATION_FAILED' })
-        expect(fixture.text).not.toHaveBeenCalled()
-        return
-      }
-      const result = await execution
-      const expected = change === 'unchanged' ? 2 : change === 'changed qualifier' ? 3 : 4
-      expect(groups).toHaveLength(expected)
-      expect(settledNative).toHaveLength(expected)
-      expect(
-        fixture.event.mock.calls.filter(([type, data]) => {
-          const record = questionRecord(data)
-          return type === 'model.turn' && record.purpose === 'verification' && questionRecord(record.verification).phase === 'semantic'
-        })
-      ).toHaveLength(expected)
-      expect(result.executionLimit).toBeUndefined()
-      expect(result.totalTokens).toBe(settledTokens)
-      expect(result.costMicros).toBe(settledCostMicros)
-      const repairRequest = fixture.providerCalls.filter(input => synthesisInputFromRequest(input) !== undefined)[1]!
-      // Ordinary source reads do not acquire recent-recap progress authority.
-      expect(synthesisRepairFeedback(repairRequest).value.verifiedReadRefs).toBeUndefined()
-      expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(change === 'changed qualifier' ? revised : first)
     }
-  )
+    const answer = (input: Readonly<AxChatRequest>) => {
+      attempt++
+      return sourceBoundAnswer(input, [
+        {
+          evidenceId: pages[attempt > 1 && change === 'read identity changed' ? 2 : 0]!.citation.evidenceId,
+          sourceText: first,
+          statement: attempt > 1 && change === 'changed qualifier' ? revised : first
+        },
+        { evidenceId: pages[1]!.citation.evidenceId, sourceText: second, statement: second }
+      ])
+    }
+    const fixture = questionFixture(
+      'native',
+      [{ calls: pages.map(page => ({ id: `reuse-read-${page.id}`, name: 'pages.get' as const, arguments: { id: page.id } })) }, { answer }, { answer }],
+      owned.invoke,
+      [],
+      {
+        validateObservation: async (...args) => authorized && owned.validateObservation(...args),
+        coverage: async () => {
+          const incomplete = audits++ === 0 && change !== 'uncertain' && change !== 'malformed'
+          return {
+            results: [
+              {
+                index: 0,
+                content: JSON.stringify({ verdict: incomplete ? 'incomplete' : 'complete', feedback: incomplete ? 'Retain both source contributions.' : '' }),
+                finishReason: 'stop'
+              }
+            ]
+          }
+        }
+      },
+      {},
+      decisionProviders
+    )
+    fixture.event.mockImplementation(async (type, data) => {
+      if (type !== 'evidence.provenance' || questionRecord(data).accepted !== false) return
+      if (change === 'source changed') pages[0]!.content += '\nThe source was revised.'
+      if (change === 'provider changed') revision++
+      if (change === 'revision changed') pages[0]!.sourceRevision = '2'
+      if (change === 'authority revoked') authorized = false
+      if (change === 'provider config changed') providerChanged = true
+    })
+    let reservationId = 0
+    let settledTokens = 0
+    let settledCostMicros = 0
+    const dispatchBudget = {
+      reserve: vi.fn(async maximum => ({ id: ++reservationId, ...maximum })),
+      release: vi.fn(async () => {}),
+      consumeTool: vi.fn(async () => {}),
+      reconcile: vi.fn(async (_reservation, actual) => {
+        settledTokens += actual.totalTokens
+        settledCostMicros += actual.costMicros
+        if (actual.totalTokens === 9 && actual.costMicros === 2) settledNative.push(actual.totalTokens)
+      })
+    } satisfies NonNullable<AgentEngineRequest['dispatchBudget']>
+    const execution = fixture.execute('Describe the release restriction and the ledger review.', { maxTurns: 4, maxToolCalls: pages.length }, dispatchBudget)
+    if (['source changed', 'revision changed', 'authority revoked', 'provider changed', 'provider config changed'].includes(change)) {
+      await expect(execution).rejects.toMatchObject({ code: change.startsWith('provider') ? 'WIKI_VERIFICATION_FAILED' : 'AGENT_EVIDENCE_INVALID' })
+      expect(groups).toBe(2)
+      expect(settledNative).toHaveLength(2)
+      expect(fixture.text).not.toHaveBeenCalled()
+      return
+    }
+    const result = await execution
+    const expected = change === 'unchanged' ? 2 : change === 'changed qualifier' || change === 'read identity changed' ? 3 : 4
+    expect(groups).toBe(expected)
+    expect(settledNative).toHaveLength(expected)
+    expect(
+      fixture.event.mock.calls.filter(([type, data]) => {
+        const record = questionRecord(data)
+        return type === 'model.turn' && record.purpose === 'verification' && questionRecord(record.verification).phase === 'semantic'
+      })
+    ).toHaveLength(expected)
+    const frames = fixture.event.mock.calls
+      .filter(([type, data]) => type === 'model.turn' && questionRecord(questionRecord(data).verification ?? {}).phase === 'semantic')
+      .map(([, data]) => questionRecord(questionRecord(questionRecord(data).verification).resultFrame))
+    expect(frames[0]).toMatchObject({
+      policy: 'wiki-evidence-probability-v2',
+      minProbability: 0.8,
+      requestSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      sourceScopes: ['complete-read'],
+      status: change === 'malformed' ? 'invalid_response' : change === 'uncertain' ? 'semantic_rejection' : 'accepted',
+      questions: [
+        expect.objectContaining({
+          ...(change === 'malformed' ? { reason: 'invalid_response' } : { confidence: 0.775 }),
+          accepted: change !== 'uncertain' && change !== 'malformed',
+          ...(change === 'uncertain' || change === 'malformed' ? {} : { probabilities: { supports: 0.85, contradicts: 0, not_supported: 0.15 } })
+        })
+      ],
+      omittedQuestions: 0
+    })
+    expect(result.executionLimit).toBeUndefined()
+    expect(result.totalTokens).toBe(settledTokens)
+    expect(result.costMicros).toBe(settledCostMicros)
+    const repairRequest = fixture.providerCalls.filter(input => synthesisInputFromRequest(input) !== undefined)[1]!
+    // Ordinary source reads do not acquire recent-recap progress authority.
+    expect(synthesisRepairFeedback(repairRequest).value.verifiedReadRefs).toBeUndefined()
+    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(change === 'changed qualifier' ? revised : first)
+  })
 
   it('does not pay to compact discarded active collection during typed repair or history-only finalization', async () => {
     const fact = 'The release requires safety approval.'
@@ -11038,6 +11064,7 @@ describe('request-derived evidence coverage', () => {
     | 'source mutation'
     | 'provider mutation'
     | 'request mutation'
+    | 'predispatch request mutation'
     | 'unmeasured receipt'
     | 'unpriced receipt'
   const originalCoverageFixture = (mode: OriginalCoverageMode, settlement?: { readonly entered: () => void; readonly wait: Promise<void> }) => {
@@ -11090,7 +11117,6 @@ describe('request-derived evidence coverage', () => {
     const nativeCalls: {
       readonly owners: readonly string[]
       readonly originalReads: readonly string[]
-      readonly projectionTexts: readonly string[]
     }[] = []
     const decisionProviders = {
       selectRuntime: async () => {
@@ -11112,33 +11138,14 @@ describe('request-derived evidence coverage', () => {
             nativeDispatches.push({ sourceInvalidated: sourceAuthority.invalidated, reservationId: [...outstanding.keys()][0] })
           }
         }
+        if (mode === 'predispatch request mutation') Object.assign(nativeRequest, { state: { changed: true } })
         await observedOptions.onPreDispatch?.()
         const state = questionRecord(typeof nativeRequest.state === 'string' ? JSON.parse(nativeRequest.state) : nativeRequest.state)
-        let nativeCall: (typeof nativeCalls)[number]
-        if (typeof state.source === 'string') {
-          const evidenceReads = state.evidence as readonly { readonly evidenceId: string }[]
-          const originalSource = state.source
-          nativeCall = {
-            owners: [...new Set(evidenceReads.map(read => read.evidenceId))],
-            originalReads: [originalSource],
-            projectionTexts: [originalSource]
-          }
-        } else {
-          const sources = decodeWikiVerificationSources(
-            state.sources as Parameters<typeof decodeWikiVerificationSources>[0],
-            state.readTexts as readonly string[]
-          )
-          const evidenceReads = state.evidence as readonly {
-            readonly readId: string
-            readonly source: Parameters<typeof unpackWikiReadTexts>[0]['sources'][number]
-          }[]
-          const physicalReadSources = [...new Map(evidenceReads.map(read => [read.readId, read.source] as const)).values()]
-          nativeCall = {
-            owners: [...new Set(sources.map(source => source.evidenceId))],
-            originalReads: unpackWikiReadTexts({ texts: state.readTexts as readonly string[], sources: physicalReadSources }),
-            projectionTexts: sources.map(source => source.text)
-          }
-        }
+        const source = questionRecord(state.source)
+        const originalSource = String(source.original)
+        const sourcePage = pages.find(page => page.content === originalSource)
+        if (sourcePage === undefined) throw new Error('Native proof must retain an admitted original read')
+        const nativeCall = { owners: [sourcePage.citation.evidenceId], originalReads: [originalSource] }
         observedOptions.onRequestDispatched()
         nativeCalls.push(nativeCall)
         const answers: Record<string, DecisionBatchResult['answers'][string]> = {}
@@ -11333,9 +11340,6 @@ describe('request-derived evidence coverage', () => {
     expect(visible).toContain('These recipes are authored and untested; total times are estimates.')
     expect(result.citations?.map(citation => citation.evidenceId)).toEqual(expectedReadIds(['page:42:revision:1', 'page:44:revision:1']))
     expect(fixture.nativeCalls.map(call => call.owners)).toEqual([['page:42:revision:1'], ['page:44:revision:1']])
-    for (const call of fixture.nativeCalls) {
-      expect(call.projectionTexts).toEqual(call.originalReads)
-    }
     expect(fixture.settled.reduce((sum, actual) => sum + actual.totalTokens, 0)).toBe(result.totalTokens)
     expect(fixture.settled.reduce((sum, actual) => sum + actual.costMicros, 0)).toBe(result.costMicros)
     expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
@@ -11347,15 +11351,13 @@ describe('request-derived evidence coverage', () => {
     const visible = visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))
     expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
     expect(result.citations).toBeUndefined()
-    expect(fixture.nativeCalls.map(call => call.owners)).toEqual([
-      ['page:42:revision:1'],
-      ['page:44:revision:1'],
-      ['page:42:revision:1'],
-      ['page:44:revision:1']
-    ])
+    expect(fixture.nativeCalls.map(call => call.owners)).toEqual(
+      mode === 'request mutation'
+        ? [['page:42:revision:1'], ['page:42:revision:1']]
+        : [['page:42:revision:1'], ['page:44:revision:1'], ['page:42:revision:1'], ['page:44:revision:1']]
+    )
     for (const call of fixture.nativeCalls) {
       expect(call.owners.length).toBe(1)
-      expect(call.projectionTexts).toEqual(call.originalReads)
       const originalIndex = call.owners[0] === 'page:42:revision:1' ? 0 : 1
       expect(call.originalReads).toEqual([fixture.originalContents[originalIndex]!])
       expect(call.originalReads.some(read => read.includes('The warehouse opens after inspection.'))).toBe(false)
@@ -11364,6 +11366,28 @@ describe('request-derived evidence coverage', () => {
     expect(visible).not.toContain('Sunset skillet')
     expect(visible).not.toContain('Garden bowl')
     expect(fixture.event.mock.calls.some(([type, data]) => type === 'evidence.provenance' && questionRecord(data).accepted === true)).toBe(false)
+  })
+
+  it('rechecks sealed issuance immediately before native dispatch and releases its undispatched hold', async () => {
+    const fixture = originalCoverageFixture('predispatch request mutation')
+    await expect(fixture.execute()).rejects.toMatchObject({ code: 'WIKI_VERIFICATION_BINDING_INVALID' })
+    expect(fixture.nativeDispatches).toHaveLength(0)
+    expect(fixture.nativeCalls).toHaveLength(0)
+    expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+    expect(fixture.event.mock.calls).toContainEqual([
+      'model.turn',
+      expect.objectContaining({
+        purpose: 'verification',
+        outcome: 'verification_failed',
+        usageSource: 'not-dispatched',
+        unknownExposure: null,
+        totalTokens: 0,
+        verification: expect.objectContaining({
+          resultFrame: expect.objectContaining({ status: 'host_rejection' })
+        })
+      })
+    ])
+    expect(fixture.text).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -11427,7 +11451,9 @@ describe('request-derived evidence coverage', () => {
     )
     expect(questionRecord(diagnostic![1])).toMatchObject({
       usageSource: 'unmeasured-exposure',
-      unknownExposure: { tokens: 64_000, costMicros: 314_000 }
+      unknownExposure: { tokens: 64_000, costMicros: 314_000 },
+      outcome: 'verification_failed',
+      verification: expect.objectContaining({ resultFrame: expect.objectContaining({ status: 'receipt_rejection' }) })
     })
     expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).not.toContain('Lentil skillet')
     expect(fixture.event.mock.calls.some(([type, data]) => type === 'evidence.provenance' && questionRecord(data).accepted === true)).toBe(false)
@@ -11439,6 +11465,13 @@ describe('request-derived evidence coverage', () => {
     expect(fixture.nativeCalls.map(call => call.owners)).toEqual([['page:42:revision:1']])
     expect(fixture.settled.at(-1)).toMatchObject({ totalTokens: 9, costMicros: 314_000 })
     expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+    expect(fixture.event.mock.calls).toContainEqual([
+      'model.turn',
+      expect.objectContaining({
+        outcome: 'verification_failed',
+        verification: expect.objectContaining({ resultFrame: expect.objectContaining({ status: 'receipt_rejection' }) })
+      })
+    ])
     expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).not.toContain('Lentil skillet')
     expect(fixture.event.mock.calls.some(([type, data]) => type === 'evidence.provenance' && questionRecord(data).accepted === true)).toBe(false)
   })
@@ -11741,11 +11774,14 @@ describe('request-derived evidence coverage', () => {
         decideBatch: async (...args: Parameters<typeof fixtureDecisionProviders.decideBatch>) => {
           const result = await fixtureDecisionProviders.decideBatch(...args)
           const state = questionRecord(typeof args[0].state === 'string' ? JSON.parse(args[0].state) : args[0].state)
-          if (failure === 'truncated' || failure === 'unmentioned' || !JSON.stringify(state.evidence).includes(rows[0]!.citation.evidenceId)) return result
+          if (failure === 'truncated' || failure === 'unmentioned' || questionRecord(state.source).original !== rows[0]!.content) return result
           const answers = { ...result.answers }
           for (const id of Object.keys(answers)) {
             if (!id.startsWith('support_')) continue
-            answers[id] = failure === 'uncertain' ? { ...answers[id]!, confidence: 0.8 } : { ...answers[id]!, probabilities: { supports: 1 } }
+            answers[id] =
+              failure === 'uncertain'
+                ? { ...answers[id]!, probabilities: { supports: 0.8, contradicts: 0, not_supported: 0.2 } }
+                : { ...answers[id]!, probabilities: { supports: 1 } }
           }
           return { ...result, answers }
         }
@@ -11912,7 +11948,8 @@ describe('request-derived evidence coverage', () => {
     ['prompt', 'source facet']
   ] as const)('acquires only the unusable recent HTML body before a %s %s handoff', async (mode, handoff) => {
     const userRequest = 'Summarize the 3 most recently updated Wiki pages I can access.'
-    const fullContent = '<h1>Beacon</h1>\n<table><tr><td>Beacon requires review.</td></tr></table>'
+    // The complete read needs an explicit table header to admit its factual cell.
+    const fullContent = '<h1>Beacon</h1>\n<table><tr><th>Requirement</th></tr><tr><td>Beacon requires review.</td></tr></table>'
     const rows = [
       {
         ...recentRows[0]!,
@@ -11957,7 +11994,13 @@ describe('request-derived evidence coverage', () => {
       ...(handoff === 'collector prose' ? [{ answer: 'The requested body is now available.' }] : []),
       {
         answer: input => {
-          expect(synthesisSourcesFromRequest(input).find(source => source.evidenceId === rows[0]!.citation.evidenceId)?.text).toBe(fullContent)
+          const sources = synthesisSourcesFromRequest(input)
+          expect(sources.map(source => source.evidenceId).sort()).toEqual(rows.map(row => row.citation.evidenceId).sort())
+          const beacon = sources.find(source => source.evidenceId === rows[0]!.citation.evidenceId)!
+          expect(beacon).toMatchObject({ complete: true, readText: fullContent })
+          expect(beacon.text).toContain('Beacon requires review.')
+          expect(sources.find(source => source.evidenceId === rows[1]!.citation.evidenceId)?.text).toContain('Ready.')
+          expect(sources.find(source => source.evidenceId === rows[2]!.citation.evidenceId)?.text).toContain('Valid.')
           return synthesisFixtureAnswer(input, {
             claims: [
               { evidenceId: rows[0]!.citation.evidenceId, statement: 'Beacon requires review.' },

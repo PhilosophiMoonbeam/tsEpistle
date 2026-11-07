@@ -77,7 +77,6 @@ export const rejectFixtureStatements = (statements: readonly string[]) => ({
     const decision = await fixtureDecisionProviders.decideBatch(input, options)
     const supportQuestions = Object.entries(input.questions).filter(([, question]) => Object.hasOwn(question.criteria, 'supports'))
     if (supportQuestions.length === 0) return decision
-    const state = input.state as { candidate: readonly (string | { statement: string })[] }
     const answers = { ...decision.answers }
     for (const [id, question] of supportQuestions) {
       const instructions = question.instructions
@@ -85,14 +84,11 @@ export const rejectFixtureStatements = (statements: readonly string[]) => ({
         typeof instructions !== 'object' ||
         instructions === null ||
         Array.isArray(instructions) ||
-        !('candidate_index' in instructions) ||
-        typeof instructions.candidate_index !== 'number' ||
-        !Number.isSafeInteger(instructions.candidate_index)
+        !('claim' in instructions) ||
+        typeof instructions.claim !== 'string'
       )
-        throw new Error(`Fixture support question lacks its independent candidate index: ${id}`)
-      const claim = state.candidate[instructions.candidate_index]
-      if (claim === undefined) throw new Error(`Fixture support question selects a missing candidate: ${id}`)
-      if (statements.includes(typeof claim === 'string' ? claim : claim.statement))
+        throw new Error(`Fixture support question lacks its unchanged claim: ${id}`)
+      if (statements.includes(instructions.claim))
         answers[id] = { choice: 'not_supported', probabilities: { supports: 0, contradicts: 0, not_supported: 1 }, confidence: 1 }
     }
     return { ...decision, answers }
@@ -171,7 +167,9 @@ const synthesisFieldText = (input: string, title: string): string => {
   const end =
     title === 'Source Text'
       ? value.lastIndexOf('\n\nSource References: ')
-      : value.search(/\n\n(?:Input Media References|Conversation Context|User Request|Request Facets|Available Observations|Operation Evidence|Repair Feedback): /u)
+      : value.search(
+          /\n\n(?:Input Media References|Conversation Context|User Request|Request Facets|Available Observations|Operation Evidence|Repair Feedback): /u
+        )
   return end < 0 ? value : value.slice(0, end)
 }
 
@@ -185,6 +183,7 @@ export interface SynthesisFixtureRead {
   readonly representation: string
   readonly complete: boolean
   readonly readText: string
+  readonly authorText: string
   readonly excerpt?: WikiSynthesisSource['excerpt']
 }
 
@@ -206,7 +205,6 @@ export const synthesisReadsFromRequest = (request: Readonly<AxChatRequest>): Syn
     if (
       typeof row.evidenceId !== 'string' ||
       typeof row.revision !== 'string' ||
-      (row.title !== null && typeof row.title !== 'string') ||
       typeof row.representation !== 'string' ||
       (row.status !== 'full' && row.status !== 'truncated')
     )
@@ -216,14 +214,26 @@ export const synthesisReadsFromRequest = (request: Readonly<AxChatRequest>): Syn
     const footer = `\nEND SOURCE READ ${header[1]}`
     const bodyEnd = sourceText.lastIndexOf(footer, nextStart)
     if (bodyEnd < bodyStart || bodyEnd + footer.length > nextStart) throw new Error('Missing supplied synthesis read footer')
+    const frame: unknown = JSON.parse(sourceText.slice(bodyStart, bodyEnd))
+    if (frame === null || typeof frame !== 'object' || Array.isArray(frame)) throw new Error('Invalid supplied synthesis source frame')
+    const view = frame as Record<string, unknown>
+    if (
+      typeof view.title !== 'string' ||
+      typeof view.original !== 'string' ||
+      (view.admittedBody !== undefined && typeof view.admittedBody !== 'string') ||
+      view.scope !== (row.status === 'full' ? 'complete-read' : 'recent-excerpt') ||
+      Object.keys(view).some(key => !['title', 'scope', 'original', 'admittedBody'].includes(key))
+    )
+      throw new Error('Invalid supplied synthesis source frame')
     return {
       readRef: header[1]!,
       evidenceId: row.evidenceId,
       sourceRevision: row.revision,
-      title: row.title,
+      title: view.title,
       representation: row.representation,
       complete: row.status === 'full',
-      readText: sourceText.slice(bodyStart, bodyEnd),
+      readText: view.original,
+      authorText: view.admittedBody === undefined ? view.original : (view.admittedBody as string),
       ...(row.excerpt === undefined ? {} : { excerpt: row.excerpt as WikiSynthesisSource['excerpt'] })
     }
   })
@@ -256,7 +266,7 @@ export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): S
       ...read,
       sourceRef,
       evidenceId: source.evidenceId,
-      text: read.readText,
+      text: read.authorText,
       kind: read.complete ? ('source-read' as const) : ('recent-excerpt' as const)
     }
   })

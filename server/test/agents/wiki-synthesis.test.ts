@@ -120,7 +120,10 @@ describe('Wiki source-bound typed synthesis', () => {
   it('admits an explicitly bounded recent prefix without making an incomplete full-read binding selectable', async () => {
     const text = `${source.text}\n\nUnfinished archive note`
     const bounded: WikiSynthesisSource = {
-      ...source, text, kind: 'recent-excerpt', complete: false,
+      ...source,
+      text,
+      kind: 'recent-excerpt',
+      complete: false,
       excerpt: {
         representation: 'recent-excerpt',
         representationMetadata: JSON.stringify({ contentTruncated: true, sourceContentCharacters: text.length + 500, updatedAt: '2026-10-30T12:00:00.000Z' }),
@@ -133,9 +136,9 @@ describe('Wiki source-bound typed synthesis', () => {
       { ...bounded, complete: true },
       { ...bounded, excerpt: undefined },
       { ...bounded, kind: 'source-read' as const }
-    ]) expect(() => createWikiSynthesisProgram([invalid])).toThrow()
+    ])
+      expect(() => createWikiSynthesisProgram([invalid])).toThrow()
   })
-
 
   it('streams source-bound claims when native optional output channels are null', async () => {
     const wire = JSON.stringify({ ...encodeWikiSynthesisAnswer(answer()), attachmentClaims: null, recommendations: null })
@@ -160,9 +163,7 @@ describe('Wiki source-bound typed synthesis', () => {
     }
     expect(claims).toEqual(answer().claims)
     expect(unresolved).toEqual([1])
-    expect(renderWikiSynthesisAnswer({ claims, unresolvedFacets: unresolved, observations: [] })).toBe(
-      `${source.text} [[cite:${source.evidenceId}]]`
-    )
+    expect(renderWikiSynthesisAnswer({ claims, unresolvedFacets: unresolved, observations: [] })).toBe(`${source.text} [[cite:${source.evidenceId}]]`)
   })
 
   it('keeps complete untrusted sources ahead of changing turn data with a stable system prompt and supported cache boundary', async () => {
@@ -540,9 +541,7 @@ describe('Wiki source-bound typed synthesis', () => {
 
   it('preserves distinct same-source paragraphs and immediate citations through the Markdown consumer', () => {
     const statements = ['External publication requires two approvals.', 'The approvals must precede publication.']
-    const rendered = renderWikiSynthesisAnswer(
-      answer({ claims: statements.map(statement => ({ ...answer().claims[0]!, statement })) })
-    )
+    const rendered = renderWikiSynthesisAnswer(answer({ claims: statements.map(statement => ({ ...answer().claims[0]!, statement })) }))
     const document = load(markdown.render(formatAgentCitationMarkers(rendered, () => ({ number: 1, label: 'Approvals', href: '/approvals' }))))
     const paragraphs = document('body > p')
     expect(paragraphs.length).toBe(2)
@@ -570,11 +569,12 @@ describe('Wiki source-bound typed synthesis', () => {
     for (const mode of ['native', 'json_object'] as const)
       for (const statement of statements) {
         const predicted = answer({ claims: [{ ...answer().claims[0]!, statement }] })
-        const validateClaim = vi.fn((claim: WikiSynthesisAnswer['claims'][number], selected: WikiSynthesisSource) =>
-          selected.text === readText && claim.statement === statement
+        const validateClaim = vi.fn(
+          (claim: WikiSynthesisAnswer['claims'][number], selected: WikiSynthesisSource) => selected.text === readText && claim.statement === statement
         )
-        const validateAnswer = vi.fn((candidate: WikiSynthesisAnswer, rendered: string) =>
-          candidate.claims[0]?.statement === statement && rendered === `${statement}${statement.includes('\n') ? '\n\n' : ' '}[[cite:${source.evidenceId}]]`
+        const validateAnswer = vi.fn(
+          (candidate: WikiSynthesisAnswer, rendered: string) =>
+            candidate.claims[0]?.statement === statement && rendered === `${statement}${statement.includes('\n') ? '\n\n' : ' '}[[cite:${source.evidenceId}]]`
         )
         const options = { validateClaim, validateAnswer }
         const accepted = await generate(predicted, [bound], options, mode).result
@@ -628,7 +628,9 @@ describe('Wiki source-bound typed synthesis', () => {
           await expect(
             generate(predicted, [bound], { ...options, validateAnswer: () => 'Whole-answer proof rejected this section.' }, mode).result
           ).rejects.toThrow('Whole-answer proof rejected')
-          const unsupportedHeading = answer({ claims: [{ ...predicted.claims[0]!, statement: statement.replace(/^#{2,3} [^\n]+/u, '## No approval required') }] })
+          const unsupportedHeading = answer({
+            claims: [{ ...predicted.claims[0]!, statement: statement.replace(/^#{2,3} [^\n]+/u, '## No approval required') }]
+          })
           await expect(generate(unsupportedHeading, [bound], options, mode).result).rejects.toThrow()
         }
       }
@@ -1394,11 +1396,31 @@ describe('Wiki synthesis complete registered read transport', () => {
     expect(delivered).toHaveLength(1)
     expect(delivered[0]!.text).toBe(body)
     expect(delivered[0]!.readText).toBe(body)
-    expect(encoded.sourceText.split(body)).toHaveLength(2)
     expect(JSON.parse(encoded.sourceReferences)).toEqual({
       reads: { [wikiSynthesisSourceRef(root)]: { readRef: 'd0', evidenceId: root.evidenceId, sourceRevision: '7' } }
     })
     expect(encoded.sourceReferences).not.toContain('keeper@example.test')
+  })
+
+  it('rejects malformed or scope-changing source frames instead of treating raw transport as admitted content', () => {
+    const encoded = encodeWikiSynthesisSources([root], [read])
+    const frame = encoded.sourceText.split('\n')[1]!
+    for (const invalid of [
+      body,
+      JSON.stringify({ title: read.title, scope: 'complete-read' }),
+      JSON.stringify({ title: read.title, scope: 'recent-excerpt', original: body }),
+      JSON.stringify({ title: read.title, scope: 'complete-read', original: body, admittedBody: null })
+    ]) {
+      const supplied: Readonly<AxChatRequest> = {
+        chatPrompt: [
+          {
+            role: 'user',
+            content: `Source Text: ${encoded.sourceText.replace(frame, invalid)}\n\nSource References: ${encoded.sourceReferences}\n\nUser Request: Preserve requested facts.\n\nRequest Facets: []`
+          }
+        ]
+      }
+      expect(() => synthesisSourcesFromRequest(supplied)).toThrow()
+    }
   })
 
   it('shares body bytes only across compatible physical read aliases while every ref decodes to its original owner', () => {
@@ -1408,7 +1430,6 @@ describe('Wiki synthesis complete registered read transport', () => {
     const index = JSON.parse(encoded.sourceReferences) as WikiSynthesisReferenceIndex
     expect(Object.keys(index.reads)).toHaveLength(2)
     expect(index.reads[wikiSynthesisSourceRef(root)]!.readRef).toBe(index.reads[wikiSynthesisSourceRef(section)]!.readRef)
-    expect(encoded.sourceText.split(body)).toHaveLength(2)
     const delivered = synthesisSourcesFromRequest(request([root, section], reads))
     expect(delivered.map(row => row.evidenceId)).toEqual([root.evidenceId, section.evidenceId])
     for (const row of delivered) expect(row.text).toBe(body)
@@ -1439,7 +1460,6 @@ describe('Wiki synthesis complete registered read transport', () => {
     )
     expect(changed.sourceReferences).toBe(encoded.sourceReferences)
     expect(changed.sourceText).not.toBe(encoded.sourceText)
-    expect(changed.sourceText.indexOf(body)).toBeLessThan(changed.sourceText.indexOf('ZZZ changed'))
     expect(encodeWikiSynthesisSources([root], [{ ...read, representation: 'html' }]).sourceText).not.toBe(encodeWikiSynthesisSources([root], [read]).sourceText)
     const revised = { ...root, evidenceId: 'page:42:revision:8', sourceRevision: '8', readId: 'physical:42:8', unitId: 'read:physical:42:8' }
     const revisedRead = { ...read, evidenceId: revised.evidenceId, sourceRevision: '8', readId: revised.readId }
@@ -1462,7 +1482,6 @@ describe('Wiki synthesis complete registered read transport', () => {
     )
     const index = JSON.parse(encoded.sourceReferences) as WikiSynthesisReferenceIndex
     expect(index.reads[wikiSynthesisSourceRef(first)]!.readRef).not.toBe(index.reads[wikiSynthesisSourceRef(second)]!.readRef)
-    expect(encoded.sourceText.split(repeated)).toHaveLength(3)
     expect(Object.keys(index.reads)).toHaveLength(2)
     expect(encoded.sourceReferences).not.toContain('record')
   })
@@ -1480,12 +1499,13 @@ describe('Wiki synthesis complete registered read transport', () => {
     expect(() => encodeWikiSynthesisSources([root], [read, { ...read, representation: 'html' }])).toThrow()
     expect(() => encodeWikiSynthesisSources([root], [read, { ...read, title: 'Conflicting title' }])).toThrow()
     expect(() => encodeWikiSynthesisSources([root], [read, { ...read, readId: 'physical:other:7' }])).toThrow()
+    expect(() => encodeWikiSynthesisSources([root], [read, { ...read, authorText: '' }])).toThrow()
   })
 
   it('preserves truncated original data without making an incomplete read selectable', () => {
     const incomplete = { ...root, complete: false }
     const encoded = encodeWikiSynthesisSources([incomplete], [{ ...read, complete: false }])
-    expect(encoded.sourceText).toContain(body)
+    expect(synthesisReadsFromRequest(request([incomplete], [{ ...read, complete: false }]))[0]!.readText).toBe(body)
     expect(JSON.parse(encoded.sourceReferences)).toEqual({ reads: {} })
     expect(synthesisSourcesFromRequest(request([incomplete], [{ ...read, complete: false }]))).toEqual([])
     expect(

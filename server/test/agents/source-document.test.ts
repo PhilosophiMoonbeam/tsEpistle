@@ -2,6 +2,7 @@ import { describe, expect, it } from '../bun-test.mts'
 
 import { parseSourceDocument, type ParsedSourceDocument, type SourceSpan, type SourceUnit } from '../../agents/providers/source-document.ts'
 import { getLiteralSourceStatement, isLiteralSourceClaim } from '../../agents/providers/wiki-source-quotation.ts'
+import { admittedWikiBody } from '../../agents/providers/wiki-source-view.ts'
 import type { WikiVerificationSource } from '../../agents/providers/wiki-verification.ts'
 
 const parse = (source: string): ParsedSourceDocument => parseSourceDocument(source, { representation: 'markdown', truncated: false })
@@ -111,27 +112,28 @@ describe('source document explicit ownership', () => {
       }
     }
     expect(getLiteralSourceStatement(source)).toBe(text)
-    expect(isLiteralSourceClaim({ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement: text }, source)).toBe(true)
+    expect(isLiteralSourceClaim({ evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId, statement: text }, source)).toBe(
+      true
+    )
     expect(unit.kind).toBe('paragraph')
     expect(unit.complete).toBe(true)
     expect(unit.recordId).toBeNull()
     expect(document.records).toEqual([])
   })
 
-  it.each([
-    'Hours:18:30\n',
-    'Hours: 18:30\n',
-    '| Hours |\n| --- |\n| 18:30 |\n'
-  ])('retains authored Hours field ownership and its complete clock value: %s', text => {
-    const document = parse(text)
-    const record = document.records[0]!
-    expect(record.complete).toBe(true)
-    expect(record.fields.map(field => [field.label, field.value])).toEqual([['Hours', '18:30']])
-    const field = record.fields[0]!
-    const unit = document.units.find(entry => entry.id === field.unitIds[0])!
-    expect(unit.recordId).toBe(record.id)
-    expect(unit.complete).toBe(true)
-  })
+  it.each(['Hours:18:30\n', 'Hours: 18:30\n', '| Hours |\n| --- |\n| 18:30 |\n'])(
+    'retains authored Hours field ownership and its complete clock value: %s',
+    text => {
+      const document = parse(text)
+      const record = document.records[0]!
+      expect(record.complete).toBe(true)
+      expect(record.fields.map(field => [field.label, field.value])).toEqual([['Hours', '18:30']])
+      const field = record.fields[0]!
+      const unit = document.units.find(entry => entry.id === field.unitIds[0])!
+      expect(unit.recordId).toBe(record.id)
+      expect(unit.complete).toBe(true)
+    }
+  )
 
   it('adds complete list ownership without changing original item or later assertion identities', () => {
     const document = parse('- Ada\n- Bea\n\nOutside.\n')
@@ -361,6 +363,73 @@ describe('source document HTML and opaque literal boundaries', () => {
       ['Route', 'east']
     ])
     expect(document.units.map(unit => unit.normalizedText).join(' ')).not.toMatch(/Injected|Hidden|Fake|999|123|456|789/u)
+  })
+
+  it.each([
+    'display:none',
+    'color: red; DiSpLaY : NoNe ! IMPORTANT ; font-weight: bold',
+    'visibility:hidden',
+    ' VISIBILITY : COLLAPSE !important ',
+    'content-visibility:hidden',
+    'CONTENT-VISIBILITY : HIDDEN ! important; color: red',
+    'display:none !important;display:block',
+    'display:none;display:block',
+    'visibility:hidden !important;visibility:visible',
+    'visibility:collapse;visibility:visible',
+    'content-visibility:hidden !important;content-visibility:auto',
+    'content-visibility:hidden;content-visibility:visible'
+  ])('excludes inline and block hidden descendants from visible units and admitted body: %s', style => {
+    const inline = `Inline <span style="${style}">Secret inline <span>descendant</span> <a href="/secret">link</a>.</span> remains.\n\n`
+    const paragraph = `<p>Before <span style="${style}">Secret nested descendant.</span> <span style="color: blue; display: inline; visibility: visible">Visible styled neighbor.</span></p>`
+    const source =
+      inline +
+      `<div>${paragraph}<div style="${style}"><p>Secret block descendant.</p></div><p style="content-visibility: auto; color: green">After styled block.</p></div>`
+    const document = parse(source)
+    expect(document.source).toBe(source)
+    expect(document.requiresVisibilityProjection).toBe(true)
+    expect(member(document, 'Inline remains.').links).toEqual([])
+    const visible = member(document, 'Before Visible styled neighbor.')
+    expect(visible.complete).toBe(true)
+    expect(slices(document, visible.sourceSpans)).toEqual([paragraph])
+    expect(visible.sourceSpans).toEqual([{ start: source.indexOf(paragraph), end: source.indexOf(paragraph) + paragraph.length }])
+    expect(member(document, 'After styled block.').complete).toBe(true)
+    expect(document.units.map(unit => unit.visibleText).join('\n')).not.toContain('Secret')
+    expect(admittedWikiBody(document).replace(/\s+/gu, ' ').trim()).toBe('Inline remains. Before Visible styled neighbor. After styled block.')
+  })
+
+  it.each([
+    'display:none; visibility:hidden; content-visibility:hidden',
+    'display:none !important;display:block; visibility:hidden !important;visibility:visible'
+  ])('retains hidden-looking authored code bytes as inert data rather than applying their styles: %s', style => {
+    const literal = `<span style="${style}">Authored data.</span>`
+    const escaped = literal.replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+    const source = [
+      '# Actual',
+      '',
+      '```html',
+      literal,
+      '```',
+      '',
+      `Literal \`${literal}\` remains.`,
+      '',
+      `<pre><code>${escaped}</code></pre>`,
+      '',
+      `<p>HTML <code>${escaped}</code> remains.</p>`
+    ].join('\n')
+    const document = parse(source)
+    const code = document.units.filter(unit => unit.kind === 'code')
+    expect(code).toHaveLength(2)
+    expect(code.every(unit => unit.visibleText?.includes(literal) && unit.complete && unit.links.length === 0)).toBe(true)
+    expect(document.units.filter(unit => unit.kind === 'paragraph').map(unit => [unit.visibleText, unit.complete, unit.links])).toEqual([
+      [`Literal \`${literal}\` remains.`, true, []],
+      [`HTML \`${literal}\` remains.`, true, []]
+    ])
+    expect(document.sections.map(section => section.ancestry)).toEqual([['Actual']])
+    expect(document.source).toBe(source)
+    const body = admittedWikiBody(document)
+    expect(body).toContain(JSON.stringify(literal))
+    expect(body).toContain(`Literal \`${literal}\` remains.`)
+    expect(body).toContain(`HTML \`${literal}\` remains.`)
   })
 
   it('preserves code and inline literals without creating headings, disclosure owners or links', () => {

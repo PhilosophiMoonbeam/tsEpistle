@@ -153,7 +153,7 @@ describe('Wiki coverage input binding', () => {
     expect(() => encodeWikiCoverageInput({ ...input(), requestFacets: [' '] })).toThrow()
   })
 
-  it('keeps complete admitted bodies independent of arrival order, excludes raw-only data and invalidates changed visible evidence', () => {
+  it('retains original ownership structure alongside admitted facts and invalidates changed evidence', () => {
     const valid = input()
     const raw = '  <p>Qualified 🥣 e\u0301</p>\r\n<!-- hidden -->\r\n'
     const authorText = 'Qualified 🥣 e\u0301'
@@ -164,10 +164,9 @@ describe('Wiki coverage input binding', () => {
     const encoded = encodeWikiCoverageInput({ ...valid, reads })
     expect(encodeWikiCoverageInput({ ...valid, reads: [...reads].reverse() }).sourceText).toBe(encoded.sourceText)
     expect(JSON.parse(encoded.sourceText)).toEqual([
-      { readRef: 'r1', title: 'Approvals', source: 'ZZZ governing body.\r\n', complete: true },
-      { readRef: reads[0]!.readRef, title: 'Other', source: authorText, complete: true }
+      { readRef: 'r1', title: 'Approvals', original: 'ZZZ governing body.\r\n', scope: 'complete-read' },
+      { readRef: reads[0]!.readRef, title: 'Other', original: raw, admittedBody: authorText, scope: 'complete-read' }
     ])
-    expect(encoded.sourceText).not.toContain('hidden')
     const changedBody = encodeWikiCoverageInput({
       ...valid,
       reads: [{ ...reads[0]!, source: `${raw}changed`, authorText: `${authorText} changed` }, reads[1]!]
@@ -193,13 +192,25 @@ describe('Wiki coverage input binding', () => {
       {
         readRef: bounded.readRef,
         title: bounded.title,
-        source: bounded.authorText,
-        complete: false,
+        original: bounded.source,
+        scope: 'recent-excerpt',
         excerpt
       }
     ])
     expect(() => encodeWikiCoverageInput({ ...valid, reads: [{ ...bounded, complete: true }] })).toThrow()
     expect(() => encodeWikiCoverageInput({ ...valid, reads: [{ ...bounded, excerpt: undefined }] })).toThrow()
+  })
+
+  it('preserves an explicitly empty admitted body rather than restoring raw-only facts', () => {
+    const valid = input()
+    const read = { ...valid.reads[0]!, source: '<!-- Approval is automatic. -->', authorText: '' }
+    const encoded = encodeWikiCoverageInput({ ...valid, reads: [read], claims: [] })
+    expect(JSON.parse(encoded.sourceText)[0]).toMatchObject({
+      original: read.source,
+      admittedBody: '',
+      title: read.title,
+      scope: 'complete-read'
+    })
   })
 
   it('places complete untrusted reads before changing conversation, question, facets and claims with a stable optional-field system prompt', async () => {
