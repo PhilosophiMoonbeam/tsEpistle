@@ -1119,3 +1119,30 @@ Accepted evidence-limited findings settle as `partial`, not `blocked` or complet
 Normal length-limited EOF retains the same bounded phase, requested output cap and provider-reported reasoning-token diagnostics as exceptional response failures. The existing authoritative `run.partial` event supplies the matching assistant's typed `length` issue; no new log, ACL, event kind or accounting total is introduced. Missing historical counts remain unknown.
 
 Reasoning effort is an existing operator profile choice, not an extra retry strategy or a larger allowance. GPT-6.1 Sol leaves reasoning at the provider default when unset and cannot disable it. An explicit Low setting must be qualified for the intended Wiki work under the same output cap; it is not a universal model default or proof of an unrecorded historical failure cause.
+
+### Maintained tailnet smoke qualification
+
+The maintained Wiki service runs code `316657f349ccb269a5b614a80f9db000e81b7a07`, image `sha256:7a182157d8878a26d8ede6028d60bf099bff4614ae8f0c0378e6afe413f6fbf1`. Wiki-only replacement preserved 17 tracked run rows and event histories, five controlled page rows, all 32 then-existing provider versions, protected deployment configuration and exact cache/uploads ownership and bytes before startup. PostgreSQL's container and start time did not change.
+
+Real owner UI qualification used explicit Low Agent reasoning with the unchanged 8,192-output/128,000-context caps:
+
+| Scenario | Observed result |
+| --- | --- |
+| Unchanged stock Catch Up | Honest partial with nine verified cited contributions; identical answer and citations after reload, not falsely blocked. |
+| Original source quotations | Complete opening and own marker, with citations. |
+| Same-conversation follow-up | Complete original quotations and citations retained. |
+| Ordinary support | Complete source-scoped prose; own marker, not the linked page's marker or a documentary fallback. |
+| Literal code export | All three displayed bodies and real Code Copy results byte-exact; hostile syntax remained inert. Copied answer matched the existing saved draft exactly, so no duplicate save was replayed. |
+| Approved page edit | Exactly one reviewed marker changed on private unpublished page 163, revision 10 to 11; no write before approval and no other page source changed. |
+
+Two earlier reviewed saves created private unpublished drafts 166 and 167. Their Reader Copy outputs preserve all three original bodies, including tabs and final newlines; draft 166 was refreshed through one source-fenced render without an editorial revision. These controlled drafts remain for review and citation reproducibility through 2026-11-13. Live recent windows changed as fixtures were created: these are smoke proofs, not matched model-quality, cost or throughput comparisons. Incomplete coverage remains incomplete, and a Native-declined repair claim is not resurrected.
+
+The temporary testing allowance was restored and verified through the existing profile editor; Agent reasoning remains Low and utility reasoning, model, output/context caps and the current cost limit remain unchanged. Usage and credits were not reset:
+
+| Daily token accounting, 2026-11-07 | Tokens |
+| --- | ---: |
+| Restored limit | 1,000,000 |
+| Consumed | 1,028,245 |
+| Reserved | 0 |
+
+Further admission therefore waits for the daily reset unless the operator explicitly changes the limit. Compact private receipts are bounded to 12 files/8 MiB under `xuq-maya-evidence-20261107-xuh6515c`, expiring 2026-11-13; no raw private source or prompt is retained there. One immediate previous-code rollback image is retained through the same date. Obsolete owned candidate tags were retired only after verifying that no container referenced them; unowned images and services were preserved.
