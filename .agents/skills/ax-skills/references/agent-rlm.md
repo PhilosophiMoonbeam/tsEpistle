@@ -1,6 +1,6 @@
 # AxAgent RLM Runtime, Context Policy, and Semantic Queries
 
-Source API snapshot: `@ax-llm/ax` 25.4.8. Use for RLM code execution, `AxJSRuntime`, `contextFields`, `contextPolicy`, `liveRuntimeState`, `promptLevel`, stage prompts, `executorModelPolicy`, `maxRuntimeChars`, `agent.test(...)`, `llmQuery(...)`, `recursionOptions`, and long-running runtime behavior. Not ordinary setup: see [agent setup](references/agent.md) for child agents, tool namespaces, clarification, and `bubbleErrors`; [observability](references/agent-observability.md) for callbacks/logs; [memory and skills](references/agent-memory-skills.md) for persistent orientation, retrieval, and skill loading.
+Source API snapshot: `@ax-llm/ax` 25.4.9. Use for RLM code execution, `AxJSRuntime`, `contextFields`, `contextPolicy`, `liveRuntimeState`, `promptLevel`, stage prompts, `executorModelPolicy`, `maxRuntimeChars`, `agent.test(...)`, `llmQuery(...)`, `recursionOptions`, and long-running runtime behavior. Not ordinary setup: see [agent setup](references/agent.md) for child agents, tool namespaces, clarification, and `bubbleErrors`; [observability](references/agent-observability.md) for callbacks/logs; [memory and skills](references/agent-memory-skills.md) for persistent orientation, retrieval, and skill loading.
 
 ## Use These Defaults
 
@@ -97,7 +97,7 @@ Important:
 
 ## Prompt Level and Model Selection
 
-`contextPolicy.preset` controls raw-history replay; `promptLevel` controls teaching detail; `executorModelPolicy` upgrades only the executor. Leaner replay usually requires a stronger model; `full` gives smaller models more raw evidence.
+`contextPolicy.preset` controls raw-history replay; `promptLevel` is the declared teaching-detail setting, subject to the pinned-template limitation below; `executorModelPolicy` upgrades only the executor. Leaner replay usually requires a stronger model; `full` gives smaller models more raw evidence.
 
 | Task/model needs | Choose |
 | --- | --- |
@@ -106,7 +106,9 @@ Important:
 | Earlier compression of older successful work while live runtime state remains visible | `adaptive + balanced` |
 | Very long, character-constrained work that can continue from current runtime state plus compact summaries; strong model | `lean` |
 
-Use `promptLevel: 'default'` normally; `'detailed'` adds anti-pattern examples and tighter teaching scaffolding.
+Use `promptLevel: 'default'` normally. **25.4.9 packaged-template limitation:** the coordinator forwards `promptLevel` to both actors and both definition builders pass it to their template renderer, but neither shipped `rlm/distiller.md` nor `rlm/executor.md` template reads it. Consequently, `'detailed'` does not add anti-pattern examples or extra scaffolding in those bundled templates. This is not an executor-only option, nor a guarantee about custom templates or other releases. See the version-pinned [packaged source map](https://unpkg.com/@ax-llm/ax@25.4.9/index.js.map), specifically `agent/agentInternal/coordinator.ts:102–132` (`SHARED_KNOB_KEYS`, including `promptLevel` at line 108), `agent/rlm.ts:658,866` (both definition builders), and `agent/templates.generated.ts:8–9` (both actor templates).
+
+The [executor comparison](examples/32-executor-context.ts) routes through `directResponse: 'off'`, a distiller `final(...)` handoff, actual executor requests, and the final responder; it also checks retained runtime state and the same invoice result for both settings. Inspect the selected stage rather than assuming the first request belongs to the executor. For weaker/cheaper models, retain `full` replay when exact prior evidence is needed; do not rely on this pinned version's `'detailed'` setting to supply additional teaching, or on `'default'` to reduce context usage. Use replay policy—not `promptLevel`—when planning context budgets in 25.4.9.
 
 For a cheap default actor, prefer `executorModelPolicy` over upgrading the whole agent when exploration—not synthesis—is the bottleneck: upgrade only the executor after repeated error turns, discovery in specific namespaces, growing context, or thrashing, while keeping the responder cheap.
 
@@ -309,6 +311,8 @@ Implement `AxCodeRuntime` when the actor should write a language other than Java
 - Use `getPrimitiveOverrides()` to describe language-native calls for built-in primitives, and `formatCallable()` to describe language-native calls for tools and child agents.
 - Implement `inspectGlobals()` on sessions when `contextPolicy` should show live runtime state for non-JavaScript runtimes; otherwise AxAgent will not run JavaScript fallback inspection snippets.
 - If a session returns errors in the code as readable text instead of rejecting, also implement `executeWithStatus()` and return `{ value, isError: true }` for them. AxAgent then tags those turns as errors for failure learning and context pruning, while the actor reads the same text. `AxJSRuntime` does this for `ReferenceError`, `TypeError`, `SyntaxError`, and the other built-in error types.
+
+The [custom runtime example](examples/36-custom-runtime.ts) implements a real, constrained JSON Plan interpreter—not JavaScript under a different language label. Actual agent turns call a host invoice tool, retain values, produce typed output, restore isolated sessions and close them. The interpreter's operation allowlist is an application protocol, not a claim to run arbitrary Python or provide a general security sandbox.
 
 ## RLM Test Harness
 

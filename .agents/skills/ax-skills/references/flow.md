@@ -1,13 +1,13 @@
 # AxFlow workflows, DAGs, and execution contracts
 
-Use `flow()` and `AxFlow` for workflows, DAG orchestration, multi-node AI pipelines, conditional routing, parallel execution, and array/map-reduce processing. This reference preserves the source API snapshot **25.4.8**. Prefer short, copyable patterns; provide tutorial prose only when requested. Provider setup belongs in [AI services](references/ai.md); generic generation in [Generators](references/gen.md); event ingestion, persistence, and safe routing in [Event runtime](references/event-runtime.md).
+Use `flow()` and `AxFlow` for workflows, DAG orchestration, multi-node AI pipelines, conditional routing, parallel execution, and array/map-reduce processing. This reference preserves the source API snapshot **25.4.9**. Prefer short, copyable patterns; provide tutorial prose only when requested. Provider setup belongs in [AI services](references/ai.md); generic generation in [Generators](references/gen.md); event ingestion, persistence, and safe routing in [Event runtime](references/event-runtime.md).
 
 ## Builder rules and boundaries
 
 - Import `import { ai, flow, f } from '@ax-llm/ax';`; use the `flow()` factory, never `new AxFlow(...)` for new code.
 - Define each `.node()` before its `.execute()`; reversed order throws. `.execute()` maps current state to node inputs; `.map()` shapes state without AI calls; `.returns()` maps final state to the output contract.
 - Use `flow<InputType, OutputType>()` and explicit input/output generics; do not infer broad signatures from arbitrary transform source. Finish execution steps with `.returns()` or `.r()` to lock output type. Removed terminal shapers `.mapOutput()` and `.mo()` must not be used.
-- Keep state flat; do not create deeply nested objects in `.map()`. Use descriptive node names (`documentSummarizer`, not `proc1`) and field names (`userInput`, `responseText`, not generic `text`, `result`, `data`, `input`, `output`). Historical examples below retain their original names.
+- Keep state flat; do not create deeply nested objects in `.map()`. Use descriptive node names (`documentSummarizer`, not `proc1`) and field names (`userInput`, `responseText`, not generic `text`, `result`, `data`, `input`, `output`).
 - Independent executes and derives safely auto-parallelize by default when metadata reads/writes are known and non-conflicting. Do not add unnecessary execute dependencies. Conditions must change; feedback needs a maximum-iteration guard. Access untaken branch results with optional chaining after `.merge()`.
 - Aliases: `.n()` = `.node()`, `.nx()` = `.nodeExtended()`, `.m()` = `.map()`, `.r()` = `.returns()`.
 
@@ -49,10 +49,10 @@ Executed nodes extend state under `${nodeName}Result`; access fields as `state.$
 
 ```typescript
 // Initial state: { userInput: 'Hello' }
-wf.execute('processor', (state) => ({ input: state.userInput }));
-// State: { userInput: 'Hello', processorResult: { output: '...' } }
+wf.execute('processor', (state) => ({ sourceText: state.userInput }));
+// State: { userInput: 'Hello', processorResult: { processedText: '...' } }
 
-wf.execute('analyzer', (state) => ({ text: state.processorResult.output }));
+wf.execute('analyzer', (state) => ({ sourceText: state.processorResult.processedText }));
 // State: { ..., analyzerResult: { sentiment: '...', confidence: 0.8 } }
 ```
 
@@ -64,16 +64,16 @@ requires an explicit rubric through `typesafe(...).systemOne(...)`. See [Typesaf
 
 ```typescript
 // String signature (creates AxGen automatically)
-wf.node('processor', 'input:string -> output:string');
+wf.node('processor', 'sourceText:string -> processedText:string');
 
 // Multiple outputs
-wf.node('analyzer', 'text:string -> sentiment:string, confidence:number');
+wf.node('analyzer', 'sourceText:string -> sentiment:string, confidence:number');
 
 // Array outputs
 wf.node('extractor', 'documentText:string -> entities:string[]');
 
 // Short alias
-wf.n('processorAlias', 'input:string -> output:string');
+wf.n('processorAlias', 'sourceText:string -> processedText:string');
 ```
 
 ### Rich Node Contracts (String Grammar)
@@ -108,12 +108,12 @@ wf.nx('reasoner', 'question:string -> answer:string', {
 });
 
 // Add confidence scoring
-wf.nx('analyzer', 'input:string -> result:string', {
+wf.nx('analyzer', 'sourceText:string -> analysisText:string', {
   appendOutputs: [{ name: 'confidence', type: f.number('Confidence 0-1') }],
 });
 
 // Add optional context input
-wf.nx('processor', 'query:string -> response:string', {
+wf.nx('processor', 'query:string -> responseText:string', {
   appendInputs: [{ name: 'context', type: f.string('Extra context').optional() }],
 });
 ```
@@ -126,7 +126,7 @@ Extension options: `prependInputs`, `appendInputs`, `prependOutputs`, `appendOut
 wf.execute('summarizer', (state) => ({ documentText: state.document }));
 
 // With AI override (use a different model for this node)
-wf.execute('processor', (state) => ({ input: state.data }), { ai: alternativeAI });
+wf.execute('processor', (state) => ({ sourceText: state.data }), { ai: alternativeAI });
 ```
 
 ## Map (State Transformation)
@@ -148,6 +148,8 @@ wf.map([
 ], { parallel: true });
 ```
 
+The [`16-flow/async-parallel-map`](examples/16-flow.ts) case exercises async transforms and explicit parallel map composition; this is separate from automatic execute/derive scheduling below.
+
 ## Returns (Final Output)
 
 ```typescript
@@ -162,12 +164,12 @@ const result = await wf.forward(llm, { input: 'test' });
 ## Sequential Processing
 
 ```typescript
-const wf = flow<{ input: string }, { finalResult: string }>()
-  .node('step1', 'input:string -> intermediate:string')
-  .node('step2', 'intermediate:string -> output:string')
-  .execute('step1', (state) => ({ input: state.input }))
-  .execute('step2', (state) => ({ intermediate: state.step1Result.intermediate }))
-  .returns((state) => ({ finalResult: state.step2Result.output }));
+const wf = flow<{ sourceText: string }, { finalResult: string }>()
+  .node('step1', 'sourceText:string -> intermediateText:string')
+  .node('step2', 'intermediateText:string -> processedText:string')
+  .execute('step1', (state) => ({ sourceText: state.sourceText }))
+  .execute('step2', (state) => ({ intermediateText: state.step1Result.intermediateText }))
+  .returns((state) => ({ finalResult: state.step2Result.processedText }));
 ```
 
 ## Auto-Parallel Execution
@@ -175,14 +177,14 @@ const wf = flow<{ input: string }, { finalResult: string }>()
 `autoParallel: true` is the default. Independent execute steps with known, non-conflicting metadata run in parallel:
 
 ```typescript
-const wf = flow<{ text: string }, { combined: string }>()
-  .node('sentimentAnalyzer', 'text:string -> sentiment:string')
-  .node('topicExtractor', 'text:string -> topics:string[]')
-  .node('entityRecognizer', 'text:string -> entities:string[]')
-  // These three run in parallel (all depend only on state.text)
-  .execute('sentimentAnalyzer', (state) => ({ text: state.text }))
-  .execute('topicExtractor', (state) => ({ text: state.text }))
-  .execute('entityRecognizer', (state) => ({ text: state.text }))
+const wf = flow<{ sourceText: string }, { combined: string }>()
+  .node('sentimentAnalyzer', 'sourceText:string -> sentiment:string')
+  .node('topicExtractor', 'sourceText:string -> topics:string[]')
+  .node('entityRecognizer', 'sourceText:string -> entities:string[]')
+  // These three run in parallel (all depend only on state.sourceText)
+  .execute('sentimentAnalyzer', (state) => ({ sourceText: state.sourceText }))
+  .execute('topicExtractor', (state) => ({ sourceText: state.sourceText }))
+  .execute('entityRecognizer', (state) => ({ sourceText: state.sourceText }))
   // This waits for all three
   .returns((state) => ({
     combined: JSON.stringify({
@@ -215,9 +217,9 @@ await wf.forward(llm, input, { autoParallel: false });
 ## Conditional Branching
 
 ```typescript
-const wf = flow<{ query: string; expertMode: boolean }, { response: string }>()
-  .node('simple', 'query:string -> response:string')
-  .node('expert', 'query:string -> response:string')
+const wf = flow<{ query: string; expertMode: boolean }, { responseText: string }>()
+  .node('simple', 'query:string -> responseText:string')
+  .node('expert', 'query:string -> responseText:string')
   .branch((state) => state.expertMode)
     .when(true)
       .execute('expert', (state) => ({ query: state.query }))
@@ -225,7 +227,7 @@ const wf = flow<{ query: string; expertMode: boolean }, { response: string }>()
       .execute('simple', (state) => ({ query: state.query }))
   .merge()
   .returns((state) => ({
-    response: state.expertResult?.response ?? state.simpleResult?.response,
+    responseText: state.expertResult?.responseText ?? state.simpleResult?.responseText,
   }));
 ```
 
@@ -260,14 +262,14 @@ Rules:
 ## Feedback Loops (label/feedback)
 
 ```typescript
-const wf = flow<{ prompt: string }, { result: string }>()
-  .node('gen', 'prompt:string -> result:string, quality:number')
+const wf = flow<{ prompt: string }, { generatedText: string }>()
+  .node('gen', 'prompt:string -> generatedText:string, quality:number')
   .map((state) => ({ ...state, tries: 0 }))
   .label('retry')
     .map((state) => ({ ...state, tries: state.tries + 1 }))
     .execute('gen', (state) => ({ prompt: state.prompt }))
   .feedback((state) => state.genResult.quality < 0.9 && state.tries < 3, 'retry')
-  .returns((state) => ({ result: state.genResult.result }));
+  .returns((state) => ({ generatedText: state.genResult.generatedText }));
 ```
 
 Rules:
@@ -279,9 +281,9 @@ Rules:
 ```typescript
 wf
   .parallel([
-    (sub) => sub.execute('analyzer1', (state) => ({ text: state.input })),
-    (sub) => sub.execute('analyzer2', (state) => ({ text: state.input })),
-    (sub) => sub.execute('analyzer3', (state) => ({ text: state.input })),
+    (sub) => sub.execute('analyzer1', (state) => ({ sourceText: state.input })),
+    (sub) => sub.execute('analyzer2', (state) => ({ sourceText: state.input })),
+    (sub) => sub.execute('analyzer3', (state) => ({ sourceText: state.input })),
   ])
   .merge('combinedResults', (r1, r2, r3) => ({
     a1: r1.analyzer1Result.analysis,
@@ -309,12 +311,12 @@ import { ai, flow, AxAIOpenAIModel } from '@ax-llm/ax';
 const fast = ai({ name: 'openai', apiKey: '...', config: { model: AxAIOpenAIModel.GPT6Luna } });
 const smart = ai({ name: 'anthropic', apiKey: '...' });
 
-const wf = flow<{ text: string }, { out: string }>()
-  .node('draft', 'text:string -> out:string')
-  .node('refine', 'text:string -> out:string')
-  .execute('draft', (state) => ({ text: state.text }), { ai: fast })
-  .execute('refine', (state) => ({ text: state.draftResult.out }), { ai: smart })
-  .returns((state) => ({ out: state.refineResult.out }));
+const wf = flow<{ sourceText: string }, { refinedText: string }>()
+  .node('draft', 'sourceText:string -> draftText:string')
+  .node('refine', 'draftText:string -> refinedText:string')
+  .execute('draft', (state) => ({ sourceText: state.sourceText }), { ai: fast })
+  .execute('refine', (state) => ({ draftText: state.draftResult.draftText }), { ai: smart })
+  .returns((state) => ({ refinedText: state.refineResult.refinedText }));
 ```
 
 ## Description and toFunction
@@ -373,12 +375,14 @@ Rules:
 - Limiter failures propagate; tracing and metric failures are fail-open. External meter output is separate from balancer `getMetrics()` state.
 - `axGlobals.abortSignal` is merged with flow-level abort signals.
 
+For a real tracer provider, exporter and shutdown lifecycle, select [`16-flow/opentelemetry-lifecycle`](examples/16-flow.ts). It uses `@opentelemetry/api` 1.9.0 and `@opentelemetry/sdk-trace-base` 2.0.1; that SDK release is npm-deprecated but tested compatible with this pinned collection.
+
 ## Program IDs and Demos
 
 ```typescript
-const wf = flow<{ input: string }>()
-  .node('summarizer', 'text:string -> summary:string')
-  .node('classifier', 'text:string -> category:string');
+const wf = flow<{ sourceText: string }>()
+  .node('summarizer', 'sourceText:string -> summary:string')
+  .node('classifier', 'sourceText:string -> category:string');
 
 // Discover program IDs
 console.log(wf.namedPrograms());
@@ -686,6 +690,8 @@ expiry.
 ## Automatic sessions (TypeScript)
 
 Pass `{ control: runControl() }` to `forward()`. Each node receives its own `root/<nodeName>` scope and conversation. Target that path to restrict an update; root updates also apply to future nodes. Completed nodes are not rerun and controller-attached runs bypass result caching.
+
+The standalone [automatic-session control case](examples/16-flow.ts) verifies node-targeted versus root updates, separate conversations, completed-node preservation, cache bypass and session cleanup. Its provider-session events are explicit fixtures, not live transport or model-compliance qualification.
 
 
 Runnable TypeScript examples under `src/examples/typescript/flows/`:

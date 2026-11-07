@@ -1,0 +1,45 @@
+{
+  "name": "ax-skills-examples",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "list": "node --import tsx run.ts --list",
+    "offline": "node --import tsx run.ts",
+    "live": "node --import tsx run.ts --live",
+    "build:browser": "esbuild browser/chrome-ai.ts --bundle --platform=browser --conditions=browser --format=esm --target=chrome138 --external:node:* --outfile=browser/dist/chrome-ai.js"
+  },
+  "dependencies": {
+    "@ax-llm/ax": "25.4.9",
+    "@ax-llm/ax-ai-sdk-provider": "25.4.9",
+    "@ax-llm/ax-tools": "25.4.9",
+    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/sdk-trace-base": "2.0.1",
+    "ai": "7.0.2",
+    "zod": "4.1.11"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.6",
+    "esbuild": "0.25.12",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  },
+  "files": [
+    "[0-9][0-9]-*.ts",
+    "support.ts",
+    "run.ts",
+    "tsconfig.json",
+    "browser/"
+  ],
+  "overrides": {
+    "@ai-sdk/provider": "4.0.0",
+    "@ai-sdk/provider-utils": "5.0.0"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true
+  }
+}

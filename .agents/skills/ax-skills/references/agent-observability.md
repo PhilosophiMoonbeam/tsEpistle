@@ -1,6 +1,6 @@
 # AxAgent Observability
 
-Use for AxAgent runtime visibility, progress, callbacks, telemetry, centralized or multi-tenant usage accounting, chat logs, and traces in `@ax-llm/ax`. Source API snapshot: 25.4.8. For setup see [agent authoring](references/agent.md); for runtime policy see [RLM](references/agent-rlm.md); for memories and dynamic skills see [memory and skills](references/agent-memory-skills.md). This is not general application logging.
+Use for AxAgent runtime visibility, progress, callbacks, telemetry, centralized or multi-tenant usage accounting, chat logs, and traces in `@ax-llm/ax`. Source API snapshot: 25.4.9. For setup see [agent authoring](references/agent.md); for runtime policy see [RLM](references/agent-rlm.md); for memories and dynamic skills see [memory and skills](references/agent-memory-skills.md). This is not general application logging.
 
 ## Choose the smallest hook
 
@@ -69,7 +69,7 @@ await supportAgent.forward(
 - Put stable application/environment attribution in service-level `usageContext`; tenant, user, request, run, and feature attribution belongs in per-call/per-forward context. Per-call context overrides service defaults; `attributes` shallow-merge.
 - Ax does not await the best-effort observer and ignores its failures. Enqueue synchronously; persist/aggregate out of band. Never perform database or network work inline.
 - Registration is process-wide; reassignment replaces the observer. Set `axGlobals.onUsage = undefined` during teardown/shutdown when appropriate.
-- Multi-process/serverless accounting requires a shared durable pipeline, not an in-memory application-wide total.
+- Multi-process/serverless accounting requires a shared durable pipeline, not an in-memory application-wide total. The best-effort observer is not itself a durable ledger or provider billing reconciliation; missing events do not prove zero provider cost.
 - Keep identifiers opaque and attributes low-cardinality; exclude prompts, responses, secrets, and sensitive payloads.
 - Token events do not estimate currency cost; apply a versioned provider/model pricing table downstream.
 
@@ -201,11 +201,15 @@ onFunctionCall?: (call: {
 
 ## Chat logs, usage, and traces
 
-AxAgent exposes actor and responder subprograms. `getChatLog()`, `getUsage()`, and trace export refresh the agent snapshot from distiller, executor, and responder before returning, even after `forward()` throws. Successful calls before actor limits, provider errors, cancellation, or responder errors remain observable and counted.
+AxAgent exposes actor and responder subprograms, but its reporting methods have different scopes. Usage aggregates, chat-log snapshots, and program traces are not interchangeable request ledgers. After a successful or interrupted run, correlate available records by provider request/response IDs rather than assuming every completed request appears in every instance view.
 
 ### `getChatLog()`
 
-Returns full normalized history after any `.forward()`, in the same flat `AxChatLogEntry[]` shape as AxGen/AxFlow. Each entry is an `ai.chat()` round-trip; actors accumulate one per turn, responder typically one. Optional `name` distinguishes `distiller`, `executor`, `responder`. Entries contain the full model prompt and response.
+In pinned SDK 25.4.9, this returns a flat `AxChatLogEntry[]` instance view, not a guaranteed full history of all completed provider requests. The coordinator returns `pipelineFlow.getChatLog()` immediately when that snapshot is nonempty; only an empty flow log triggers reconstruction from distiller, executor, and responder program logs. `getTraces()` similarly prefers nonempty flow traces over stage-program fallback. Source: [`AxAgent` coordinator in the published 25.4.9 source map](https://unpkg.com/@ax-llm/ax@25.4.9/index.js.map), embedded `../agent/agentInternal/coordinator.ts`, `getChatLog()` lines 693–715 and `getTraces()` lines 606–615.
+
+Each available entry represents a normalized model round trip and can contain sensitive prompts and responses. Optional `name` identifies its producing program; `stage`, when present, distinguishes `ctx` from `task`. Correlate `remoteRequestId` and `remoteId` with actual completed provider requests, then explicitly report requests missing from this view. A normal run can omit completed requests, including distiller requests; do not infer all-stage coverage from a nonempty log or require a fixed entry count. There is no public `getStagedChatLog()` in this SDK.
+
+The [observability example](examples/15-observability.ts), `accounting-and-runtime-events`, checks actual request ownership for global usage events, compares staged token totals, and exports visible versus omitted log request IDs without exporting log payloads. This fixture demonstrates correlation, not a durable accounting guarantee. `excludeContentFromTrace` does not redact chat logs: the example verifies that a real private marker reaches the provider prompt but is absent from normalized usage events, and checks the marker in the distiller log only when that request is visible.
 
 ```typescript
 const log = myAgent.getChatLog();
@@ -226,6 +230,8 @@ type AxChatLogEntry = {
   name?: string; // distiller, executor, responder
   model: string;
   messages: AxChatLogMessage[];
+  remoteRequestId?: string;
+  remoteId?: string;
   modelUsage?: AxProgramUsage;
   stage?: 'ctx' | 'task';
 };

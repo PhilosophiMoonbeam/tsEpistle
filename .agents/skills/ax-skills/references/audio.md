@@ -1,6 +1,6 @@
 # Audio inputs, speech artifacts, and realtime turns
 
-Use for batch speech-to-text (`ai.transcribe()`), batch text-to-speech (`ai.speak()`), synthesized `speech:audio` signature outputs, agent audio handling, and conversational/realtime `.chat()` audio. Choose the smallest matching surface; use forward-time `speech` for structured artifacts and `modelConfig.audio` for chat turns. General provider setup/routing belongs in [AI configuration](references/ai.md), not here. Source API snapshot: 25.4.8.
+Use for batch speech-to-text (`ai.transcribe()`), batch text-to-speech (`ai.speak()`), synthesized `speech:audio` signature outputs, agent audio handling, and conversational/realtime `.chat()` audio. Choose the smallest matching surface; use forward-time `speech` for structured artifacts and `modelConfig.audio` for chat turns. General provider setup/routing belongs in [AI configuration](references/ai.md), not here. Source API snapshot: 25.4.9.
 
 ## Audio values and execution boundaries
 
@@ -143,7 +143,7 @@ const res = await llm.chat({
   modelConfig: {
     audio: { output: { enabled: true, voice: 'alloy', format: 'wav' } },
   },
-});
+}, { stream: false });
 
 if (!('results' in res)) throw new Error('Expected a non-streaming chat response');
 console.log(res.results[0]?.content);
@@ -222,7 +222,7 @@ const res = await openai.chat({
       ],
     },
   ],
-});
+}, { stream: false });
 
 if (!('results' in res)) throw new Error('Expected a non-streaming chat response');
 console.log(res.results[0]?.content);
@@ -315,7 +315,7 @@ const res = await gemini.chat({
       ],
     },
   ],
-});
+}, { stream: false });
 
 if (!('results' in res)) throw new Error('Expected a non-streaming chat response');
 console.log(res.results[0]?.content);
@@ -354,7 +354,7 @@ const res = await grok.chat(
   {
     chatPrompt: [{ role: 'user', content: 'Say hello out loud.' }],
   },
-  { webSocket: WebSocket }
+  { stream: false, webSocket: WebSocket }
 );
 
 if (!('results' in res)) throw new Error('Expected a non-streaming chat response');

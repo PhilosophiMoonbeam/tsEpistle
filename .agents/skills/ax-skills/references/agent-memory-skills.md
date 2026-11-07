@@ -1,6 +1,6 @@
 # AxAgent Context Maps, Memory Retrieval, and Dynamic Skills
 
-Source API snapshot: `@ax-llm/ax` 25.4.8. Use for `contextMap` / `AxAgentContextMap`, memory catalogs/search/recall, `inputs.memories`, memory carryover and preloading, skill catalogs/search/discovery/preloading, loaded/used IDs and observers, and `relevanceRanking`. For ordinary setup see [agent setup](references/agent.md); for execution and replay policy see [RLM runtime](references/agent-rlm.md); for callbacks/telemetry see [observability](references/agent-observability.md).
+Source API snapshot: `@ax-llm/ax` 25.4.9. Use for `contextMap` / `AxAgentContextMap`, memory catalogs/search/recall, `inputs.memories`, memory carryover and preloading, skill catalogs/search/discovery/preloading, loaded/used IDs and observers, and `relevanceRanking`. For ordinary setup see [agent setup](references/agent.md); for execution and replay policy see [RLM runtime](references/agent-rlm.md); for callbacks/telemetry see [observability](references/agent-observability.md).
 
 `contextMap` persists prompt-resident corpus orientation across successful runs; `contextPolicy` compresses within-run actor replay without deleting runtime state; memories are retrieved task context whose loaded collection resets each run. Loaded skills are system-prompt guides retained on the agent across runs. None is a substitute for the others.
 
@@ -8,7 +8,7 @@ Source API snapshot: `@ax-llm/ax` 25.4.8. Use for `contextMap` / `AxAgentContext
 
 - Use `skillsCatalog` / `memoriesCatalog` for plain arrays, not host callbacks that merely scan them; built-in deterministic lexical search requires no host search callback. Use `onSkillsSearch` / `onMemoriesSearch` for vector DB, BM25, KV, or other external retrieval. Host callbacks take precedence over catalog search.
 - `recall(...)` is available to distiller and executor with a callback or non-empty memory catalog. `discover({ skills })` is advertised to the executor with a callback or non-empty skill catalog; the Skills Search section records the source's additional distiller behavior. Do not call either API from the responder stage.
-- Both return `void`; do not assign their results. Loaded content appears next turn. Batch all searches of each kind into one call per turn: never loop calls or wrap them in `Promise.all(...)`.
+- Both return `void`; do not assign their results. Loaded content appears in the next actor prompt; JavaScript worker memory visibility has a 25.4.9 qualification below. Batch all searches of each kind into one call per turn: never loop calls or wrap them in `Promise.all(...)`.
 - Child agents inherit neither search callback; configure each agent explicitly. Use `recall(...)`, not shared fields, to deliver search results.
 - `onLoadedMemories` / `onLoadedSkills` report retrieval, not evidence of actor reliance. `onUsedMemories` / `onUsedSkills` track the actor's declared reliance, not independent proof of use.
 
@@ -65,10 +65,21 @@ Use `onMemoriesSearch` when the agent needs to pull task-relevant context such a
 
 When `onMemoriesSearch` is set, the distiller and executor stages gain:
 
-1. An `inputs.memories` field. In JS this is an array of `{ id, content }` entries the actor reads directly. In the prompt, the same entries render as markdown blocks with `ID: \`...\`` lines, matching the Loaded Skills ID style. Each `content` is opaque markdown; frontmatter is not parsed.
-2. A `recall(searches: string[]): void` global the actor `await`s to load more entries. Recalled entries are appended to `inputs.memories` and visible from the next turn onward. `recall()` returns nothing.
+1. An `inputs.memories` field. In JS this is an array of `{ id, content }` entries initialized when the stage starts. The host's loaded-memory snapshot renders in subsequent prompts as markdown blocks with `ID: \`...\`` lines, matching the Loaded Skills ID style. Each `content` is opaque markdown; frontmatter is not parsed.
+2. A `recall(searches: string[]): void` global the actor `await`s to load more entries. Recalled entries update the host snapshot and the next actor prompt. `recall()` returns nothing; do not assume that it also refreshes an existing JavaScript worker's `inputs.memories` on the next turn.
 
 The responder stage does not receive memories.
+
+### 25.4.9 JavaScript worker visibility
+
+In the shipped 25.4.9 implementation, `noteLoadedMemories` updates host-owned inputs, while `runActorTurn` calls `syncRuntimeInputsToSession` only when an `inputUpdateCallback` is configured. Without that synchronization, a same-stage worker can still hold its pre-recall memory array even though `onLoadedMemories` fired and the next model prompt includes the loaded content. Loaded-memory analytics and prompt visibility are therefore not proof that actor JavaScript can read the new entries.
+
+Distiller-to-executor handoff merges the host snapshot into the executor's worker inputs. Recall in the distiller, hand off without reading its stale worker array, then consume `inputs.memories` in the executor. Alternatively, preload application-owned memories at forward time. Do not add a dummy update callback merely to hide this version-bound limitation.
+
+The finite [`catalog-recall-discover` control](examples/14-memory-skills.ts) separately asserts host-loaded/prompt visibility, the distiller worker's pre-handoff snapshot, and the executor worker's post-handoff memory read before creating a real proposal. It does not simulate memory retrieval or substitute hardcoded memory content for that read.
+
+Exact release source: [`@ax-llm/ax@25.4.9/index.js.map`](https://unpkg.com/@ax-llm/ax@25.4.9/index.js.map), embedded `../agent/agentInternal/runtimeExecutionNotes.ts` (`noteLoadedMemories`), `actorLoopTurn.ts` (`runActorTurn`), `runtimeExecutionSession.ts` (`syncRuntimeInputsToSession`), and `pipelineForward.ts` (`buildExecutorHandoffInputs`).
+
 
 ### Enabling
 
@@ -82,8 +93,8 @@ const onMemoriesSearch: AxAgentMemoriesSearchFn = async (
 ) => {
   // `searches` is the full array passed to recall(...). Batch your
   // store lookup in one round-trip.
-  // `alreadyLoaded` is the current inputs.memories snapshot. Filter
-  // against it to skip duplicates.
+  // `alreadyLoaded` is the host's current loaded-memory snapshot, which may
+  // be newer than a same-stage JS worker's inputs.memories. Filter it
   const skip = new Set(alreadyLoaded.map((m) => m.id));
   const fresh = await myVectorDB.searchBatch(searches, { topK: 3 });
   return fresh.filter((m) => !skip.has(m.id));
@@ -106,7 +117,7 @@ type AxAgentMemoryResult = {
 
 ### Static catalog (no callback)
 
-If the memory set fits in a plain array, skip the callback entirely: pass `memoriesCatalog` and Ax backs `recall(...)` with a built-in deterministic local search (idf-weighted token overlap over `id` + content; not regex, not embeddings). The `alreadyLoaded` contract is preserved — entries already on `inputs.memories` are excluded before ranking.
+If the memory set fits in a plain array, skip the callback entirely: pass `memoriesCatalog` and Ax backs `recall(...)` with a built-in deterministic local search (idf-weighted token overlap over `id` + content; not regex, not embeddings). The `alreadyLoaded` contract is preserved — entries already in the host's loaded-memory snapshot are excluded before ranking.
 
 ```typescript
 const myAgent = agent('task:string -> answer:string', {
@@ -138,18 +149,22 @@ await myAgent.forward(ai, {
 ### Actor usage
 
 ```javascript
-// Turn 1: kick off one batched lookup.
+// Distiller turn: kick off one batched lookup.
 await recall(['user preferences', 'project constraints']);
+// Later distiller turn: hand off; do not assume its worker array was refreshed.
+await final('Apply the recalled preferences and constraints in the executor', {});
+```
 
-// Turn 2+: matched entries are now visible on inputs.memories.
+```javascript
+// Executor, after phase handoff: the loaded snapshot is now worker-resident.
 const prefs = inputs.memories.find((m) => m.id === 'user-prefs-v2');
 ```
 
 Rules:
 
-- Read `inputs.memories` on the next turn to see what landed.
+- The next actor prompt shows recalled entries. In 25.4.9, read new worker-resident entries after distiller-to-executor handoff, not by assuming same-stage JavaScript inputs refresh automatically.
 - `recall()` invokes `onMemoriesSearch` with `(searches, alreadyLoaded)` and returns `void`.
-- Results land on `inputs.memories` for subsequent turns and render in the prompt as:
+- Results update the host's loaded-memory snapshot and render in the next actor prompt as:
 
 ```markdown
 ### Memory
@@ -372,7 +387,7 @@ used; // [{ id, reason, stage }]
 
 Rules:
 
-- The actor can only report memory IDs already present in `inputs.memories`.
+- The actor can only report memory IDs already in the host's loaded-memory snapshot. In 25.4.9 this can be newer than a same-stage JavaScript worker's `inputs.memories`; `used(...)` is a declaration, not proof of a worker read.
 - The actor can only report skill IDs already present in Loaded Skills.
 - Unknown values are dropped.
 - When tracking is enabled, the actor sees `await used(id, reason?)`; this is the actor-side declaration mechanism.

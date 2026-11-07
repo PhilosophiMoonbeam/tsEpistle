@@ -1,6 +1,6 @@
 # Ax signatures and field contracts
 
-Use for `s()`, `f()`, signature strings, field types, validation, and type-safe inputs/outputs. Source snapshot: Ax 25.4.8. Generator execution belongs in [generator reference](references/gen.md); native decision criteria belong in [Typesafe reference](references/typesafe.md).
+Use for `s()`, `f()`, signature strings, field types, validation, and type-safe inputs/outputs. Source snapshot: Ax 25.4.9. Generator execution belongs in [generator reference](references/gen.md); native decision criteria belong in [Typesafe reference](references/typesafe.md).
 
 ## String syntax and field types
 
@@ -28,7 +28,7 @@ Use for `s()`, `f()`, signature strings, field types, validation, and type-safe 
 
 ```typescript
 'tags:string[] -> processedTags:string[]'
-'query:string, context?:string -> response:string'
+'query:string, context?:string -> answer:string'
 'problem:string -> reasoning!:string, solution:string'
 ```
 
@@ -121,7 +121,7 @@ Boolean/class evidence opt-in is `.withEvidence()` or `(evidence)`. `score "Low,
 
 Jev 1.14 supports native PNG/JPEG localization with the required experimental header supplied by Ax. Box always returns a region, not a presence judgment: pair it with a boolean if the target may be absent and consume the box only when present. Generative vision providers use validated structured output with `elicited` provenance and no invented native confidence. OpenAI Decisions supports images but rejects Box outputs before transport; use a generative vision model instead. See [Typesafe image/Box transport and preparation](references/typesafe.md#image-inputs-and-box-outputs).
 
-**Source scope disagreement (25.4.8):** the signature source says generated-language Box support remains in the AxIR backlog, while the Typesafe source says Image/Box signatures are available in TypeScript, Python, Java, C++, Go, and Rust, with per-language examples. These statements disagree; this reference documents the TypeScript contract and does not establish universal generated-language Box availability.
+**Source scope disagreement (25.4.9):** the signature source says generated-language Box support remains in the AxIR backlog, while the Typesafe source says Image/Box signatures are available in TypeScript, Python, Java, C++, Go, and Rust, with per-language examples. These statements disagree; this reference documents the TypeScript contract and does not establish universal generated-language Box availability.
 
 
 ## Four construction forms
@@ -130,8 +130,8 @@ Jev 1.14 supports native PNG/JPEG localization with the required experimental he
 
 ```typescript
 import { ax, s } from '@ax-llm/ax';
-const gen = ax('input:string -> output:string');
-const sig = s('query:string -> response:string');
+const gen = ax('customerMessage:string -> replyDraft:string');
+const sig = s('userQuestion:string -> answer:string');
 ```
 
 ### Fluent builder
@@ -184,13 +184,13 @@ const sig3 = f()
     score: z.number().min(0).max(100).describe('Numeric score'),
   }))
   .output(z.object({
-    priority: z.enum(['low', 'medium', 'high']).describe('Priority'),
+    priority: z.string().refine((value) => ['low', 'medium', 'high'].includes(value), 'Use low, medium or high').describe('Priority'),
     summary: z.string().describe('Result'),
   }))
   .build();
 ```
 
-Zod string `.email()`, `.url()`, `.min()`, `.max()`, `.regex()` and number `.min()` / `.max()` flow into prompt validation. Arrays use `z.array(z.string())`; `z.enum([...])` maps to Ax `class`, valid only on outputs.
+Zod string `.email()`, `.url()`, `.min()`, `.max()`, `.regex()` and number `.min()` / `.max()` remain schema validation constraints. Arrays use `z.array(z.string())`. `z.enum([...])` infers a literal union and is intended to map to output-only Ax `class`, but **Ax 25.4.9 + Zod 4.1.11 has a confirmed enum-conversion defect**: the [converter](https://github.com/ax-llm/ax/blob/25.4.9/src/ax/dsp/standardSchema.ts#L228-L235) reads `def.values`, while [Zod 4](https://github.com/colinhacks/zod/blob/v4.1.11/packages/zod/src/v4/classic/schemas.ts#L1545-L1557) stores `def.entries`, leaving rejected empty class options. This is not a blanket Standard Schema limitation. The refined string above validates membership at runtime but infers `string` and does not advertise enum choices in the converted prompt/schema. For native enum advertising and literal-union output types, use `.output('priority', f.class(['low', 'medium', 'high'] as const))` instead of that whole-object output schema. See the [pinned defect and executable examples](references/gen.md#standard-schema-signatures-and-tools).
 
 The same schema shapes work with `fn().arg()`, `.returns()`, `.returnsField()`; schemas infer handler argument types. Per-argument schemas can mix with `f.*()` arguments and Ax hints:
 
@@ -227,7 +227,7 @@ const searchDocs = fn('searchDocs')
 
 ```typescript
 import { s, f } from '@ax-llm/ax';
-const sig = s('base:string -> result:string')
+const sig = s('taskBrief:string -> draftSummary:string')
   .appendInputField('extra', f.json('Metadata').optional())
   .appendOutputField('score', f.number('Quality score'));
 ```

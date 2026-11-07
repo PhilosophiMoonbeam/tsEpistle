@@ -1,6 +1,6 @@
 # AxGen execution, streaming, and validation
 
-Use for `ax()`, `AxGen`, `forward()`, `streamingForward()`, structured outputs, assertions, processors, hooks, and self-tuning. Source snapshot: Ax 25.4.8. Prefer short, modern, copyable code; add tutorial prose only when requested. Use [signature reference](references/signature.md) for field contracts, [AI reference](references/ai.md) for providers, [refine reference](references/refine.md) for reward-scored selection, [MCP reference](references/mcp.md) for MCP construction/transports/prompts/resources/tools/tasks/subscriptions/authentication/events, and [event runtime reference](references/event-runtime.md) for wake/resume routing.
+Use for `ax()`, `AxGen`, `forward()`, `streamingForward()`, structured outputs, assertions, processors, hooks, and self-tuning. Source snapshot: Ax 25.4.9. Prefer short, modern, copyable code; add tutorial prose only when requested. Use [signature reference](references/signature.md) for field contracts, [AI reference](references/ai.md) for providers, [refine reference](references/refine.md) for reward-scored selection, [MCP reference](references/mcp.md) for MCP construction/transports/prompts/resources/tools/tasks/subscriptions/authentication/events, and [event runtime reference](references/event-runtime.md) for wake/resume routing.
 
 ## Construction and execution defaults
 
@@ -10,7 +10,7 @@ Use for `ax()`, `AxGen`, `forward()`, `streamingForward()`, structured outputs, 
 - Use schemas for field shape/constraints, `addAssert()` for whole-output hard invariants, and `addStreamingAssert()` for partial-output hard invariants. Streaming assertions are not reward/refine mechanisms.
 - Use `bestOfN()` / `refine()` for reward-scored complete outputs.
 - Multi-step execution continues until all outputs are filled, a stop function fires, or `maxSteps` is reached; do not assume one LLM call.
-- Hook mutations apply at the next step boundary, not immediately.
+- Hook mutations are queued, then consumed at defined boundaries: `beforeStep` changes apply before the current generation step's initial request, not every provider request or retry; `afterFunctionExecution` / `afterStep` changes apply before the next step's initial request.
 
 ```typescript
 import { ai, ax, s } from '@ax-llm/ax';
@@ -20,18 +20,18 @@ const llm = ai({
   apiKey: process.env.OPENAI_APIKEY!,
 });
 
-const gen = ax('input:string -> output:string, reasoning:string');
+const gen = ax('userMessage:string -> assistantReply:string, reasoning:string');
 const sig = s('question:string, context:string[] -> answer:string');
 const gen2 = ax(sig);
-const gen3 = ax('input -> output', {
+const gen3 = ax('userMessage -> assistantReply', {
   description: 'A helpful assistant',
   maxRetries: 3,
   maxSteps: 10,
   modelConfig: { temperature: 0.7 },
 });
 
-const result = await gen.forward(llm, { input: 'Hello world' });
-console.log(result.output);
+const result = await gen.forward(llm, { userMessage: 'Hello world' });
+console.log(result.assistantReply);
 ```
 
 ### Standard Schema signatures and tools
@@ -49,12 +49,14 @@ const gen = ax(f()
   }))
   .output(z.object({
     headline: z.string(),
-    recommendation: z.enum(['buy', 'wait', 'skip']),
+    recommendation: z.string().refine((value) => ['buy', 'wait', 'skip'].includes(value), 'Use buy, wait or skip'),
   }))
   .build());
 ```
 
 Constraints (`.min()`, `.email()`, `.regex()`) and custom `.refine()`, `.transform()`, `.superRefine()` run in normal validation/retries at parse time on complete field values, including streaming field boundaries. Ax hints use companion options: `.input('ctx', z.string(), { cache: true })`, `.output('reasoning', z.string(), { internal: true })`.
+
+**Pinned Zod 4 enum-conversion defect (not a blanket Standard Schema limitation):** the bundled guide's whole-object `z.enum(...)` example fails during signature construction with Ax 25.4.9 and Zod 4.1.11. The [Ax converter](https://github.com/ax-llm/ax/blob/25.4.9/src/ax/dsp/standardSchema.ts#L228-L235) reads `def.values`, while [Zod 4.1.11](https://github.com/colinhacks/zod/blob/v4.1.11/packages/zod/src/v4/classic/schemas.ts#L1545-L1557) stores enum values in `def.entries`; the resulting empty class options are rejected. The refined string above preserves runtime membership validation but does not advertise an enum in the converted prompt/schema. For a native Ax enum contract use `.output('recommendation', f.class(['buy', 'wait', 'skip'] as const))`. The [standard-schema example](examples/01-signatures.ts) explicitly asserts the rejected original boundary, exercises corrected whole-object string/refinement validation and separately executes the native `f.class` alternative. It does not claim the original Zod enum path succeeds.
 
 `fn().arg()` / `.returns()` accept per-argument or whole-object schemas and infer handler argument types:
 
@@ -87,8 +89,8 @@ const result = await gen.forward(llm, {
 ## Forward calls, defaults, and option precedence
 
 ```typescript
-const result = await gen.forward(llm, { input: '...' });
-const configuredResult = await gen.forward(llm, { input: '...' }, {
+const result = await gen.forward(llm, { userMessage: 'Hello world' });
+const configuredResult = await gen.forward(llm, { userMessage: 'Hello world' }, {
   maxRetries: 5,
   model: 'gpt-5.4-mini',
   modelConfig: { temperature: 0.9, maxTokens: 1000 },
@@ -136,9 +138,9 @@ Constructor forward options default every call, including:
 ## Streaming output and replacement versions
 
 ```typescript
-const stream = gen.streamingForward(llm, { input: 'Write a long story' });
+const stream = gen.streamingForward(llm, { userMessage: 'Write a long story' });
 for await (const chunk of stream) {
-  if (chunk.delta.output) process.stdout.write(chunk.delta.output);
+  if (chunk.delta.assistantReply) process.stdout.write(chunk.delta.assistantReply);
 }
 ```
 
@@ -146,6 +148,7 @@ for await (const chunk of stream) {
 - Versions never decrease. Validation/refusal retries and later steps replacing already-emitted output (such as processor feedback) start a new version; thought accumulated so far is re-emitted.
 - In TypeScript, partial JSON repair preserves string text such as `, t`, `, n`, trailing punctuation, and commas before brackets inside strings. Structural repair applies outside strings so these fragments do not change into literals or repeat in merged deltas. [PR #862](https://github.com/ax-llm/ax/pull/862) aligns partial-JSON string and escaped-quote repair across generated Python, C++, Rust, Go, and Java ports; this is a scoped repair-parity claim, not blanket streaming parity.
 - Streamed `code` drops fences regardless of chunk split. Incomplete possible fences and partial labels are held back so merged deltas equal non-streaming values.
+- Text labels are case-sensitive and signature-derived: `javascriptCode` is titled `Javascript Code`, not `JavaScript Code`. Match that label (or the exact field name) and its colon before testing code-fence stripping; otherwise singleton fallback can preserve the unmatched label as content. See the [code-and-json-deltas example](examples/03-tools-streaming.ts).
 - Deltas never end in half a surrogate pair: a trailing high surrogate waits for its low half.
 - Error/token-limit terminal results are rejected even if the final chunk is empty and earlier chunks already form valid output.
 
@@ -222,12 +225,14 @@ const result = await gen.forward(llm, { question: '...' }, {
 ```
 
 - `functionCallMode`: `'auto'` (default), `'native'`, `'prompt'` (prompt emulation).
+- **Pinned prompt-tool boundaries:** emit the exact wire keys requested by `<output_fields>`: the [prompt-tools example](examples/03-tools-streaming.ts) uses `lookup_price_product_name: Notebook` for the emulated call and `priceUsd: 12` for the answer, not their display titles. In TypeScript 25.4.9, [`forward()` response handling](https://github.com/ax-llm/ax/blob/25.4.9/src/ax/dsp/response/nonStreaming.ts#L77-L175) records parsed emulated calls in memory but executes only the original native `result.functionCalls`. The example validates the actual call name and semantic arguments (params can be an object or JSON string) before classifying missing execution. [`streamingForward()` finalization](https://github.com/ax-llm/ax/blob/25.4.9/src/ax/dsp/response/finalize.ts#L161-L211) executes the host handler, then appends the emulated assistant call after the function result; the generator's last-memory-role continuation check therefore ends without requesting the final answer. The example asserts real streamed execution and actual call-ID/result correlation separately from the missing continuation. For a complete host-tool/answer loop in this version, use a provider supporting native functions with `functionCallMode: 'native'`; the same example proves that control with the same handler and a grounded final price. These are version-bound prompt-emulation limitations, not universal lack of tool support.
 - `functionCall`: `'auto'`, `'none'`, `'required'`, or `{ type: 'function', function: { name: 'search' } }` for a forced named call.
 - Forced `'required'` / named calls apply only on the first step. Subsequent steps remove the force and tools to allow an answer. In the `function` structured-output rung, the forced step omits `__axOutput` so forcing reaches a user tool.
 - `stopFunction` accepts string or string[]; matching calls halt multi-step without an answer. Output retains every step's thought, including the stop step, streamed or not.
 - Otherwise continue until outputs are filled or `maxSteps` is reached.
-- In TypeScript AxGen, an unknown function name receives a result for its own call ID with `isError: true` and the available registered names. Valid sibling calls run normally and their completed results remain in history; every call ID in that batch is answered before the next model request, allowing correction on the next step without discarding successful results. This applies to `forward()` and `streamingForward()`.
-- Unknown-name recovery does not swallow arbitrary validation/runtime failures or authorize replaying completed effects. Unexpected handler errors still fail the run; application code owns authorization, idempotency and replay policy. This is not an agent/RLM or generated-port parity guarantee; [PR 878](https://github.com/ax-llm/ax/pull/878) explicitly leaves generated ports on the old raise-and-retry behavior until ported.
+- In TypeScript AxGen, an unknown function name receives a result for its own call ID with `isError: true` and the available registered names. Its plain error text bypasses `functionResultFormatter`; valid results still use that formatter. Valid sibling calls run normally and their completed results remain in history; every call ID in that batch is answered before the next model request, allowing correction on the next step without discarding successful results. This applies to `forward()` and `streamingForward()`.
+- Unknown-name recovery does not swallow arbitrary validation/runtime failures or authorize replaying completed effects. Unexpected handler and result-formatter errors still fail the run; application code owns authorization, idempotency and replay policy.
+- For 25.4.9, [PR 883](https://github.com/ax-llm/ax/pull/883) reports TypeScript-derived fixture conformance in generated Python, Java, C++, Go, and Rust for unknown calls first, middle, last, or alone in both forward modes: call ID, plain error text, error flag, formatter bypass, and continued sibling execution. Generated clients already continued such batches; this release removes JSON wrapping of the unknown-call error. This bounded source evidence is not a blanket generated-port or agent/RLM parity guarantee.
 
 ## Response/context caching and sampling
 
@@ -278,7 +283,7 @@ In TypeScript, providers advertising `requiresStructuredOutput` (for example Typ
 
 ```typescript
 const sig = f()
-  .input('text', f.string())
+  .input('articleText', f.string())
   .output('summary', f.string())
   .output('metadata', f.json().optional())
   .useStructured()
@@ -327,13 +332,17 @@ Read-only `AxStepContext`:
 - `usage`: token statistics; `state`: current step state.
 
 Mutators:
-- `setModel(model)`: next-step model; `setThinkingBudget(budget)`: thinking budget.
+- `setModel(model)`: select model; `setThinkingBudget(budget)`: thinking budget.
 - `setTemperature(temp)`, `setMaxTokens(max)`: temperature/output-token limit.
 - `setOptions(opts)`: arbitrary forward options.
-- `addFunctions(fns)`: next-step functions; `removeFunctions(names)`: remove by name.
-- `stop()`: stop multi-step execution.
+- `addFunctions(fns)`: add functions; `removeFunctions(...names)`: remove by name (rest arguments, not an array).
+- `stop()`: terminate after an executed step; observe the pinned early-stop/result-value limitation below.
 
-All mutations are pending until the next step boundary. `beforeStep` runs before every LLM call; `afterStep` runs after. Use `afterFunctionExecution` to react to specific function results.
+Mutations are queued. `beforeStep` runs once per generation step, before its initial provider request; TypeScript 25.4.9 immediately consumes its mutations before that request. Infrastructure and validation retries within the step can issue additional provider requests without rerunning `beforeStep`, so it is not a per-request budget-enforcement hook. `afterFunctionExecution` / `afterStep` mutations wait for the next iteration's boundary. Use `afterFunctionExecution` to react to specific function results. `state` is an application-owned mutable `Map`, not a pending-options mutator.
+
+**Pinned source/guide disagreement:** the bundled official guide says all hook mutations apply at the next step boundary. The actual [25.4.9 generator source](https://github.com/ax-llm/ax/blob/25.4.9/src/ax/dsp/generate.ts#L2399-L2457) consumes prior mutations near the loop start, and calls `applyStepContextMutations()` immediately after `await stepHooks.beforeStep(stepContext)`. The [25.4.9 context type](https://github.com/ax-llm/ax/blob/25.4.9/src/ax/dsp/types.ts) declares `removeFunctions(...names: string[])`. These TypeScript source contracts take precedence over the guide's blanket timing statement and array-like pseudocode. The offline `28-advanced-generation/hook-timing` case captures actual provider requests to make both boundaries observable; it does not establish generated-language parity.
+
+**Pinned hook-stop limitation:** [`AxStepContext.stop(resultValues)`](https://github.com/ax-llm/ax/blob/25.4.9/src/ax/dsp/stepContext.ts#L107-L110) stores stop values and exposes `_stopValues`, but the 25.4.9 generator never consumes those values. A `beforeStep` stop [breaks the outer loop](https://github.com/ax-llm/ax/blob/25.4.9/src/ax/dsp/generate.ts#L2450-L2457), reaching its [unconditional max-steps error](https://github.com/ax-llm/ax/blob/25.4.9/src/ax/dsp/generate.ts#L3147-L3164) without a provider call. An `afterStep` stop can prevent subsequent work and retain already-emitted output, but cannot replace it with supplied stop values. The [cancellation example](examples/28-advanced-generation.ts) keeps the early-stop error explicit, demonstrates the ignored override on an emitted answer, and independently covers actual `gen.stop()` cancellation, pre-aborted run control and successful non-aborted completion. These bounded hook defects do not make ordinary aborts or all hook mutations unsupported.
 
 ## Self-tuning
 
@@ -348,14 +357,14 @@ const granularResult = await gen.forward(llm, values, {
 });
 ```
 
-`true` enables automatic model/parameter selection. Granular configuration tunes aspects independently; `selfTuning.functions` supplies a pool the tuner may add/remove per step.
+`true` injects `adjustGeneration` with model and thinking-budget controls; it does not optimize invisibly or prove improved quality. Model selection, including the default for `true`, requires an AI `models` list with **at least two chat entries** (`model`, not `embedModel`), checked by the [25.4.9 generator](https://github.com/ax-llm/ax/blob/25.4.9/src/ax/dsp/generate.ts#L1983-L2008). Pass a configured entry's **key** to the tool's `model` argument; the [self-tuning tool](https://github.com/ax-llm/ax/blob/25.4.9/src/ax/dsp/selfTuning.ts#L32-L53) builds its enum from those keys. Granular configuration tunes aspects independently; `selfTuning.functions` supplies a pool the tuner may add/remove per step. The [self-tuning example](examples/28-advanced-generation.ts) configures two actual fixture chat entries and captures a model-key switch in both modes, without provider calls; it does not disable model selection to bypass the requirement.
 
 ## Errors and strict labels
 
 ```typescript
 import { AxGenerateError } from '@ax-llm/ax';
 try {
-  const result = await gen.forward(llm, { input: '...' });
+  const result = await gen.forward(llm, { userMessage: 'Hello world' });
 } catch (error) {
   if (error instanceof AxGenerateError) {
     console.log(error.details.model, error.details.signature);

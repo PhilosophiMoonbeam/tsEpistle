@@ -1,6 +1,6 @@
 # Ax Library Quick Reference
 
-Ax (`@ax-llm/ax`) is a TypeScript library for type-safe LLM signatures, streaming, and multiple providers. Use this overview for `ax()`, `ai()`, `f()`, `s()`, `agent()`, `flow()`, `AxGen`, `AxAgent`, and `AxFlow`; use the focused companion references for detailed contracts. Source API snapshot: 25.4.8.
+Ax (`@ax-llm/ax`) is a TypeScript library for type-safe LLM signatures, streaming, and multiple providers. Use this overview for `ax()`, `ai()`, `f()`, `s()`, `agent()`, `flow()`, `AxGen`, `AxAgent`, and `AxFlow`; use the focused companion references for detailed contracts. Source API snapshot: 25.4.9.
 
 Companion guidance: [AI providers](references/ai.md) covers providers, routing, and adaptive balancing; [Typesafe/Jev](references/typesafe.md) covers decisions, criteria, and native scoring; [signatures](references/signature.md) covers signatures and types; [generators](references/gen.md) covers generator behavior. For agents, select [core agents/tools](references/agent.md), [runtime/RLM/delegation](references/agent-rlm.md), [callbacks/logs/usage](references/agent-observability.md), [recall/dynamic skills](references/agent-memory-skills.md), or [tuning/evaluation](references/agent-optimize.md). See [flows](references/flow.md) for workflows and [GEPA](references/gepa.md) for top-level `optimize(...)`, BootstrapFewShot-to-GEPA migration, and Pareto optimization.
 
@@ -30,14 +30,14 @@ const zodGen = ax(
 );
 
 const sig = s('question:string, context:string[] -> answer:string');
-const myAgent = agent('userInput:string -> response:string', {
+const myAgent = agent('userMessage:string -> assistantReply:string', {
   agentIdentity: { name: 'helper', description: 'A helpful assistant' },
 });
 
-const wf = flow<{ input: string }, { output: string }>()
-  .node('step1', 'input:string -> output:string')
-  .execute('step1', (state) => ({ input: state.input }))
-  .returns((state) => ({ output: state.step1Result.output }));
+const wf = flow<{ userQuestion: string }, { answer: string }>()
+  .node('step1', 'userQuestion:string -> answer:string')
+  .execute('step1', (state) => ({ userQuestion: state.userQuestion }))
+  .returns((state) => ({ answer: state.step1Result.answer }));
 
 // Native fluent function tool.
 const tool = fn('search')
@@ -52,12 +52,14 @@ const zodTool = fn('calculateTax')
   .description('Calculate tax for an amount')
   .arg(z.object({
     amount: z.number().positive().describe('Pre-tax amount in USD'),
-    region: z.enum(['US', 'EU', 'UK']).describe('Tax region'),
+    region: z.string().refine((value) => ['US', 'EU', 'UK'].includes(value), 'Use US, EU or UK').describe('Tax region'),
   }))
   .returns(z.object({ tax: z.number(), total: z.number() }))
   .handler(async ({ amount }) => ({ tax: amount * 0.1, total: amount * 1.1 }))
   .build();
 ```
+
+The tax tool uses runtime string membership validation, not enum advertising or a literal-union type: Ax 25.4.9 + Zod 4.1.11 rejects converted `z.enum(...)` fields. See the [narrow enum-conversion qualification](references/signature.md#standard-schema-zod-valibot-arktype); other Standard Schema shapes remain supported.
 
 ## Running and Forward Types
 
@@ -127,7 +129,7 @@ Hook precedence: forward/direct-call hooks → enclosing program defaults → ch
 Reuse `AxMemory` across turns:
 
 ```typescript
-const conversation = ax('userMessage:string -> response:string');
+const conversation = ax('userMessage:string -> assistantReply:string');
 const memory = new AxMemory();
 await conversation.forward(llm, { userMessage: 'My name is Alice' }, { mem: memory });
 const r = await conversation.forward(llm, { userMessage: 'What is my name?' }, { mem: memory });
@@ -144,6 +146,8 @@ classifier.setExamples([
 ]);
 ```
 
+Runnable scope: [`02-generation/memory-few-shot`](examples/02-generation.ts) demonstrates shared conversation memory and few-shot examples with scripted model I/O, not provider-quality acceptance.
+
 ## Common Patterns
 
 ### Classification
@@ -151,19 +155,21 @@ classifier.setExamples([
 ```typescript
 const classifier = ax(
   f()
-    .input('text', f.string())
+    .input('emailBody', f.string())
     .output('category', f.class(['spam', 'ham', 'uncertain']))
     .output('confidence', f.number().min(0).max(1))
     .build()
 );
 ```
 
+The [generative classification example](examples/02-generation.ts) validates class membership and corrects out-of-range confidence. This numeric field is elicited text, not a calibrated probability; use [native decision evidence](references/typesafe.md) when the application needs provider-produced probabilities.
+
 ### Extraction
 
 ```typescript
 const extractor = ax(
   f()
-    .input('text', f.string())
+    .input('articleText', f.string())
     .output('entities', f.object({
       people: f.string().array(),
       organizations: f.string().array(),
@@ -178,7 +184,7 @@ const extractor = ax(
 ```typescript
 const analyzer = ax(
   f()
-    .input('image', f.image('Image to analyze'))
+    .input('productPhoto', f.image('Image to analyze'))
     .input('question', f.string('Question').optional())
     .output('description', f.string())
     .output('objects', f.string().array())
@@ -186,7 +192,7 @@ const analyzer = ax(
 );
 
 const result = await analyzer.forward(llm, {
-  image: { mimeType: 'image/jpeg', data: base64Data },
+  productPhoto: { mimeType: 'image/jpeg', data: base64Data },
   question: 'What objects are in this image?'
 });
 ```
@@ -199,6 +205,8 @@ const writer = ax('research:string, keyFacts:string[] -> article:string');
 const research = await researcher.forward(llm, { topic: 'AGI' });
 const draft = await writer.forward(llm, { research: research.research, keyFacts: research.keyFacts });
 ```
+
+See [`02-generation/direct-generator-chain`](examples/02-generation.ts) for explicit output-to-input composition without a Flow graph.
 
 ## Errors and Debugging
 
@@ -248,7 +256,7 @@ const transport = new AxMCPStdioTransport({
 const mcpClient = new AxMCPClient(transport, { namespace: 'memory' });
 
 // Initialize native MCP context once; all agent stages inherit it.
-const myAgent = agent('userMessage:string -> response:string', {
+const myAgent = agent('userMessage:string -> assistantReply:string', {
   mcp: mcpClient,
   functionDiscovery: true,
   contextFields: [],

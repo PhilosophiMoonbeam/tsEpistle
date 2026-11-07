@@ -1,6 +1,6 @@
 # AI providers, models, and runtime configuration
 
-Use for `ai()`, deployment profiles, model catalogs/presets, routing and balancing, embeddings, thinking, service tiers, caching, cancellation, and provider-specific request contracts. Prefer short copyable code, not tutorial prose unless requested. Source API snapshot: 25.4.8. Audio task-specific detail belongs in [audio](references/audio.md); signature design in [signatures](references/signature.md); agent/runtime design is outside this reference.
+Use for `ai()`, deployment profiles, model catalogs/presets, routing and balancing, embeddings, thinking, service tiers, caching, cancellation, and provider-specific request contracts. Prefer short copyable code, not tutorial prose unless requested. Source API snapshot: 25.4.9. Audio task-specific detail belongs in [audio](references/audio.md); signature design in [signatures](references/signature.md); agent/runtime design is outside this reference.
 
 ## Factory and deployment profiles
 
@@ -113,6 +113,8 @@ const result = await program.forward(llm, { question: 'What is 2+2?' });
 ```
 
 The default uses Chrome's sampling settings. Chrome extensions can specify `temperature` and `topK` together; when only one is supplied, Ax obtains the other from `LanguageModel.params()`. An incomplete pair without defaults fails before session creation. Web pages do not support these legacy numeric settings. Streaming chunks contain successive text and are passed through unchanged. Ax releases each session on completion, cancellation, or failure. The adapter supports native JSON Schema output and text conversations, with no tools or embeddings. For a runnable browser demo, build Ax and open `src/examples/chrome-ai-chat.html` through a local web server.
+
+The local [browser entry](examples/browser/chrome-ai.html) uses the same public imports; [adapter fixtures](examples/33-browser-ai.ts) separately verify wire conversion and session cleanup. Build with `npm --prefix examples run build:browser`, serve the browser directory over localhost, and check Chrome's current desktop/hardware/model prerequisites. Fixture success is not local-model inference.
 
 ## Model Presets
 
@@ -244,6 +246,8 @@ Rules:
 - Streaming can fail over before the first emitted chunk. A mid-stream transient failure is learned but cannot be replayed after partial output; caller cancellation is not recorded.
 - Adaptive selection applies to chat. Embedding, transcription, and speech keep existing balancer behavior.
 
+Do not infer batch `speak()` / `transcribe()` failover from chat routing. In the pinned [spoken-assistant control](examples/26-architecture.ts), primary batch failures propagate; the application explicitly selects an alternate. This is separate from conversational chat fallback before output starts.
+
 See the [adaptive balancer example](https://raw.githubusercontent.com/ax-llm/ax/refs/heads/main/src/examples/typescript/generation/adaptive-balancer.ts) for complete provider setup.
 
 ## Generated Runtime Cancellation
@@ -260,10 +264,12 @@ const res = await llm.chat({
     { role: 'system', content: 'You are concise.' },
     { role: 'user', content: 'Write a haiku about the ocean.' },
   ],
-});
+}, { stream: false });
 if (!('results' in res)) throw new Error('Expected a non-streaming chat response');
 console.log(res.results[0]?.content);
 ```
+
+Raw `chat()` streams by default; choose the response mode explicitly before consuming it. The [raw chat example](examples/04-providers.ts) drains the default stream and separately validates a completed response.
 
 ## Meta Muse
 
@@ -288,6 +294,8 @@ const result = await muse.chat({
 All three Spark profiles support function-based structured output. When Ax selects its internal `__axOutput` tool, the profiles require that sole tool using the protocol's unnamed required choice. Explicit caller-named choices remain unsupported, including a caller naming `__axOutput` directly.
 
 Use `muse-image-1.0` through the same `chat()` method. Text and reference images belong in normal chat content, and generated images arrive in `result.results[0].images`. Muse Image rejects ordinary function tools. Use `transcribe()` for Muse Voice batch audio and streaming `chat()` with PCM16 for realtime transcription; Ax adds no Meta-specific service methods.
+
+The [generated-image case](examples/04-providers.ts) consumes `AxChatImageOutput` with `stream: false` and retains its opaque provider image ID for stateless replay. Its valid PNG is an explicit transport fixture, not live image synthesis or localization evidence.
 
 Muse Glimmer is self-hosted. Point Ax's `vllm`, `llama-cpp`, `ollama`, or `lm-studio` profile at the server you operate. Ax does not download, serve, or manage Glimmer weights.
 
@@ -486,7 +494,7 @@ const claude = ai({
 
 const res = await claude.chat(
   { chatPrompt: [{ role: 'user', content: 'Solve step by step...' }] },
-  { thinkingTokenBudget: 'medium', showThoughts: true },
+  { stream: false, thinkingTokenBudget: 'medium', showThoughts: true },
 );
 if (!('results' in res)) throw new Error('Expected a non-streaming chat response');
 console.log(res.results[0]?.thought);
@@ -550,6 +558,8 @@ For GPT-5.6 and GPT-6 (Astra, Sol, Luna, GPT-6.1 Sol), these map to `none`, `low
 - Opus 4.5: budget_tokens + effort levels (capped at `'high'`)
 - Other thinking models: budget tokens only
 
+For assistant replay, empty visible text (`content: ''`) adds no synthetic text block. Cache markers attach only to text or tool-use blocks, never to signed or redacted thinking. See the [25.4.9 replay mapper](https://github.com/ax-llm/ax/blob/3ad7b69947e05f1770b1bd6cb1316a8ec7fcd106/src/ax/ai/anthropic/api.ts#L1871-L2013).
+
 Anthropic `modelConfig.effort` can be set directly on a request. Fast mode and task budgets are Anthropic-only opt-ins; `taskBudget.total` must be at least 20,000 tokens.
 
 ```typescript
@@ -588,6 +598,8 @@ const claude = ai({
   },
 });
 ```
+
+The [custom thinking-level case](examples/04-providers.ts) contrasts a legacy numeric budget with an adaptive model using the same custom effort map. Adaptive thinking does not consume the numeric budget ladder; hidden display thoughts do not disable thinking.
 
 ## Embeddings
 
@@ -783,6 +795,10 @@ const result = await generateText({
 });
 ```
 
+The tested [integration cases](examples/34-vercel.ts) pin `@ax-llm/ax-ai-sdk-provider@25.4.9` with `ai@7.0.2` on Node ≥22.18. Keep their shared provider types coherent; the example package pins `@ai-sdk/provider@4.0.0` and `@ai-sdk/provider-utils@5.0.0` through overrides.
+
+This adapter's `createChatRequest` drops `abortSignal`, `providerOptions` and `responseFormat`; sampling fields are not forwarded through Ax's `modelConfig`. Vercel typed-output validation is client-side, not native schema enforcement. Do not assume transport cancellation or provider-option forwarding from the higher-level call. See the [pinned adapter implementation](https://unpkg.com/@ax-llm/ax-ai-sdk-provider@25.4.9/index.js). The examples use actual adapter/SDK algorithms with explicitly scripted model I/O, not live cross-provider qualification.
+
 ## MCP transport and event ingestion
 
 ```typescript
@@ -875,11 +891,13 @@ For custom native question/request shapes and provider-specific input, use `open
 
 The response preserves answer order, model, full usage, and per-question `{ type: 'refusal', name }` outcomes. Narrow refusals before accessing values. Predicates return `probability`; choices return `choice`, `confidence`, and `probabilities: [{ value, probability }]`; scores return `score`, `confidence`, and `probabilities: [{ value, label, probability }]`. Ax validates the response against the questions and preserves probabilities without normalization (an inclusive `0.01` sum tolerance accommodates rounding). Question dependencies require separate requests.
 
+The standalone [OpenAI Decisions wire case](examples/06-decisions.ts) uses the real adapter with synthetic HTTP answers. It preserves native selection, fractional score and ordered evidence; it does not measure inference quality or calibration.
+
 Native `input` is text or an array of user messages with text and inline image parts: `{ role: 'user', content: [{ type: 'input_text', text }, { type: 'input_image', image_url: 'data:image/png;base64,...', detail?: 'auto' }] }`. There are at most 128 images per request; hosted image URLs, file IDs, audio, non-user roles, and tool items are unsupported. The signature adapter preserves Ax's text prompt/history as role-labelled evidence in a user message and passes inline images through. It does not give those labels native role authority.
 
 Both interfaces accept `apiURL` including `/v1` (default `https://api.openai.com/v1`) and renewable credentials. Native and adapter transport options support fetch, timeout, retry, and cancellation. Both instance and per-call cancellation apply to native requests. Credential-provider headers override static credentials and native custom headers regardless of header-name capitalization. Native requests can include `safety_identifier`; adapter instances accept `safetyIdentifier`. Unsupported requests are excluded from router/balancer selection and fallbacks.
 
-Run the public examples from the repository root:
+In an Ax source checkout, run the upstream examples from its repository root:
 
 ```bash
 npm run tsx src/examples/typescript/generation/decision-evidence.ts

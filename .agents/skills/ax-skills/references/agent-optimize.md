@@ -1,6 +1,6 @@
 # AxAgent Optimization and Evaluation
 
-Use for `agent.optimize(...)`, task datasets, judge options, optimization targets, evaluation semantics, delegation tuning, and saved `optimizedProgram` artifacts in `@ax-llm/ax`. Source API snapshot: 25.4.8. Configure a runnable agent first; see [agent authoring](references/agent.md). Generic `ax(...)`/`flow(...)` tuning with top-level `optimize(program, train, metric, options)` belongs in [GEPA](references/gepa.md), not this agent workflow. Keep examples short and copyable; repeat general agent guidance only when needed.
+Use for `agent.optimize(...)`, task datasets, judge options, optimization targets, evaluation semantics, delegation tuning, and saved `optimizedProgram` artifacts in `@ax-llm/ax`. Source API snapshot: 25.4.9. Configure a runnable agent first; see [agent authoring](references/agent.md). Generic `ax(...)`/`flow(...)` tuning with top-level `optimize(program, train, metric, options)` belongs in [GEPA](references/gepa.md), not this agent workflow. Keep examples short and copyable; repeat general agent guidance only when needed.
 
 ## Defaults and target selection
 
@@ -107,6 +107,7 @@ const tasks = [
 ];
 
 const result = await assistant.optimize(tasks, {
+  bootstrap: false, // 25.4.9 pipeline bootstrap has the bounded defects below.
   maxMetricCalls: 12,
   verbose: true,
 });
@@ -123,11 +124,11 @@ The original example also imports `axDefaultOptimizerLogger` but does not use it
 Start here unless a hand-built scorer is needed; the `tasks` above supply realistic input, criteria, and action expectations.
 
 ```typescript
-const result = await assistant.optimize(tasks);
+const result = await assistant.optimize(tasks, { bootstrap: false });
 assistant.applyOptimization(result.optimizedProgram!);
 ```
 
-`target` defaults to actor; `metric` defaults to the built-in LLM judge. Next, consider `bootstrap: true` for tool-heavy agents to initialize GEPA with successful task traces.
+`target` defaults to actor; `metric` defaults to the built-in LLM judge. These 25.4.9 recipes explicitly disable pipeline bootstrap rather than treating an empty demo artifact as successful demonstration training. The separate generic `BootstrapFewShot` path is supported; see [GEPA and demonstration training](references/gepa.md) and [`23-optimize`](examples/23-optimize.ts).
 
 ## Deterministic metric pattern
 
@@ -226,12 +227,65 @@ Tell the actor child-input fields and local-only tasks. For synthesis, state the
 ## Artifacts and replay
 
 - Save the full `result.optimizedProgram` for portable/reusable configurations; do not omit save/load when reuse is requested.
-- Serialize with `axSerializeOptimizedProgram(result.optimizedProgram!)`; deserialize with `axDeserializeOptimizedProgram(saved)` and apply with `agent.applyOptimization(...)`. The source also specifies restoring via `new AxOptimizedProgramImpl(...)`, then applying; it does not provide that constructor's argument shape.
+- Serialize with `axSerializeOptimizedProgram(result.optimizedProgram!)`; deserialize with `axDeserializeOptimizedProgram(saved)` and apply with `agent.applyOptimization(...)`. The working agent example explicitly uses a component-only artifact, not a claimed bootstrapped-demo artifact; see the version-specific boundaries below.
 - `result.optimizedProgram.componentMap` is the canonical saved agent-GEPA artifact and reapplies learned strings. Depending on selected targets, it may contain actor instructions, descriptions, tool descriptions/names, templates, or runtime primitives. Preserve the full program, not just selected strings.
-- With `bootstrap`, demos are saved in `result.optimizedProgram.demos`; raw failed traces are not saved in v1.
+- Bootstrap's implementation saves eligible successful fresh traces in `result.optimizedProgram.demos`, with a metric budget separate from regular evaluation. In this pipeline version, the trace filtering and context-demo routing defects below prevent a working end-to-end training recipe for this shape. Raw failed traces are not saved.
 - Auto-promoted undeclared inputs made runtime-only by `autoUpgrade` appear in captured traces/demos as truncated preview strings, not full values, just like declared truncate-style `contextFields`. This is expected, not corrupted saved demos; see [context handling](references/agent-context.md).
 - Serialized JSON can be stored in localStorage, IndexedDB, or a backend for browser-safe persistence.
 - Use fresh eval-safe tool state separately for baseline, optimize, and restored replay to prevent side-effect leakage. To demonstrate improvement, run a held-out task before tuning and replay it on a freshly restored optimized agent.
+
+### TypeScript 25.4.9 bootstrap trace-ID boundary
+
+Source evidence in the installed package's `index.js.map`:
+
+- `../agent/optimize.ts`, `resolveAgentOptimizeTargetIds`, makes `'all'` select staged actor/responder IDs, excluding their container descriptors.
+- `../agent/agentInternal/optimizer.ts`, `createOptimizationProgram`, removes its trace-ID filter only when **every** descriptor is selected. Otherwise it filters `getTraces()` by those selected, stage-prefixed IDs.
+- `../agent/agentInternal/coordinator.ts` prefixes descriptors with `ctx.`/`task.`, but its evaluation fallback aggregates raw stage trace IDs. Thus switching from `'actor'` to `'all'` does not itself fix this mismatch.
+- `../dsp/optimizers/gepaBootstrap.ts` snapshots trace-object identities before each training rollout, scores it, then retains only fresh traces from successful runs, capped by `maxBootstrapDemos`. Demos are grouped from those real traces, not copied from expected outputs or merely inferred from successful scores.
+
+Selecting every public descriptor, including containers, removes the filter:
+`target: assistant.namedPrograms().map(({ id }) => id)`. **This is not a working
+bootstrap correction.** Bootstrap immediately calls `program.setDemos(...)`.
+The coordinator routes raw unprefixed context traces to the task side, whose
+program validates IDs before accepting demos. With distinct public actor IDs,
+the reported execution rejects `stock-context.actor`, listing only
+`stock-task` and `stock-task.actor` as valid task-side IDs. Adding a routing
+prefix after optimization cannot repair a compile that already threw.
+
+The offline [`24-agent-optimize/bootstrap-boundaries`](examples/24-agent-optimize.ts)
+case asserts both boundaries: a successfully scored training rollout produces
+no demos with the default target; explicitly selecting all descriptors with
+distinct actor IDs rejects the real context trace during demo installation.
+It bounds each path to one baseline evaluation and one training rollout with
+only in-memory inventory reads. Neither is an automatic fallback.
+
+Use `bootstrap: false` for the working agent component-artifact path, whose
+round-trip retains real GEPA components and replays a held-out task with fresh
+tool state. For actual algorithm-generated demonstrations and restoration, use
+the public generator `BootstrapFewShot` training path exercised by
+[`23-optimize`](examples/23-optimize.ts), rather than manufacturing an agent
+artifact or representing an empty demo list as successful bootstrap.
+
+### TypeScript 25.4.9 component-and-demo restoration limitation
+
+Implementation evidence: the published `index.js.map` source
+`../agent/agentInternal/coordinator.ts`, `AxAgent.applyOptimization`, first calls
+`applyOptimizedComponents(optimizedProgram?.componentMap ?? {})` and delegates to
+`primaryAgent.applyOptimization(...)` only when `componentMap` is absent.
+Consequently, a GEPA artifact containing both `componentMap` and valid `demos`
+would not automatically restore both through that coordinator method.
+`agent.setDemos(...)` is a separate public operation, but it is not a blanket fix
+for the earlier bootstrap compile failure. Its context router requires a `ctx.`
+prefix, strips it, and matches underlying context IDs; unprefixed demos go to
+the task side, which rejects unknown IDs.
+
+This restoration omission is a source finding, not a completed rendered-prompt
+probe: the real pipeline bootstrap fails before a valid saved demonstration
+artifact is available in the distinct-stage shape. The working
+[`24-agent-optimize/action-metric-artifact`](examples/24-agent-optimize.ts)
+round-trips and replays actual components with `bootstrap: false`; it does not
+claim demo exposure, demo restoration, or demonstrated quality improvement.
+The generic training example is the separate real-demonstration path.
 
 ## Remote examples
 

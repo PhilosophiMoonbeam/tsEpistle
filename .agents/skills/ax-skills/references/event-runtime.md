@@ -72,6 +72,22 @@ await source.publish({ event, identity, trust: 'authenticated' });
 - Fan out to several Agents with several matching routes, not a multi-target
   route. This preserves independent authorization, ordering, retries, and runs.
 
+## Sink redrive reliability
+
+In TypeScript **25.4.9**, successful sink-only `runtime.redrive(deadLetterId)`
+awaits the sink callback with the already-persisted output and removes that
+dead letter, without invoking the program again. It does **not** rewrite
+`run.sinks`: that array remains the original dispatch-attempt snapshot and can
+still report `failed` after a successful redrive. Do not use it as a current
+delivery ledger. Establish completion from the accepted business output in the
+sink callback, current delivery/run state, and removal of the sink dead letter;
+a succeeded run alone does not establish successful sink delivery.
+
+See the pinned [`runtime.ts` sink-redrive branch](https://github.com/ax-llm/ax/blob/25.4.9/src/ax/event/runtime.ts#L301-L343)
+and the wake → pause → resume → sink-redrive composition in
+[`26-architecture.ts`](examples/26-architecture.ts). This does not add durability
+to the in-memory store or guarantee cross-system exactly-once effects.
+
 ## Continuation Pattern
 
 ```ts
@@ -103,10 +119,31 @@ implicit wake route. Upstream subscription policy resource: `docs/MCP_SUBSCRIPTI
 ## UCP Adapter
 
 Use `AxUCPWebhookEventSource({ client, identity })` inside an application-owned
-HTTP handler, then call `source.ingest(request)`. Verification of the signer
-profile, RFC 9421 signature, digest, freshness window, key rotation, and replay
-key completes before enqueue. Resolve tenant/account identity from application
-state after verification; do not copy identity from the business payload.
+HTTP handler, then call `source.ingest(request)`. The client verifies signer
+profile, RFC 9421 signature, digest, freshness and key rotation before enqueue.
+Resolve tenant/account identity from trusted application registration after
+verification; never copy authority from the business payload.
+
+**25.4.9 replay qualification:** `AxUCPClient.verifyOrderEvent` creates a new
+signature verifier per request; its persistent process-local replay check uses
+`Webhook-Id`, while that header and `Webhook-Timestamp` need not be signed.
+Bind them to the signed `request-id` and `created` before ingestion, and require
+the signed signer-profile header. Parse exactly one verified signature member
+with unique parameters; bind metadata to that member, not a separately selected
+or ambiguous `Signature-Input` entry. The
+[`35-ucp/webhook-freshness-member-binding`](examples/35-ucp.ts) case includes a
+fresh `created`-last control and rejects old or ambiguous metadata before enqueue.
+The [verified webhook example](examples/35-ucp.ts) also covers real client
+verification, key rotation, tamper/replay rejection and host-bound tenant routing.
+Its volatile replay state is not restart durability; production hosts need
+durable replay/idempotency policy. Source:
+[`25.4.9 client and signing code`](https://unpkg.com/@ax-llm/ax@25.4.9/index.js.map),
+embedded `../ucp/client.ts` (`verifyOrderEvent`) and `../ucp/signing.ts`.
+
+Native UCP attachment is independent of transport. The same example carries
+UCP through Flow → Agent/Gen and preserves structured results; MCP-backed UCP
+also reuses protocol sessions and propagates cancellation. Attaching a client
+does not itself authorize purchases or establish tenant isolation.
 
 Generated Python, Java, C++, Go, and Rust packages expose the same Core-owned
 single-worker event state machine plus functioning inline lifecycle dispatch,

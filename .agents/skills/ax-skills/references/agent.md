@@ -1,6 +1,6 @@
 # Core AxAgent Construction and Runtime Contracts
 
-Use for `agent(...)`, ordinary tool-using assistants, identity, child delegation, namespaced functions, discovery, `bubbleErrors`, host-side completion, clarification, and public run/state APIs. Generate the smallest correct factory-based shape and copyable code; do not add tutorial prose unless requested. Source API snapshot: `@ax-llm/ax` 25.4.8.
+Use for `agent(...)`, ordinary tool-using assistants, identity, child delegation, namespaced functions, discovery, `bubbleErrors`, host-side completion, clarification, and public run/state APIs. Generate the smallest correct factory-based shape and copyable code; do not add tutorial prose unless requested. Source API snapshot: `@ax-llm/ax` 25.4.9.
 
 ## Choose the Agent Shape
 
@@ -302,13 +302,13 @@ Public `forward()` and `streamingForward()` throw `AxAgentClarificationError` on
 import { AxAgentClarificationError, AxJSRuntime, agent, ai } from '@ax-llm/ax';
 
 const llm = ai({ name: 'openai', apiKey: process.env.OPENAI_APIKEY! });
-const tripAgent = agent('request:string, answer?:string -> reply:string', {
+const tripAgent = agent('userRequest:string, answer?:string -> reply:string', {
   contextFields: [],
   runtime: new AxJSRuntime(),
 });
 let savedState = tripAgent.getState();
 try {
-  await tripAgent.forward(llm, { request: 'Plan a Lisbon trip' });
+  await tripAgent.forward(llm, { userRequest: 'Plan a Lisbon trip' });
 } catch (error) {
   if (error instanceof AxAgentClarificationError) {
     console.log(error.question);
@@ -320,7 +320,7 @@ try {
 if (savedState) {
   tripAgent.setState(savedState);
   const resumed = await tripAgent.forward(llm, {
-    request: 'Plan a Lisbon trip',
+    userRequest: 'Plan a Lisbon trip',
     answer: 'June 1-5',
   });
   console.log(resumed.reply);
@@ -505,7 +505,29 @@ Construction-time `playbook` and `citations` both default off and are portable a
 
 ### Stage guidance and generated-language spellings
 
-`setInstruction` replaces the stage-owned actor instruction; `addActorInstruction` appends an additive rule. Both are optimization components retained when split programs are rebuilt. Generated spellings follow language conventions: `set_instruction` in Python/C++/Rust, `SetInstruction` in Go.
+In TypeScript 25.4.9, the pipeline returned by `agent(...)` has **no `setInstruction` method**. Use `assistant.executor.setInstruction(text)` to **replace** that executor's stage-owned instruction; `assistant.addActorInstruction(text)` **appends** an executor-only standing rule. Neither changes distiller/responder guidance or grants tool authority.
+
+Keep the canonical rules in application state and explicitly reapply the replacement after changing the signature:
+
+```typescript
+const assistant = agent('query:string -> reorderUnits:number', {
+  contextFields: [], directResponse: 'off',
+});
+let executorRule = 'Propose enough units to reach ten units in stock.';
+const packingRule = 'Round the proposed units up to a multiple of four.';
+assistant.executor.setInstruction(executorRule);
+executorRule = 'Propose enough units to reach twelve units in stock.';
+assistant.executor.setInstruction(executorRule); // replaces ten; does not append
+assistant.addActorInstruction(packingRule);     // separate additive channel
+assistant.setSignature('query:string, requestTag?:string -> reorderUnits:number');
+assistant.executor.setInstruction(executorRule); // reassert application policy
+```
+
+**Rebuild boundary:** this release keeps the executor actor object during pipeline `setSignature`; its stage-owned instruction and addenda survive that object's inner-program rebuild. Instructions placed on recreated inner programs are a different boundary and can disappear. The recipe above does not depend on an empty instruction being correct or claim automatic retention across replacing the agent or restoring `AxAgentState`: addenda are process-local, not serialized state. On a fresh agent, replay the application-owned replacement and each standing rule once. Do **not** append the same rule again on the existing executor after `setSignature`; that duplicates it.
+
+Inspect `assistant.executor.getInstruction()` and that stage's `getOptimizableComponents()`, not the first matching instruction key in the pipeline aggregate: default IDs can collide across stages. The executable [stage-instructions case](examples/09-agents.ts) changes the actual schema, records the pre-reapplication boundary, explicitly reapplies the canonical rule, and checks before/after system prompts, single-copy append, absent prior replacement, stage isolation, real stock reads, and typed proposals. Its deterministic replies prove wiring and arithmetic, not model reasoning quality.
+
+Pinned implementation: [25.4.9 source map](https://unpkg.com/@ax-llm/ax@25.4.9/index.js.map), `agent/AxAgent.ts` (`setInstruction`, `setSignature`, local instruction component), `agent/agentInternal/coordinator.ts` (pipeline signature routing, aggregate components, additive instruction), and `agent/agentInternal/signatureBuilders.ts` (prompt composition); [25.4.9 public types](https://unpkg.com/@ax-llm/ax@25.4.9/index.d.ts). Generated-language names below follow their own APIs; they do not imply a TypeScript pipeline setter or identical retention boundaries.
 
 | Language | Citations observer | Verified agent playbook evolve |
 | --- | --- | --- |

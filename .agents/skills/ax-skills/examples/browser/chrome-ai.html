@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ax · Chrome built-in AI</title>
+  <style>
+    :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
+    body { max-width: 56rem; margin: 2rem auto; padding: 0 1rem 3rem; }
+    h1 { line-height: 1.2; }
+    label, textarea { display: block; }
+    textarea { box-sizing: border-box; width: 100%; min-height: 6rem; margin: .5rem 0 1rem; padding: .6rem; font: inherit; }
+    button { margin: 0 .4rem .6rem 0; padding: .6rem .9rem; font: inherit; cursor: pointer; }
+    button:disabled { cursor: not-allowed; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 1rem; border: 1px solid #888; border-radius: .4rem; }
+    #capability { padding: 1rem; border-inline-start: .3rem solid #668bc6; }
+    details { margin: 1.3rem 0; }
+    summary { cursor: pointer; font-weight: 600; }
+    code { font-size: .9em; }
+    a { color: light-dark(#164e9c, #9fc7ff); }
+  </style>
+</head>
+<body>
+  <h1>Ask Chrome’s local model with Ax</h1>
+  <p>This runs <strong>Gemini Nano through Chrome’s LanguageModel API</strong>, using
+    <code>@ax-llm/ax@25.4.9</code>. No API key, cloud inference or network fallback.
+    Importing the entry only inspects availability; it does not create a session or download a model.</p>
+  <p id="capability">Capability not checked: build and serve the browser entry first (instructions below).</p>
+
+  <label for="question">A short English question</label>
+  <textarea id="question">Why does a bicycle stay easier to balance while moving? Answer in two sentences.</textarea>
+  <div>
+    <button id="answer" type="button" disabled>Answer · Ax + native JSON Schema</button>
+    <button id="stream" type="button" disabled>Stream · inspect text chunks</button>
+    <button id="cancel" type="button" disabled>Cancel request</button>
+    <button id="refresh" type="button">Refresh capability</button>
+  </div>
+  <p id="status" role="status" aria-live="polite">Browser bundle not loaded yet. This page alone is not evidence that a model ran.</p>
+  <h2>Model output</h2>
+  <pre id="output" aria-live="polite">An actual model answer will appear here only after you click a request button in a compatible browser.</pre>
+
+  <details>
+    <summary>1 · Build and open locally</summary>
+    <p>From <code>skills/ax-skills/examples</code>, with the collection dependencies and
+      <code>esbuild@0.25.12</code> installed:</p>
+    <pre>npx --no-install esbuild browser/chrome-ai.ts --bundle --platform=browser --conditions=browser --format=esm --target=chrome138 '--external:node:*' --outfile=browser/dist/chrome-ai.js</pre>
+    <p>Serve the examples directory using your local static HTTP server, then open
+      <code>http://localhost:PORT/browser/chrome-ai.html</code>. Do not open it as a
+      <code>file:</code> URL. For deployment, use HTTPS.</p>
+    <p>The SDK contains an optional Node worker import for its unrelated JavaScript executor.
+      <code>--external:node:*</code> keeps that unreachable Node-only path out of browser resolution;
+      the demo never creates an executor. Ax and its OpenTelemetry dependency are bundled locally,
+      not loaded from a CDN. The generated <code>browser/dist/</code> bundle is not source.</p>
+    <p>The entry uses minimal local DOM shapes. <code>npm run check</code> checks both the
+      browser entry and the Node CLI; <code>npm run build:browser</code> creates the local bundle.</p>
+  </details>
+
+  <details>
+    <summary>2 · Browser, hardware and first-download prerequisites</summary>
+    <p>Use a supported desktop Chrome exposing <code>LanguageModel</code> in a secure context.
+      Chrome 138+ extension support does <em>not</em> imply every ordinary web page or device
+      supports the API. Web rollout, enablement and hardware/profile restrictions differ.
+      Mobile Chrome is not a substitute.</p>
+    <p>Check the current <a href="https://developer.chrome.com/docs/ai/prompt-api">Chrome Prompt API prerequisites</a>
+      and <a href="https://developer.chrome.com/docs/ai/get-started">built-in AI setup guide</a>.
+      Chrome requires eligible desktop hardware and substantial free profile storage; its model
+      is a separate initial download. Inspect <code>chrome://on-device-internals</code> for model state.</p>
+    <p>If Chrome reports <em>downloadable</em>, clicking a request button authorizes model creation
+      and a potentially large download by Chrome. An unmetered connection may be required.
+      This adapter does not expose download progress, so the page reports waiting honestly.
+      Subsequent local inference does not need a cloud API key.</p>
+    <p><strong>Unavailable is a valid result.</strong> Offline Node fixtures assert adapter protocol
+      and cleanup only; neither those assertions nor loading this page verifies Gemini Nano,
+      hardware compatibility, answer quality or successful model download.</p>
+  </details>
+
+  <details>
+    <summary>3 · What the code teaches and where its boundary is</summary>
+    <ul>
+      <li><code>Answer</code> constructs <code>ai({ name: 'chrome-ai' })</code> and
+        <code>ax('question:string -&gt; answer:string')</code> from the click handler, then
+        calls <code>forward(..., { structuredOutputMode: 'native' })</code>.
+        Ax forwards a JSON Schema as Chrome’s native <code>responseConstraint</code> and parses the answer.</li>
+      <li><code>Stream</code> calls the same provider’s real <code>chat(..., { stream: true })</code>.
+        Every native successive text chunk is displayed separately, unchanged: no overlap removal,
+        invented cumulative text or fake model response.</li>
+      <li>Each request owns a fresh session. Ax releases it on completion and prompt/stream failure.
+        Cancel and page navigation abort the signal passed to creation and prompting; the demo
+        also aborts on an interrupted consumer path. Partial text is not a completed answer.</li>
+      <li>This Ax adapter supports text conversations and native JSON Schema, not tools, media
+        inference or embeddings. The underlying browser API may support more than this adapter.</li>
+      <li>Ordinary web pages omit numeric sampling. In Chrome extensions only, set
+        <code>temperature</code> and <code>topK</code> together. When only one is supplied,
+        Ax obtains the other from <code>LanguageModel.params()</code> (or legacy capabilities).
+        Missing defaults reject before session creation; no guessed defaults are inserted.</li>
+    </ul>
+    <p>Read <a href="./chrome-ai.ts">chrome-ai.ts</a> for the complete browser entry and
+      <a href="../33-browser-ai.ts">33-browser-ai.ts</a> for explicitly labeled Node fixtures.
+      This provider is TypeScript/JavaScript browser-only, not a portable AxIR provider.</p>
+  </details>
+  <noscript>This demo requires JavaScript and an eligible Chrome LanguageModel implementation.</noscript>
+  <script type="module" src="./dist/chrome-ai.js"></script>
+</body>
+</html>
