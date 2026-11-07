@@ -1122,7 +1122,9 @@ Reasoning effort is an existing operator profile choice, not an extra retry stra
 
 ### Maintained tailnet smoke qualification
 
-The maintained Wiki service runs code `316657f349ccb269a5b614a80f9db000e81b7a07`, image `sha256:7a182157d8878a26d8ede6028d60bf099bff4614ae8f0c0378e6afe413f6fbf1`. Wiki-only replacement preserved 17 tracked run rows and event histories, five controlled page rows, all 32 then-existing provider versions, protected deployment configuration and exact cache/uploads ownership and bytes before startup. PostgreSQL's container and start time did not change.
+The maintained Wiki service runs code `6b0e498f8b26105fe8dea05803792c01de749137`, image `sha256:0ee2b75d3173ee2846623914192550a3040620d1b575c715ba760de4fd7a441e`. Wiki-only replacement preserved 23 tracked run rows and event histories, five controlled page rows, all 34 then-existing provider versions, protected deployment configuration and exact cache/uploads ownership and bytes before startup. PostgreSQL's container and start time did not change.
+
+The six paid Low cases below ran on `316657f…`. Final `6b0e498f…` corrections passed the focused consumer regressions, isolated actual-image source/secret smoke, authenticated private Reader/workspace and the actual administrator diagnostic export: a recorded semantic rejection now reports completed transport. No additional paid model calls were needed. All 12 frozen Native request hashes and the Native runtime hash remained unchanged.
 
 Real owner UI qualification used explicit Low Agent reasoning with the unchanged 8,192-output/128,000-context caps:
 
