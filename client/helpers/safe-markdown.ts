@@ -44,8 +44,8 @@ const readableQuotation = (text: string): string => {
   }
   // Plain-text fences preserve whitespace and keep source links, directives,
   // nested fences and citation-looking text inert in the destination Wiki.
-  const body = text.endsWith('\n') ? text.slice(0, -1) : text
-  return `> ${fence}text\n> ${body.replaceAll('\n', '\n> ')}\n> ${fence}`
+  const body = text.replace(/\r\n|\r|\n/gu, '$&> ')
+  return `> ${fence}text\n> ${body}${/[\r\n]$/u.test(text) ? fence : `\n> ${fence}`}`
 }
 
 export const exportAgentQuotationMarkdown = (content: string): string =>

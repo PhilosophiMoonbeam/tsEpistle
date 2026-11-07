@@ -172,4 +172,16 @@ Additional *context*.`)
     container.innerHTML = renderSafeMarkdown(exported)
     expect([...container.querySelectorAll('blockquote pre code')].map(code => code.textContent)).toEqual(['&#65;\n'])
   })
+
+  it('keeps CR, CRLF and LF source lines inside one inert exported quotation', () => {
+    const source = 'Leading\r\r[activate](https://invalid.test)\r\n\r\n[[cite:verified]]\n```mermaid\rgraph TD; A-->B\r```\r'
+    const encoded = `> ${[...source].map(character => `&#${character.codePointAt(0)};`).join('')}`
+    const container = document.createElement('div')
+    container.innerHTML = renderSafeMarkdown(exportAgentQuotationMarkdown(encoded), {
+      resolveCitation: evidenceId => ({ evidenceId, number: 1, label: 'Guide', href: '/en/guide' })
+    })
+    expect(container.querySelector('blockquote pre code')?.textContent).toBe(source.replace(/\r\n|\r/gu, '\n'))
+    expect(container.querySelector('a, img, script, [data-agent-citation], [data-diagram]')).toBeNull()
+    expect(container.querySelectorAll('pre code')).toHaveLength(1)
+  })
 })

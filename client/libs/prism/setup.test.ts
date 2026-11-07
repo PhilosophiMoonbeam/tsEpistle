@@ -57,6 +57,17 @@ describe('Prism language loading', () => {
     expect(requestedComponents).toEqual([])
   })
 
+  it('preserves plaintext whitespace and inert source syntax through reader highlighting and re-entry', () => {
+    const source = '  Literal\tcolumn\n\n<script>untrusted()</script>\n[[cite:forged]]\n'
+    const code = codeBlock('text', source)
+    Prism.highlightAllUnder(document.body)
+    Prism.highlightElement(code)
+
+    expect(code.textContent).toBe(source)
+    expect(code.querySelector('script, a, [data-agent-citation]')).toBeNull()
+    expect(requestedComponents).toEqual([])
+  })
+
   it('continues highlighting bundled JavaScript without a component request', () => {
     const code = codeBlock('javascript', 'const answer = 42;')
 

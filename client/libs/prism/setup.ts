@@ -8,6 +8,11 @@ Reflect.set(globalThis, 'Prism', Prism)
 await import('prismjs/plugins/autoloader/prism-autoloader')
 await import('prismjs/plugins/line-numbers/prism-line-numbers')
 await import('prismjs/plugins/line-highlight/prism-line-highlight')
+// Literal plaintext must survive both display and code-copy unchanged. Register
+// before the normalizer, which otherwise trims and rewrites env.code.
+Prism.hooks.add('before-sanity-check', env => {
+  if (env.grammar === Prism.languages.plaintext) env.element.classList.add('no-whitespace-normalization')
+})
 await import('prismjs/plugins/normalize-whitespace/prism-normalize-whitespace')
 await import('prismjs/plugins/toolbar/prism-toolbar')
 
