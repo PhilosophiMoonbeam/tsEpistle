@@ -18,6 +18,29 @@ describe('Wiki model source admission', () => {
     expect(view).toEqual({ title: 'Registry title is not a body fact', scope: 'complete-read', original: source })
   })
 
+  it('keeps ordinary unprojected reads unchanged when no code quotation is admitted', () => {
+    for (const source of ['# Scope\n\nOrdinary visible prose.\n', '# Scope\n\n```text\nExact body\n```\n']) {
+      const document = parseSourceDocument(source, { representation: 'markdown', truncated: false })
+      expect(document.requiresVisibilityProjection).toBe(false)
+      expect(admittedWikiBody(document)).toBe(source)
+      expect(admittedWikiBody(document, () => false)).toBe(source)
+    }
+  })
+
+  it('never offers unowned code text to a permissive quotation predicate', () => {
+    const source = '<p>Visible scope.</p>\n\n```text\nExact body\n```\n'
+    const document = parseSourceDocument(source, { representation: 'markdown', truncated: false })
+    const unowned = { ...document, units: document.units.map(unit => ({ ...unit })) }
+    const offered: string[] = []
+    const body = admittedWikiBody(unowned, literal => {
+      offered.push(literal)
+      return true
+    })
+    expect(offered).toEqual([])
+    expect(body).toBe(admittedWikiBody(unowned))
+    expect(body).not.toContain('{"codeQuotation":')
+  })
+
   it('retains an explicitly empty admitted body instead of falling back to raw hidden facts', () => {
     const source = '<div hidden>Private owner: Mallory.</div>'
     const view = modelRead(source, 'Registered owner: Ada')

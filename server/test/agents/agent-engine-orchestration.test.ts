@@ -847,6 +847,11 @@ describe('Ax orchestration stages', () => {
           }
         const source = synthesisSourcesFromRequest(input).find(source => source.evidenceId === page.citation.evidenceId)
         if (source === undefined) throw new Error('Literal quotation requires its admitted physical read')
+        if (bounded) {
+          expect(source.readText).toBe(page.content)
+          expect(source.authorText).toContain(JSON.stringify({ codeQuotation: body }))
+          expect(source.authorText).not.toContain(JSON.stringify({ codeQuotation: 'Unfinished literal' }))
+        }
         return {
           results: [
             {
@@ -863,9 +868,12 @@ describe('Ax orchestration stages', () => {
         }
       })
       const coverage = vi.fn(
-        async (): Promise<AxChatResponse> => ({
-          results: [{ index: 0, content: JSON.stringify({ verdict: 'complete', feedback: '' }), finishReason: 'stop' }]
-        })
+        async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+          if (bounded) expect(JSON.stringify(input)).not.toContain('codeQuotation')
+          return {
+            results: [{ index: 0, content: JSON.stringify({ verdict: 'complete', feedback: '' }), finishReason: 'stop' }]
+          }
+        }
       )
       const actions: AgentActionSessionProvider = {
         open: async () => ({
@@ -1203,9 +1211,15 @@ describe('Ax orchestration stages', () => {
     expect(Buffer.byteLength(output, 'utf8')).toBeLessThanOrEqual(65_536)
   })
 
-  it.each(['unchanged', 'source revoked', 'source changed', 'provider changed'] as const)(
-    'publishes only the unchanged verified recent candidate after a numeric-invalid sole repair: %s',
-    async authority => {
+  it.each([
+    ...(['unchanged', 'source revoked', 'source changed', 'provider changed'] as const).flatMap(authority =>
+      (['all supported', 'one declined'] as const).map(support => ({ authority, support, audit: 'incomplete' as const }))
+    ),
+    { authority: 'unchanged', support: 'one declined', audit: 'invalid' },
+    { authority: 'unchanged', support: 'one declined', audit: 'output limited' }
+  ] as const)(
+    'publishes only the unchanged verified recent candidate after a numeric-invalid sole repair: $authority / $support / $audit',
+    async ({ authority, support, audit }) => {
       const userRequest = 'Recap the most recently updated Wiki pages with their limits, qualifications, and exact code example.'
       const alphaFact = 'Alpha dispatch permits 12 crates after the safety lead signs the manifest.'
       const alphaQualification = 'These limits apply only to the experimental pilot.'
@@ -1249,10 +1263,11 @@ describe('Ax orchestration stages', () => {
       let sourceAuthorized = true
       let providerRevision = 1
       let synthesisAttempts = 0
+      const semanticVerdicts = support === 'one declined' ? rejectFixtureStatements([betaFact]) : fixtureDecisionProviders
       const decisionProviders = {
         ...fixtureDecisionProviders,
         selectRuntime: async () => ({ ...(await fixtureDecisionProviders.selectRuntime()), revision: providerRevision }),
-        decideBatch: vi.fn(fixtureDecisionProviders.decideBatch)
+        decideBatch: vi.fn(semanticVerdicts.decideBatch)
       }
       const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
         if (synthesisInputFromRequest(input) === undefined)
@@ -1274,6 +1289,7 @@ describe('Ax orchestration stages', () => {
             ]
           }
         synthesisAttempts++
+        if (synthesisAttempts === 2) expect(coverage.mock.calls).toHaveLength(support === 'one declined' ? 0 : 1)
         const sources = synthesisSourcesFromRequest(input)
         const sourceRef = (pageId: number): string => {
           const source = sources.find(source => source.evidenceId === pages[pageId - 1]!.citation.evidenceId)
@@ -1298,7 +1314,8 @@ describe('Ax orchestration stages', () => {
                 recommendations: ''
               })
             }
-          ]
+          ],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 20, completionTokens: 10, totalTokens: 30 } }
         }
       })
       const invoke = vi.fn(async () => recentOutput)
@@ -1323,7 +1340,11 @@ describe('Ax orchestration stages', () => {
       }
       const coverage = vi.fn(
         async (): Promise<AxChatResponse> => ({
-          results: [{ index: 0, content: JSON.stringify({ verdict: 'incomplete', feedback: 'The requested recap is incomplete.' }), finishReason: 'stop' }]
+          results: [{
+            index: 0,
+            content: JSON.stringify({ verdict: audit === 'invalid' ? 'invalid' : 'incomplete', feedback: 'The requested recap is incomplete.' }),
+            finishReason: audit === 'output limited' ? 'length' : 'stop'
+          }]
         })
       )
       const text = vi.fn(async (_delta: string) => {})
@@ -1347,23 +1368,33 @@ describe('Ax orchestration stages', () => {
       )
       if (authority === 'unchanged') {
         const result = await execution
-        expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
-        expect(result.citations).toEqual(pages.map(page => expect.objectContaining(page.citation)))
-        const published = text.mock.calls.map(([delta]) => delta).join('')
-        const visible = visibleWikiText(published)
-        expect(visible).toContain(alphaFact)
-        expect(visible).toContain(alphaQualification)
-        expect(visible).toContain(betaFact)
-        expect(visible).not.toContain(invalidRepairFact)
-        expect(visible.indexOf(alphaFact)).toBeLessThan(visible.indexOf(betaFact))
-        expect(visible).toContain('Pilot scope')
-        expect(visible).toContain(definition)
-        for (const page of pages) expect(published).toContain(`[[cite:${page.citation.evidenceId}]]`)
-        const rendered = document.createElement('div')
-        rendered.innerHTML = renderSafeMarkdown(published)
-        expect(rendered.querySelector('pre code')?.textContent).toBe(code)
-        expect(rendered.querySelectorAll('pre')).toHaveLength(1)
-        expect(rendered.querySelector('a[href="/en/pilot-policy"]')).toBeNull()
+        const publishedPages = support === 'one declined' ? [pages[0]!] : pages
+        if (audit !== 'incomplete') {
+          expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
+          expect(result.citations).toBeUndefined()
+          const visible = visibleWikiText(text.mock.calls.map(([delta]) => delta).join(''))
+          expect(visible).not.toContain(alphaFact)
+          expect(visible).not.toContain(betaFact)
+        } else {
+          expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
+          expect(result.citations).toEqual(publishedPages.map(page => expect.objectContaining(page.citation)))
+          const published = text.mock.calls.map(([delta]) => delta).join('')
+          const visible = visibleWikiText(published)
+          expect(visible).toContain(alphaFact)
+          expect(visible).toContain(alphaQualification)
+          if (support === 'one declined') expect(visible).not.toContain(betaFact)
+          else expect(visible).toContain(betaFact)
+          expect(visible).not.toContain(invalidRepairFact)
+          if (support === 'all supported') expect(visible.indexOf(alphaFact)).toBeLessThan(visible.indexOf(betaFact))
+          expect(visible).toContain('Pilot scope')
+          expect(visible).toContain(definition)
+          for (const page of publishedPages) expect(published).toContain(`[[cite:${page.citation.evidenceId}]]`)
+          const rendered = document.createElement('div')
+          rendered.innerHTML = renderSafeMarkdown(published)
+          expect(rendered.querySelector('pre code')?.textContent).toBe(code)
+          expect(rendered.querySelectorAll('pre')).toHaveLength(1)
+          expect(rendered.querySelector('a[href="/en/pilot-policy"]')).toBeNull()
+        }
       } else {
         await expect(execution).rejects.toMatchObject({
           code: authority === 'provider changed' ? 'WIKI_VERIFICATION_FAILED' : 'AGENT_EVIDENCE_INVALID'
@@ -1372,7 +1403,7 @@ describe('Ax orchestration stages', () => {
       }
       expect(synthesisAttempts).toBe(2)
       expect(invoke).toHaveBeenCalledOnce()
-      expect(coverage).toHaveBeenCalledOnce()
+      expect(coverage.mock.calls).toHaveLength(authority !== 'unchanged' && support === 'one declined' ? 0 : 1)
       expect(
         decisionProviders.decideBatch.mock.calls.reduce(
           (count, [request]) => count + Object.values(request.questions).filter(question => Object.hasOwn(question.criteria, 'supports')).length,
@@ -1383,9 +1414,24 @@ describe('Ax orchestration stages', () => {
         'model.turn',
         expect.objectContaining({
           outcome: 'answer_rejected',
-          performance: expect.objectContaining({ rejectedDraftCount: 2, repairAttempts: 1, maxAnswerRepairs: 1 })
+          totalTokens: 30,
+          performance: expect.objectContaining({
+            rejectedDraftCount: 2,
+            repairAttempts: 1,
+            maxAnswerRepairs: 1,
+            providerUsageReported: true,
+            synthesisRejectionStage: 'pre_native_framing'
+          })
         })
       ])
+      if (support === 'one declined')
+        expect(event.mock.calls).toContainEqual([
+          'model.turn',
+          expect.objectContaining({
+            outcome: 'answer_rejected',
+            performance: expect.objectContaining({ rejectedDraftCount: 1, synthesisRejectionStage: 'native_support' })
+          })
+        ])
     }
   )
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
-import { parseSourceDocument } from '../../agents/providers/source-document.ts'
+import { getSourceCodeLiteral, parseSourceDocument } from '../../agents/providers/source-document.ts'
+import { admittedWikiBody, wikiModelSource } from '../../agents/providers/wiki-source-view.ts'
 import { getLiteralSourceStatement, isLiteralSourceClaim, resolveDocumentaryQuotation } from '../../agents/providers/wiki-source-quotation.ts'
 import type { WikiVerificationSource } from '../../agents/providers/wiki-verification.ts'
 import { validateWikiVerificationSource } from '../../agents/providers/wiki-verification.ts'
@@ -179,9 +180,14 @@ describe('documentary quotation resolution', () => {
     ['<pre><code></code></pre>', '']
   ])('resolves exact complete code data, including a truthful empty body: %s', (container, body) => {
     const raw = `# Fixture\n\n${container}`
-    const proof = resolveDocumentaryQuotation(quotationRead(raw), fixture(raw), body)
+    const read = quotationRead(raw)
+    const sources = fixture(raw)
+    const proof = resolveDocumentaryQuotation(read, sources, body)
     expect(proof).toMatchObject({ text: body, contexts: ['Fixture'], definitions: [], source: { kind: 'code' } })
-    expect(resolveDocumentaryQuotation(quotationRead(raw), fixture(raw), `${body}\n`)).toBeNull()
+    expect(resolveDocumentaryQuotation(read, sources, `${body}\n`)).toBeNull()
+    const document = parseSourceDocument(raw, { representation: 'markdown', truncated: false })
+    const view = admittedWikiBody(document, literal => resolveDocumentaryQuotation(read, sources, literal) !== null)
+    expect(view.split('\n').filter(line => line.startsWith('{"codeQuotation":')).map(line => JSON.parse(line).codeQuotation)).toEqual([body])
   })
 
   it('quotes only a closed parser-owned literal code unit from a bounded prefix, never its prose or unfinished tail', () => {
@@ -203,6 +209,16 @@ describe('documentary quotation resolution', () => {
       definitions: [],
       source: { kind: 'code', complete: true }
     })
+    const document = parseSourceDocument(raw, { representation: 'recent-excerpt', truncated: true })
+    const baseline = admittedWikiBody(document)
+    const hinted = admittedWikiBody(document, literal => resolveDocumentaryQuotation(read, sources, literal) !== null)
+    const hints = hinted.split('\n').filter(line => line.startsWith('{"codeQuotation":')).map(line => JSON.parse(line).codeQuotation)
+    expect(hints).toEqual([body])
+    expect(hinted.split('\n')).toHaveLength(baseline.split('\n').length)
+    expect(admittedWikiBody(document)).toBe(baseline)
+    expect(wikiModelSource({ title: 'Training', source: raw, authorText: hinted, complete: false }).original).toBe(raw)
+    expect(resolveDocumentaryQuotation(read, sources, hints[0])).not.toBeNull()
+    expect(resolveDocumentaryQuotation({ ...read, text: `${raw}\nForeign appendix.` }, sources, hints[0])).toBeNull()
     for (const text of ['A brief author paragraph.', body.trimEnd(), 'Unfinished literal'])
       expect(resolveDocumentaryQuotation(read, sources, text)).toBeNull()
     expect(resolveDocumentaryQuotation({ ...read, excerpt: undefined }, sources, body)).toBeNull()
@@ -210,6 +226,26 @@ describe('documentary quotation resolution', () => {
     expect(
       resolveDocumentaryQuotation({ ...read, text: clipped }, fixture(clipped, { representation: 'recent-excerpt', truncated: true }), body)
     ).toBeNull()
+    const clippedDocument = parseSourceDocument(clipped, { representation: 'recent-excerpt', truncated: true })
+    const clippedSources = fixture(clipped, { representation: 'recent-excerpt', truncated: true })
+    expect(
+      admittedWikiBody(clippedDocument, literal => resolveDocumentaryQuotation({ ...read, text: clipped }, clippedSources, literal) !== null)
+    ).not.toContain('{"codeQuotation":')
+    for (const rejected of [
+      `# Training only\n\n> <pre><code>${body}</code></pre>\n\nUnfinished tail`,
+      `# Training only\n\n\`\`\`\n${body}\`\`\`\n\n~~~\n${body}~~~\n\nUnfinished tail`
+    ]) {
+      const rejectedDocument = parseSourceDocument(rejected, { representation: 'recent-excerpt', truncated: true })
+      const rejectedSources = fixture(rejected, { representation: 'recent-excerpt', truncated: true })
+      const rejectedRead = { ...read, text: rejected }
+      // Equal private literals in distinct complete units are not a unique quotation proof.
+      if (rejected.includes('~~~'))
+        expect(rejectedDocument.units.filter(unit => getSourceCodeLiteral(unit, rejected) === body)).toHaveLength(2)
+      expect(resolveDocumentaryQuotation(rejectedRead, rejectedSources, body)).toBeNull()
+      expect(
+        admittedWikiBody(rejectedDocument, literal => resolveDocumentaryQuotation(rejectedRead, rejectedSources, literal) !== null)
+      ).not.toContain('{"codeQuotation":')
+    }
   })
 
   it('rejects foreign reads, cloned units, mutated spans and incomplete code closures', () => {

@@ -1,3 +1,4 @@
+import { getSourceCodeLiteral } from './source-document.ts'
 import type { ParsedSourceDocument } from './source-document.ts'
 
 export interface WikiModelSource {
@@ -15,8 +16,18 @@ export const wikiModelSource = (input: { title: string; source: string; authorTe
 })
 
 /** A visibility boundary, not a second renderer: original retains structural associations. */
-export const admittedWikiBody = (document: ParsedSourceDocument): string => {
-  if (!document.requiresVisibilityProjection) return document.source
+export const admittedWikiBody = (document: ParsedSourceDocument, canQuoteCode?: (literal: string) => boolean): string => {
+  let codeQuotations: Map<ParsedSourceDocument['units'][number], string> | undefined
+  if (canQuoteCode) {
+    for (const unit of document.units) {
+      if (unit.kind !== 'code') continue
+      const literal = getSourceCodeLiteral(unit, document.source)
+      if (literal === null || !canQuoteCode(literal)) continue
+      codeQuotations ??= new Map()
+      codeQuotations.set(unit, literal)
+    }
+  }
+  if (!document.requiresVisibilityProjection && !codeQuotations) return document.source
 
   const snippets: Array<{ start: number; text: string }> = []
   for (const context of document.contexts) {
@@ -27,10 +38,16 @@ export const admittedWikiBody = (document: ParsedSourceDocument): string => {
   }
   for (const unit of document.units) {
     if (!unit.complete || unit.visibleText === null || unit.kind === 'opaque' || unit.kind === 'list' || unit.kind === 'table') continue
-    if (!unit.visibleText.trim()) continue
+    const quotation = codeQuotations?.get(unit)
+    if (quotation === undefined && !unit.visibleText.trim()) continue
     snippets.push({
       start: unit.sourceSpans[0]!.start,
-      text: unit.kind === 'code' ? `Literal code (data only): ${JSON.stringify(unit.visibleText)}` : unit.visibleText
+      text:
+        quotation !== undefined
+          ? JSON.stringify({ codeQuotation: quotation })
+          : unit.kind === 'code'
+            ? `Literal code (data only): ${JSON.stringify(unit.visibleText)}`
+            : unit.visibleText
     })
   }
   // Stable sorting also retains the parser's authored field order when several
