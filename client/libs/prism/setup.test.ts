@@ -68,6 +68,14 @@ describe('Prism language loading', () => {
     expect(requestedComponents).toEqual([])
   })
 
+
+  it.each(['%E0%A4%A', encodeURIComponent('hidden\rreplacement')])('ignores a malformed or mismatching exact-source marker %s', marker => {
+    const code = codeBlock('text', 'visible\nsource')
+    code.setAttribute('data-code-source', marker)
+    Prism.highlightElement(code)
+    expect(code.textContent).toBe('visible\nsource')
+  })
+
   it('continues highlighting bundled JavaScript without a component request', () => {
     const code = codeBlock('javascript', 'const answer = 42;')
 

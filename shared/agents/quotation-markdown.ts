@@ -17,8 +17,28 @@ const decodeCodeQuotation = (content: string): string | null => {
 export const installAgentCodeQuotationRule = (markdown: MarkdownIt): void => {
   markdown.core.ruler.before('inline', 'agent_code_quotation', state => {
     const tokens = state.tokens
-    for (let index = 1; index + 3 < tokens.length; index++) {
+    for (let index = 1; index + 1 < tokens.length; index++) {
       const open = tokens[index]!
+      if (
+        tokens[index - 1]!.type === 'blockquote_open' &&
+        open.type === 'html_block' &&
+        open.map !== null &&
+        open.map[1] === open.map[0] + 1 &&
+        tokens[index + 1]!.type === 'blockquote_close'
+      ) {
+        const text = decodeCodeQuotation(open.content.replace(/\n$/u, ''))
+        if (text !== null) {
+          open.type = 'fence'
+          open.tag = 'code'
+          open.nesting = 0
+          open.content = text
+          open.info = 'text'
+          open.markup = '```'
+          open.hidden = false
+        }
+        continue
+      }
+      if (index + 3 >= tokens.length) continue
       const inline = tokens[index + 1]!
       if (
         tokens[index - 1]!.type !== 'blockquote_open' ||

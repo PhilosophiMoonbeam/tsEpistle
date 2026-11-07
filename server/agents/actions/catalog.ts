@@ -415,7 +415,7 @@ export const ACTION_CATALOG = {
     descriptor: descriptor(
       'pages.get',
       'Get page',
-      `Read a visible current Wiki page by exact positive numeric ID, or a user-supplied raw stored path with separate locale. From search, discovery, recent, or related results use ${AGENT_TOOL_NAMES['pages.get']}({id: result.id}), not a displayed path, locale, href, citation, URI, revision, title, or history version ID. The read reauthorizes current content; reuse delivered evidence for wording repairs only while its source and access remain valid. Omitted or not_executed reads supply no evidence; do not infer access or retry automatically.`,
+      `Read a visible current Wiki page by exact positive numeric ID, or a user-supplied raw stored path with separate locale. When a read is needed from search, discovery, recent, or related results, use ${AGENT_TOOL_NAMES['pages.get']}({id: result.id}), not a displayed path, locale, href, citation, URI, revision, title, or history version ID. Delivered recent-page body excerpts already support bounded recaps and citations; read the full page only for needed content the excerpt cannot establish. The read reauthorizes current content; reuse delivered evidence for wording repairs only while its source and access remain valid. Omitted or not_executed reads supply no evidence; do not infer access or retry automatically.`,
       'read',
       ['read:pages'],
       both,

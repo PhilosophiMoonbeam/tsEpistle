@@ -1023,6 +1023,194 @@ describe('Ax orchestration stages', () => {
     expect(published).toMatch(/not established/iu)
   })
 
+  it.each(['unchanged', 'source revoked', 'source changed', 'provider changed'] as const)(
+    'publishes only the unchanged verified recent candidate after a numeric-invalid sole repair: %s',
+    async authority => {
+      const userRequest = 'Recap the most recently updated Wiki pages with their limits, qualifications, and exact code example.'
+      const alphaFact = 'Alpha dispatch permits 12 crates after the safety lead signs the manifest.'
+      const alphaQualification = 'These limits apply only to the experimental pilot.'
+      const betaFact = 'Beta storage permits 24 crates after the custodian seals the receipt.'
+      const invalidRepairFact = 'Alpha dispatch permits 13 crates after the safety lead signs the manifest.'
+      const code = 'if (crates > 12) {\n\treturn false\n}\n'
+      const definition = '[pilot-policy]: /en/pilot-policy "Experimental pilot policy"'
+      const alphaContent = `# Pilot [scope][pilot-policy]\n\n${alphaFact}\n\n${alphaQualification}\n\n\`\`\`js\n${code}\`\`\`\n\n${definition}\n`
+      const pages = [
+        {
+          id: 1,
+          locale: 'en',
+          path: 'alpha',
+          title: 'Alpha',
+          contentType: 'markdown',
+          sourceRevision: 'rev-1',
+          content: alphaContent,
+          citation: { evidenceId: 'page:1:revision:rev-1', label: 'Alpha', href: '/en/alpha' },
+          citationSections: [],
+          updatedAt: '2026-09-21T09:00:00.000Z',
+          contentTruncated: false,
+          sourceContentCharacters: alphaContent.length
+        },
+        {
+          id: 2,
+          locale: 'en',
+          path: 'beta',
+          title: 'Beta',
+          contentType: 'markdown',
+          sourceRevision: 'rev-2',
+          content: betaFact,
+          citation: { evidenceId: 'page:2:revision:rev-2', label: 'Beta', href: '/en/beta' },
+          citationSections: [],
+          updatedAt: '2026-09-20T09:00:00.000Z',
+          contentTruncated: false,
+          sourceContentCharacters: betaFact.length
+        }
+      ]
+      const recentOutput = { kind: 'recent-page-evidence', requestedLimit: 10, exhausted: true, pages }
+      let currentRecentOutput = recentOutput
+      let sourceAuthorized = true
+      let providerRevision = 1
+      let synthesisAttempts = 0
+      const decisionProviders = {
+        ...fixtureDecisionProviders,
+        selectRuntime: async () => ({ ...(await fixtureDecisionProviders.selectRuntime()), revision: providerRevision }),
+        decideBatch: vi.fn(fixtureDecisionProviders.decideBatch)
+      }
+      const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+        if (synthesisInputFromRequest(input) === undefined)
+          return {
+            results: [
+              {
+                index: 0,
+                content: `<wiki-request-plan>${JSON.stringify({
+                  facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'recent-window' }]
+                })}</wiki-request-plan>`,
+                functionCalls: [
+                  {
+                    id: 'read-recent-limits',
+                    type: 'function',
+                    function: { name: input.functions!.find(fn => fn.name.includes('recent'))!.name, params: '{"limit":10}' }
+                  }
+                ]
+              }
+            ]
+          }
+        synthesisAttempts++
+        const sources = synthesisSourcesFromRequest(input)
+        const sourceRef = (pageId: number): string => {
+          const source = sources.find(source => source.evidenceId === pages[pageId - 1]!.citation.evidenceId)
+          if (source === undefined) throw new Error('Repair requires the original recent physical reads')
+          return source.sourceRef
+        }
+        return {
+          results: [
+            {
+              index: 0,
+              content: JSON.stringify({
+                // Deliberately reverse the recent order; publication must use
+                // the host's newest-first order, not the producer's order.
+                claims: [
+                  { sourceRef: sourceRef(2), statement: betaFact },
+                  { sourceRef: sourceRef(1), statement: synthesisAttempts === 1 ? alphaFact : invalidRepairFact },
+                  { sourceRef: sourceRef(1), statement: alphaQualification }
+                ],
+                quotations: [{ sourceRef: sourceRef(1), text: code }],
+                unresolvedFacets: [],
+                observations: [],
+                recommendations: ''
+              })
+            }
+          ]
+        }
+      })
+      const invoke = vi.fn(async () => recentOutput)
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: [
+            {
+              name: 'pages.listRecent',
+              title: 'Read recent pages',
+              description: 'Read recent pages',
+              parameters: { type: 'object', properties: {} },
+              risk: 'read'
+            }
+          ],
+          invoke,
+          validateObservation: async (name, output) =>
+            name === 'pages.listRecent' && sourceAuthorized && JSON.stringify(output) === JSON.stringify(currentRecentOutput),
+          snapshot: async () => ({}),
+          close: () => {},
+          authoritySha256: null
+        })
+      }
+      const coverage = vi.fn(
+        async (): Promise<AxChatResponse> => ({
+          results: [{ index: 0, content: JSON.stringify({ verdict: 'incomplete', feedback: 'The requested recap is incomplete.' }), finishReason: 'stop' }]
+        })
+      )
+      const text = vi.fn(async (_delta: string) => {})
+      const event = vi.fn(async (type: string, _data: unknown) => {
+        // Revoke only after the invalid repair's own rejection was published,
+        // isolating the retained candidate's terminal publication fence.
+        if (synthesisAttempts !== 2 || type !== 'evidence.provenance') return
+        if (authority === 'source revoked') sourceAuthorized = false
+        if (authority === 'source changed')
+          currentRecentOutput = { ...recentOutput, pages: pages.map(page => (page.id === 1 ? { ...page, sourceRevision: 'changed-revision' } : page)) }
+        if (authority === 'provider changed') providerRevision++
+      })
+      const execution = new AxAgentEngine(factoryFor(chat, { coverage }), actions, undefined, { decisionProviders }).execute(
+        {
+          ...baseRequest(new AbortController().signal),
+          memory: { user: [], agent: [] },
+          messages: [{ role: 'user', content: userRequest }],
+          limits: { maxTurns: 3, maxToolCalls: 1, maxTokens: 2_000_000 }
+        },
+        { text, event }
+      )
+      if (authority === 'unchanged') {
+        const result = await execution
+        expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
+        expect(result.citations).toEqual(pages.map(page => expect.objectContaining(page.citation)))
+        const published = text.mock.calls.map(([delta]) => delta).join('')
+        const visible = visibleWikiText(published)
+        expect(visible).toContain(alphaFact)
+        expect(visible).toContain(alphaQualification)
+        expect(visible).toContain(betaFact)
+        expect(visible).not.toContain(invalidRepairFact)
+        expect(visible.indexOf(alphaFact)).toBeLessThan(visible.indexOf(betaFact))
+        expect(visible).toContain('Pilot scope')
+        expect(visible).toContain(definition)
+        expect(visible).toMatch(/not established/iu)
+        expect(visible).not.toContain("I couldn't complete a source-verified answer")
+        for (const page of pages) expect(published).toContain(`[[cite:${page.citation.evidenceId}]]`)
+        const rendered = document.createElement('div')
+        rendered.innerHTML = renderSafeMarkdown(published)
+        expect(rendered.querySelector('pre code')?.textContent).toBe(code)
+        expect(rendered.querySelectorAll('pre')).toHaveLength(1)
+        expect(rendered.querySelector('a[href="/en/pilot-policy"]')).toBeNull()
+      } else {
+        await expect(execution).rejects.toMatchObject({
+          code: authority === 'provider changed' ? 'WIKI_VERIFICATION_FAILED' : 'AGENT_EVIDENCE_INVALID'
+        })
+        expect(text).not.toHaveBeenCalled()
+      }
+      expect(synthesisAttempts).toBe(2)
+      expect(invoke).toHaveBeenCalledOnce()
+      expect(coverage).toHaveBeenCalledOnce()
+      expect(
+        decisionProviders.decideBatch.mock.calls.reduce(
+          (count, [request]) => count + Object.values(request.questions).filter(question => Object.hasOwn(question.criteria, 'supports')).length,
+          0
+        )
+      ).toBe(3)
+      expect(event.mock.calls).toContainEqual([
+        'model.turn',
+        expect.objectContaining({
+          outcome: 'answer_rejected',
+          performance: expect.objectContaining({ rejectedDraftCount: 2, repairAttempts: 1, maxAnswerRepairs: 1 })
+        })
+      ])
+    }
+  )
+
   it('uses the same bounded root output exposure for preflight and actual generation on large provider profiles', async () => {
     const chat = vi.fn(
       async (input: Readonly<AxChatRequest<unknown>>) =>

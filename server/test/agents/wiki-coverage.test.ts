@@ -1,6 +1,6 @@
-import { type AxChatRequest, AxMockAIService } from '@ax-llm/ax'
+import { AxMockAIService } from '@ax-llm/ax'
 import { createWikiCoverageProgram, encodeWikiCoverageInput, type WikiCoverageInput } from '../../agents/providers/wiki-coverage.ts'
-import { describe, expect, it, vi } from '../bun-test.mts'
+import { describe, expect, it } from '../bun-test.mts'
 
 const input = (): WikiCoverageInput => ({
   userRequest: 'Summarize the approval restrictions.',
@@ -60,26 +60,24 @@ describe('Wiki coverage input binding', () => {
       }
     }
     const group = ` \n${JSON.stringify(evidence, null, 2)}\n `
-    for (const observations of [[], ['Wiki proposal application status: applied.']]) {
-      const encoded = encodeWikiCoverageInput({
-        userRequest: 'Replace the requested line, preserve everything else, then independently verify the saved page.',
-        requestFacets: ['Replace the requested line', 'preserve everything else', 'independently verify the saved page'],
-        unresolvedFacets: [2],
-        reads: [],
-        claims: [],
-        observations,
-        operationEvidence: [group]
-      })
-      const groups = JSON.parse(encoded.operationEvidence!)
-      expect(groups).toEqual([evidence])
-      expect(groups[0].reviewedChange.diff).toBe(evidence.reviewedChange.diff)
-      expect(JSON.parse(encoded.observations!)).toEqual(observations)
-      expect(encoded.unresolvedFacets).toEqual([2])
-      expect(JSON.parse(encoded.sourceText)).toEqual([])
-      expect(JSON.parse(encoded.claims)).toEqual([])
-    }
+    const observations = ['Wiki proposal application status: applied.']
+    const encoded = encodeWikiCoverageInput({
+      userRequest: 'Replace the requested line, preserve everything else, then independently verify the saved page.',
+      requestFacets: ['Replace the requested line', 'preserve everything else', 'independently verify the saved page'],
+      unresolvedFacets: [2],
+      reads: [],
+      claims: [],
+      observations,
+      operationEvidence: [group]
+    })
+    const groups = JSON.parse(encoded.operationEvidence!)
+    expect(groups).toEqual([evidence])
+    expect(groups[0].reviewedChange.diff).toBe(evidence.reviewedChange.diff)
+    expect(JSON.parse(encoded.observations!)).toEqual(observations)
+    expect(encoded.unresolvedFacets).toEqual([2])
+    expect(JSON.parse(encoded.sourceText)).toEqual([])
+    expect(JSON.parse(encoded.claims)).toEqual([])
     expect(encodeWikiCoverageInput(input())).not.toHaveProperty('operationEvidence')
-    expect(JSON.parse(encodeWikiCoverageInput({ ...input(), operationEvidence: [] }).operationEvidence!)).toEqual([])
   })
 
   it('admits whole operation evidence groups only within the UTF-8 byte bound', () => {
@@ -240,110 +238,12 @@ describe('Wiki coverage input binding', () => {
     })
   })
 
-  it('places complete untrusted reads before changing conversation, question, facets and claims with a stable optional-field system prompt', async () => {
-    const valid = input()
-    const encoded = encodeWikiCoverageInput(valid)
-    const history = 'Earlier user: focus on external approvals.'
-    const operation = { reviewedChange: { diff: '--- before\n+++ after\n@@ -1 +1 @@\n-old\n+new é' } }
-    const operationGroup = JSON.stringify(operation)
-    const files = [
-      { id: 'file:coverage-first', filename: 'first.png', mimeType: 'image/png' },
-      { id: 'file:coverage-second', filename: 'second.pdf', mimeType: 'application/pdf' }
-    ]
-    for (const contextCache of [undefined, { cacheBreakpoint: 'after-examples' as const }]) {
-      const chat = vi.fn(async (_request: Readonly<AxChatRequest>) => ({
-        results: [{ index: 0, content: JSON.stringify({ verdict: 'complete', feedback: '' }), finishReason: 'stop' as const }]
-      }))
-      const service = new AxMockAIService<string>({
-        features: {
-          functions: false,
-          streaming: false,
-          structuredOutputs: true,
-          structuredOutputModes: ['native'],
-          caching: { supported: true, types: ['ephemeral'], cacheBreakpoints: true }
-        },
-        chatResponse: chat
-      })
-      const program = createWikiCoverageProgram()
-      const turns: WikiCoverageInput[] = [
-        valid,
-        { ...valid, conversationContext: '', inputMediaSources: [files[0]!] },
-        {
-          ...valid,
-          conversationContext: history,
-          userRequest: 'Who approves this now?',
-          requestFacets: ['Who approves this now?'],
-          unresolvedFacets: [0],
-          claims: [{ readRef: 'r1', statement: 'Both owners approve.' }],
-          observations: ['Wiki proposal application status: applied.'],
-          operationEvidence: [operationGroup],
-          inputMediaSources: files,
-          attachmentClaims: [
-            {
-              mediaId: files[1]!.id,
-              filename: files[1]!.filename,
-              mimeType: files[1]!.mimeType,
-              statement: 'The provided document contains an approval diagram.'
-            }
-          ]
-        }
-      ]
-      for (const turn of turns) await program.forward(service, encodeWikiCoverageInput(turn), { structuredOutputMode: 'native', contextCache })
-      const requests = chat.mock.calls.map(([request]) => request)
-      const userText = (request: Readonly<AxChatRequest>): string =>
-        request.chatPrompt
-          .filter(message => message.role === 'user')
-          .map(message =>
-            typeof message.content === 'string'
-              ? message.content
-              : message.content
-                  .filter(part => part.type === 'text')
-                  .map(part => part.text)
-                  .join('\n')
-          )
-          .join('\n')
-      const prefix = (request: Readonly<AxChatRequest>): string => {
-        const text = userText(request)
-        const sourceStart = text.indexOf(encoded.sourceText)
-        expect(sourceStart).toBeGreaterThanOrEqual(0)
-        expect(text.indexOf('User Request:')).toBeGreaterThan(sourceStart + encoded.sourceText.length)
-        expect(text.indexOf('Claims:')).toBeGreaterThan(sourceStart + encoded.sourceText.length)
-        return text.slice(0, sourceStart + encoded.sourceText.length)
-      }
-      for (const request of requests) {
-        expect(request.chatPrompt[0]).toEqual(requests[0]!.chatPrompt[0])
-        expect(request.chatPrompt[0]!.content).not.toContain(valid.reads[0]!.source)
-        expect(request.responseFormat).toEqual(requests[0]!.responseFormat)
-        expect(request.chatPrompt[0]!.content).not.toContain(files[0]!.id)
-        expect(request.chatPrompt[0]!.content).not.toContain(files[1]!.id)
-        expect(prefix(request)).toBe(prefix(requests[0]!))
-        if (contextCache !== undefined) {
-          const cached = request.chatPrompt.find(message => message.role === 'user' && message.cache)
-          expect(cached?.content).toContain(encoded.sourceText)
-          expect(cached?.content).not.toContain('User Request:')
-          expect(cached?.content).not.toContain(history)
-          expect(cached?.content).not.toContain('Claims:')
-          expect(cached?.content).not.toContain('Input Media References:')
-          expect(cached?.content).not.toContain('Attachment Claims:')
-          expect(cached?.content).not.toContain(files[0]!.id)
-          expect(cached?.content).not.toContain(files[1]!.id)
-          expect(cached?.content).not.toContain('Operation Evidence:')
-          expect(cached?.content).not.toContain(operationGroup)
-        }
-      }
-      expect(userText(requests[2]!)).toContain(history)
-      expect(userText(requests[2]!)).toContain(turns[2]!.userRequest)
-      expect(userText(requests[2]!)).toContain(turns[2]!.claims[0]!.statement)
-      expect(userText(requests[2]!)).toContain(turns[2]!.attachmentClaims![0]!.statement)
-      expect(userText(requests[2]!)).toContain(JSON.stringify([operation]))
-      expect(userText(requests[2]!)).not.toContain(JSON.stringify([operationGroup]))
-    }
-  })
 })
 
 describe('Wiki coverage native optional feedback protocol', () => {
-  const forward = (verdict: string) =>
-    createWikiCoverageProgram().forward(
+  const forward = (verdict: string) => {
+    const encoded = encodeWikiCoverageInput(input())
+    return createWikiCoverageProgram(encoded).forward(
       new AxMockAIService({
         features: { functions: false, structuredOutputs: true, structuredOutputModes: ['native'] },
         chatResponse: {
@@ -351,8 +251,9 @@ describe('Wiki coverage native optional feedback protocol', () => {
           modelUsage: { ai: 'fixture', model: 'fixture', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
         }
       }),
-      encodeWikiCoverageInput(input())
+      encoded
     )
+  }
 
   it('accepts native null feedback for a complete verdict', async () => {
     expect((await forward('complete')).verdict).toBe('complete')

@@ -7350,7 +7350,7 @@ export class AxAgentEngine implements AgentEngine {
     const features = provider.service.getFeatures(provider.model)
     const structured =
       features.structuredOutputModes === undefined ? features.structuredOutputs === true || features.functions : features.structuredOutputModes.length > 0
-    const program = createWikiCoverageProgram({ structured })
+    const program = createWikiCoverageProgram(input, { structured })
     let dispatched: TurnResult | undefined
     let dispatchFailure: unknown
     const admittedChat: AxAIService['chat'] = async (generation, generationOptions) => {
@@ -7906,6 +7906,7 @@ export class AxAgentEngine implements AgentEngine {
       let cacheHitCount = 0
       let rejectedDraftCount = 0
       let retainedRecentDraft: NativeDraft | undefined
+      let retainedRecentPublication: { readonly draft: NativeDraft; readonly evidence: ReadonlyMap<string, CitationEvidence> } | undefined
       let repairFeedback: SynthesisRepairFeedback | undefined
       // Complete native support requests are run-local proofs, not another
       // dispatch: reuse must never add the original receipt to usage twice.
@@ -9818,6 +9819,7 @@ export class AxAgentEngine implements AgentEngine {
           let coverageOutputLimited = false
           let coverageAuditFeedback: string | undefined
           let selectedRecentPartial = false
+          const hostInvalidBeforeSemanticVerification = !assessment.valid
           if (
             assessment.valid &&
             result.rootNativeDraft !== undefined &&
@@ -10052,6 +10054,15 @@ export class AxAgentEngine implements AgentEngine {
                 if (maxTokens !== undefined && totalTokens > maxTokens)
                   throw new AgentRepositoryError('AGENT_TOKEN_BUDGET_LIMITED', 'Coverage exceeded the admitted run token limit', 429)
                 coverageOutputLimited = audit.turn.finishReason === 'length'
+                if (
+                  !coverageOutputLimited &&
+                  audit.verdict === 'incomplete' &&
+                  semantic.valid &&
+                  assessment.valid &&
+                  rejectedDraftCount === 0 &&
+                  retainedRecentDraft !== undefined
+                )
+                  retainedRecentPublication = { draft: orderVerifiedRecentDraft(retainedRecentDraft), evidence }
                 // A valid incomplete audit can narrow completion, never source support.
                 // Preserve unchanged, wholly verified recent contributions on the final attempt.
                 if (
@@ -10217,6 +10228,54 @@ export class AxAgentEngine implements AgentEngine {
                   })
             }
           }
+          let terminalRetainedPublication = false
+          if (
+            !assessment.valid &&
+            hostInvalidBeforeSemanticVerification &&
+            (request.purpose ?? 'root') === 'root' &&
+            rejectedDraftCount > MAX_ANSWER_REPAIRS &&
+            retainedRecentPublication !== undefined
+          ) {
+            // The sole repair never reached Native verification. Reject that
+            // paid response, then publish the separate unchanged prior proof;
+            // never merge its invalid groups or dispatch another proof/audit.
+            await publishAssessmentEvents()
+            const retained = retainedRecentPublication.draft
+            const retainedEvidence = retainedRecentPublication.evidence
+            await retained.authorizeSourceInputs()
+            await requireLiveWikiVerification(retainedEvidence)
+            const retainedAssessment = assessDraft(
+              assessableActionStatusContent(retained.content, deliveredAttributedLines, deliveredBrowserAttributions),
+              retainedEvidence,
+              {
+                ...coverage,
+                partialCoverage: { omittedCount: executedOmittedCount(), notExecutedCount: notExecutedActionCallIds.size }
+              },
+              retained
+            )
+            if (!retainedAssessment.valid) return await publishExecutionLimit('evidence')
+            const retainedResult = {
+              ...result,
+              content: retained.content,
+              thoughtBlocks: [],
+              rootNativeDraft: retained,
+              rootAuthorizeSourceInputs: retained.authorizeSourceInputs,
+              rootUnresolvedFacets: retained.answer.unresolvedFacets,
+              rootHasVerifiedContent: true,
+              rootMetadataPresent: true
+            } satisfies TurnResult
+            delete retainedResult.nativeContent
+            delete retainedResult.rootRejectedDraft
+            delete retainedResult.rootFramingIssue
+            result = retainedResult
+            assessment = retainedAssessment
+            assessmentEvidence = retainedEvidence
+            publicationVerificationEvidence = retainedEvidence
+            requestDisclosure = requestEvidenceDisclosure(contextPlan.requestFacets, retained.answer.unresolvedFacets, unestablishedCoverage)
+            rootMetadataStripped = true
+            selectedRecentPartial = true
+            terminalRetainedPublication = true
+          }
           if (!assessment.valid) {
             await publishAssessmentEvents()
             let correctionContext: SynthesisRepairFeedback['context'] = {
@@ -10370,7 +10429,11 @@ export class AxAgentEngine implements AgentEngine {
           const closeFailure = finalizeActionSession()
           if (closeFailure) throw closeFailure
           if (publicationVerificationEvidence !== undefined) await requireLiveWikiVerification(publicationVerificationEvidence)
-          await publishAssessmentEvents()
+          if (!terminalRetainedPublication) await publishAssessmentEvents()
+          else {
+            await assertAssessmentPublicationFresh()
+            await sink.event('evidence.provenance', provenanceData(true, assessment, retrievals))
+          }
           await assertAssessmentPublicationFresh()
           await presentAcceptedContent(
             acceptedContent,

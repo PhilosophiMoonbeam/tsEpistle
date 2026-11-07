@@ -1,3 +1,6 @@
+import { document, resetBody } from '../../../client/test/browser-dom.mts'
+import Prism from '../../../client/libs/prism/setup.ts'
+import { vi } from '../bun-test.mts'
 import * as cheerio from 'cheerio'
 import renderer from '../../modules/rendering/markdown-core/renderer.ts'
 import securityRenderer from '../../modules/rendering/html-security/renderer.ts'
@@ -24,6 +27,83 @@ const renderMarkdown = (input, { config = {}, children = [], page = { localeCode
 }
 
 describe('markdown core renderer plugin behavior', () => {
+  it('preserves saved canonical quotations through Reader rendering and the Prism Copy source', async () => {
+    const hostile = '\t<script>untrusted()</script>\n```mermaid\nA-->B\n```\n[link](https://invalid.test)\n[[cite:forged]]\n\n'
+    resetBody()
+    const originalWiki = Object.getOwnPropertyDescriptor(globalThis, 'WIKI')
+    Reflect.set(globalThis, 'WIKI', { config: { host: 'https://wiki.example.test' } })
+    const htmlRenderer = (await vi.importFresh(
+      '../../modules/rendering/html-core/renderer.ts', import.meta.url
+    )).default
+    try {
+      for (const source of [hostile, '', '\n', '  leading\tand trailing  \n', 'one\r\ntwo\rthree']) {
+        const carrier = `> <pre><code>${[...source].map(character => `&#${character.codePointAt(0)};`).join('')}</code></pre>`
+        for (const allowHTML of [false, true]) {
+          const html = await renderer.render.call({
+            input: `${carrier}\n\n\`\`\`javascript\nconst answer = 42;\n\`\`\``,
+            config: { allowHTML, linebreaks: true, linkify: true, typographer: true, quotes: 'English', underline: false },
+            children: []
+          })
+          document.body.innerHTML = await htmlRenderer.render.call({
+            input: html,
+            config: { absoluteLinks: false, openExternalLinkNewTab: false, relAttributeExternalLink: '' },
+            children: [
+              { key: 'htmlCodehighlighter', config: {} },
+              { key: 'htmlSecurity', config: { safeHTML: true, allowIFrames: false, allowDrawIoUnsafe: false }, step: 'post' }
+            ],
+            page: { id: 42, localeCode: 'en', path: 'test', visibility: 'public', ownerId: null }
+          })
+          // Reader's existing toolbar copies env.code, not reconstructed Markdown or rendered prose.
+          const copies = []
+          const capture = env => {
+            if (env.language === 'text') copies.push(env.code)
+          }
+          Prism.hooks.add('complete', capture)
+          try {
+            Prism.highlightAllUnder(document.body)
+            const code = document.querySelector('blockquote pre > code')
+            expect(code?.textContent).toBe(source)
+            expect(copies).toEqual([source])
+            Prism.highlightAllUnder(document.body)
+            expect(code?.textContent).toBe(source)
+            expect(copies).toEqual([source, source])
+            expect(code?.querySelector('script, a, img, [data-agent-citation]')).toBeNull()
+            expect(document.querySelector('.codeblock-mermaid, .diagram, script, a')).toBeNull()
+            expect(document.querySelector('code.language-javascript .token.keyword')?.textContent).toBe('const')
+          } finally {
+            const hooks = Prism.hooks.all.complete
+            hooks.splice(hooks.indexOf(capture), 1)
+          }
+        }
+      }
+    } finally {
+      if (originalWiki) Object.defineProperty(globalThis, 'WIKI', originalWiki)
+      else Reflect.deleteProperty(globalThis, 'WIKI')
+      resetBody()
+    }
+  })
+  it('recognizes only an exact one-line numeric code carrier in its own quotation', async () => {
+    const carrier = '<pre><code>&#9;&#65;&#10;</code></pre>'
+    for (const allowHTML of [false, true]) {
+      const options = { config: { allowHTML } }
+      const admitted = cheerio.load(await renderMarkdown(`> ${carrier}`, options))
+      expect(admitted('blockquote > pre > code.language-text').text()).toBe('\tA\n')
+      for (const source of [
+        carrier,
+        `> prefix ${carrier}`,
+        `> ${carrier} suffix`,
+        '> <pre><code>A</code></pre>',
+        '> <pre><code>&#55296;</code></pre>',
+        `> ${carrier}\n>\n> extra paragraph`,
+        '> <pre><code>&#65;\n> &#10;</code></pre>',
+        `\`\`\`text\n> ${carrier}\n\`\`\``
+      ]) {
+        const document = cheerio.load(await renderMarkdown(source, options))
+        expect(document('blockquote > pre > code.language-text')).toHaveLength(0)
+      }
+    }
+  })
+
   it('renders same-line and marker-only quote attribution identically', async () => {
     const sameLine = await renderMarkdown('> [name=Ada] Quoted **body**.')
     for (const source of ['> [name=Ada]\n> Quoted **body**.', '> [name=Ada]\n>\n> Quoted **body**.']) {

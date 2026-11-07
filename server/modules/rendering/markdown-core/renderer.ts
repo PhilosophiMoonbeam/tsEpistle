@@ -9,6 +9,7 @@ import { installContentExtensionFenceRule, prepareContentExtensionFences } from 
 import { installAdmonitionRule } from './admonitions.ts'
 import { renderMarkdownCodeFence } from '../../../../shared/markdown-code-fence.ts'
 import markdownItQuoteAttribution from '../../../../shared/markdown-it-quote-attribution.ts'
+import { installAgentCodeQuotationRule } from '../../../../shared/agents/quotation-markdown.ts'
 
 interface MarkdownRendererConfig extends UnknownRecord {
   allowHTML: boolean
@@ -149,6 +150,7 @@ const plugin = {
     }
 
     installAdmonitionRule(mkdown)
+    installAgentCodeQuotationRule(mkdown)
     mkdown.renderer.rules.fence = (tokens, index) => {
       const token = tokens[index]
       if (!token) throw new TypeError('Markdown fence token is unavailable.')

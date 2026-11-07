@@ -11,7 +11,19 @@ await import('prismjs/plugins/line-highlight/prism-line-highlight')
 // Literal plaintext must survive both display and code-copy unchanged. Register
 // before the normalizer, which otherwise trims and rewrites env.code.
 Prism.hooks.add('before-sanity-check', env => {
-  if (env.grammar === Prism.languages.plaintext) env.element.classList.add('no-whitespace-normalization')
+  if (env.grammar !== Prism.languages.plaintext) return
+  env.element.classList.add('no-whitespace-normalization')
+  const encoded = env.element.getAttribute('data-code-source')
+  if (encoded !== null) {
+    try {
+      const source = decodeURIComponent(encoded)
+      // The marker may restore newline spelling, never substitute hidden content.
+      if (source.replace(/\r\n?/gu, '\n') === env.code.replace(/\r\n?/gu, '\n')) env.code = source
+    } catch { /* Malformed authored markers leave visible code unchanged. */ }
+  }
+})
+Prism.hooks.add('before-insert', env => {
+  if (env.grammar === Prism.languages.plaintext) env.highlightedCode = env.highlightedCode.replace(/\r/gu, '&#13;')
 })
 await import('prismjs/plugins/normalize-whitespace/prism-normalize-whitespace')
 await import('prismjs/plugins/toolbar/prism-toolbar')

@@ -1096,3 +1096,18 @@ Both framing arms used the same canonical admitted source view. This isolates fr
 The actual operator ledger reconciled 52 Native calls, 75,435 tokens and 3,011 cost micros ($0.003011), with no retry, unknown exposure or pending allocation. These are Native qualification receipts, not the separately metered owner-UI generation totals. Synthetic gold review used a separate Jevify model and made no synthetic gold-label changes.
 
 The qualification freeze is source `3d4202ab8b38b0244230e6805fedacf07d1eb623`, image `sha256:a05aaaf4dd7c17f16d01d10f605e2483953802026c225ba155d8f8c421abecb4`, actual Native model `jev-1.13.0`, policy `wiki-evidence-probability-v2`, and Native runtime SHA-256 `8167797774eab9e2f942893b8eaba1c63cca282b2c724b651b8b5747bf4f7231`. Frozen holdout request hashes and compact numeric/hash-only results are retained under the owner-only `xuq-maya-evidence-20261107-xuh6515c` directory until 2026-11-13; this is ordinary Sprint evidence, not a release attestation.
+
+### Requested depth, retained findings and saved code
+
+Brief summaries select substantive, source-qualified facts; they do not silently become exhaustive inventories of every restriction in every available page. Explicit requests for all members, dimensions or restrictions still require that coverage. Selected assertions always retain their governing conditions and definitions. Independent collective coverage remains separate from Native claim support.
+
+Source-only synthesis and coverage omit the unavailable file/operation manuals and empty optional coverage arrays. Small optional-field descriptions remain stable for source-prefix caching, including repair. Synthetic installed-SDK request construction measured these system-message sizes; this is not a model-accuracy or live-cost comparison:
+
+| Available channels | Synthesis system bytes | Coverage system bytes |
+| --- | ---: | ---: |
+| Wiki source only | 11,989 | 7,742 |
+| Wiki source, files and operations | 14,998 | 13,151 |
+
+A valid incomplete coverage audit can retain a separate, unchanged, wholly verified recent candidate. If the sole repair fails host validation before Native verification, that prior candidate may publish with fresh authorization, source/provider pins, citations and explicit partial disclosure. Invalid repair text is never merged into it. Native declines, uncertain audits, provider/transport failures and unsettled usage do not enter this terminal-retention path.
+
+Saved canonical literal-code quotations use the existing strict numeric-only carrier and Reader plaintext-fence path. Tabs, blank lines and final newlines remain literal. CR-only source markers can restore newline spelling through HTML parsing only when their normalized text matches the visible code; they cannot substitute hidden content. The existing Reader Copy consumer uses the same restored code as display.

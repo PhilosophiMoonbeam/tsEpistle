@@ -213,7 +213,9 @@ export const renderMarkdownCodeFence = ({
   if (numbered) classes.push('line-numbers')
   const start = numbered && metadata.lineStart !== 1 ? ` data-start="${metadata.lineStart}" data-line-offset="${metadata.lineStart - 1}"` : ''
   const highlights = metadata.lineHighlights ? ` data-line="${metadata.lineHighlights}"` : ''
-  const pre = `<pre class="${classes.join(' ')}"${sourceMarker}${start}${highlights}><code class="language-${escapeHtml(language)}">${escapeHtml(source)}</code></pre>`
+  // HTML parsers normalize literal CRs even inside code; retain only this otherwise-lost source.
+  const exactSource = metadata.language === 'text' && source.includes('\r') ? ` data-code-source="${encodeURIComponent(source)}"` : ''
+  const pre = `<pre class="${classes.join(' ')}"${sourceMarker}${start}${highlights}><code class="language-${escapeHtml(language)}"${exactSource}>${escapeHtml(source)}</code></pre>`
   if (!metadata.title) return `${pre}\n`
   return `<figure class="codeblock-framed"${sourceMarker}><figcaption class="codeblock-title">${escapeHtml(metadata.title)}</figcaption>${pre.replace(sourceMarker, '')}</figure>\n`
 }
