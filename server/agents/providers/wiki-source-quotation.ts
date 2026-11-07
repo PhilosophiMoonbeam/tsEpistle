@@ -1,5 +1,5 @@
 import { parseSourceDocument, type SourceContext, type SourceSpan, type SourceUnit } from './source-document.ts'
-import type { WikiSynthesisAnswer } from './wiki-synthesis.ts'
+import type { WikiSynthesisAnswer, WikiSynthesisSource } from './wiki-synthesis.ts'
 import type { WikiVerificationSource } from './wiki-verification.ts'
 
 const spanKey = (span: SourceSpan): string => `${span.start}:${span.end}`
@@ -169,5 +169,63 @@ export const isLiteralSourceClaim = (claim: WikiSynthesisAnswer['claims'][number
   const statement = getLiteralSourceStatement(source)
   return statement !== null && (claim.statement === statement || source.kind === 'page-title' && claim.statement === `${statement}.` ||
     (source.closure?.record?.fields.length ?? 0) > 0 && claim.statement === literalRecordStatement(source))
+}
+
+export interface DocumentaryQuotationProof {
+  readonly source: WikiVerificationSource
+  readonly text: string
+  readonly contexts: readonly string[]
+  readonly definitions: readonly string[]
+}
+
+/** Resolve one complete original unit, never an assertion projection or world fact. */
+export const resolveDocumentaryQuotation = (
+  read: WikiSynthesisSource,
+  sources: readonly WikiVerificationSource[],
+  text: string
+): DocumentaryQuotationProof | null => {
+  if (read.kind !== 'source-read' || !read.complete || read.unitId !== `read:${read.readId}`) return null
+  let proof: DocumentaryQuotationProof | null = null
+  for (const source of sources) {
+    if (source.evidenceId !== read.evidenceId || source.sourceRevision !== read.sourceRevision ||
+      source.kind === 'source-read' || source.kind === 'recent-excerpt' || source.kind === 'page-title' ||
+      source.kind === 'opaque' || source.kind === 'table-row' || !source.complete || source.closure === null) continue
+    const closure = source.closure!
+    const { unit, record } = closure
+    if (source.text !== unit.normalizedText || closure.units.length !== 1 ||
+      record !== null && (record.unitIds.length !== 1 || record.unitIds[0] !== unit.id) ||
+      closure.dependencies.some(({ span, text: dependency }) => read.text.slice(span.start, span.end) !== dependency)) continue
+    if (unit.kind === 'code') {
+      // Code is documentary syntax, never executable output or a world claim.
+      if (text !== unit.visibleText || unit.sourceSpans.length !== 1 ||
+        read.text.slice(unit.sourceSpans[0]!.start, unit.sourceSpans[0]!.end) !== text) continue
+    } else if (text !== unit.normalizedText || text !== unit.visibleText && unit.kind !== 'list' && unit.kind !== 'table') continue
+    if (getLiteralSourceStatement(source) === null) continue
+    // Aliases share their original parser object. Different occurrences cannot
+    // select a governing scope merely because their words happen to be equal.
+    if (proof !== null) {
+      if (proof.source.closure!.unit !== unit) return null
+      continue
+    }
+    const contexts = governingContexts(source)
+    const spans = new Map<string, SourceSpan>()
+    for (const link of unit.links)
+      for (const span of link.dependencySpans) spans.set(spanKey(span), span)
+    // The parser puts the original context block first, then its owned
+    // reference-definition spans. They already belong to the checked closure.
+    for (const context of contexts)
+      for (let index = 1; index < context.sourceSpans.length; index++) {
+        const span = context.sourceSpans[index]!
+        spans.set(spanKey(span), span)
+      }
+    const definitions = [...spans.values()].sort((left, right) => left.start - right.start).map(span =>
+      closure.dependencies.find(dependency => spanKey(dependency.span) === spanKey(span))!.text)
+    proof = {
+      source, text,
+      contexts: contexts.map(context => context.normalizedLabel),
+      definitions: [...new Set(definitions)]
+    }
+  }
+  return proof
 }
 

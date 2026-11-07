@@ -128,17 +128,21 @@ import {
   type WikiCoverageResult,
   type WikiCoverageWireInput
 } from './wiki-coverage.ts'
-import { getLiteralSourceStatement, isLiteralSourceClaim } from './wiki-source-quotation.ts'
+import { getLiteralSourceStatement, isLiteralSourceClaim, resolveDocumentaryQuotation, type DocumentaryQuotationProof } from './wiki-source-quotation.ts'
 import {
+  compactWikiQuotationContext,
+  wikiSynthesisContributions,
   createWikiSynthesisProgram,
   createWikiSynthesisStreamGuard,
   encodeWikiSynthesisSources,
   renderWikiSynthesisAnswer,
   renderWikiSynthesisAttachmentClaimStatement,
   renderWikiSynthesisClaimStatement,
+  renderWikiSynthesisQuotation,
   validateWikiSynthesisShape,
   type WikiSynthesisAnswer,
   type WikiSynthesisInputMedia,
+  type WikiSynthesisQuotation,
   type WikiSynthesisRead,
   type WikiSynthesisReferenceIndex,
   type WikiSynthesisSource,
@@ -3000,13 +3004,19 @@ const assessDraft = (
   const supportedBodyFactClaims = new Set<ClaimProvenance>()
   let hasCitedBodyFact = false
   let previousMarkerEnd = 0
+  const typedContributions = nativeDraft === undefined ? undefined : wikiSynthesisContributions(nativeDraft.answer, nativeDraft.sourceOrder)
   for (const match of content.matchAll(citationMarker)) {
     const evidenceId = match[1] ?? ''
-    const boundClaim = nativeDraft?.answer.claims[claims.length]
-    const renderedStatement = boundClaim === undefined ? undefined : renderWikiSynthesisClaimStatement(boundClaim)
-    const extractedClaim = claimBeforeMarker(content, match.index ?? 0, previousMarkerEnd, boundClaim?.statement, renderedStatement)
-    if (nativeDraft !== undefined && (boundClaim === undefined || boundClaim.evidenceId !== evidenceId || !extractedClaim.boundStatementMatched)) {
-      issues.push('Typed source claims must retain their exact host-rendered statement and citation.')
+    const nextContribution = typedContributions?.next()
+    const contribution = nextContribution?.done === false ? nextContribution.value : undefined
+    const boundClaim = contribution !== undefined && 'statement' in contribution ? contribution : undefined
+    const boundQuotation = contribution !== undefined && 'text' in contribution ? contribution : undefined
+    const binding = boundClaim ?? boundQuotation
+    const renderedStatement = boundClaim !== undefined ? renderWikiSynthesisClaimStatement(boundClaim)
+      : boundQuotation === undefined ? undefined : renderWikiSynthesisQuotation(boundQuotation)
+    const extractedClaim = claimBeforeMarker(content, match.index ?? 0, previousMarkerEnd, boundClaim?.statement ?? renderedStatement, renderedStatement)
+    if (nativeDraft !== undefined && (binding === undefined || binding.evidenceId !== evidenceId || !extractedClaim.boundStatementMatched)) {
+      issues.push('Typed source content must retain its exact host-rendered statement, scope and citation.')
     }
     const claim = extractedClaim.claim
     const assessmentClaim = extractedClaim.assessmentClaim
@@ -3015,21 +3025,21 @@ const assessDraft = (
       if (!issues.includes(issue)) issues.push(issue)
     }
     const titleAssertion = extractedClaim.titleClaim === null ? null : parseTitleAssertion(extractedClaim.titleClaim)
-    const titleAssertionRecognized = extractedClaim.titleClaim !== null || extractedClaim.titleClaimTooLong
+    const titleAssertionRecognized = boundQuotation === undefined && (extractedClaim.titleClaim !== null || extractedClaim.titleClaimTooLong)
     previousMarkerEnd = (match.index ?? 0) + match[0].length
     const registeredEvidence = registry.get(evidenceId)
     // A draft cannot revive a removed, superseded or unauthorized original read.
-    const bindingKey = boundClaim === undefined ? undefined : canonicalJson([boundClaim.evidenceId, boundClaim.sourceRevision, boundClaim.unitId])
+    const bindingKey = binding === undefined ? undefined : canonicalJson([binding.evidenceId, binding.sourceRevision, binding.unitId])
     const boundEvidence = bindingKey === undefined ? undefined : nativeDraft?.evidence.get(bindingKey)
     const readSource = bindingKey === undefined ? undefined : nativeDraft?.readSources.get(bindingKey)
     const literals = bindingKey === undefined ? undefined : nativeDraft?.readLiterals.get(bindingKey)
     const evidence =
       nativeDraft === undefined ||
-      (boundClaim?.evidenceId === evidenceId &&
+      (binding?.evidenceId === evidenceId &&
         (readSource?.kind === 'source-read' || readSource?.kind === 'recent-excerpt') &&
-        boundClaim.unitId === `read:${readSource.readId}` &&
-        registeredEvidence?.binding.sourceRevision === boundClaim.sourceRevision &&
-        boundEvidence?.binding.sourceRevision === boundClaim.sourceRevision &&
+        binding.unitId === `read:${readSource.readId}` &&
+        registeredEvidence?.binding.sourceRevision === binding.sourceRevision &&
+        boundEvidence?.binding.sourceRevision === binding.sourceRevision &&
         registeredEvidence.binding.retrievedSource === readSource.text &&
         boundEvidence.binding.retrievedSource === readSource.text &&
         registeredEvidence.document === boundEvidence.document)
@@ -3054,23 +3064,30 @@ const assessDraft = (
       })
       continue
     }
+    const quotationProof = boundQuotation === undefined ? undefined : nativeDraft?.quotationProofs?.get(boundQuotation)
+    const documentarySupported = quotationProof !== undefined && boundQuotation !== undefined &&
+      readSource?.kind === 'source-read' && readSource.complete &&
+      quotationProof.text === boundQuotation.text &&
+      quotationProof.contexts === boundQuotation.contexts && quotationProof.definitions === boundQuotation.definitions &&
+      evidence.documentUnits.some(unit => unit.identity === quotationProof.source.unitId && unit.closure.unit === quotationProof.source.closure?.unit)
     const claimLinks = renderedLinkSignatures(extractedClaim.renderedClaim)
     incrementCounts(citationBoundLinks, claimLinks)
     const exactLinks = claimLinks.every(link => evidence.renderedLinks.has(link))
     const exactCodeLinkLiterals =
       nativeDraft !== undefined
-        ? literals !== undefined && readLiteralFailure(boundClaim!.statement, literals, evidence) === undefined
+        ? boundQuotation !== undefined ? documentarySupported : literals !== undefined && readLiteralFailure(boundClaim!.statement, literals, evidence) === undefined
         : linkLookingCodeLiterals(extractedClaim.renderedClaim).every(literal => evidence.source.includes(literal))
     const clauseAssessments = nativeDraft === undefined ? assessClaimClauses(assessmentClaim, evidence) : []
     const matchedTerms = [...new Set(clauseAssessments.flatMap(clause => clause.matchedTerms))]
     const sourceLocalSupported =
       nativeDraft !== undefined
-        ? nativeDraft.semanticSupport?.has(canonicalJson(boundClaim)) === true
+        ? boundQuotation !== undefined ? documentarySupported : nativeDraft.semanticSupport?.has(canonicalJson(boundClaim)) === true
         : clauseAssessments.length > 0 && clauseAssessments.every(clause => clause.supported)
     const bodyFact =
       nativeDraft !== undefined
-        ? !titleAssertionRecognized &&
-          evidence.document.units.some(unit => unit.complete && unit.kind !== 'heading' && unit.kind !== 'summary' && unit.kind !== 'opaque')
+        ? !titleAssertionRecognized && (boundQuotation !== undefined
+          ? quotationProof !== undefined && !['heading', 'summary', 'opaque'].includes(quotationProof.source.kind)
+          : evidence.document.units.some(unit => unit.complete && unit.kind !== 'heading' && unit.kind !== 'summary' && unit.kind !== 'opaque'))
         : clauseAssessments.some(clause => clause.bodyFact === true)
     if (sourceLocalSupported && bodyFact) hasCitedBodyFact = true
     const lexicalSupported = sourceLocalSupported && exactLinks && exactCodeLinkLiterals
@@ -3121,7 +3138,7 @@ const assessDraft = (
       citationIds.push(evidenceId)
     }
   }
-  if (nativeDraft !== undefined && claims.length !== nativeDraft.answer.claims.length) {
+  if (nativeDraft !== undefined && claims.length !== nativeDraft.answer.claims.length + (nativeDraft.answer.quotations?.length ?? 0)) {
     issues.push('Every typed source claim must retain its own host-rendered citation.')
   }
   if (registry.size > 0 && claims.length === 0 && content.trim().length > 0) {
@@ -3541,6 +3558,8 @@ interface NativeDraft {
   readonly authorizeSourceInputs: AgentSourceAuthorizer
   readonly readSources: ReadonlyMap<string, WikiVerificationSource>
   readonly readLiterals: ReadonlyMap<string, ReadLiteralSnapshot>
+  readonly quotationProofs?: WeakMap<WikiSynthesisQuotation, DocumentaryQuotationProof>
+  readonly sourceOrder?: ReadonlyMap<string, number>
   readonly content: string
   readonly contentByteLimit: number
   readonly trustedObservations: ReadonlySet<string>
@@ -3559,12 +3578,14 @@ interface SynthesisRepairFeedback {
   readonly authorize: AgentSourceAuthorizer
 }
 
+type WikiSourceContribution = WikiSynthesisAnswer['claims'][number] | WikiSynthesisQuotation
+
 /**
  * Only omitted whole-read contributions may return. The latest candidate owns
  * every read it mentions, including siblings later declined by verification.
  * Reuse current source scope and authority; never revive the retained catalog.
  */
-const restoreVerifiedRecentDraft = (draft: NativeDraft, retained: NativeDraft, latestClaims: WikiSynthesisAnswer['claims']): NativeDraft | undefined => {
+const restoreVerifiedRecentDraft = (draft: NativeDraft, retained: NativeDraft, latestAnswer: WikiSynthesisAnswer): NativeDraft | undefined => {
   if (
     (draft.inputMediaSources?.length ?? 0) > 0 ||
     (draft.answer.attachmentClaims?.length ?? 0) > 0 ||
@@ -3573,20 +3594,20 @@ const restoreVerifiedRecentDraft = (draft: NativeDraft, retained: NativeDraft, l
   )
     return undefined
   const latestReadIds = new Set<string>()
-  for (const claim of latestClaims) {
+  for (const claim of wikiSynthesisContributions(latestAnswer)) {
     const source = draft.readSources.get(canonicalJson([claim.evidenceId, claim.sourceRevision, claim.unitId]))
     if (source?.kind !== 'source-read' && source?.kind !== 'recent-excerpt') return undefined
     latestReadIds.add(source.readId)
   }
-  const groups = new Map<string, WikiSynthesisAnswer['claims']>()
-  for (const claim of retained.answer.claims) {
+  const groups = new Map<string, WikiSourceContribution[]>()
+  for (const claim of wikiSynthesisContributions(retained.answer)) {
     const source = retained.readSources.get(canonicalJson([claim.evidenceId, claim.sourceRevision, claim.unitId]))
     if (source?.kind !== 'source-read' && source?.kind !== 'recent-excerpt') return undefined
     const group = groups.get(source.readId) ?? []
     group.push(claim)
     groups.set(source.readId, group)
   }
-  const restoredClaims: WikiSynthesisAnswer['claims'] = []
+  const restored: WikiSourceContribution[] = []
   for (const [readId, claims] of groups) {
     if (latestReadIds.has(readId)) continue
     if (
@@ -3598,21 +3619,36 @@ const restoreVerifiedRecentDraft = (draft: NativeDraft, retained: NativeDraft, l
         return (
           source === undefined ||
           currentSource === undefined ||
-          original === undefined ||
+          original === undefined || ('text' in claim && !retained.quotationProofs?.has(claim)) ||
           draft.evidence.get(key)?.document !== original.document ||
           canonicalJson(currentSource) !== canonicalJson(source)
         )
       })
     )
       continue
-    restoredClaims.push(...claims)
+    restored.push(...claims)
   }
-  if (restoredClaims.length === 0) return undefined
-  const answer: WikiSynthesisAnswer = { ...draft.answer, claims: [...draft.answer.claims, ...restoredClaims] }
+  if (restored.length === 0) return undefined
+  const restoredClaims = restored.filter(claim => 'statement' in claim)
+  const restoredQuotations = restored.filter(claim => 'text' in claim)
+  const answer: WikiSynthesisAnswer = {
+    ...draft.answer,
+    claims: [...draft.answer.claims, ...restoredClaims],
+    ...((draft.answer.quotations?.length ?? 0) + restoredQuotations.length === 0 ? {} : {
+      quotations: [...(draft.answer.quotations ?? []), ...restoredQuotations]
+    })
+  }
+  const quotationProofs = new WeakMap<WikiSynthesisQuotation, DocumentaryQuotationProof>()
+  for (const quotation of answer.quotations ?? []) {
+    const proof = draft.quotationProofs?.get(quotation) ?? retained.quotationProofs?.get(quotation)
+    if (proof === undefined) return undefined
+    quotationProofs.set(quotation, proof)
+  }
   return {
     ...draft,
     answer,
-    content: renderWikiSynthesisAnswer(answer),
+    quotationProofs,
+    content: renderWikiSynthesisAnswer(answer, draft.sourceOrder),
     semanticSupport: new Set([...(draft.semanticSupport ?? []), ...restoredClaims.map(claim => canonicalJson(claim))])
   }
 }
@@ -3632,7 +3668,7 @@ const selectVerifiedRecentDraft = (
   const checks = Object.values(plan?.checks ?? {})
   if (
     requestFacetCount === 0 ||
-    (nativeSupportedClaimIndexes.length === 0 && retained === undefined) ||
+    (nativeSupportedClaimIndexes.length === 0 && (draft.answer.quotations?.length ?? 0) === 0 && retained === undefined) ||
     checks.length !== draft.answer.claims.length ||
     checks.some(check => check.kind !== 'support') ||
     (draft.inputMediaSources?.length ?? 0) > 0 ||
@@ -3651,21 +3687,34 @@ const selectVerifiedRecentDraft = (
     readIds.push(source.readId)
     if (!supported.has(index)) declinedReads.add(source.readId)
   }
+  const quotationReadIds: string[] = []
+  for (const quotation of draft.answer.quotations ?? []) {
+    const source = draft.readSources.get(canonicalJson([quotation.evidenceId, quotation.sourceRevision, quotation.unitId]))
+    if (source?.kind !== 'source-read' || !source.complete) return undefined
+    quotationReadIds.push(source.readId)
+    if (!draft.quotationProofs?.has(quotation)) declinedReads.add(source.readId)
+  }
   const claims = draft.answer.claims.filter((_claim, index) => !declinedReads.has(readIds[index]!))
-  const restored =
-    retained === undefined ? undefined : restoreVerifiedRecentDraft({ ...draft, answer: { ...draft.answer, claims } }, retained, draft.answer.claims)
+  const quotations = draft.answer.quotations?.filter((_quotation, index) => !declinedReads.has(quotationReadIds[index]!))
+  const selectedAnswer = { ...draft.answer, claims, ...(quotations === undefined ? {} : { quotations }) }
+  const restored = retained === undefined ? undefined : restoreVerifiedRecentDraft({ ...draft, answer: selectedAnswer }, retained, draft.answer)
   const selectedClaims = restored?.answer.claims ?? claims
-  if (selectedClaims.length === 0 || (!allowCompleteSelection && claims.length === draft.answer.claims.length && restored === undefined)) return undefined
+  const selectedQuotations = restored?.answer.quotations ?? quotations
+  if (selectedClaims.length + (selectedQuotations?.length ?? 0) === 0 ||
+    (!allowCompleteSelection && claims.length === draft.answer.claims.length &&
+      (quotations?.length ?? 0) === (draft.answer.quotations?.length ?? 0) && restored === undefined)) return undefined
   const answer: WikiSynthesisAnswer = {
     ...draft.answer,
     claims: selectedClaims,
+    ...(selectedQuotations === undefined ? {} : { quotations: selectedQuotations }),
     unresolvedFacets: Array.from({ length: requestFacetCount }, (_value, index) => index)
   }
   return {
     ...draft,
     answer,
+    ...(restored?.quotationProofs === undefined ? {} : { quotationProofs: restored.quotationProofs }),
     allRequestFacetsUnresolved: true,
-    content: renderWikiSynthesisAnswer(answer),
+    content: renderWikiSynthesisAnswer(answer, draft.sourceOrder),
     semanticSupport: new Set(selectedClaims.map(claim => canonicalJson(claim)))
   }
 }
@@ -4440,12 +4489,14 @@ const conversationFor = (
   for (let index = throughSourceIndex + 1; index < request.messages.length; index++) {
     const message = request.messages[index]!
     if (message.content.length === 0 && (message.attachments?.length ?? 0) === 0) continue
+    const content = message.role === 'assistant' ? compactWikiQuotationContext(message.content) : message.content
     conversation.push(
       message.role === 'assistant'
         ? {
             role: 'assistant',
-            content: message.content,
-            ...(message.providerState?.thoughtBlocks ? { thoughtBlocks: message.providerState.thoughtBlocks.map(block => ({ ...block })) } : {})
+            content,
+            ...(content === message.content && message.providerState?.thoughtBlocks
+              ? { thoughtBlocks: message.providerState.thoughtBlocks.map(block => ({ ...block })) } : {})
           }
         : {
             role: 'user',
@@ -6857,9 +6908,33 @@ export class AxAgentEngine implements AgentEngine {
       (input.coverage?.recentGroups.length ?? 0) > 0
         ? new Map(input.coverage!.recentGroups.flatMap(group => group.evidenceIds).map((id, index) => [id, index]))
         : undefined
+    const quotationProofs = new WeakMap<WikiSynthesisQuotation, DocumentaryQuotationProof>()
+    const resolveQuotation = (text: string, source: WikiSynthesisSource): WikiSynthesisQuotation | null => {
+      const bound = sourceEvidence.get(canonicalJson([source.evidenceId, source.sourceRevision, source.unitId]))
+      if (bound === undefined || source.text !== bound.binding.retrievedSource || bound.document.source !== source.text ||
+        source.sourceRevision !== bound.binding.sourceRevision) return null
+      const candidates = bound.documentUnits
+        .filter(unit => (unit.text === text || unit.kind === 'code' && unit.closure.unit.visibleText === text) &&
+          bound.document.units.includes(unit.closure.unit) && unit.closure.units.every(member => bound.document.units.includes(member)) &&
+          unit.closure.contexts.every(context => bound.document.contexts.includes(context)) &&
+          (unit.closure.record === null || bound.document.records.includes(unit.closure.record)))
+        .map((unit): WikiVerificationSource => ({
+          evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: unit.identity,
+          context: unit.context, text: unit.text, kind: unit.kind, complete: unit.complete, closure: unit.closure
+        }))
+      const proof = resolveDocumentaryQuotation(source, candidates, text)
+      if (proof === null) return null
+      const quotation: WikiSynthesisQuotation = {
+        evidenceId: source.evidenceId, sourceRevision: source.sourceRevision, unitId: source.unitId,
+        text: proof.text, contexts: proof.contexts, definitions: proof.definitions
+      }
+      quotationProofs.set(quotation, proof)
+      return quotation
+    }
     const program = createWikiSynthesisProgram(sources, {
       structured,
       inputMediaSources,
+      resolveQuotation,
       maxOutputTokens: () => maxOutputTokens,
       observations: input.observations,
       facetCount: input.requestFacets.length,
@@ -6886,12 +6961,7 @@ export class AxAgentEngine implements AgentEngine {
           rejection = 'Canonical synthesis output exceeded its provider content byte limit.'
           return rejection
         }
-        if (recentOrder !== undefined) {
-          answer.claims.sort(
-            (left, right) => (recentOrder.get(left.evidenceId) ?? Number.MAX_SAFE_INTEGER) - (recentOrder.get(right.evidenceId) ?? Number.MAX_SAFE_INTEGER)
-          )
-          content = renderWikiSynthesisAnswer(answer)
-        }
+        if (recentOrder !== undefined) content = renderWikiSynthesisAnswer(answer, recentOrder)
         rendered = content
         // Read identity and exact literal admission are mechanical; every claim
         // still requires independent Jev proof within its exact admitted scope.
@@ -6903,6 +6973,8 @@ export class AxAgentEngine implements AgentEngine {
           authorizeSourceInputs,
           readSources,
           readLiterals,
+          quotationProofs,
+          ...(recentOrder === undefined ? {} : { sourceOrder: recentOrder }),
           content,
           contentByteLimit: deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes,
           trustedObservations: new Set(input.observations),
@@ -6911,6 +6983,7 @@ export class AxAgentEngine implements AgentEngine {
         if (
           answer.claims.length === 0 &&
           (answer.attachmentClaims?.length ?? 0) === 0 &&
+          (answer.quotations?.length ?? 0) === 0 &&
           (answer.observations.length === 0 ||
             (input.explicitContentFacets && !answer.observations.some(line => input.operationObservations.includes(line)))) &&
           answer.unresolvedFacets.length !== input.requestFacets.length
@@ -7118,7 +7191,7 @@ export class AxAgentEngine implements AgentEngine {
           true,
           false,
           undefined,
-          { request: generationRequest, guard: createWikiSynthesisStreamGuard(sources, { maxOutputTokens, inputMediaSources }) },
+          { request: generationRequest, guard: createWikiSynthesisStreamGuard(sources, { maxOutputTokens, inputMediaSources, resolveQuotation }) },
           authorizeSourceInputs,
           'synthesis',
           generationOptions
@@ -7220,7 +7293,7 @@ export class AxAgentEngine implements AgentEngine {
       rootAuthorizeSourceInputs: authorizeSourceInputs,
       rootNativeDraft: nativeDraft,
       rootUnresolvedFacets: answer.unresolvedFacets,
-      rootHasVerifiedContent: answer.claims.length > 0 || (answer.attachmentClaims?.length ?? 0) > 0 || answer.observations.length > 0
+      rootHasVerifiedContent: answer.claims.length > 0 || (answer.quotations?.length ?? 0) > 0 || (answer.attachmentClaims?.length ?? 0) > 0 || answer.observations.length > 0
     }
   }
 
@@ -9643,6 +9716,7 @@ export class AxAgentEngine implements AgentEngine {
             result.rootNativeDraft !== undefined &&
             (result.rootNativeDraft.answer.claims.length > 0 ||
               (result.rootNativeDraft.answer.attachmentClaims?.length ?? 0) > 0 ||
+              (result.rootNativeDraft.answer.quotations?.length ?? 0) > 0 ||
               result.rootNativeDraft.answer.observations.length > 0 ||
               (result.rootNativeDraft.answer.recommendations ?? '').trim().length > 0 ||
               retainedRecentDraft !== undefined)
@@ -9663,7 +9737,7 @@ export class AxAgentEngine implements AgentEngine {
               for (const nativeRequest of plan?.requests ?? []) semanticResults.push(await decide(nativeRequest, 'semantic', plan!.literalSupportCount))
               const semantic =
                 plan === null ? { valid: true, issues: [], nativeSupportedClaimIndexes: [] } : assessWikiVerificationResults(plan, semanticResults)
-              if (plan !== null) publicationVerificationEvidence = evidence
+              if (plan !== null || (nativeDraft.answer.quotations?.length ?? 0) > 0) publicationVerificationEvidence = evidence
               const finalRecentAttempt =
                 (request.purpose ?? 'root') === 'root' &&
                 recentPublication &&
@@ -9674,7 +9748,7 @@ export class AxAgentEngine implements AgentEngine {
                 (request.purpose ?? 'root') === 'root' &&
                 recentPublication &&
                 result.finishReason !== 'length' &&
-                plan !== null
+                (plan !== null || (candidateDraft.answer.quotations?.length ?? 0) > 0)
               ) {
                 const retained = selectVerifiedRecentDraft(
                   candidateDraft,
@@ -9714,7 +9788,7 @@ export class AxAgentEngine implements AgentEngine {
               }
               const restoredDraft =
                 semantic.valid && finalRecentAttempt && retainedRecentDraft !== undefined
-                  ? restoreVerifiedRecentDraft(supportedDraft, retainedRecentDraft, candidateDraft.answer.claims)
+                  ? restoreVerifiedRecentDraft(supportedDraft, retainedRecentDraft, candidateDraft.answer)
                   : undefined
               const orderVerifiedRecentDraft = (draft: NativeDraft): NativeDraft => {
                 const recentOrder = new Map(
@@ -9722,18 +9796,11 @@ export class AxAgentEngine implements AgentEngine {
                     .flatMap(group => group.evidenceIds)
                     .map((evidenceId, index) => [evidenceId, index])
                 )
-                const answer: WikiSynthesisAnswer = {
-                  ...draft.answer,
-                  // Stable sorting preserves each read's original claim/qualification order.
-                  claims: [...draft.answer.claims].sort(
-                    (left, right) =>
-                      (recentOrder.get(left.evidenceId) ?? Number.MAX_SAFE_INTEGER) - (recentOrder.get(right.evidenceId) ?? Number.MAX_SAFE_INTEGER)
-                  )
-                }
-                return { ...draft, answer, content: renderWikiSynthesisAnswer(answer) }
+                return { ...draft, sourceOrder: recentOrder, content: renderWikiSynthesisAnswer(draft.answer, recentOrder) }
               }
               const verifiedDraft =
-                selectedDraft !== undefined || restoredDraft !== undefined ? orderVerifiedRecentDraft(restoredDraft ?? supportedDraft) : supportedDraft
+                recentPublication || selectedDraft !== undefined || restoredDraft !== undefined
+                  ? orderVerifiedRecentDraft(restoredDraft ?? supportedDraft) : supportedDraft
               if (restoredDraft !== undefined) publicationVerificationEvidence = evidence
               const adoptVerifiedRecentDraft = (partial: NativeDraft, partialSelection = true): void => {
                 selectedRecentPartial = partialSelection
@@ -9756,6 +9823,7 @@ export class AxAgentEngine implements AgentEngine {
               }
               if (selectedDraft !== undefined || restoredDraft !== undefined)
                 adoptVerifiedRecentDraft(verifiedDraft, selectedDraft !== undefined || verifiedDraft.allRequestFacetsUnresolved)
+              else if (verifiedDraft.content !== result.content) adoptVerifiedRecentDraft(verifiedDraft, false)
               else result = { ...result, rootNativeDraft: verifiedDraft }
               // Every published claim still needs proof within its exact admitted source scope.
               // An explicitly unresolved request can retain verified partial findings.
@@ -9786,6 +9854,7 @@ export class AxAgentEngine implements AgentEngine {
                 (semantic.valid || selectedRecentPartial) &&
                 (nativeDraft.answer.claims.length > 0 ||
                   (nativeDraft.answer.attachmentClaims?.length ?? 0) > 0 ||
+                  (nativeDraft.answer.quotations?.length ?? 0) > 0 ||
                   requiresOperationCoverage ||
                   requiresRecentObservationCoverage)
               ) {
@@ -9800,6 +9869,12 @@ export class AxAgentEngine implements AgentEngine {
                   ...(operationEvidence === undefined ? {} : { operationEvidence }),
                   ...(nativeDraft.inputMediaSources === undefined ? {} : { inputMediaSources: nativeDraft.inputMediaSources }),
                   ...(nativeDraft.answer.attachmentClaims === undefined ? {} : { attachmentClaims: nativeDraft.answer.attachmentClaims }),
+                  ...(nativeDraft.answer.quotations === undefined ? {} : { quotations: nativeDraft.answer.quotations.map(quotation => {
+                    const source = nativeDraft.readSources.get(canonicalJson([quotation.evidenceId, quotation.sourceRevision, quotation.unitId]))
+                    if (source?.kind !== 'source-read' || !source.complete || !nativeDraft.quotationProofs?.has(quotation))
+                      throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Coverage quotation lacks its complete host-proved physical read', 409)
+                    return { readRef: source.readId, text: quotation.text, contexts: quotation.contexts, definitions: quotation.definitions }
+                  }) }),
                   reads: [...nativeDraft.readSources.values()].map(source => {
                     if (source.kind !== 'source-read' && source.kind !== 'recent-excerpt')
                       throw new AgentRepositoryError('WIKI_VERIFICATION_BINDING_INVALID', 'Coverage requires unchanged admitted physical reads', 409)
@@ -10038,7 +10113,7 @@ export class AxAgentEngine implements AgentEngine {
             let verifiedReadIds: Set<string> | undefined
             if (verifiedRecentDraft !== undefined) {
               verifiedReadIds = new Set<string>()
-              for (const claim of verifiedRecentDraft.answer.claims) {
+              for (const claim of wikiSynthesisContributions(verifiedRecentDraft.answer)) {
                 const source = verifiedRecentDraft.readSources.get(canonicalJson([claim.evidenceId, claim.sourceRevision, claim.unitId]))
                 if (source?.kind === 'source-read' || source?.kind === 'recent-excerpt') verifiedReadIds.add(source.readId)
               }

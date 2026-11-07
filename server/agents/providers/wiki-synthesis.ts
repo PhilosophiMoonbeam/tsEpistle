@@ -177,9 +177,20 @@ export interface WikiSynthesisAttachmentClaim extends WikiSynthesisWireAttachmen
   readonly mimeType: string
 }
 
+/** Documentary text plus mandatory host-owned scope, never a paraphrased fact. */
+export interface WikiSynthesisQuotation {
+  readonly evidenceId: string
+  readonly sourceRevision: string
+  readonly unitId: string
+  readonly text: string
+  readonly contexts: readonly string[]
+  readonly definitions: readonly string[]
+}
+
 export interface WikiSynthesisWireAnswer {
   readonly claims: WikiSynthesisWireClaim[]
   readonly attachmentClaims?: WikiSynthesisWireAttachmentClaim[]
+  readonly quotations?: { readonly sourceRef: string; readonly text: string }[]
   readonly unresolvedFacets: number[]
   readonly observations: string[]
   readonly recommendations?: string
@@ -187,18 +198,24 @@ export interface WikiSynthesisWireAnswer {
 
 /** Optimizer demonstrations are vendor wire outputs, never canonical provenance. */
 export const encodeWikiSynthesisAnswer = (answer: WikiSynthesisAnswer): WikiSynthesisWireAnswer => ({
-  ...answer,
+  unresolvedFacets: answer.unresolvedFacets,
+  observations: answer.observations,
+  ...(answer.recommendations === undefined ? {} : { recommendations: answer.recommendations }),
   claims: answer.claims.map(claim => ({ sourceRef: wikiSynthesisSourceRef(claim), statement: claim.statement })),
   ...(answer.attachmentClaims === undefined
     ? {}
     : {
         attachmentClaims: answer.attachmentClaims.map(({ mediaId, statement }) => ({ mediaId, statement }))
-      })
+      }),
+  ...(answer.quotations === undefined
+    ? {}
+    : { quotations: answer.quotations.map(quotation => ({ sourceRef: wikiSynthesisSourceRef(quotation), text: quotation.text })) })
 })
 
 export interface WikiSynthesisAnswer {
   readonly claims: WikiSynthesisClaim[]
   readonly attachmentClaims?: WikiSynthesisAttachmentClaim[]
+  readonly quotations?: WikiSynthesisQuotation[]
   readonly unresolvedFacets: number[]
   readonly observations: string[]
   readonly recommendations?: string
@@ -218,6 +235,7 @@ export interface WikiSynthesisInput {
 export interface WikiSynthesisOptions {
   readonly inputMediaSources?: readonly WikiSynthesisInputMedia[]
   readonly validateClaim?: (claim: WikiSynthesisClaim, source: WikiSynthesisSource) => boolean | string
+  readonly resolveQuotation?: (text: string, source: WikiSynthesisSource) => WikiSynthesisQuotation | null
   readonly validateAnswer?: (answer: WikiSynthesisAnswer, rendered: string) => boolean | string
   readonly observations?: readonly string[]
   readonly facetCount?: number
@@ -283,6 +301,15 @@ const attachmentClaimSchema = z
     statement: z.string().min(1).describe('Nonempty requested content of the provided native file identified by mediaId, using the attachment format above.')
   })
   .strict()
+const quotationSchema = z.object({ sourceRef: claimSchema.shape.sourceRef, text: z.string().min(1) }).strict()
+const canonicalQuotationSchema = z.object({
+  evidenceId: evidenceIdSchema,
+  sourceRevision: z.string().min(1),
+  unitId: z.string().regex(/^read:\S+$/u),
+  text: z.string().min(1),
+  contexts: z.array(z.string().min(1)),
+  definitions: z.array(z.string().min(1))
+}).strict()
 
 const instructions = `# Goal
 Answer userRequest at its requested level of detail using the complete original reads and exact host-admitted observations. Inspect all reads for requested facts, author references and governing qualifications. Include only requested content and the qualifications needed to interpret it, not unrequested fields, contacts or background.
@@ -293,13 +320,13 @@ Use conversationContext, the admitted prior conversation including compaction no
 For inventories, cover every requested qualifying member; distinguish direct entries from organizers and incidental mentions. For procedures, preserve requested inputs, quantities, prerequisites and ordered steps. For comparisons, cover requested dimensions consistently.
 
 # Return Format
-Return only the strict object with claims, optional attachmentClaims, unresolvedFacets, observations and optional recommendations. Return at most 64 claims across both channels. Each Wiki claim has one exact sourceRef copied from a sourceReferences.reads key and an explicit nonempty statement. Never construct or rewrite sourceRef.
+Return only the strict object with claims, optional quotations and attachmentClaims, unresolvedFacets, observations and optional recommendations. Return at most 64 entries across all channels. Each Wiki claim has one exact sourceRef copied from a sourceReferences.reads key and an explicit nonempty statement. Never construct or rewrite sourceRef.
 Honor the requested presentation through correction: an explicit table request requires Markdown table claims, with governing conditions beside them when clearer, rather than replacing the requested table with prose.
 Each statement must be supported by its selected complete read. Use rendering-safe GFM paragraphs, short lists or tables as requested. A comparison or selected-field table may summarize the requested subset without reproducing the complete native table. Explain a requested dimension's meaning only when that read states it; otherwise retain the source's label without inventing a definition or making a general condition more specific. Shared source-stated definitions and schedules may appear in concise prose beside the table.
 For a multi-section summary, use useful concise sections or a short list with one compact item per substantive requested section unless the user specifies another format. Optional ## or ### section headings belong inside the source-bound statement and must be followed by substantive supported body content; never emit a heading-only claim or a Recommendations heading. All heading text must be supported by the same read as its body. Before finalizing, inspect each source paragraph, list item and table qualification for an independently stated restriction material to the requested scope, including limits outside numeric fields; ensure the summary represents every such restriction and every conjunct of a condition. Stating A does not convey A AND B; topic mention or a positive permission does not convey an independent limitation. Use plain concise sentences for focused questions.
 When reporting an author-defined quantity or timing target, explicitly retain the source-defined event, actor or mechanism that counts, its operating window and exclusions, and what it does not promise. Do not substitute the label alone for those governing conditions, or omit them because they occur outside the selected table or paragraph.
 When a requested fact comes from a linked read, bind its values and exceptions to that read. A referring page proves the reference, not the target's facts. Keep source-specific conditions together; omit an unnecessary extra claim from a traversal read rather than generalizing its narrower rule.
-For requested faithful quotations, emit the exact requested wording. Never add a prefix, expand a subset, or rely on an empty statement to select source content. The host adds citations, not source text.
+For requested faithful quotations, use quotations with exactly sourceRef and text when enabled: copy one complete author paragraph, list item, original list/table container or full literal code block unchanged from a complete read. No sentence subsets, projected table fields, altered syntax, cross-unit combinations, title metadata or bounded excerpts. The host alone resolves parser ownership and supplies mandatory governing context, reference definitions and citations; never put these annotations in wire fields. This documentary channel reports what the source says, not independent world truth or operation completion. Do not replace requested paraphrases with large unrequested quotations. Ordinary claims, including exact-looking claims, remain independently Native-verified.
 Return unique zero-based unresolvedFacets indices for unsupported or unanswered requestFacets. If neither a complete read nor an explicitly admitted bounded recent-excerpt binding exists, return claims: []. Select observations only as unique exact safe single lines from availableObservations; no prose, table, heading, list or reference-definition formatting. Give recommendations only when requested, as standalone imperative or modal suggestions or questions; no declarative explanations, causal premises or additional factual sentences. Put supported factual premises in claims.
 Classify obligations by the original userRequest, not a facet label: a default source facet does not turn an operation-only request into a page-content question. Select the exact delivered proposal status and applied result identity from availableObservations. An applied receipt establishes that operation and its reported result identity without a source read; pending, approved, denied, expired, cancelled, partial or unavailable results never prove application. Private operationEvidence, when present, supplies the exact approved diff and historical result to establish which requested operation was fulfilled; report only the availableObservations, never that private proof as answer text. A null or undisclosed result page is not proof of deletion. Do not turn a completed reviewed edit or its preparatory reading into unrequested post-operation research, or mark it unresolved merely because claims is empty. Receipts and operationEvidence cannot establish current page content, source facts, duplicate absence, a recent recap or unrelated work. Independently requested post-write verification, current-state confirmation and content research require fresh eligible content claims. Mark only genuinely unsupported or unfinished requested details unresolved, preserving those details in mixed operation-and-fact requests.
 When operationEvidence marks reviewedChange.currentRunReview:true, the matching proposal's host-provided review record is part of this run's output. Its exact diff can fulfil a preparatory request to show or propose the change for approval; a later applied receipt reports the subsequent approval outcome. Do not duplicate that diff solely to satisfy the preparatory review step. An explicitly requested copy in the final answer remains an output obligation; an old or unselected proposal record cannot supply it.
@@ -477,7 +504,8 @@ const safeObservation = (value: string): boolean => inlineStatement(value) && !/
 
 // Formal shape/render safety only; source support and semantic entailment are host checks.
 export const validateWikiSynthesisShape = (answer: WikiSynthesisAnswer): true | string => {
-  if (answer.claims.length + (answer.attachmentClaims?.length ?? 0) > MAX_CLAIMS) return 'Answers may contain at most 64 claims across both channels.'
+  if (answer.claims.length + (answer.quotations?.length ?? 0) + (answer.attachmentClaims?.length ?? 0) > MAX_CLAIMS)
+    return 'Answers may contain at most 64 entries across all channels.'
   if (answer.claims.some(claim => !evidenceIdSchema.safeParse(claim.evidenceId).success || !safeStatement(claim.statement)))
     return 'Each claim must have a safe evidence ID and explicit nonempty rendering-safe Markdown body content; only source-bound h2/h3 sections with body content are allowed, without reserved headings, markers or rendering control syntax.'
   if (
@@ -493,6 +521,9 @@ export const validateWikiSynthesisShape = (answer: WikiSynthesisAnswer): true | 
     )
   )
     return 'Attachment claims require host file attribution and safe nonempty Markdown without citations, URLs, HTML or rendering control syntax.'
+  if (answer.quotations?.some(quotation => !canonicalQuotationSchema.safeParse(quotation).success ||
+    hasUnsafeControlCharacters(quotation.text) || quotation.contexts.some(hasUnsafeControlCharacters) || quotation.definitions.some(hasUnsafeControlCharacters)))
+    return 'Documentary quotations require exact read attribution and safe nonempty text with host-owned scope.'
   if (answer.observations.some(observation => !safeObservation(observation)))
     return 'Observations must be safe complete single lines without citation or rendering control syntax.'
   const recommendations = answer.recommendations ?? ''
@@ -523,17 +554,62 @@ export const renderWikiSynthesisAttachmentClaimStatement = (claim: WikiSynthesis
   // Numeric text entities cannot become Markdown or pre-Markdown Wiki markers.
   `Provided file ${[...claim.filename].map(character => `&#${character.codePointAt(0)!};`).join('')}:\n\n${claim.statement.trim()}`
 
-export const renderWikiSynthesisAnswer = (answer: WikiSynthesisAnswer): string => {
+const inertQuotation = (text: string): string => `> ${[...text].map(character => `&#${character.codePointAt(0)!};`).join('')}`
+
+/** All source syntax stays inert; mandatory scope remains outside the quoted unit. */
+export const renderWikiSynthesisQuotation = (quotation: WikiSynthesisQuotation): string => [
+  ...(quotation.contexts.length === 0 ? [] : [`Source context:\n\n${inertQuotation(quotation.contexts.join(' › '))}`]),
+  `Source quotation:\n\n${inertQuotation(quotation.text)}`,
+  ...(quotation.definitions.length === 0 ? [] : [`Source reference syntax:\n\n${inertQuotation(quotation.definitions.join('\n'))}`])
+].join('\n\n')
+
+/** Lossless model-only quotation view; never source evidence or publication Markdown. */
+export const compactWikiQuotationContext = (content: string): string => {
+  if (!content.includes('> &#')) return content
+  const lines = content.split('\n')
+  let changed = false
+  for (const token of markdown.parse(content, {})) {
+    if (token.type !== 'inline' || token.map === null || token.map[1] !== token.map[0] + 1 ||
+      !/^(?:&#[0-9]+;)+$/u.test(token.content) || token.children?.length !== 1 || token.children[0]?.type !== 'text') continue
+    const index = token.map[0]
+    const line = lines[index]
+    if (line !== `> ${token.content}` && line !== `> ${token.content}\r`) continue
+    // JSON quoting keeps decoded directives, entity-looking literals and line
+    // boundaries as untrusted data. Markdown parsing excludes literal code.
+    lines[index] = `> ${JSON.stringify(token.children[0].content)}${line.endsWith('\r') ? '\r' : ''}`
+    changed = true
+  }
+  return changed ? lines.join('\n') : content
+}
+
+/** Source channels share presentation order, never proof or semantic authority. */
+export function* wikiSynthesisContributions(
+  answer: WikiSynthesisAnswer,
+  sourceOrder?: ReadonlyMap<string, number>
+): Generator<WikiSynthesisClaim | WikiSynthesisQuotation, void> {
+  if (sourceOrder === undefined) {
+    yield* answer.claims
+    if (answer.quotations !== undefined) yield* answer.quotations
+    return
+  }
+  const entries = [...answer.claims, ...(answer.quotations ?? [])]
+  entries.sort((left, right) => (sourceOrder.get(left.evidenceId) ?? Number.MAX_SAFE_INTEGER) -
+    (sourceOrder.get(right.evidenceId) ?? Number.MAX_SAFE_INTEGER))
+  yield* entries
+}
+
+export const renderWikiSynthesisAnswer = (answer: WikiSynthesisAnswer, sourceOrder?: ReadonlyMap<string, number>): string => {
   const safe = validateWikiSynthesisShape(answer)
   if (safe !== true) throw new Error(safe)
   // A citation appended to the last table row can be swallowed as a spare cell.
   // An immediate separate paragraph stays visible in the client citation parser.
   const sections: string[] = []
-  for (const claim of answer.claims) {
-    const statement = renderWikiSynthesisClaimStatement(claim)
-    const block = /[\r\n]/u.test(statement)
-    const rendered = `${statement}${block ? '\n\n' : ' '}[[cite:${claim.evidenceId}]]`
-    sections.push(rendered)
+  for (const contribution of wikiSynthesisContributions(answer, sourceOrder)) {
+    if ('statement' in contribution) {
+      const statement = renderWikiSynthesisClaimStatement(contribution)
+      const block = /[\r\n]/u.test(statement)
+      sections.push(`${statement}${block ? '\n\n' : ' '}[[cite:${contribution.evidenceId}]]`)
+    } else sections.push(`${renderWikiSynthesisQuotation(contribution)}\n\n[[cite:${contribution.evidenceId}]]`)
   }
   sections.push(...(answer.attachmentClaims ?? []).map(renderWikiSynthesisAttachmentClaimStatement))
   sections.push(...answer.observations)
@@ -610,6 +686,30 @@ const resolvedClaimSchema = (
     return canonical
   })
 
+const resolvedQuotationSchema = (
+  registry: ReadonlyMap<string, WikiSynthesisSource>,
+  contentBytes: () => number,
+  resolve: WikiSynthesisOptions['resolveQuotation'],
+  normalized: WeakSet<WikiSynthesisQuotation> = new WeakSet()
+) => quotationSchema.transform((wire, context): WikiSynthesisQuotation => {
+  const source = registry.get(wire.sourceRef)
+  const quotation = source?.kind === 'source-read' && source.complete ? resolve?.(wire.text, source) : null
+  if (quotation === null || quotation === undefined || !canonicalQuotationSchema.safeParse(quotation).success ||
+    quotation.text !== wire.text || bindingKey(quotation) !== bindingKey(source!) ||
+    hasUnsafeControlCharacters(quotation.text) || quotation.contexts.some(hasUnsafeControlCharacters) || quotation.definitions.some(hasUnsafeControlCharacters)) {
+    context.addIssue({ code: 'custom', message: 'Quotation requires an exact complete owned unit and its mandatory host-proved scope.' })
+    return z.NEVER
+  }
+  if (Buffer.byteLength(JSON.stringify(quotation), 'utf8') > contentBytes()) {
+    context.addIssue({ code: 'custom', message: 'Canonical synthesis output exceeded its provider content byte limit.' })
+    return z.NEVER
+  }
+  Object.freeze(quotation.contexts)
+  Object.freeze(quotation.definitions)
+  normalized.add(Object.freeze(quotation))
+  return quotation
+})
+
 const resolvedAttachmentClaimSchema = (
   registry: ReadonlyMap<string, WikiSynthesisInputMedia>,
   contentBytes: () => number,
@@ -669,7 +769,7 @@ const synthesisContentBytes = (options: Pick<WikiSynthesisOptions, 'maxOutputTok
 
 interface JsonFrame {
   readonly kind: 'object' | 'array'
-  readonly claims: 'claims' | 'attachmentClaims' | false
+  readonly claims: 'claims' | 'quotations' | 'attachmentClaims' | false
   state: 'key' | 'colon' | 'value' | 'comma'
   key?: string
 }
@@ -678,12 +778,13 @@ interface JsonFrame {
 // Semantic faithfulness and partial JSON validity remain final-output host checks.
 export const createWikiSynthesisStreamGuard = (
   sources: readonly WikiSynthesisSource[],
-  options: Pick<WikiSynthesisOptions, 'maxOutputTokens' | 'inputMediaSources'> = {}
+  options: Pick<WikiSynthesisOptions, 'maxOutputTokens' | 'inputMediaSources' | 'resolveQuotation'> = {}
 ): ((fragment: string) => string | undefined) => {
   const registry = sourceRegistry(sources)
   const contentBytes = synthesisContentBytes(options)
   const resolvedSchema = resolvedClaimSchema(registry, contentBytes)
   const resolvedAttachmentSchema = resolvedAttachmentClaimSchema(inputMediaRegistry(options.inputMediaSources ?? []), contentBytes)
+  const resolvedQuoteSchema = resolvedQuotationSchema(registry, contentBytes, options.resolveQuotation)
   const frames: JsonFrame[] = []
   let quoted = false
   let escaped = false
@@ -692,7 +793,7 @@ export const createWikiSynthesisStreamGuard = (
   let primitive = false
   let claimParts: string[] | undefined
   let claimDepth = 0
-  let claimChannel: 'claims' | 'attachmentClaims' = 'claims'
+  let claimChannel: 'claims' | 'quotations' | 'attachmentClaims' = 'claims'
   let completedClaims = 0
   let canonicalClaimBytes = 2
   let violation: string | undefined
@@ -712,7 +813,7 @@ export const createWikiSynthesisStreamGuard = (
       return
     }
     claimParts = undefined
-    const checked = claimChannel === 'claims' ? resolvedSchema.safeParse(parsed) : resolvedAttachmentSchema.safeParse(parsed)
+    const checked = (claimChannel === 'claims' ? resolvedSchema : claimChannel === 'quotations' ? resolvedQuoteSchema : resolvedAttachmentSchema).safeParse(parsed)
     if (!checked.success) {
       violation = `A completed claim must match the rendering-safe claim schema: ${checked.error.issues[0]?.message ?? 'Invalid claim.'}`
       return
@@ -794,7 +895,7 @@ export const createWikiSynthesisStreamGuard = (
             frames.length === 1 &&
             parent?.kind === 'object' &&
             parent.state === 'value' &&
-            (parent.key === 'claims' || parent.key === 'attachmentClaims')
+            (parent.key === 'claims' || parent.key === 'quotations' || parent.key === 'attachmentClaims')
               ? parent.key
               : false,
           state: character === '{' ? 'key' : 'value'
@@ -832,6 +933,8 @@ export const createWikiSynthesisProgram = (sources: readonly WikiSynthesisSource
   const mediaRegistry = inputMediaRegistry(options.inputMediaSources ?? [])
   const normalizedAttachmentClaims = new WeakSet<WikiSynthesisAttachmentClaim>()
   const boundAttachmentClaimSchema = resolvedAttachmentClaimSchema(mediaRegistry, contentBytes, normalizedAttachmentClaims)
+  const normalizedQuotations = new WeakSet<WikiSynthesisQuotation>()
+  const boundQuotationSchema = resolvedQuotationSchema(registry, contentBytes, options.resolveQuotation, normalizedQuotations)
   const claimDescription =
     admittedSources.length === 0
       ? 'No complete read or bounded recent-excerpt bindings are available: return [].'
@@ -873,6 +976,10 @@ export const createWikiSynthesisProgram = (sources: readonly WikiSynthesisSource
         )
         .describe(claimDescription)
     )
+    .output('quotations', z.array(boundQuotationSchema).max(options.resolveQuotation === undefined ? 0 : MAX_CLAIMS).optional()
+      .describe(options.resolveQuotation === undefined
+        ? 'Documentary proof is disabled for this program; omit quotations or return [].'
+        : 'Exact complete documentary author units, each with only sourceRef and text; omit when none.'))
     .output(
       'attachmentClaims',
       z
@@ -923,6 +1030,14 @@ export const createWikiSynthesisProgram = (sources: readonly WikiSynthesisSource
                     }
                   }
           }
+        : field.name === 'quotations'
+          ? { ...field, type: options.structured === false ? { name: 'json' as const, isArray: true } : {
+            name: 'object' as const, isArray: true, fields: {
+              sourceRef: { type: 'string' as const, isArray: false, pattern: '^s[A-Za-z0-9_-]{16}$',
+                patternDescription: 'Copy an exact sourceReferences.reads key unchanged: s followed by 16 base64url characters.' },
+              text: { type: 'string' as const, isArray: false, description: 'Exact complete original author unit; no changes or omitted conditions.' }
+            }
+          } }
         : field.name === 'attachmentClaims'
           ? {
               ...field,
@@ -985,10 +1100,16 @@ export const createWikiSynthesisProgram = (sources: readonly WikiSynthesisSource
       return claim as WikiSynthesisAttachmentClaim
     return boundAttachmentClaimSchema.parse(claim)
   }
+  const normalizeEmittedQuotation = (quotation: unknown): WikiSynthesisQuotation => {
+    if (typeof quotation === 'object' && quotation !== null && normalizedQuotations.has(quotation as WikiSynthesisQuotation))
+      return quotation as WikiSynthesisQuotation
+    return boundQuotationSchema.parse(quotation)
+  }
   const normalizeOptionalFields = <T extends object>(answer: T): T => {
     // Native structured schemas encode omitted optional outputs as null.
     // Canonical answers use absence; required fields still pass ordinary validation.
     if ('attachmentClaims' in answer && answer.attachmentClaims === null) delete answer.attachmentClaims
+    if ('quotations' in answer && answer.quotations === null) delete answer.quotations
     if ('recommendations' in answer && answer.recommendations === null) delete answer.recommendations
     return answer
   }
@@ -1005,7 +1126,12 @@ export const createWikiSynthesisProgram = (sources: readonly WikiSynthesisSource
       claimCount += canonical.attachmentClaims.length
       canonical.attachmentClaims = canonical.attachmentClaims.map(normalizeEmittedAttachmentClaim)
     }
-    if (claimCount > MAX_CLAIMS) throw new Error('Answers may contain at most 64 claims across both channels.')
+    if ('quotations' in canonical && canonical.quotations !== undefined) {
+      if (!Array.isArray(canonical.quotations)) throw new Error('Synthesis quotations must be an array.')
+      claimCount += canonical.quotations.length
+      canonical.quotations = canonical.quotations.map(normalizeEmittedQuotation)
+    }
+    if (claimCount > MAX_CLAIMS) throw new Error('Answers may contain at most 64 entries across all channels.')
     if (Buffer.byteLength(JSON.stringify(canonical), 'utf8') > contentBytes())
       throw new Error('Canonical synthesis output exceeded its provider content byte limit.')
     return canonical
@@ -1040,8 +1166,9 @@ export const createWikiSynthesisProgram = (sources: readonly WikiSynthesisSource
       const delta = normalizeOptionalFields({ ...chunk.delta })
       if (delta.claims !== undefined) delta.claims = delta.claims.map(normalizeEmittedClaim)
       if (delta.attachmentClaims !== undefined) delta.attachmentClaims = delta.attachmentClaims.map(normalizeEmittedAttachmentClaim)
-      sample.claimsSeen += (delta.claims?.length ?? 0) + (delta.attachmentClaims?.length ?? 0)
-      if (sample.claimsSeen > MAX_CLAIMS) throw new Error('Answers may contain at most 64 claims across both channels.')
+      if (delta.quotations !== undefined) delta.quotations = delta.quotations.map(normalizeEmittedQuotation)
+      sample.claimsSeen += (delta.claims?.length ?? 0) + (delta.quotations?.length ?? 0) + (delta.attachmentClaims?.length ?? 0)
+      if (sample.claimsSeen > MAX_CLAIMS) throw new Error('Answers may contain at most 64 entries across all channels.')
       // Account the merged canonical object, not repeated chunk envelopes.
       // This includes host-expanded file metadata and every non-claim field.
       for (const [key, value] of Object.entries(delta)) {
@@ -1072,6 +1199,8 @@ export const createWikiSynthesisProgram = (sources: readonly WikiSynthesisSource
     } catch {
       return 'Attachment claims must retain their exact host-admitted input file and safe content.'
     }
+    if (answer.quotations?.some((quotation: WikiSynthesisQuotation) => !normalizedQuotations.has(quotation)))
+      return 'Documentary quotations must retain their exact host-issued unit and complete scope.'
     if (Buffer.byteLength(JSON.stringify(answer), 'utf8') > contentBytes()) return 'Canonical synthesis output exceeded its provider content byte limit.'
     const unresolved = new Set<number>()
     for (const index of answer.unresolvedFacets) {
@@ -1097,6 +1226,7 @@ export const createWikiSynthesisProgram = (sources: readonly WikiSynthesisSource
     }
     if (claimIssues.size > 0) return [...claimIssues].join('\n')
     const rendered = renderWikiSynthesisAnswer(answer)
+    if (Buffer.byteLength(rendered, 'utf8') > contentBytes()) return 'Rendered synthesis output exceeded its provider content byte limit.'
     const valid = options.validateAnswer?.(answer, rendered)
     if (valid !== undefined && valid !== true)
       return typeof valid === 'string' && valid.length > 0 ? valid : 'Answer failed host evidence or requested-facet validation.'
@@ -1110,6 +1240,8 @@ export const createWikiSynthesisProgram = (sources: readonly WikiSynthesisSource
       } catch {
         return 'Host-normalized attachment claims must retain their exact original input file.'
       }
+      if (answer.quotations?.some((quotation: WikiSynthesisQuotation) => !normalizedQuotations.has(quotation)))
+        return 'Host normalization cannot replace a documentary quotation or strip its mandatory source scope.'
       if (Buffer.byteLength(JSON.stringify(answer), 'utf8') > contentBytes()) return 'Canonical synthesis output exceeded its provider content byte limit.'
       for (const claim of answer.claims) {
         if (normalizedClaims.has(claim)) continue

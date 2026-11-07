@@ -7,6 +7,7 @@ import { AgentChildBudgetReservations, type AgentOrchestrationLimits } from '../
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import { AgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import { AgentProviderAttemptError, type AgentProviderFactory, type AgentProviderService } from '../../agents/providers/factory.ts'
+import { compactWikiQuotationContext, renderWikiSynthesisAnswer } from '../../agents/providers/wiki-synthesis.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 import type {
   AgentDispatchBudget,
@@ -585,6 +586,264 @@ describe('Ax orchestration stages', () => {
     expect(fixture.text).not.toHaveBeenCalled()
     expect(fixture.event.mock.calls).not.toContainEqual(['model.turn', expect.objectContaining({ outcome: 'answer_accepted' })])
     expect(fixture.reserveSequence).not.toHaveBeenCalled()
+  })
+
+  it.each(['authorized', 'revoked after coverage'] as const)(
+    'publishes host-scoped documentary opening and whole labelled marker only while the source remains %s',
+    async authority => {
+      const opening = 'Falcon dispatch requires a signed manifest. This requirement applies only to the supervised pilot.'
+      const marker = 'Review marker: amber-ledger-17.'
+      const definition = '[pilot-policy]: /en/pilot-policy "Pilot scope only"'
+      const historicalContent = renderWikiSynthesisAnswer({
+        claims: [],
+        quotations: [{
+          evidenceId: 'page:42:revision:0', sourceRevision: '0', unitId: 'read:prior-supplier',
+          text: 'Earlier marker: obsolete-ledger.', contexts: ['Prior unverified source'], definitions: []
+        }],
+        unresolvedFacets: [], observations: []
+      })
+      const historicalAssistant = Object.freeze({
+        role: 'assistant' as const, content: historicalContent,
+        providerState: { thoughtBlocks: [{ data: 'opaque-prior-reasoning', encrypted: true as const }] }
+      })
+      const page = {
+        id: 42,
+        locale: 'en',
+        path: 'suppliers',
+        title: 'Supplier operations',
+        contentType: 'markdown',
+        sourceRevision: '1',
+        content: `# Pilot [scope][pilot-policy]\n\n${opening}\n\n## Review evidence\n\n- ${marker}\n\n${definition}\n`,
+        citation: { evidenceId: 'page:42:revision:1', label: 'Supplier operations', href: '/en/suppliers' },
+        citationSections: []
+      }
+      let sourceAuthorized = true
+      const decisionProviders = { ...fixtureDecisionProviders, decideBatch: vi.fn(fixtureDecisionProviders.decideBatch) }
+      const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+        if (synthesisInputFromRequest(input) === undefined)
+          return {
+            results: [
+              { index: 0, functionCalls: [{ id: 'read-documentary-page', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } }] }
+            ]
+          }
+        const source = synthesisSourcesFromRequest(input).find(source => source.evidenceId === page.citation.evidenceId)
+        if (source === undefined) throw new Error('The quotation producer requires its admitted complete physical read')
+        return {
+          results: [
+            {
+              index: 0,
+              content: JSON.stringify({
+                claims: [],
+                quotations: [opening, marker].map(text => ({ sourceRef: source.sourceRef, text })),
+                unresolvedFacets: [],
+                observations: [],
+                recommendations: ''
+              })
+            }
+          ]
+        }
+      })
+      const coverage = vi.fn(async (): Promise<AxChatResponse> => ({
+        results: [{ index: 0, content: JSON.stringify({ verdict: 'complete', feedback: '' }), finishReason: 'stop' }]
+      }))
+      const invoke = vi.fn(async () => page)
+      const validateObservation = vi.fn(
+        async (name: string, output: unknown) => name === 'pages.get' && sourceAuthorized && JSON.stringify(output) === JSON.stringify(page)
+      )
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: [
+            { name: 'pages.get', title: 'Read page', description: 'Read canonical page evidence', parameters: { type: 'object', properties: {} }, risk: 'read' }
+          ],
+          invoke,
+          validateObservation,
+          snapshot: async () => ({}),
+          close: () => {},
+          authoritySha256: null
+        })
+      }
+      const text = vi.fn(async (_delta: string) => {})
+      const event = vi.fn(async (type: string, data: unknown) => {
+        if (
+          authority === 'revoked after coverage' &&
+          type === 'model.turn' &&
+          typeof data === 'object' &&
+          data !== null &&
+          'verification' in data &&
+          typeof data.verification === 'object' &&
+          data.verification !== null &&
+          'phase' in data.verification &&
+          data.verification.phase === 'coverage_audit'
+        )
+          sourceAuthorized = false
+      })
+      const execution = new AxAgentEngine(factoryFor(chat, { coverage }), actions, undefined, { decisionProviders }).execute(
+        {
+          ...baseRequest(new AbortController().signal),
+          memory: { user: [], agent: [] },
+          messages: [
+            { role: 'user', content: 'Quote the earlier marker.' },
+            historicalAssistant,
+            { role: 'user', content: 'Quote the complete opening paragraph and the whole current review marker from Supplier operations.' }
+          ],
+          limits: { maxTurns: 3, maxToolCalls: 1, maxTokens: 2_000_000 }
+        },
+        { text, event }
+      )
+      if (authority === 'revoked after coverage') {
+        await expect(execution).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
+        expect(sourceAuthorized).toBe(false)
+        expect(text).not.toHaveBeenCalled()
+        expect(event.mock.calls).not.toContainEqual(['model.turn', expect.objectContaining({ outcome: 'answer_accepted' })])
+      } else {
+        const result = await execution
+        expect(result.executionLimit).toBeUndefined()
+        expect(result.citations).toEqual([expect.objectContaining(page.citation)])
+        const published = text.mock.calls.map(([delta]) => delta).join('')
+        const visible = visibleWikiText(published)
+        expect(visible).toContain(opening)
+        expect(visible).toContain(marker)
+        expect(visible).toContain('Pilot scope')
+        expect(visible).toContain('Review evidence')
+        expect(visible).toContain(definition)
+        expect(published).toContain(`[[cite:${page.citation.evidenceId}]]`)
+        const rendered = document.createElement('div')
+        rendered.innerHTML = renderSafeMarkdown(published)
+        expect(rendered.querySelector('a[href="/en/pilot-policy"]')).toBeNull()
+      }
+      const historicalPrompt = chat.mock.calls[0]![0].chatPrompt.find(message => message.role === 'assistant')
+      expect(historicalPrompt?.content).toBe(compactWikiQuotationContext(historicalContent))
+      expect(historicalPrompt).not.toHaveProperty('thoughtBlocks')
+      expect(historicalAssistant.content).toBe(historicalContent)
+      expect(historicalAssistant.providerState.thoughtBlocks).toEqual([{ data: 'opaque-prior-reasoning', encrypted: true }])
+      expect(invoke).toHaveBeenCalledOnce()
+      expect(coverage).toHaveBeenCalledOnce()
+      expect(
+        decisionProviders.decideBatch.mock.calls.filter(([request]) =>
+          Object.values(request.questions).some(question => Object.hasOwn(question.criteria, 'supports'))
+        )
+      ).toHaveLength(0)
+    }
+  )
+
+  it('drops a declined recent read atomically and retains only an unchanged omitted quotation group across repair', async () => {
+    const userRequest = 'Recap the most recently updated Wiki pages with short source quotations.'
+    const alphaQuote = 'Alpha dispatch requires a signed manifest.'
+    const betaQuote = 'Beta storage requires a sealed receipt.'
+    const gammaQuote = 'Gamma review requires a named approver.'
+    const alphaDeclined = 'Alpha dispatch does not require a signed manifest.'
+    const gammaDeclined = 'Gamma review does not require a named approver.'
+    const pages = [alphaQuote, betaQuote, gammaQuote].map((content, index) => {
+      const title = ['Alpha', 'Beta', 'Gamma'][index]!
+      return {
+        id: index + 1,
+        locale: 'en',
+        path: title.toLowerCase(),
+        title,
+        contentType: 'markdown',
+        sourceRevision: `rev-${index + 1}`,
+        content,
+        citation: { evidenceId: `page:${index + 1}:revision:rev-${index + 1}`, label: title, href: `/en/${title.toLowerCase()}` },
+        citationSections: [],
+        updatedAt: '2026-09-20T09:00:00.000Z',
+        contentTruncated: false,
+        sourceContentCharacters: content.length
+      }
+    })
+    const semanticVerdicts = rejectFixtureStatements([alphaDeclined, gammaDeclined])
+    const decisionProviders = { ...semanticVerdicts, decideBatch: vi.fn(semanticVerdicts.decideBatch) }
+    let synthesisAttempts = 0
+    const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+      if (synthesisInputFromRequest(input) === undefined)
+        return {
+          results: [
+            {
+              index: 0,
+              content: `<wiki-request-plan>${JSON.stringify({
+                facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'recent-window' }]
+              })}</wiki-request-plan>`,
+              functionCalls: [
+                {
+                  id: 'read-recent-documentary-pages',
+                  type: 'function',
+                  function: { name: input.functions!.find(fn => fn.name.includes('recent'))!.name, params: '{"limit":10}' }
+                }
+              ]
+            }
+          ]
+        }
+      synthesisAttempts++
+      const sources = synthesisSourcesFromRequest(input)
+      const sourceRef = (pageId: number): string => {
+        const source = sources.find(source => source.evidenceId === pages[pageId - 1]!.citation.evidenceId)
+        if (source === undefined) throw new Error('Repair must keep the unchanged complete recent read available')
+        return source.sourceRef
+      }
+      return {
+        results: [
+          {
+            index: 0,
+            content: JSON.stringify({
+              claims: [
+                { sourceRef: sourceRef(1), statement: alphaDeclined },
+                ...(synthesisAttempts === 1 ? [] : [{ sourceRef: sourceRef(3), statement: gammaDeclined }])
+              ],
+              quotations: [
+                { sourceRef: sourceRef(1), text: alphaQuote },
+                ...(synthesisAttempts === 1
+                  ? [{ sourceRef: sourceRef(2), text: betaQuote }, { sourceRef: sourceRef(3), text: gammaQuote }]
+                  : [])
+              ],
+              unresolvedFacets: [],
+              observations: [],
+              recommendations: ''
+            })
+          }
+        ]
+      }
+    })
+    const recentOutput = { kind: 'recent-page-evidence', requestedLimit: 10, exhausted: true, pages }
+    const invoke = vi.fn(async () => recentOutput)
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [
+          { name: 'pages.listRecent', title: 'Read recent pages', description: 'Read recent pages', parameters: { type: 'object', properties: {} }, risk: 'read' }
+        ],
+        invoke,
+        validateObservation: async (name, output) => name === 'pages.listRecent' && JSON.stringify(output) === JSON.stringify(recentOutput),
+        snapshot: async () => ({}),
+        close: () => {},
+        authoritySha256: null
+      })
+    }
+    const text = vi.fn(async (_delta: string) => {})
+    const coverage = vi.fn(async (): Promise<AxChatResponse> => ({
+      results: [{ index: 0, content: JSON.stringify({ verdict: 'incomplete', feedback: 'Alpha and Gamma have no verified contribution.' }), finishReason: 'stop' }]
+    }))
+    const result = await new AxAgentEngine(factoryFor(chat, { coverage }), actions, undefined, { decisionProviders }).execute(
+      {
+        ...baseRequest(new AbortController().signal),
+        memory: { user: [], agent: [] },
+        messages: [{ role: 'user', content: userRequest }],
+        limits: { maxTurns: 3, maxToolCalls: 1, maxTokens: 2_000_000 }
+      },
+      { text, event: async () => {} }
+    )
+    expect(synthesisAttempts).toBe(2)
+    expect(invoke).toHaveBeenCalledOnce()
+    expect(coverage).toHaveBeenCalledOnce()
+    expect(decisionProviders.decideBatch).toHaveBeenCalled()
+    expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'partial' })
+    expect(result.citations).toEqual([expect.objectContaining(pages[1]!.citation)])
+    const published = visibleWikiText(text.mock.calls.map(([delta]) => delta).join(''))
+    expect(published).toContain(betaQuote)
+    expect(published).not.toContain(alphaQuote)
+    expect(published).not.toContain(alphaDeclined)
+    // Gamma was wholly verified in the first draft, but its latest declined
+    // mention supersedes that group; only the omitted unchanged Beta may return.
+    expect(published).not.toContain(gammaQuote)
+    expect(published).not.toContain(gammaDeclined)
+    expect(published).toMatch(/not established/iu)
   })
 
   it('uses the same bounded root output exposure for preflight and actual generation on large provider profiles', async () => {

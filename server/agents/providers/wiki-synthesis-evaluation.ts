@@ -51,16 +51,21 @@ const readSchema = z
   })
   .strict()
 const claimSchema = z.object({ evidenceId: z.string(), sourceRevision: z.string(), unitId: z.string(), statement: z.string() })
-// This Wiki-only corpus admits no native files; never silently strip a new claim channel.
+// Assertion-only corpus: files and documentary proofs need separate qualification.
 const answerSchema = z
   .object({
     claims: z.array(claimSchema).max(64),
     attachmentClaims: z.array(z.never()).max(0).optional(),
+    quotations: z.array(z.never()).max(0).optional(),
     unresolvedFacets: z.array(z.number().int().nonnegative()).max(64),
     observations: z.array(z.string()),
     recommendations: z.string().default('')
   })
-  .transform(({ attachmentClaims, ...answer }) => (attachmentClaims === undefined ? answer : { ...answer, attachmentClaims }))
+  .transform(({ attachmentClaims, quotations, ...answer }) => ({
+    ...answer,
+    ...(attachmentClaims === undefined ? {} : { attachmentClaims }),
+    ...(quotations === undefined ? {} : { quotations })
+  }))
 const fixtureSchema = z.object({
   id: z.string(),
   family: z.string(),

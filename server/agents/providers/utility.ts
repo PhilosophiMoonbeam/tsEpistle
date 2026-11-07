@@ -8,6 +8,7 @@ import { acceptCumulativeAgentProviderUsage, readAgentProviderUsage, type AgentP
 import type { AgentProviderTransportKind } from './registry.ts'
 import type { AgentDispatchBudget, AgentDispatchBudgetReservation } from '../runtime.ts'
 import { AgentRepositoryError } from '../repository.ts'
+import { compactWikiQuotationContext } from './wiki-synthesis.ts'
 
 const TITLE_MAXIMUM_CHARACTERS = 72
 const TITLE_MAXIMUM_PROVIDER_BYTES = 4_096
@@ -137,7 +138,7 @@ const boundedTranscript = (messages: readonly AgentConversationTitleMessage[]): 
   const transcript: AgentConversationTitleMessage[] = []
   for (const message of messages.slice(0, TITLE_MAXIMUM_TRANSCRIPT_MESSAGES)) {
     if (remainingCharacters < 1) break
-    const content = message.content.slice(0, remainingCharacters).trim()
+    const content = (message.role === 'assistant' ? compactWikiQuotationContext(message.content) : message.content).slice(0, remainingCharacters).trim()
     if (!content) continue
     transcript.push({ role: message.role, content })
     remainingCharacters -= content.length

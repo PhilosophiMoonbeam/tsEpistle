@@ -750,6 +750,14 @@ onBeforeUnmount(() => {
   padding: var(--wiki-space-3) var(--wiki-space-4);
 }
 
+.agent-markdown :deep(blockquote p) {
+  white-space: pre-wrap;
+}
+
+.agent-markdown :deep(blockquote p br) {
+  display: none;
+}
+
 [dir='rtl'] .agent-markdown :deep(blockquote) {
   border-radius: var(--wiki-control-radius) 0 0 var(--wiki-control-radius);
 }
