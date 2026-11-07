@@ -1311,6 +1311,51 @@ describe('Wiki synthesis complete registered read transport', () => {
     expect(encoded.sourceReferences).not.toContain('keeper@example.test')
   })
 
+  it('delivers bounded excerpt metadata without private receipts or duplicate representation while retaining host alias authority', async () => {
+    const excerpt = {
+      representation: 'recent-excerpt' as const,
+      representationMetadata: JSON.stringify({ contentTruncated: true, sourceContentCharacters: body.length + 500, updatedAt: '2026-11-07T00:00:00.000Z' }),
+      readReceipts: [{ actionCallId: 'private-original-receipt', actionName: 'pages.listRecent' as const }]
+    }
+    const bounded: WikiSynthesisSource = { ...root, kind: 'recent-excerpt', complete: false, excerpt }
+    const boundedRead: WikiSynthesisRead = { ...read, representation: 'recent-excerpt', complete: false, excerpt }
+    const original = JSON.stringify([bounded, boundedRead])
+    const encoded = encodeWikiSynthesisSources([bounded], [boundedRead])
+    const chat = vi.fn(async (_request: Readonly<AxChatRequest>) => ({
+      results: [{ index: 0, content: JSON.stringify({ claims: [], unresolvedFacets: [], observations: [] }), finishReason: 'stop' as const }]
+    }))
+    const service = new AxMockAIService<string>({
+      features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ['native'] },
+      chatResponse: chat
+    })
+    await createWikiSynthesisProgram([bounded]).forward(service, { ...input, ...encoded, requestFacets: [] })
+    const delivered = synthesisReadsFromRequest(chat.mock.calls[0]![0])
+    expect(delivered).toEqual([expect.objectContaining({
+      representation: 'recent-excerpt',
+      complete: false,
+      readText: body,
+      excerpt: { representationMetadata: excerpt.representationMetadata }
+    })])
+    const metadata = JSON.parse(encoded.sourceText.split('\n')[0]!.replace(/^SOURCE READ d\d+ /u, ''))
+    expect(metadata).toEqual({
+      evidenceId: bounded.evidenceId,
+      revision: bounded.sourceRevision,
+      representation: 'recent-excerpt',
+      status: 'truncated',
+      excerpt: { representationMetadata: excerpt.representationMetadata }
+    })
+    expect(encoded.sourceText).not.toContain('private-original-receipt')
+    expect(encoded.sourceText).not.toContain('readReceipts')
+    expect(JSON.stringify([bounded, boundedRead])).toBe(original)
+    expect(() => encodeWikiSynthesisSources([bounded], [{
+      ...boundedRead, excerpt: { ...excerpt, readReceipts: [{ actionCallId: 'different-private-receipt', actionName: 'pages.listRecent' }] }
+    }])).toThrow()
+    expect(() => encodeWikiSynthesisSources([bounded], [boundedRead, {
+      ...boundedRead, evidenceId: `${bounded.evidenceId}:section:1`,
+      excerpt: { ...excerpt, readReceipts: [{ actionCallId: 'different-private-receipt', actionName: 'pages.listRecent' }] }
+    }])).toThrow()
+  })
+
   it('rejects malformed or scope-changing source frames instead of treating raw transport as admitted content', () => {
     const encoded = encodeWikiSynthesisSources([root], [read])
     const frame = encoded.sourceText.split('\n')[1]!

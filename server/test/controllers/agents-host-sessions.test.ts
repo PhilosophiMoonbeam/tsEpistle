@@ -3378,7 +3378,7 @@ describe('ordinary-origin agent session API', () => {
     30_000
   )
 
-  it('retains complete owned reads once across cached followups, preserves historical versions, and rejects corrupt receipts', async () => {
+  it('retains complete owned reads and original recent batches across cached followups without dropping distinct historical observations', async () => {
     const ownedSession = randomUUID()
     const foreignSession = randomUUID()
     await insertAccountingSession(ownedSession)
@@ -3395,6 +3395,26 @@ describe('ordinary-origin agent session API', () => {
       content,
       citation: { evidenceId: `page:${id}:revision:${revision}`, label: `Page ${id}`, href: `/en/page-${id}` }
     })
+    const recentPage = {
+      ...page(50, '7', 'Exact disclaimer prefix.'),
+      sourceContentCharacters: 400,
+      contentTruncated: true
+    }
+    const recentBatch = {
+      pages: [
+        recentPage,
+        { ...page(51, '8', 'Complete short disclaimer.'), sourceContentCharacters: 26, contentTruncated: false }
+      ],
+      exhausted: false,
+      requestedLimit: 2,
+      kind: 'recent-page-evidence'
+    }
+    const olderBatch = {
+      ...recentBatch,
+      pages: [{ ...recentPage, content: 'Older disclaimer prefix.', sourceRevision: '6', citation: page(50, '6').citation }]
+    }
+    const differentWindow = { ...recentBatch, exhausted: true, requestedLimit: 3 }
+    const differentMetadata = { ...recentBatch, pages: [{ ...recentPage, title: 'Historical title' }, recentBatch.pages[1]!] }
     let engineCalls = 0
     let ownInitialRun: string | undefined
     const observations: Array<NonNullable<AgentEngineRequest['retainedPageReads']>> = []
@@ -3416,8 +3436,13 @@ describe('ordinary-origin agent session API', () => {
             await sink.event('tool.started', { actionCallId, actionName, input: JSON.stringify(input) })
             await sink.event('tool.completed', { actionCallId, actionName, result: JSON.stringify(output), ...extra })
           }
+          const emitRecent = async (actionCallId: string, output: unknown, extra: Readonly<Record<string, unknown>> = {}) => {
+            await sink.event('tool.started', { actionCallId, actionName: 'pages.listRecent', input: JSON.stringify({ limit: 2 }) })
+            await sink.event('tool.completed', { actionCallId, actionName: 'pages.listRecent', result: JSON.stringify(output), ...extra })
+          }
           if (request.run.sessionId === foreignSession) {
             await emitRead('foreign-receipt', page(99, '1', 'Foreign source must never enter the owned thread.'))
+            await emitRecent('foreign-recent', recentBatch)
           } else if (ownInitialRun === undefined) {
             ownInitialRun = request.run.id
             await emitRead('superseded-current', page(42, '1', 'Old revision.'))
@@ -3439,6 +3464,24 @@ describe('ordinary-origin agent session API', () => {
             await emitRead('truncated-source', { ...page(44, '1'), contentTruncated: true })
             await emitRead('incomplete-source', { ...page(45, '1'), complete: false })
             await emitRead('expired-source', { ...page(46, '1'), groundedExpiresAt: '2000-01-01T00:00:00.000Z' })
+            await emitRecent('older-recent', olderBatch)
+            await emitRecent('window-recent', differentWindow)
+            await emitRecent('metadata-recent', differentMetadata)
+            await emitRecent('duplicate-recent', {
+              kind: recentBatch.kind,
+              requestedLimit: recentBatch.requestedLimit,
+              exhausted: recentBatch.exhausted,
+              pages: recentBatch.pages
+            })
+            await emitRecent('original-recent', recentBatch)
+            await emitRecent('cached-recent', recentBatch, { cacheHit: true, reusedActionCallId: 'original-recent' })
+            await emitRecent('legacy-recent', { pages: [page(60, '1')], requestedLimit: 2, exhausted: true })
+            await emitRecent('malformed-recent', { ...recentBatch, pages: [{ ...recentPage, contentTruncated: false }] })
+            await emitRecent('error-recent', recentBatch, { isError: true })
+            await emitRecent('error-code-recent', recentBatch, { errorCode: 'WIKI_FAILURE' })
+            await emitRecent('omitted-recent', recentBatch, { contextExclusion: { status: 'omitted', reason: 'tool_result_capacity' } })
+            await emitRecent('invalid-json-recent', recentBatch, { result: '{' })
+            await emitRecent('omitted-row-recent', { ...recentBatch, pages: [{ ...recentPage, status: 'omitted' }] })
             // This fixture exercises context scans, not serial event-write throughput.
             // Keep all 132 cached reads across both scan boundaries, but seed them
             // atomically instead of spending the test deadline on 264 transactions.
@@ -3532,7 +3575,7 @@ describe('ordinary-origin agent session API', () => {
       duplicateOfActionCallId: 'original-current'
     })
     const retained = observations[2]!
-    expect(retained).toHaveLength(3)
+    expect(retained).toHaveLength(7)
     expect(retained.find(read => read.actionName === 'pages.get')).toEqual({
       actionCallId: 'original-current',
       actionName: 'pages.get',
@@ -3544,6 +3587,14 @@ describe('ordinary-origin agent session API', () => {
         .map(read => read.output.versionId)
         .sort()
     ).toEqual([1, 2])
+    expect(retained.filter(read => read.actionName === 'pages.listRecent')).toEqual([
+      { actionCallId: 'original-recent', actionName: 'pages.listRecent', output: recentBatch },
+      { actionCallId: 'metadata-recent', actionName: 'pages.listRecent', output: differentMetadata },
+      { actionCallId: 'window-recent', actionName: 'pages.listRecent', output: differentWindow },
+      { actionCallId: 'older-recent', actionName: 'pages.listRecent', output: olderBatch }
+    ])
+    // Preserve the parsed original record rather than the schema-normalized clone.
+    expect(JSON.stringify(retained.find(read => read.actionCallId === 'original-recent')?.output)).toBe(JSON.stringify(recentBatch))
     expect(await db('agentMessages').where({ id: followup.run.assistantMessageId }).first('content')).toEqual({ content: 'RETAINED-TAIL' })
     const events = await db('agentEvents').where({ runId: ownInitialRun!, type: 'tool.completed' }).orderBy('sequence', 'desc').select('id', 'data')
     const corrupt = events.find(event => JSON.parse(String(event.data)).actionName === 'pages.get')
@@ -3559,6 +3610,94 @@ describe('ordinary-origin agent session API', () => {
       errorCode: 'AGENT_EVENT_CORRUPT'
     })
   }, 10_000)
+
+  it.each(['source', 'selector', 'owner', 'session'] as const)(
+    'revalidates recent batch hashes before content dedup and enforces retained %s scope',
+    async boundary => {
+      const sessionId = randomUUID()
+      const otherSessionId = randomUUID()
+      await insertAccountingSession(sessionId)
+      await insertAccountingSession(otherSessionId)
+      let engineCalls = 0
+      const batch = {
+        kind: 'recent-page-evidence',
+        requestedLimit: 1,
+        exhausted: false,
+        pages: [
+          {
+            id: 166,
+            locale: 'en',
+            path: 'disclaimer',
+            title: 'Disclaimer',
+            contentType: 'markdown',
+            sourceRevision: '9',
+            updatedAt: '2026-08-17T00:00:00.000Z',
+            content: 'Historical disclaimer excerpt.',
+            sourceContentCharacters: 300,
+            contentTruncated: true,
+            citation: { evidenceId: 'page:166:revision:9', label: 'Disclaimer', href: '/en/disclaimer' }
+          }
+        ]
+      }
+      const retainedRuntime = makeAccountingRuntime(
+        {
+          preflight: preflightAgentRequest,
+          async execute(request, sink) {
+            engineCalls += 1
+            if (engineCalls === 1) {
+              for (const actionCallId of ['older-receipt', 'newer-identical-receipt']) {
+                await sink.event('tool.started', { actionCallId, actionName: 'pages.listRecent', input: JSON.stringify({ limit: 1 }) })
+                await sink.event('tool.completed', { actionCallId, actionName: 'pages.listRecent', result: JSON.stringify(batch) })
+              }
+            } else {
+              expect(request.retainedPageReads).toEqual([])
+              await sink.text('No owned historical source.')
+            }
+            return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 0 }
+          }
+        },
+        1_000
+      )
+      const submit = async () => {
+        const session = await db('agentSessions').where({ id: sessionId }).first('version')
+        return retainedRuntime.submit({
+          ownerId: 7,
+          sessionId,
+          expectedSessionVersion: Number(session.version),
+          profileResolutionToken: 'accounting-test',
+          clientRequestId: randomUUID(),
+          content: 'Use only the historical disclaimer excerpt.'
+        })
+      }
+      const initial = await submit()
+      expect(await retainedRuntime.runOnce()).toBe(true)
+      if (boundary === 'owner') await db('agentRuns').where({ id: initial.run.id }).update({ ownerId: 8 })
+      else if (boundary === 'session') await db('agentRuns').where({ id: initial.run.id }).update({ sessionId: otherSessionId })
+      else {
+        const events = await db('agentEvents')
+          .where({ runId: initial.run.id, type: boundary === 'source' ? 'tool.completed' : 'tool.started' })
+          .select('id', 'data')
+        const event = events.find(row => JSON.parse(String(row.data)).actionCallId === 'older-receipt')
+        if (!event) throw new Error('Missing original recent batch receipt')
+        await db('agentEvents').where({ id: event.id }).update({ dataSha256: '0'.repeat(64) })
+      }
+      const followup = await submit()
+      expect(await retainedRuntime.runOnce()).toBe(true)
+      if (boundary === 'owner' || boundary === 'session') {
+        expect(engineCalls).toBe(2)
+        expect(await db('agentRuns').where({ id: followup.run.id }).first('status', 'errorCode')).toEqual({ status: 'succeeded', errorCode: null })
+        expect(await db('agentMessages').where({ id: followup.run.assistantMessageId }).first('content')).toEqual({
+          content: 'No owned historical source.'
+        })
+      } else {
+        expect(engineCalls).toBe(1)
+        expect(await db('agentRuns').where({ id: followup.run.id }).first('status', 'errorCode')).toEqual({
+          status: 'failed',
+          errorCode: 'AGENT_EVENT_CORRUPT'
+        })
+      }
+    }
+  )
 
   it.each(['missing', 'corrupt'] as const)('fails closed when an earlier telemetry start boundary is %s', async corruption => {
     const sessionId = randomUUID()

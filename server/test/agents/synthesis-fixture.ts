@@ -2,7 +2,7 @@ import { AxMockAIService, type AxAIService, type AxChatRequest, type AxChatRespo
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import type { DecisionProviderRegistry, DecisionProviderRuntime } from '../../agents/decision-providers.ts'
 import type { AgentProviderChatOptions } from '../../agents/providers/factory.ts'
-import { wikiSynthesisSourceRef, type WikiSynthesisSource } from '../../agents/providers/wiki-synthesis.ts'
+import { wikiSynthesisSourceRef } from '../../agents/providers/wiki-synthesis.ts'
 
 /**
  * Test-only Jev decision judge for engine fixtures. It is a mock dependency,
@@ -184,7 +184,7 @@ export interface SynthesisFixtureRead {
   readonly complete: boolean
   readonly readText: string
   readonly authorText: string
-  readonly excerpt?: WikiSynthesisSource['excerpt']
+  readonly excerpt?: { readonly representationMetadata: string }
 }
 
 export interface SynthesisFixtureSource extends SynthesisFixtureRead {
@@ -234,7 +234,7 @@ export const synthesisReadsFromRequest = (request: Readonly<AxChatRequest>): Syn
       complete: row.status === 'full',
       readText: view.original,
       authorText: view.admittedBody === undefined ? view.original : (view.admittedBody as string),
-      ...(row.excerpt === undefined ? {} : { excerpt: row.excerpt as WikiSynthesisSource['excerpt'] })
+      ...(row.excerpt === undefined ? {} : { excerpt: row.excerpt as NonNullable<SynthesisFixtureRead['excerpt']> })
     }
   })
 }
@@ -260,7 +260,7 @@ export const synthesisSourcesFromRequest = (request: Readonly<AxChatRequest>): S
     )
       throw new Error('Invalid supplied synthesis read locator')
     const read = reads.get(source.readRef)
-    if (read === undefined || (!read.complete && read.excerpt?.representation !== 'recent-excerpt') || read.sourceRevision !== source.sourceRevision)
+    if (read === undefined || (!read.complete && read.representation !== 'recent-excerpt') || read.sourceRevision !== source.sourceRevision)
       throw new Error('Missing or incompatible supplied synthesis read')
     return {
       ...read,

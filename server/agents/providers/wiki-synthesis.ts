@@ -145,7 +145,7 @@ export const encodeWikiSynthesisSources = (sources: readonly WikiSynthesisSource
       orderedReads
         .map(
           read =>
-            `SOURCE READ ${readRefs.get(read.readId)} ${JSON.stringify({ evidenceId: read.evidenceId, revision: read.sourceRevision, representation: read.representation, status: read.complete ? 'full' : 'truncated', ...(read.excerpt === undefined ? {} : { excerpt: read.excerpt }) })}\n${JSON.stringify(wikiModelSource({ title: read.title ?? '', source: read.source, ...(read.authorText === undefined ? {} : { authorText: read.authorText }), complete: read.complete }))}\nEND SOURCE READ ${readRefs.get(read.readId)}`
+            `SOURCE READ ${readRefs.get(read.readId)} ${JSON.stringify({ evidenceId: read.evidenceId, revision: read.sourceRevision, representation: read.representation, status: read.complete ? 'full' : 'truncated', ...(read.excerpt === undefined ? {} : { excerpt: { representationMetadata: read.excerpt.representationMetadata } }) })}\n${JSON.stringify(wikiModelSource({ title: read.title ?? '', source: read.source, ...(read.authorText === undefined ? {} : { authorText: read.authorText }), complete: read.complete }))}\nEND SOURCE READ ${readRefs.get(read.readId)}`
         )
         .join('\n\n') || 'No registered source reads.',
     sourceReferences: JSON.stringify({ reads: references } satisfies WikiSynthesisReferenceIndex)

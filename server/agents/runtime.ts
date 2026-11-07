@@ -700,7 +700,7 @@ const retainedPageReads = (rows: readonly RuntimeContextRow[]): readonly AgentRe
     const data = parsedObject(row.data, 'AGENT_EVENT_CORRUPT')
     if (parsedContextExclusion(data, 'AGENT_EVENT_CORRUPT') !== undefined || data.errorCode !== undefined || data.isError === true) continue
     const actionName = data.actionName
-    if (actionName !== 'pages.get' && actionName !== 'pages.getVersion' && actionName !== 'pages.getOkf') continue
+    if (actionName !== 'pages.get' && actionName !== 'pages.getVersion' && actionName !== 'pages.getOkf' && actionName !== 'pages.listRecent') continue
     if (typeof data.actionCallId !== 'string' || data.actionCallId.length === 0 || typeof data.result !== 'string') continue
     let output: unknown
     try {
@@ -710,6 +710,15 @@ const retainedPageReads = (rows: readonly RuntimeContextRow[]): readonly AgentRe
     }
     if (typeof output !== 'object' || output === null || Array.isArray(output)) continue
     const page = output as Readonly<Record<string, unknown>>
+    const actionCallId =
+      data.cacheHit === true && typeof data.reusedActionCallId === 'string' && data.reusedActionCallId.length > 0 ? data.reusedActionCallId : data.actionCallId
+    const receiptKey = `${actionName}:${actionCallId}`
+    if (actionName === 'pages.listRecent') {
+      if (parseRecentPageEvidenceBatch(page) === null || receipts.has(receiptKey)) continue
+      receipts.add(receiptKey)
+      reads.push({ actionCallId, actionName, output: page })
+      continue
+    }
     const source = actionName === 'pages.getOkf' ? page.document : page.content
     if (
       typeof source !== 'string' ||
@@ -730,9 +739,6 @@ const retainedPageReads = (rows: readonly RuntimeContextRow[]): readonly AgentRe
       (typeof page.groundedExpiresAt !== 'string' || !Number.isFinite(Date.parse(page.groundedExpiresAt)) || Date.parse(page.groundedExpiresAt) <= Date.now())
     )
       continue
-    const actionCallId =
-      data.cacheHit === true && typeof data.reusedActionCallId === 'string' && data.reusedActionCallId.length > 0 ? data.reusedActionCallId : data.actionCallId
-    const receiptKey = `${actionName}:${actionCallId}`
     if (receipts.has(receiptKey)) continue
     receipts.add(receiptKey)
     reads.push({ actionCallId, actionName, output: page })
@@ -744,6 +750,27 @@ const loadRetainedPageReads = async (knex: Knex, claim: AgentRunClaim, signal: A
   const reads: AgentRetainedPageRead[] = []
   const receipts = new Set<string>()
   const sources = new Set<string>()
+  const recentSources = new Set<string>()
+  const recentSourceFields = [
+    'kind',
+    'requestedLimit',
+    'exhausted',
+    'pages',
+    'id',
+    'locale',
+    'path',
+    'title',
+    'contentType',
+    'sourceRevision',
+    'updatedAt',
+    'content',
+    'sourceContentCharacters',
+    'contentTruncated',
+    'citation',
+    'evidenceId',
+    'label',
+    'href'
+  ]
   // Page size bounds working memory, not the retained corpus or lifetime history.
   const pageSize = 128
   const postgres = knex.client.config.client === 'pg' || knex.client.config.client === 'postgresql'
@@ -760,7 +787,7 @@ const loadRetainedPageReads = async (knex: Knex, claim: AgentRunClaim, signal: A
       })
       .where({ 'runs.ownerId': claim.ownerId, 'runs.sessionId': claim.sessionId, 'events.type': 'tool.completed' })
       .andWhere('runs.id', '!=', claim.id)
-      .whereRaw(`${eventField('events', 'actionName')} IN (?, ?, ?)`, ['pages.get', 'pages.getVersion', 'pages.getOkf'])
+      .whereRaw(`${eventField('events', 'actionName')} IN (?, ?, ?, ?)`, ['pages.get', 'pages.getVersion', 'pages.getOkf', 'pages.listRecent'])
       .orderBy('runs.queuedAt', 'desc')
       .orderBy('events.sequence', 'desc')
       .orderBy('events.id', 'desc')
@@ -803,7 +830,7 @@ const loadRetainedPageReads = async (knex: Knex, claim: AgentRunClaim, signal: A
             const id = selector.pageId ?? selector.id
             const version = selector.versionId ?? null
             const representation = row.actionName === 'pages.getOkf' ? 'okf' : 'markdown'
-            if (typeof id === 'number' && sources.has(JSON.stringify([id, version, representation]))) continue
+            if (row.actionName !== 'pages.listRecent' && typeof id === 'number' && sources.has(JSON.stringify([id, version, representation]))) continue
           }
         } catch {
           // Invalid selector metadata cannot hide a potentially complete observation.
@@ -815,6 +842,15 @@ const loadRetainedPageReads = async (knex: Knex, claim: AgentRunClaim, signal: A
       if (!read) continue
       receipts.add(receiptKey)
       const page = read.output
+      if (read.actionName === 'pages.listRecent') {
+        // Include the whole historical window and every row's metadata/body. Never
+        // filter overlapping rows or replace the original batch receipt.
+        const sourceKey = JSON.stringify(page, recentSourceFields)
+        if (recentSources.has(sourceKey)) continue
+        recentSources.add(sourceKey)
+        reads.push(read)
+        continue
+      }
       const pageId = page.pageId ?? page.id
       const versionId = page.versionId ?? null
       if (typeof pageId !== 'number' || !Number.isSafeInteger(pageId) || pageId <= 0) continue
@@ -912,10 +948,10 @@ export interface AgentRecoveredAction {
   readonly output: unknown
 }
 
-/** Prior complete observations, not proof of delivery to the current provider. */
+/** Prior completed observations (including partial recent-page excerpts), not proof of current provider delivery or complete page reads. */
 export interface AgentRetainedPageRead {
   readonly actionCallId: string
-  readonly actionName: 'pages.get' | 'pages.getVersion' | 'pages.getOkf'
+  readonly actionName: 'pages.get' | 'pages.getVersion' | 'pages.getOkf' | 'pages.listRecent'
   readonly output: Readonly<Record<string, unknown>>
 }
 

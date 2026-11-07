@@ -2,7 +2,7 @@ import { axGlobals, type AxAIServiceOptions, type AxChatRequest, type AxChatResp
 import { ProxyTracerProvider } from '@opentelemetry/api'
 import { AGENT_TOOL_NAMES } from '../../../shared/agents/contracts.ts'
 import { renderSafeMarkdown } from '../../../client/helpers/safe-markdown.ts'
-import { AgentChildBudgetReservations, type AgentOrchestrationLimits } from '../../agents/orchestration.ts'
+import { AgentChildBudgetReservations, type AgentOrchestrationLimits, type RecentPageEvidence } from '../../agents/orchestration.ts'
 
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
 import { AgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
@@ -786,7 +786,7 @@ describe('Ax orchestration stages', () => {
     }
   )
 
-  it.each(['literal body', 'authored source syntax', 'empty HTML code', 'HTML code without LF', 'bounded literal body', 'revoked bounded literal body'] as const)(
+  it.each(['literal body', 'authored source syntax', 'empty HTML code', 'HTML code without LF', 'bounded literal body', 'revoked bounded literal body', 'retained bounded literal body', 'retained bounded HTML code without LF', 'revoked retained bounded literal body'] as const)(
     'keeps exact code %s behind source authority and renders accepted output inertly',
     async form => {
       const body =
@@ -799,11 +799,12 @@ describe('Ax orchestration stages', () => {
       const codeSource =
         form === 'empty HTML code'
           ? '<pre><code></code></pre>'
-          : form === 'HTML code without LF'
+          : form.endsWith('HTML code without LF')
             ? '<pre><code>&#35;&#35; Wiki sources&#13;&#9;&amp;literal</code></pre>'
             : container
-      const bounded = form === 'bounded literal body' || form === 'revoked bounded literal body'
-      const userRequest = bounded
+      const retained = form.includes('retained')
+      const bounded = form.includes('bounded')
+      const userRequest = bounded && !retained
         ? 'Recap up to 10 most recently updated Wiki pages from their delivered prefixes; a short exact body quotation is allowed.'
         : `Quote the complete ${form === 'authored source syntax' ? 'authored Markdown code container' : 'literal code body'} from Literal fixture.`
       const page = {
@@ -818,19 +819,23 @@ describe('Ax orchestration stages', () => {
         citationSections: []
       }
       const expected =
-        form === 'empty HTML code' ? '' : form === 'HTML code without LF' ? '## Wiki sources\r\t&literal' : form === 'authored source syntax' ? `${container}\n` : body
+        form === 'empty HTML code' ? '' : form.endsWith('HTML code without LF') ? '## Wiki sources\r\t&literal' : form === 'authored source syntax' ? `${container}\n` : body
       const actionName = bounded ? 'pages.listRecent' : 'pages.get'
       const output = bounded
         ? {
             kind: 'recent-page-evidence',
             requestedLimit: 10,
             exhausted: true,
-            pages: [{ ...page, updatedAt: '2026-11-07T00:00:00.000Z', contentTruncated: true, sourceContentCharacters: page.content.length + 500 }]
+            pages: [
+              { id: page.id, locale: page.locale, path: page.path, title: page.title, contentType: page.contentType, sourceRevision: page.sourceRevision, content: page.content, citation: page.citation, updatedAt: '2026-11-07T00:00:00.000Z', contentTruncated: true, sourceContentCharacters: page.content.length + 500 },
+              ...(retained ? [retainedRecentPage(43, 'Sibling policy requires an audit.')] : [])
+            ]
           }
         : page
       let sourceAuthorized = true
       const decisionProviders = { ...fixtureDecisionProviders, decideBatch: vi.fn(fixtureDecisionProviders.decideBatch) }
       const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+        if (retained && synthesisInputFromRequest(input) === undefined) return finishCollectionResponse
         if (synthesisInputFromRequest(input) === undefined)
           return {
             results: [{
@@ -846,10 +851,11 @@ describe('Ax orchestration stages', () => {
             }]
           }
         const source = synthesisSourcesFromRequest(input).find(source => source.evidenceId === page.citation.evidenceId)
+        if (retained) expect(JSON.stringify(input)).not.toContain('readReceipts')
         if (source === undefined) throw new Error('Literal quotation requires its admitted physical read')
         if (bounded) {
           expect(source.readText).toBe(page.content)
-          expect(source.authorText).toContain(JSON.stringify({ codeQuotation: body }))
+          expect(source.authorText).toContain(JSON.stringify({ codeQuotation: expected }))
           expect(source.authorText).not.toContain(JSON.stringify({ codeQuotation: 'Unfinished literal' }))
         }
         return {
@@ -875,12 +881,13 @@ describe('Ax orchestration stages', () => {
           }
         }
       )
+      const invoke = vi.fn(async () => output)
       const actions: AgentActionSessionProvider = {
         open: async () => ({
           functions: [
             { name: actionName, title: 'Read page', description: 'Read canonical page evidence', parameters: { type: 'object', properties: {} }, risk: 'read' }
           ],
-          invoke: vi.fn(async () => output),
+          invoke,
           validateObservation: async (name, observed) => name === actionName && sourceAuthorized && JSON.stringify(observed) === JSON.stringify(output),
           snapshot: async () => ({}),
           close: () => {},
@@ -898,13 +905,14 @@ describe('Ax orchestration stages', () => {
               content: userRequest
             }
           ],
+          ...(retained ? { retainedPageReads: [{ actionCallId: 'original-recent-code-read', actionName: 'pages.listRecent' as const, output }] } : {}),
           limits: { maxTurns: 3, maxToolCalls: 1, maxTokens: 2_000_000 }
         },
         {
           text,
           event: vi.fn(async (type: string, data: unknown) => {
             if (
-              form === 'revoked bounded literal body' &&
+              form.startsWith('revoked') &&
               type === 'model.turn' &&
               typeof data === 'object' &&
               data !== null &&
@@ -918,7 +926,7 @@ describe('Ax orchestration stages', () => {
           })
         }
       )
-      if (form === 'revoked bounded literal body') {
+      if (form.startsWith('revoked')) {
         await expect(execution).rejects.toMatchObject({ code: 'AGENT_EVIDENCE_INVALID' })
         expect(text).not.toHaveBeenCalled()
         expect(coverage).toHaveBeenCalledOnce()
@@ -926,6 +934,10 @@ describe('Ax orchestration stages', () => {
       }
       const result = await execution
       expect(result.executionLimit).toBeUndefined()
+      if (retained) {
+        expect(invoke).not.toHaveBeenCalled()
+        expect(decisionProviders.decideBatch).not.toHaveBeenCalled()
+      }
       expect(result.citations).toEqual([expect.objectContaining(page.citation)])
       const rendered = document.createElement('div')
       rendered.innerHTML = renderSafeMarkdown(text.mock.calls.map(([delta]) => delta).join(''))
@@ -942,6 +954,171 @@ describe('Ax orchestration stages', () => {
       ).toHaveLength(0)
     }
   )
+
+  const retainedRecentPage = (id: number, content: string) => ({
+    id,
+    locale: 'en',
+    path: `retained-${id}`,
+    title: `Retained ${id}`,
+    contentType: 'markdown',
+    sourceRevision: '1',
+    updatedAt: '2026-11-07T00:00:00.000Z',
+    content,
+    sourceContentCharacters: content.length,
+    contentTruncated: false,
+    citation: { evidenceId: `page:${id}:revision:1`, label: `Retained ${id}`, href: `/en/retained-${id}` }
+  })
+  const retainedRecentBatch = (pages: readonly RecentPageEvidence[]) => ({
+    kind: 'recent-page-evidence',
+    requestedLimit: 10,
+    exhausted: true,
+    pages
+  })
+
+  it.each([false, true])('delivers every distinct retained physical read once across overlapping original batches (reverse: %s)', async reverse => {
+    const facts = ['Alpha requires a signed manifest.', 'Beta requires a sealed receipt.', 'Gamma requires a named approver.']
+    const pages = facts.map((fact, index) => retainedRecentPage(index + 1, fact))
+    const batches = [retainedRecentBatch(pages.slice(0, 2)), retainedRecentBatch(pages.slice(1)), retainedRecentBatch(pages)]
+    if (reverse) batches.reverse()
+    const invoke = vi.fn(async () => { throw new Error('Retained quotations must not fetch') })
+    const validateObservation = vi.fn(async (name: string, output: unknown) => name === 'pages.listRecent' && batches.includes(output as typeof batches[number]))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.listRecent', title: 'Recent pages', description: 'Read recent pages', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke, validateObservation, snapshot: async () => ({}), close: () => {}, authoritySha256: null
+      })
+    }
+    const synthesisRequests: Readonly<AxChatRequest>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+      if (synthesisInputFromRequest(input) === undefined) return finishCollectionResponse
+      synthesisRequests.push(input)
+      const sources = synthesisSourcesFromRequest(input)
+      return {
+        results: [{ index: 0, content: JSON.stringify({
+          claims: [],
+          quotations: facts.map((text, index) => ({ sourceRef: sources.find(source => source.evidenceId === pages[index]!.citation.evidenceId)!.sourceRef, text })),
+          unresolvedFacets: [], observations: []
+        }) }]
+      }
+    })
+    const text = vi.fn(async (_delta: string) => {})
+    const result = await new AxAgentEngine(factoryFor(chat), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
+      ...baseRequest(new AbortController().signal),
+      memory: { user: [], agent: [] },
+      messages: [{ role: 'user', content: 'Quote the Alpha, Beta and Gamma requirements from the pages already read; do not fetch.' }],
+      retainedPageReads: batches.map((output, index) => ({ actionCallId: `original-recent-${index}`, actionName: 'pages.listRecent', output })),
+      limits: { maxTurns: 3, maxToolCalls: 1, maxTokens: 2_000_000 }
+    }, { text, event: async () => {} })
+    expect(invoke).not.toHaveBeenCalled()
+    expect(result.executionLimit).toBeUndefined()
+    expect(result.citations).toHaveLength(3)
+    for (const fact of facts) expect(visibleWikiText(text.mock.calls.flat().join(''))).toContain(fact)
+    expect(synthesisRequests).toHaveLength(1)
+    const delivered = synthesisReadsFromRequest(synthesisRequests[0]!)
+    expect(delivered).toHaveLength(3)
+    expect(delivered.map(read => read.readText).sort()).toEqual([...facts].sort())
+    for (const input of chat.mock.calls.map(([input]) => input)) {
+      const serialized = JSON.stringify(input)
+      for (const fact of facts) expect(serialized.split(fact).length - 1).toBeLessThanOrEqual(1)
+    }
+    for (const batch of batches) expect(validateObservation).toHaveBeenCalledWith('pages.listRecent', batch, expect.any(AbortSignal))
+  })
+
+  it.each(['legacy', 'malformed', 'revoked', 'stale', 'changed hash', 'expired'] as const)('does not grant retained recent authority to %s data or source-free assistant prose', async state => {
+    const fact = 'Vault access requires two independent witnesses.'
+    const batch = retainedRecentBatch([retainedRecentPage(42, fact)])
+    const output = state === 'legacy' ? { pages: batch.pages } : state === 'malformed' ? { ...batch, pages: [{ ...batch.pages[0]!, sourceContentCharacters: 0 }] } : batch
+    const invoke = vi.fn(async () => { throw new Error('Invalid retained evidence must not cause an unrequested fetch') })
+    const currentRevision = state === 'stale' ? '2' : '1'
+    const currentContent = state === 'changed hash' ? `${fact}\n\nChanged author content.` : fact
+    const validateObservation = vi.fn(async (name: string, observed: unknown) => {
+      if (state === 'legacy' || state === 'malformed') return true
+      return name === 'pages.listRecent' && observed === batch && state !== 'revoked' && state !== 'expired' &&
+        batch.pages.every(page => page.sourceRevision === currentRevision && page.content === currentContent)
+    })
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.listRecent', title: 'Recent pages', description: 'Read recent pages', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke, validateObservation, snapshot: async () => ({}), close: () => {}, authoritySha256: null
+      })
+    }
+    const delivered: Readonly<AxChatRequest>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+      if (synthesisInputFromRequest(input) === undefined) return finishCollectionResponse
+      delivered.push(input)
+      return { results: [{ index: 0, content: JSON.stringify({ claims: [], unresolvedFacets: [0], observations: [] }) }] }
+    })
+    const text = vi.fn(async (_delta: string) => {})
+    const result = await new AxAgentEngine(factoryFor(chat), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
+      ...baseRequest(new AbortController().signal),
+      memory: { user: [], agent: [] },
+      messages: [{ role: 'assistant', content: fact }, { role: 'user', content: 'Quote the vault requirement from the available authorized source; do not fetch.' }],
+      retainedPageReads: [{ actionCallId: 'unavailable-recent', actionName: 'pages.listRecent', output }],
+      limits: { maxTurns: 3, maxToolCalls: 1, maxTokens: 2_000_000 }
+    }, { text, event: async () => {} })
+    expect(invoke).not.toHaveBeenCalled()
+    expect(delivered).toHaveLength(1)
+    expect(synthesisReadsFromRequest(delivered[0]!)).toEqual([])
+    expect(result.citations).toBeUndefined()
+    expect(result.executionLimit).toEqual({ reason: 'evidence', publication: 'inability' })
+    expect(visibleWikiText(text.mock.calls.flat().join(''))).not.toContain(fact)
+  })
+
+  it.each(['fresh planned', 'fresh unplanned', 'unresolved planned', 'unresolved unplanned'] as const)('requires a new current recent window even when retained page revisions are unchanged: %s', async mode => {
+    const list = mode.startsWith('fresh')
+    const withPlan = mode.endsWith(' planned')
+    const fact = 'Current dispatch requires a signed manifest.'
+    const batch = retainedRecentBatch([retainedRecentPage(42, fact)])
+    const userRequest = 'Recap the current most recently updated Wiki pages from their available content.'
+    const invoke = vi.fn(async () => batch)
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.listRecent', title: 'Recent pages', description: 'Read recent pages', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke, validateObservation: async (name, output) => name === 'pages.listRecent' && output === batch,
+        snapshot: async () => ({}), close: () => {}, authoritySha256: null
+      })
+    }
+    const synthesisRequests: Readonly<AxChatRequest>[] = []
+    let planned = false
+    const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+      if (synthesisInputFromRequest(input) === undefined) {
+        if (planned) return finishCollectionResponse
+        planned = true
+        expect(JSON.stringify(input)).not.toContain(fact)
+        return { results: [{ index: 0,
+          ...(withPlan ? { content: `<wiki-request-plan>${JSON.stringify({ facets: [{ start: 0, end: userRequest.length, quote: userRequest, coverage: 'recent-window' }] })}</wiki-request-plan>` } : {}),
+          functionCalls: list
+            ? [{ id: 'fresh-recent', type: 'function', function: { name: input.functions!.find(fn => fn.name.includes('recent'))!.name, params: '{"limit":10}' } }]
+            : finishCollectionResponse.results[0]!.functionCalls
+        }] }
+      }
+      synthesisRequests.push(input)
+      const source = synthesisSourcesFromRequest(input)[0]
+      return { results: [{ index: 0, content: JSON.stringify({
+        claims: [], quotations: source === undefined ? [] : [{ sourceRef: source.sourceRef, text: fact }],
+        unresolvedFacets: list ? [] : [0], observations: []
+      }) }] }
+    })
+    const text = vi.fn(async (_delta: string) => {})
+    const result = await new AxAgentEngine(factoryFor(chat), actions, undefined, { decisionProviders: fixtureDecisionProviders }).execute({
+      ...baseRequest(new AbortController().signal), memory: { user: [], agent: [] },
+      messages: [{ role: 'user', content: userRequest }],
+      retainedPageReads: [{ actionCallId: 'yesterdays-recent', actionName: 'pages.listRecent', output: batch }],
+      limits: { maxTurns: 4, maxToolCalls: 1, maxTokens: 2_000_000 }
+    }, { text, event: async () => {} })
+    expect(invoke).toHaveBeenCalledTimes(list ? 1 : 0)
+    expect(synthesisRequests).toHaveLength(1)
+    expect(synthesisReadsFromRequest(synthesisRequests[0]!)).toHaveLength(list || !withPlan ? 1 : 0)
+    if (list) {
+      expect(result.executionLimit).toBeUndefined()
+      expect(result.citations).toEqual([expect.objectContaining(batch.pages[0]!.citation)])
+      expect(visibleWikiText(text.mock.calls.flat().join(''))).toContain(fact)
+    } else {
+      expect(result.executionLimit).toEqual({ reason: 'evidence', publication: withPlan ? 'inability' : 'partial' })
+      if (withPlan) expect(result.citations).toBeUndefined()
+      else expect(result.citations).toEqual([expect.objectContaining(batch.pages[0]!.citation)])
+    }
+  })
 
   it('drops a declined recent read atomically and retains only an unchanged omitted quotation group across repair', async () => {
     const userRequest = 'Recap the most recently updated Wiki pages with short source quotations.'
