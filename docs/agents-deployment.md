@@ -1112,4 +1112,4 @@ A valid incomplete coverage audit can retain a separate, unchanged, wholly verif
 
 Saved canonical literal-code quotations use the existing strict numeric-only carrier and Reader plaintext-fence path. Tabs, blank lines and final newlines remain literal. CR-only source markers can restore newline spelling through HTML parsing only when their normalized text matches the visible code; they cannot substitute hidden content. The existing Reader Copy consumer uses the same restored code as display.
 
-Client bundle ceilings remain unchanged. Eager request validators with only server consumers live in the existing server owner modules; browser response/form validators remain shared. This includes MCP group-policy/grant inputs and developer-flag save/apply inputs, without changing their validation or authorization behavior.
+Client bundle ceilings remain unchanged. Eager request validators with only server consumers live in the existing server owner modules; browser response/form validators remain shared. This includes MCP group-policy/grant, developer-flag save/apply and profile-preferences inputs, without changing their validation or authorization behavior.

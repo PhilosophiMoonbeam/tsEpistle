@@ -1,5 +1,6 @@
 import type { Response } from 'express'
 import _ from 'lodash'
+import { z } from 'zod'
 
 import errors from './errors.ts'
 import { accountAdministration } from './account-administration.ts'
@@ -9,7 +10,11 @@ import {
   isUserTimeFormat,
   isUserTimezone,
   normalizeUserProfilePreferences,
-  ProfilePreferencesInputSchema,
+  ProfileAppearanceSchema,
+  UserFontFamilySchema,
+  UserTimeFormatSchema,
+  UserContentTextSizeSchema,
+  UserCommunicationLocaleSchema,
   type UserCommunicationLocale,
   type UserContentTextSize,
   type UserTimeFormat
@@ -17,6 +22,19 @@ import {
 import { normalizeUserAvatar } from '../helpers/user-avatar-processing.ts'
 import { principalId } from '../helpers/page-access.ts'
 
+export const ProfilePreferencesInputSchema = z
+  .object({
+    appearance: ProfileAppearanceSchema,
+    fontFamily: UserFontFamilySchema,
+    timeFormat: UserTimeFormatSchema,
+    reduceMotion: z.boolean(),
+    underlineLinks: z.boolean(),
+    contentTextSize: UserContentTextSizeSchema,
+    communicationLocale: UserCommunicationLocaleSchema
+  })
+  .strict()
+  .partial()
+  .refine(value => Object.values(value).some(field => field !== undefined), { message: 'At least one profile preference is required.' })
 const { ApplicationError } = errors
 interface GroupRecord extends Record<string, unknown> {
   id: number

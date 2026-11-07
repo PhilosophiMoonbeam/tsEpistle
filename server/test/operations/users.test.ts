@@ -303,6 +303,7 @@ describe('profile preferences operation', () => {
   it.each([
     ['unknown keys', { appearance: 'dark', name: 'must not update' }],
     ['an empty patch', {}],
+    ['an undefined-only patch', { fontFamily: undefined }],
     ['an invalid appearance', { appearance: 'sepia' }],
     ['an invalid font family', { fontFamily: 'serif' }],
     ['the removed readingGutter field as an unknown payload key', { readingGutter: 'orbits' }]

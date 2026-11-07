@@ -109,18 +109,12 @@ export const normalizeUserFontFamily = (value: unknown): UserFontFamily => {
   return result.success ? result.data : DEFAULT_USER_FONT_FAMILY
 }
 
-export const ProfilePreferencesInputSchema = z
-  .object({
-    appearance: ProfileAppearanceSchema,
-    fontFamily: UserFontFamilySchema,
-    timeFormat: UserTimeFormatSchema,
-    reduceMotion: z.boolean(),
-    underlineLinks: z.boolean(),
-    contentTextSize: UserContentTextSizeSchema,
-    communicationLocale: UserCommunicationLocaleSchema
-  })
-  .strict()
-  .partial()
-  .refine(value => Object.values(value).some(field => field !== undefined), { message: 'At least one profile preference is required.' })
-
-export type ProfilePreferencesInput = z.infer<typeof ProfilePreferencesInputSchema>
+export interface ProfilePreferencesInput {
+  appearance?: ProfileAppearance | undefined
+  fontFamily?: UserFontFamily | undefined
+  timeFormat?: UserTimeFormat | undefined
+  reduceMotion?: boolean | undefined
+  underlineLinks?: boolean | undefined
+  contentTextSize?: UserContentTextSize | undefined
+  communicationLocale?: UserCommunicationLocale | undefined
+}
