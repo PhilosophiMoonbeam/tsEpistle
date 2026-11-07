@@ -3658,17 +3658,22 @@ const restoreVerifiedRecentDraft = (draft: NativeDraft, retained: NativeDraft, l
           quotations: [...(draft.answer.quotations ?? []), ...restoredQuotations]
         })
   }
+  // Optional restoration must not invalidate an otherwise publishable draft.
+  // Decline the whole merge rather than splitting a read's qualifications.
+  if (validateWikiSynthesisShape(answer) !== true || Buffer.byteLength(JSON.stringify(answer), 'utf8') > draft.contentByteLimit) return undefined
   const quotationProofs = new WeakMap<WikiSynthesisQuotation, DocumentaryQuotationProof>()
   for (const quotation of answer.quotations ?? []) {
     const proof = draft.quotationProofs?.get(quotation) ?? retained.quotationProofs?.get(quotation)
     if (proof === undefined) return undefined
     quotationProofs.set(quotation, proof)
   }
+  const content = renderWikiSynthesisAnswer(answer, draft.sourceOrder)
+  if (Buffer.byteLength(content, 'utf8') > draft.contentByteLimit) return undefined
   return {
     ...draft,
     answer,
     quotationProofs,
-    content: renderWikiSynthesisAnswer(answer, draft.sourceOrder),
+    content,
     semanticSupport: new Set([...(draft.semanticSupport ?? []), ...restoredClaims.map(claim => canonicalJson(claim))])
   }
 }

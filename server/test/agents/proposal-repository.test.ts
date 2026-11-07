@@ -1651,18 +1651,7 @@ describe('agent proposal repository', () => {
       currentPage: null,
       signal: new AbortController().signal
     }
-    const decisionProviders = {
-      ...fixtureDecisionProviders,
-      async decideBatch(...args: Parameters<typeof fixtureDecisionProviders.decideBatch>) {
-        const result = await fixtureDecisionProviders.decideBatch(...args)
-        if (!Object.hasOwn(args[0].questions, 'context_readiness')) return result
-        return {
-          ...result,
-          answers: { context_readiness: { choice: 'answerable', probabilities: { answerable: 1, collect: 0, not_established: 0 }, confidence: 1 } }
-        }
-      }
-    }
-    const engine = new AxAgentEngine(factory, sessions, undefined, { decisionProviders })
+    const engine = new AxAgentEngine(factory, sessions, undefined, { decisionProviders: fixtureDecisionProviders })
     const text = vi.fn(async (_delta: string) => {})
     const event = vi.fn(async (_type: string, _data: unknown) => {})
     // The production engine intentionally sanitizes provider failures. Keep

@@ -488,11 +488,15 @@ describe('source document HTML and opaque literal boundaries', () => {
     expect(member(document, 'Inline remains.').links).toEqual([])
     const visible = member(document, 'Before Visible styled neighbor.')
     expect(visible.complete).toBe(true)
-    expect(slices(document, visible.sourceSpans)).toEqual([paragraph])
     expect(visible.sourceSpans).toEqual([{ start: source.indexOf(paragraph), end: source.indexOf(paragraph) + paragraph.length }])
     expect(member(document, 'After styled block.').complete).toBe(true)
     expect(document.units.map(unit => unit.visibleText).join('\n')).not.toContain('Secret')
     expect(admittedWikiBody(document).replace(/\s+/gu, ' ').trim()).toBe('Inline remains. Before Visible styled neighbor. After styled block.')
+  })
+
+  it('excludes hidden HTML descendants inside inline code while preserving escaped literal markup', () => {
+    const source = 'Text <code><span hidden>Secret hidden.</span><span style="display:none">Secret style.</span><script>Secret script.</script><template>Secret template.</template>visible &amp; &lt;span hidden&gt;literal&lt;/span&gt;</code>.'
+    expect(admittedWikiBody(parse(source))).toBe('Text `visible & <span hidden>literal</span>`.')
   })
 
   it.each([

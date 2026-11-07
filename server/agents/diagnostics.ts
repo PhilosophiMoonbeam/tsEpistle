@@ -349,7 +349,12 @@ const analyzeWikiVerifications = (
       {
         sequence: event.sequence,
         attempt: event.attempt,
-        transportOutcome: event.data.outcome === 'verification_completed' ? 'completed' : event.data.outcome === 'verification_failed' ? 'failed' : 'unknown',
+        transportOutcome:
+          event.data.outcome === 'verification_completed' || event.data.outcome === 'verification_declined'
+            ? 'completed'
+            : event.data.outcome === 'verification_failed'
+              ? 'failed'
+              : 'unknown',
         availability,
         resultFrame
       }

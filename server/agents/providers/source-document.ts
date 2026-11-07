@@ -511,7 +511,7 @@ export const parseSourceDocument = (
             // delimiters inert when decoding the surrounding HTML code wrapper.
             literal.push(child.type === 'text' ? child.content.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;') : child.content)
           }
-          text += `\`${load(literal.join(''), {}, false).root().text()}\``
+          text += `\`${htmlProjection(literal.join(''))}\``
         } else if (/^<a\b/iu.test(token.content)) {
           const anchor: Token[] = []
           index += 1

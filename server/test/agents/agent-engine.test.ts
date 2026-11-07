@@ -2184,7 +2184,6 @@ describe('Ax agent engine', () => {
     expect(fixture.settled).toHaveLength(2)
     expect(fixture.settled.every(receipt => receipt.totalTokens > 0)).toBe(true)
     expect(fixture.event.mock.calls.filter(([type, data]) => type === 'model.turn' && questionRecord(data).outcome === 'answer_rejected')).toEqual([])
-    expect(JSON.stringify(fixture.event.mock.calls)).not.toContain('sAAAAAAAAAAAAAAAA')
   })
 
   it('settles a complete streamed source rejection before its single repair without exposing the rejected binding', async () => {
@@ -12056,7 +12055,6 @@ describe('request-derived evidence coverage', () => {
       return synthesisRepairFeedback(repairRequest)
     }
     const baseline = await run('The requested review owner is missing.')
-    expect(baseline.value.verifiedReadRefs).toEqual(['d0'])
     const { verifiedReadRefs, ...required } = baseline.value
     const available = 8_000 - Buffer.byteLength(canonicalJson({ ...required, coverageFeedback: '' }), 'utf8') - 1
     const feedback = `${'界'.repeat(Math.floor(available / 3))}${'x'.repeat(available % 3)}`

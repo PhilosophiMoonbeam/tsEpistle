@@ -329,7 +329,7 @@ describe('agent conversation diagnostics', () => {
     })
     await appendEvent(db, 1, 'model.turn', {
       purpose: 'verification',
-      outcome: 'verification_completed',
+      outcome: 'verification_declined',
       verification: { phase: 'semantic', resultFrame: rejected }
     })
     const accepted = wikiFrame({
