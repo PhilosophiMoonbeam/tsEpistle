@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
-import { WikiVerificationDiagnosticSchema, type WikiVerificationDiagnostic } from '../../shared/agents/contracts.ts'
+import { WikiVerificationDiagnosticSchema, type WikiVerificationDiagnostic } from '../agents/wiki-verification-diagnostics.ts'
 import { encodeWikiSynthesisSources } from '../agents/providers/wiki-synthesis.ts'
 
 const factSchema = z.object({ id: z.string().min(1), sourceKeys: z.array(z.string()).min(1), statement: z.string().min(1) }).strict()

@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto'
 import type { Knex } from 'knex'
 
-import { WikiVerificationDiagnosticSchema, type AgentToolContextExclusion, type WikiVerificationDiagnostic } from '../../shared/agents/contracts.ts'
+import type { AgentToolContextExclusion } from '../../shared/agents/contracts.ts'
+import { WikiVerificationDiagnosticSchema, type WikiVerificationDiagnostic } from './wiki-verification-diagnostics.ts'
 import { decodeAgentMemorySnapshot } from './memory.ts'
 import { AgentRepositoryError } from './repository.ts'
 

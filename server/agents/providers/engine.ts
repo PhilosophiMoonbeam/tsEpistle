@@ -23,14 +23,13 @@ import {
   type AgentCurrentPageHint,
   type AgentEventData,
   type AgentTokenUsage,
-  type WikiVerificationDiagnostic,
-  WikiVerificationDiagnosticSchema,
   TOOL_DISCOVERY_CONTROL_NAME
 } from '../../../shared/agents/contracts.ts'
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
 import { DecisionUsageSchema, hasKnownJevContextLimits } from '../../../shared/agents/decision-providers.ts'
 import { type AgentMediaKind, agentMediaToolInputs } from '../../../shared/agents/media-providers.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
+import { WikiVerificationDiagnosticSchema, type WikiVerificationDiagnostic } from '../wiki-verification-diagnostics.ts'
 import { ACTION_CATALOG } from '../actions/catalog.ts'
 import {
   type AgentCompactionMetadata,

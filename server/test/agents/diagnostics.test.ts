@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
 import { afterEach, describe, expect, it } from '../bun-test.mts'
 
-import type { WikiVerificationDiagnostic, WikiVerificationQuestionDiagnostic } from '../../../shared/agents/contracts.ts'
+import type { WikiVerificationDiagnostic, WikiVerificationQuestionDiagnostic } from '../../agents/wiki-verification-diagnostics.ts'
 import { exportAgentSessionDiagnostics } from '../../agents/diagnostics.ts'
 
 const sessionId = '00000000-0000-4000-8000-000000000101'

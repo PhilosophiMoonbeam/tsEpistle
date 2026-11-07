@@ -1,4 +1,4 @@
-import type { WikiVerificationQuestionDiagnostic } from '../../../shared/agents/contracts.ts'
+import type { WikiVerificationQuestionDiagnostic } from '../wiki-verification-diagnostics.ts'
 import type { DecisionBatchQuestion, DecisionBatchRequest, DecisionBatchResult, DecisionJson } from '../../../shared/agents/decision-providers.ts'
 import { validateDecisionBatchRequest } from '../decision-providers.ts'
 import { AgentRepositoryError } from '../repository.ts'
