@@ -3627,7 +3627,17 @@ describe('durable agent repositories', () => {
     await runtime.shutdown()
   })
 
-  it('publishes execution-limited goal output as a blocked partial without losing applied effects or settled charges', async () => {
+  it.each([
+    { publication: 'partial', proposalStatus: 'applied', outcome: 'partial', reason: 'evidence', issueCode: 'AGENT_EVIDENCE_INCOMPLETE' },
+    { publication: 'partial', proposalStatus: 'applied', outcome: 'partial', reason: 'tools', issueCode: 'AGENT_BUDGET_LIMITED' },
+    { publication: 'inability', proposalStatus: 'applied', outcome: 'blocked', reason: 'evidence', issueCode: 'AGENT_EVIDENCE_INVALID' },
+    { publication: 'partial', proposalStatus: 'pending', outcome: 'blocked', reason: 'evidence', issueCode: 'AGENT_EVIDENCE_INCOMPLETE' },
+    { publication: 'partial', proposalStatus: 'applied', outcome: 'blocked', reason: 'evidence', issueCode: 'AGENT_EVIDENCE_INCOMPLETE', outputLimited: true },
+    { publication: 'partial', proposalStatus: 'applied', outcome: 'blocked', reason: 'evidence', issueCode: 'AGENT_EVIDENCE_INCOMPLETE', contextLimited: true }
+  ] as const)('settles $publication $reason-limit publication with $proposalStatus effects as $outcome', async testCase => {
+    const { publication, proposalStatus, outcome, reason, issueCode } = testCase
+    const outputLimited = 'outputLimited' in testCase && testCase.outputLimited
+    const contextLimited = 'contextLimited' in testCase && testCase.contextLimited
     const goalSessionId = '00000000-0000-4000-8000-000000000191'
     const goalId = '00000000-0000-4000-8000-000000000192'
     const proposalId = '00000000-0000-4000-8000-000000000193'
@@ -3657,7 +3667,9 @@ describe('durable agent repositories', () => {
         outputTokens: 3,
         totalTokens: 10,
         costMicros: 5,
-        executionLimit: { reason: 'tools', publication: 'partial' } as const,
+        executionLimit: { reason, publication },
+        ...(outputLimited ? { outputLimited: true } : {}),
+        ...(contextLimited ? { contextLimit: { reason: 'tool_result_capacity' as const, omittedActionCallIds: ['capacity-limited-source'] } } : {}),
         providerState: { schemaVersion: 1, continuationDialect: 'gemini-generate-content-v1', thoughtBlocks: [] } as const
       }
     })
@@ -3696,7 +3708,7 @@ describe('durable agent repositories', () => {
       sourceKind: 'agent',
       actionName: 'pages.prepareCreate',
       risk: 'proposal',
-      status: 'applied',
+      status: proposalStatus,
       summary: 'Create en/example-page',
       operation: JSON.stringify({ locale: 'en', path: 'example-page' }),
       pageId: null,
@@ -3721,18 +3733,27 @@ describe('durable agent repositories', () => {
     expect(finishedRun).toMatchObject({
       status: 'partial',
       errorCode: null,
-      completionOutcome: 'blocked',
+      completionOutcome: outcome,
       inputTokens: 7,
       outputTokens: 3,
       totalTokens: 10,
       estimatedCostMicros: 5
     })
     const completionAssessment = JSON.parse(String(finishedRun?.completionAssessment))
-    expect(completionAssessment).toMatchObject({
-      outcome: 'blocked',
-      issues: [{ code: 'AGENT_BUDGET_LIMITED', retryable: false }]
+    expect(completionAssessment.outcome).toBe(outcome)
+    expect(completionAssessment.issues).toContainEqual({ code: issueCode, message: expect.any(String), retryable: false })
+    expect(completionAssessment.issues).toHaveLength(1 + Number(proposalStatus === 'pending') + Number(outputLimited) + Number(contextLimited))
+    if (outputLimited)
+      expect(completionAssessment.issues).toContainEqual({ code: 'AGENT_OUTPUT_LIMITED', message: expect.any(String), retryable: false })
+    if (contextLimited)
+      expect(completionAssessment.issues).toContainEqual({ code: 'AGENT_CONTEXT_TOO_LARGE', message: expect.any(String), retryable: false })
+    if (proposalStatus === 'pending')
+      expect(completionAssessment.issues).toContainEqual({ code: 'APPROVAL_PENDING', message: expect.any(String), retryable: false })
+    const assessedEvent = await knex('agentEvents').where({ runId: admitted.run.id, type: 'run.completionAssessed' }).first('data')
+    expect(JSON.parse(String(assessedEvent?.data))).toMatchObject({
+      outcome,
+      issueCodes: expect.arrayContaining([issueCode])
     })
-    expect(completionAssessment.issues).toHaveLength(1)
     expect(await knex('agentMessages').where({ id: admitted.run.assistantMessageId }).first('status', 'content', 'providerStateCiphertext')).toEqual({
       status: 'complete',
       content: 'The page change was applied, but the remaining evidence review could not be completed.',
@@ -3744,13 +3765,13 @@ describe('durable agent repositories', () => {
       consumedCostMicros: 5
     })
     expect(await knex('agentProposals').where({ id: proposalId }).first('status', 'summary')).toEqual({
-      status: 'applied',
+      status: proposalStatus,
       summary: 'Create en/example-page'
     })
     expect(await knex('agentGoals').where({ id: goalId }).first('status', 'errorCode', 'completionOutcome')).toMatchObject({
       status: 'blocked',
       errorCode: 'GOAL_BLOCKED',
-      completionOutcome: 'blocked'
+      completionOutcome: outcome
     })
     expect(await runtime.runOnce()).toBe(false)
     expect(execute).toHaveBeenCalledOnce()
@@ -4174,7 +4195,13 @@ describe('durable agent repositories', () => {
           return { inputTokens: 2, outputTokens: 1, totalTokens: 3, costMicros: 0, outputLimited: true }
         }
         await sink.text('The available research is incomplete.')
-        return { inputTokens: 4, outputTokens: 2, totalTokens: 6, costMicros: 0 }
+        return {
+          inputTokens: 4,
+          outputTokens: 2,
+          totalTokens: 6,
+          costMicros: 0,
+          ...(limitedPurpose === 'subagent' ? { executionLimit: { reason: 'evidence' as const, publication: 'partial' as const } } : {})
+        }
       }
     }
     const runtime = new AgentProductRuntime(
@@ -4209,7 +4236,10 @@ describe('durable agent repositories', () => {
       expect(await knex('agentRunTasks').where({ runId }).pluck('status')).toEqual(['blocked', 'blocked'])
       expect(run).toMatchObject({ status: 'partial', completionOutcome: 'blocked', totalTokens: 17 })
       expect(JSON.parse(String(run.completionAssessment)).issues).toEqual(
-        expect.arrayContaining([expect.objectContaining({ code: 'REQUIRED_TASK_BLOCKED', retryable: false })])
+        expect.arrayContaining([
+          expect.objectContaining({ code: 'REQUIRED_TASK_BLOCKED', retryable: false }),
+          expect.objectContaining({ code: 'AGENT_EVIDENCE_INCOMPLETE', retryable: false })
+        ])
       )
       expect(await knex('agentEvents').where({ runId, type: 'task.failed' })).toEqual([])
     }

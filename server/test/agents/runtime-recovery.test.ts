@@ -135,7 +135,7 @@ suite('owned runtime request recovery and cancellation', () => {
     })
     expect(await fixture.runtime.runOnce()).toBe(true)
     const terminal = await getOwnedAgentRun(db, input.ownerId, created.run.id)
-    expect(terminal).toMatchObject({ status: 'partial', goalContinuation: 0, completionOutcome: 'blocked', cancelRequestedAt: null })
+    expect(terminal).toMatchObject({ status: 'partial', goalContinuation: 0, completionOutcome: 'partial', cancelRequestedAt: null })
     const blocked = await getOwnedAgentGoal(db, input.ownerId, created.goal.id)
     expect(blocked.status).toBe('blocked')
 

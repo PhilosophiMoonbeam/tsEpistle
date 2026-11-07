@@ -1256,6 +1256,8 @@ const executionLimitIssueCode: Record<AgentExecutionLimitReason, string> = {
   evidence: 'AGENT_EVIDENCE_INVALID'
 }
 
+const executionLimitIssueCodes = new Set([...Object.values(executionLimitIssueCode), 'AGENT_EVIDENCE_INCOMPLETE'])
+
 const executionLimitIssueMessage: Record<AgentExecutionLimitReason, string> = {
   turns: 'The root agent reached its turn allowance before the requested work could be completed.',
   tokens: 'The root agent reached its token allowance before the requested work could be completed.',
@@ -4533,8 +4535,14 @@ export class AgentProductRuntime {
       }
       if (executionLimit !== undefined) {
         completionIssues.push({
-          code: executionLimitIssueCode[executionLimit.reason],
-          message: executionLimitIssueMessage[executionLimit.reason],
+          code:
+            executionLimit.reason === 'evidence' && executionLimit.publication === 'partial'
+              ? 'AGENT_EVIDENCE_INCOMPLETE'
+              : executionLimitIssueCode[executionLimit.reason],
+          message:
+            executionLimit.reason === 'evidence' && executionLimit.publication === 'partial'
+              ? 'Verified findings were retained; requested coverage is not fully established.'
+              : executionLimitIssueMessage[executionLimit.reason],
           retryable: false
         })
       }
@@ -4542,7 +4550,12 @@ export class AgentProductRuntime {
         contextLimit === undefined && outputLimited === undefined && executionLimit === undefined
           ? assessedCompletion
           : {
-              outcome: 'blocked' as const,
+              outcome:
+                contextLimit === undefined && outputLimited === undefined && executionLimit?.publication === 'partial'
+                  ? assessedCompletion.outcome === 'complete'
+                    ? ('partial' as const)
+                    : assessedCompletion.outcome
+                  : ('blocked' as const),
               issues: completionIssues
             }
       const encodedCompletion = encodedCompletionAssessment(completion)
@@ -5592,7 +5605,11 @@ export class AgentProductRuntime {
         await emitGoalEvent(this.#knex, { goal: limited, run: latest, type: 'goal.status' })
         return
       }
-      if (latest.status === 'recovery_required' || completion?.outcome === 'blocked') {
+      if (
+        latest.status === 'recovery_required' ||
+        completion?.outcome === 'blocked' ||
+        completion?.issues.some(issue => executionLimitIssueCodes.has(issue.code)) === true
+      ) {
         const blocked = await updateGoalStatus(this.#knex, {
           ownerId: goal.ownerId,
           goalId: goal.id,
