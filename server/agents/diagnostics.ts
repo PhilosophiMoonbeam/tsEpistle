@@ -5,6 +5,7 @@ import type { AgentToolContextExclusion } from '../../shared/agents/contracts.ts
 import { WikiVerificationDiagnosticSchema, type WikiVerificationDiagnostic } from './wiki-verification-diagnostics.ts'
 import { decodeAgentMemorySnapshot } from './memory.ts'
 import { AgentRepositoryError } from './repository.ts'
+import { normalizeAgentExecutionFailureDiagnostics } from './providers/execution-failure.ts'
 
 interface DiagnosticEventRow {
   id: string
@@ -565,7 +566,7 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
       event =>
         event.attempt === Number(row.attempts) && (event.type === 'run.failed' || (event.type === 'run.partial' && typeof event.data.errorCode === 'string'))
     )
-    const failureContext = terminalFailure?.data.diagnostics
+    const failureContext = normalizeAgentExecutionFailureDiagnostics(terminalFailure?.data.diagnostics)
     const run = {
       id,
       userMessageId: row.userMessageId,
@@ -601,9 +602,7 @@ export const exportAgentSessionDiagnostics = async (knex: Knex, sessionId: strin
               sha256: row.completionAssessmentSha256
             },
       error: row.errorCode === null ? null : { code: row.errorCode, message: row.errorMessage },
-      ...(failureContext === undefined || typeof failureContext !== 'object' || failureContext === null || Array.isArray(failureContext)
-        ? {}
-        : { failureContext }),
+      ...(failureContext === undefined ? {} : { failureContext }),
       queuedAt: iso(row.queuedAt as Date | string),
       startedAt: nullableIso(row.startedAt as Date | string | null),
       updatedAt: iso(row.updatedAt as Date | string),

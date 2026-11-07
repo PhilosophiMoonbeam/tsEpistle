@@ -136,6 +136,37 @@ describe('agents client boundary', () => {
       fetcher.mockImplementation(async () => Response.json({ ...thread, messages: [{ ...message, presetId }] }))
       await expect(getAgentThread(fetcher, 'csrf', sessionId)).rejects.toMatchObject({ status: 502 })
     }
+    const assistant = { ...message, role: 'assistant', status: 'failed', runId: '00000000-0000-4000-8000-000000000086' }
+    for (const responseIssue of ['length', undefined] as const) {
+      fetcher.mockImplementation(async () =>
+        Response.json({
+          ...thread,
+          messages: [
+            {
+              ...assistant,
+              runOutcome: {
+                status: 'failed',
+                errorCode: 'INVALID_PROVIDER_RESPONSE',
+                ...(responseIssue === undefined ? {} : { responseIssue }),
+                response: { outputTokenLimit: 8192, reasoningTokens: 8192 },
+                message: 'PRIVATE_FAILURE_CANARY'
+              }
+            }
+          ]
+        })
+      )
+      const outcome = (await getAgentThread(fetcher, 'csrf', sessionId)).messages[0]?.runOutcome
+      expect(outcome).toEqual({ status: 'failed', errorCode: 'INVALID_PROVIDER_RESPONSE', ...(responseIssue === undefined ? {} : { responseIssue }) })
+    }
+    for (const responseIssue of [null, '', 'LENGTH', 'content_filter', 'PRIVATE_FAILURE_CANARY', 1, ['length'], { code: 'length' }]) {
+      fetcher.mockImplementation(async () =>
+        Response.json({
+          ...thread,
+          messages: [{ ...assistant, runOutcome: { status: 'failed', errorCode: 'INVALID_PROVIDER_RESPONSE', responseIssue } }]
+        })
+      )
+      await expect(getAgentThread(fetcher, 'csrf', sessionId)).rejects.toMatchObject({ status: 502 })
+    }
   })
   it('accepts projected discovery and action activity for every terminal outcome', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000081'

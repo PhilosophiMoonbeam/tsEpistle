@@ -647,7 +647,7 @@ const threadProjection = computed<ThreadProjection>(() => {
         statusLabel,
         ariaLabel: t(entry.ariaLabel.key, { status: statusLabel || t('common:agentThread.complete'), interpolation: { escapeValue: false } }),
         temporal,
-        recovery: entry.recovery ? { title: localizedText(entry.recovery.title), description: localizedText(entry.recovery.description) } : null,
+        recovery: entry.recovery ? { title: localizedText(entry.recovery.title), description: `${entry.recovery.reason ? `${localizedText(entry.recovery.reason)} ` : ''}${localizedText(entry.recovery.description)}` } : null,
         citationGroups,
         googleSearchCitations: cached && googleSearchCitations.length === cached.value.googleSearchCitations.length
           && googleSearchCitations.every((citation, index) => citation === cached.value.googleSearchCitations[index])

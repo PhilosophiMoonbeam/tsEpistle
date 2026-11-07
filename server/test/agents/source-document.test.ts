@@ -1,6 +1,12 @@
 import { describe, expect, it } from '../bun-test.mts'
 
-import { parseSourceDocument, type ParsedSourceDocument, type SourceSpan, type SourceUnit } from '../../agents/providers/source-document.ts'
+import {
+  getSourceCodeLiteral,
+  parseSourceDocument,
+  type ParsedSourceDocument,
+  type SourceSpan,
+  type SourceUnit
+} from '../../agents/providers/source-document.ts'
 import { getLiteralSourceStatement, isLiteralSourceClaim } from '../../agents/providers/wiki-source-quotation.ts'
 import { admittedWikiBody } from '../../agents/providers/wiki-source-view.ts'
 import type { WikiVerificationSource } from '../../agents/providers/wiki-verification.ts'
@@ -332,6 +338,98 @@ describe('source document explicit ownership', () => {
       truncated: true
     })
     expect(reference.units[0]?.complete).toBe(false)
+  })
+})
+
+describe('source document private literal code bodies', () => {
+  it.each([
+    ['fenced', '```text\n\talpha\n\n&amp; &#65;\n```\n', '\talpha\n\n&amp; &#65;\n'],
+    ['indented', '    alpha\n    \tbeta\n\n    gamma\n', 'alpha\n\tbeta\n\ngamma\n'],
+    [
+      'nested blockquote',
+      '> > `````text\n> > \talpha\n> >\n> > ````mermaid\n> > graph LR\n> > ````\n> > &amp;\n> > `````\n',
+      '\talpha\n\n````mermaid\ngraph LR\n````\n&amp;\n'
+    ],
+    ['CRLF', '```\r\nalpha\r\n\r\nbeta\r\n```\r\n', 'alpha\n\nbeta\n'],
+    ['empty fenced', '```\n```\n', '']
+  ])('returns the parser-rendered %s body without changing native source projections', (_, raw, literal) => {
+    const document = parse(raw)
+    const unit = document.units.find(unit => unit.kind === 'code')!
+    expect(getSourceCodeLiteral(unit, raw)).toBe(literal)
+    expect(unit.visibleText).toBe(raw)
+    expect(unit.normalizedText).toBe(raw.replace(/\s+/gu, ' ').trim())
+    expect(unit.sourceSpans).toEqual([{ start: 0, end: raw.length }])
+    expect(unit.links).toEqual([])
+    expect(admittedWikiBody(document)).toBe(raw)
+  })
+
+  it.each([
+    ['<pre><code>\t&lt;script&gt;&amp; &#65;\n\n</code></pre>', '\t<script>& A\n\n'],
+    ['<pre>\nalpha\n</pre>', 'alpha\n'],
+    ['<code>&lt;x&gt;&amp;</code>', '<x>&'],
+    ['<pre><code></code></pre>', '']
+  ])('uses only exact admitted HTML code text, including entities and absent terminal LF: %s', (raw, literal) => {
+    const unit = parse(raw).units.find(unit => unit.kind === 'code')!
+    expect(getSourceCodeLiteral(unit, raw)).toBe(literal)
+    expect(unit.sourceSpans).toEqual([{ start: 0, end: raw.length }])
+  })
+
+  it('rejects foreign sources, forged identities, and changed unit provenance', () => {
+    const raw = '# Scope\n\n> ```\n> alpha\n> ```\n'
+    const original = parse(raw).units.find(unit => unit.kind === 'code')!
+    expect(getSourceCodeLiteral(original, raw)).toBe('alpha\n')
+    expect(getSourceCodeLiteral({ ...original }, raw)).toBeNull()
+    expect(getSourceCodeLiteral(original, `${raw}\nForeign appendix.\n`)).toBeNull()
+    const mutations: Array<(unit: SourceUnit) => void> = [
+      unit => {
+        Object.assign(unit.sourceSpans[0]!, { start: 0 })
+      },
+      unit => {
+        Object.assign(unit.sourceSpans[0]!, { end: raw.length - 1 })
+      },
+      unit => {
+        Object.assign(unit, { complete: false })
+      },
+      unit => {
+        Object.assign(unit, { visibleText: 'alpha\n' })
+      },
+      unit => {
+        Object.assign(unit, { normalizedText: 'alpha' })
+      },
+      unit => {
+        Object.assign(unit, { contextIds: [] })
+      },
+      unit => {
+        Object.assign(unit, { id: 'forged' })
+      }
+    ]
+    for (const mutate of mutations) {
+      const unit = parse(raw).units.find(unit => unit.kind === 'code')!
+      mutate(unit)
+      expect(getSourceCodeLiteral(unit, raw)).toBeNull()
+    }
+  })
+
+  it('does not register truncated, hidden, masked, or repaired HTML bodies', () => {
+    const raw = '```\nalpha\n'
+    const cut = parseSourceDocument(raw, { representation: 'recent-excerpt', truncated: true }).units[0]!
+    expect(getSourceCodeLiteral(cut, raw)).toBeNull()
+    Object.assign(cut, { complete: true })
+    expect(getSourceCodeLiteral(cut, raw)).toBeNull()
+    for (const source of [
+      '<pre hidden><code>secret</code></pre>',
+      '<div style="display:none"><pre>secret</pre></div>',
+      '<pre><code>visible<span hidden>secret</span></code></pre>',
+      '<pre><script>secret</script>visible</pre>',
+      '<pre><code>unclosed</pre>',
+      '<pre><code>`<x>`</code></pre>',
+      '> <pre><code>\n> alpha\n> </code></pre>\n'
+    ]) {
+      const document = parse(source)
+      expect(document.units.every(unit => getSourceCodeLiteral(unit, source) === null)).toBe(true)
+    }
+    const prose = parse('alpha\n').units[0]!
+    expect(getSourceCodeLiteral(prose, 'alpha\n')).toBeNull()
   })
 })
 

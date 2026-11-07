@@ -271,6 +271,40 @@ describe('Agent thread presentation', () => {
     expect(text(presentation.orderedMessages[1]?.recovery?.title ?? null)).toBe('Response could not be completed')
   })
 
+  it.each([
+    ['length', 'The provider reached its output limit before completing the response.'],
+    ['refusal', 'The provider declined or filtered the response.'],
+    ['malformed_output', 'The provider returned an unusable response format.'],
+    ['response_limit', 'The response exceeded a supported processing limit.'],
+    ['provider_error', 'The provider reported a response error.']
+  ] as const)('explains an observed %s without replacing partial recovery or stronger failures', (responseIssue, explanation) => {
+    const failure = message({
+      id: 'failed',
+      role: 'assistant',
+      status: 'failed',
+      runOutcome: { status: 'failed', errorCode: 'INVALID_PROVIDER_RESPONSE', responseIssue }
+    })
+    const partial = message({
+      id: 'partial',
+      role: 'assistant',
+      status: 'complete',
+      content: 'Committed action results remain available.',
+      runOutcome: { status: 'partial', errorCode: 'INVALID_PROVIDER_RESPONSE', responseIssue }
+    })
+    const historical = { ...failure, id: 'historical', runOutcome: { status: 'failed' as const, errorCode: 'INVALID_PROVIDER_RESPONSE' } }
+    const persistence = { ...failure, id: 'persistence', runOutcome: { ...failure.runOutcome!, errorCode: 'AGENT_HOST_PERSISTENCE_FAILED' } }
+    const entries = buildAgentThreadPresentation([failure, partial, historical, persistence], [], [], []).orderedMessages
+    expect(text(entries[0]?.recovery?.reason ?? null)).toBe(explanation)
+    expect(text(entries[0]?.recovery?.description ?? null)).toContain('Nothing is sent automatically.')
+    expect(text(entries[1]?.recovery?.reason ?? null)).toBe(explanation)
+    expect(text(entries[1]?.recovery?.title ?? null)).toBe('Partial answer')
+    expect(text(entries[1]?.recovery?.description ?? null)).toContain('Review the returned answer')
+    expect(entries[1]?.message.content).toBe(partial.content)
+    expect(entries[2]?.recovery).not.toHaveProperty('reason')
+    expect(entries[3]?.recovery).not.toHaveProperty('reason')
+    expect(text(entries[3]?.recovery?.description ?? null)).toContain('Completed actions remain committed.')
+  })
+
   it('announces correction progress while preserving approval and terminal priority', () => {
     const preparing = message({ id: 'assistant-1', role: 'assistant', status: 'streaming' })
     expect(agentLiveAnnouncement([preparing], [])?.kind).toBe('generating')

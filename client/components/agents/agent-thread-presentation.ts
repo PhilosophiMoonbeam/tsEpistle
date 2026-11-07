@@ -156,6 +156,7 @@ export interface AgentRunPresentation extends AgentRunTools {
 export interface AgentMessageRecovery {
   readonly title: AgentLocalizedText
   readonly description: AgentLocalizedText
+  readonly reason?: AgentLocalizedText
 }
 
 export interface AgentMessagePresentation {
@@ -258,8 +259,12 @@ const messageStatusLabel = (message: AgentMessageView, run: AgentRunPresentation
 
 const messageRecovery = (message: AgentMessageView): AgentMessageRecovery | null => {
   const outcome = terminalAssistantOutcome(message)
+  const reason =
+    outcome?.responseIssue && (outcome.status === 'failed' || outcome.status === 'partial') && outcome.errorCode === 'INVALID_PROVIDER_RESPONSE'
+      ? { reason: { key: `common:agentThread.responseIssue.${outcome.responseIssue}` } }
+      : {}
   if (message.status === 'complete' && outcome?.status === 'partial') {
-    return { title: { key: 'common:agentThread.partialAnswer' }, description: { key: 'common:agentThread.recoveryPartial' } }
+    return { ...reason, title: { key: 'common:agentThread.partialAnswer' }, description: { key: 'common:agentThread.recoveryPartial' } }
   }
   const failed = message.status === 'failed' || outcome?.status === 'failed'
   const stopped = message.status === 'cancelled' || outcome?.status === 'cancelled'
@@ -288,6 +293,7 @@ const messageRecovery = (message: AgentMessageView): AgentMessageRecovery | null
     }
   }
   return {
+    ...reason,
     title: {
       key:
         message.role === 'user'

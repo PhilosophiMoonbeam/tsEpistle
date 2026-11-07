@@ -73,6 +73,43 @@ export interface ParsedSourceDocument {
   readonly sections: readonly SourceSection[]
 }
 
+interface SourceCodeLiteral {
+  readonly source: string
+  readonly text: string
+  readonly id: string
+  readonly start: number
+  readonly end: number
+  readonly visibleText: string | null
+  readonly normalizedText: string
+  readonly contextIds: readonly string[]
+  readonly recordId: string | null
+}
+const sourceCodeLiterals = new WeakMap<SourceUnit, SourceCodeLiteral>()
+
+/** Exact parser-rendered code data, bound to its original complete unit and source. */
+export const getSourceCodeLiteral = (unit: SourceUnit, originalSource: string): string | null => {
+  const literal = sourceCodeLiterals.get(unit)
+  if (
+    !literal ||
+    literal.source !== originalSource ||
+    unit.kind !== 'code' ||
+    !unit.complete ||
+    unit.id !== literal.id ||
+    unit.visibleText !== literal.visibleText ||
+    unit.normalizedText !== literal.normalizedText ||
+    unit.recordId !== literal.recordId ||
+    unit.sourceSpans.length !== 1 ||
+    unit.sourceSpans[0]!.start !== literal.start ||
+    unit.sourceSpans[0]!.end !== literal.end ||
+    unit.links.length !== 0 ||
+    unit.structuralLabels.length !== 0 ||
+    unit.contextIds.length !== literal.contextIds.length ||
+    unit.contextIds.some((id, index) => id !== literal.contextIds[index])
+  )
+    return null
+  return literal.text
+}
+
 type Factory = (options?: MarkdownItOptions) => MarkdownIt
 const factory = (module: unknown): Factory => {
   if (typeof module === 'function') return module as Factory
@@ -225,6 +262,7 @@ interface Block {
   type: string
   span: SourceSpan
   text?: string | undefined
+  literalCode?: string | undefined
   inline?: Token[] | undefined
   children: Block[]
   level?: number | undefined
@@ -538,10 +576,10 @@ export const parseSourceDocument = (
           const span = range(token, enclosing)
           const column = (token.meta as { startColumn?: number } | null)?.startColumn ?? 0
           htmlStarts.push(span.start + column)
-          result.push(...htmlBlocks(source.slice(span.start + column, span.end), span.start + column))
+          result.push(...htmlBlocks(source.slice(span.start + column, span.end), span.start + column, token.level === 0))
         } else if (token.type === 'fence' || token.type === 'code_block') {
           const span = range(token, enclosing)
-          result.push({ type: 'code', span, text: source.slice(span.start, span.end), children: [], complete: bounded(span) })
+          result.push({ type: 'code', span, text: source.slice(span.start, span.end), literalCode: token.content, children: [], complete: bounded(span) })
         } else if (token.nesting === 1) {
           const span = range(token, enclosing)
           const children = group(token.type.replace(/_open$/u, '_close'), span)
@@ -577,8 +615,9 @@ export const parseSourceDocument = (
     activeOffset = previousOffset
     return tokenBlocks(tokens, offset, starts, raw.length)
   }
-  const htmlBlocks = (raw: string, offset: number): Block[] => {
-    const $ = load(maskHtmlCode(raw), { sourceCodeLocationInfo: true }, false)
+  const htmlBlocks = (raw: string, offset: number, literalCodeAdmitted: boolean): Block[] => {
+    const masked = maskHtmlCode(raw)
+    const $ = load(masked, { sourceCodeLocationInfo: true }, false)
     const hidden = new Set(
       $('[hidden],[style]')
         .filter((_, node) => hiddenHtml(node.attribs, $(node).css()))
@@ -586,6 +625,18 @@ export const parseSourceDocument = (
     )
     const opaque = (span: SourceSpan): Block => ({ type: 'opaque', span, text: '', children: [], complete: false })
     const decodeText = (value: string): string => load(value, {}, false).root().text()
+    const literalCodeTree = (node: HtmlNode): boolean => {
+      if (node.type === 'text') return true
+      const location = node.sourceCodeLocation
+      return (
+        !hidden.has(node) &&
+        !['script', 'style', 'template'].includes(node.name ?? '') &&
+        location?.startTag !== undefined &&
+        location.endTag !== undefined &&
+        location.endTag.startOffset >= location.startTag.endOffset &&
+        (node.children ?? []).every(literalCodeTree)
+      )
+    }
     const nodes = (children: HtmlNode[]): Block[] => {
       const result: Block[] = []
       let run: SourceSpan | null = null
@@ -631,7 +682,19 @@ export const parseSourceDocument = (
         }
         const inner = raw.slice(location.startTag.endOffset, location.endTag.startOffset)
         if (name === 'pre' || name === 'code') {
-          result.push({ type: 'code', span, text: decodeText(inner), children: [], complete: bounded(span) })
+          result.push({
+            type: 'code',
+            span,
+            text: decodeText(inner),
+            // Masked delimiters, Markdown container prefixes, and hidden or
+            // repaired descendants cannot establish literal DOM text.
+            literalCode:
+              literalCodeAdmitted && masked.slice(location.startTag.endOffset, location.endTag.startOffset) === inner && literalCodeTree(node)
+                ? $(node as Parameters<typeof $>[0]).text()
+                : undefined,
+            children: [],
+            complete: bounded(span)
+          })
           continue
         }
         if (name === 'details') {
@@ -755,6 +818,19 @@ export const parseSourceDocument = (
       structuralLabels: [...new Set([localLabel, ...declarationLabels, ...localLinkLabels].filter(Boolean))],
       links: kind === 'code' || kind === 'opaque' ? [] : value.links.map(link => ({ ...link, unitId, sourceSpans: [block.span] })),
       complete: block.complete && value.links.every(link => link.dependencySpans.every(bounded))
+    }
+    if (kind === 'code' && valueUnit.complete && block.literalCode !== undefined) {
+      sourceCodeLiterals.set(valueUnit, {
+        source,
+        text: block.literalCode,
+        id: unitId,
+        start: block.span.start,
+        end: block.span.end,
+        visibleText: valueUnit.visibleText,
+        normalizedText,
+        contextIds: [...activeContextIds],
+        recordId: valueUnit.recordId
+      })
     }
     units.push(valueUnit)
     if (owner) {

@@ -61,11 +61,13 @@ const inputSchema = z
         z
           .object({
             readRef: nonblank,
-            text: nonblank,
+            text: z.string(),
+            literalCode: z.literal(true).optional(),
             contexts: z.array(nonblank),
             definitions: z.array(nonblank)
           })
           .strict()
+          .refine(quotation => quotation.text.trim().length > 0 || quotation.literalCode === true, 'Empty quotations require host-proved literal code.')
       )
       .max(64)
       .optional(),
@@ -124,7 +126,7 @@ export interface WikiCoverageInput {
   unresolvedFacets: readonly number[]
   reads: readonly { readRef: string; source: string; authorText: string; title: string; complete?: boolean; excerpt?: WikiSynthesisSource['excerpt'] }[]
   claims: readonly { readRef: string; statement: string }[]
-  quotations?: readonly { readRef: string; text: string; contexts: readonly string[]; definitions: readonly string[] }[]
+  quotations?: readonly { readRef: string; text: string; literalCode?: true; contexts: readonly string[]; definitions: readonly string[] }[]
   observations?: readonly string[]
   /** Internal current-authorized historical operation support, not candidate observations or source facts. */
   operationEvidence?: readonly string[]

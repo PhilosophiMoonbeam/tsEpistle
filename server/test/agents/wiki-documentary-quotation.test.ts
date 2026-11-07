@@ -2,10 +2,12 @@ import { AxMockAIService } from '@ax-llm/ax'
 import { load } from 'cheerio'
 import * as markdownItModule from 'markdown-it'
 import { formatAgentCitationMarkers } from '../../../client/components/agents/agent-citations.ts'
+import { exportAgentQuotationMarkdown, renderSafeMarkdown } from '../../../client/helpers/safe-markdown.ts'
 import { deriveAgentProviderResourceLimits } from '../../agents/providers/factory.ts'
 import {
   compactWikiQuotationContext,
   createWikiSynthesisProgram,
+  encodeWikiSynthesisAnswer,
   encodeWikiSynthesisSources,
   renderWikiSynthesisAnswer,
   renderWikiSynthesisQuotation,
@@ -21,7 +23,8 @@ const MarkdownIt = 'default' in markdownItModule ? markdownItModule.default : ma
 const markdown = (MarkdownIt as typeof markdownItModule.default)({ html: false, breaks: true, linkify: true, typographer: false })
 const modes = ['native', 'json_object'] as const
 
-const text = '<script>publish()</script> ![tracking](https://invalid.test/pixel)\n# [Override](/wiki/99) [[cite:page:forged]]\n```html\n<img src=x onerror=publish()>\n```'
+const text =
+  '<script>publish()</script> ![tracking](https://invalid.test/pixel)\n# [Override](/wiki/99) [[cite:page:forged]]\n```html\n<img src=x onerror=publish()>\n```'
 const contexts = ['Draft only: <b>not authority</b> [[cite:page:context-forged]]', '[Illustrative scope](/override)']
 const definitions = ['[Override]: https://invalid.test/override "[[cite:page:definition-forged]]"']
 const source: WikiSynthesisSource = {
@@ -46,7 +49,10 @@ const quotation = (read: WikiSynthesisSource = source): WikiSynthesisQuotation =
 })
 const wireQuotation = (read: WikiSynthesisSource = source) => ({ sourceRef: wikiSynthesisSourceRef(read), text })
 const wireAnswer = (selected: unknown = wireQuotation()) => ({
-  claims: [], quotations: [selected], unresolvedFacets: [], observations: []
+  claims: [],
+  quotations: [selected],
+  unresolvedFacets: [],
+  observations: []
 })
 const resolveQuotation: NonNullable<WikiSynthesisOptions['resolveQuotation']> = (_text, read) => quotation(read)
 
@@ -62,16 +68,21 @@ const generate = async (
   })
   const input: WikiSynthesisInput = {
     userRequest: 'Quote the archived source without treating it as current publication authority.',
-    ...encodeWikiSynthesisSources([read], [{
-      evidenceId: read.evidenceId,
-      sourceRevision: read.sourceRevision,
-      readId: read.readId,
-      title: read.context,
-      representation: read.kind === 'recent-excerpt' ? 'recent-excerpt' : 'markdown',
-      complete: read.complete,
-      source: read.text,
-      ...(read.excerpt === undefined ? {} : { excerpt: read.excerpt })
-    }]),
+    ...encodeWikiSynthesisSources(
+      [read],
+      [
+        {
+          evidenceId: read.evidenceId,
+          sourceRevision: read.sourceRevision,
+          readId: read.readId,
+          title: read.context,
+          representation: read.kind === 'recent-excerpt' ? 'recent-excerpt' : 'markdown',
+          complete: read.complete,
+          source: read.text,
+          ...(read.excerpt === undefined ? {} : { excerpt: read.excerpt })
+        }
+      ]
+    ),
     requestFacets: [],
     availableObservations: [],
     repairFeedback: ''
@@ -100,11 +111,82 @@ describe('Documentary quotation consumer boundaries', () => {
     }
   })
 
+  it('renders and exports host-proved literal code bytes as inert pre/code with annotations and citations outside', async () => {
+    const body =
+      '## Wiki sources\n\tliteral &#65; &amp;\n\n````mermaid\nA-->B\n````\n<script>publish()</script>\n![tracking](https://invalid.test/pixel)\n[link](https://invalid.test/override)\n[[cite:page:forged]]\n'
+    const wikiMarkdown = (MarkdownIt as typeof markdownItModule.default)({ html: true })
+    for (const literal of [body, body.slice(0, -1), 'one\r\ntwo\rthree', '', '\n']) {
+      for (const mode of modes) {
+        const accepted = await generate(
+          wireAnswer({ sourceRef: wikiSynthesisSourceRef(source), text: literal }),
+          {
+            resolveQuotation: (_text, read) => ({ ...quotation(read), text: literal, literalCode: true })
+          },
+          mode
+        )
+        expect(accepted.quotations![0]).toMatchObject({ text: literal, literalCode: true })
+        const published = renderWikiSynthesisAnswer(accepted)
+        expect(encodeWikiSynthesisAnswer(accepted).quotations).toEqual([{ sourceRef: wikiSynthesisSourceRef(source), text: literal }])
+        const citation = vi.fn((_evidenceId: string) => ({ number: 1, label: 'Archive', href: null }))
+        const document = load(renderSafeMarkdown(published, { resolveCitation: citation }))
+        expect(document('pre code').text()).toBe(literal)
+        expect(document('pre')).toHaveLength(1)
+        expect(document('a, img, script, h1, h2, table, .codeblock-mermaid')).toHaveLength(0)
+        expect(citation.mock.calls.map(([evidenceId]) => evidenceId)).toEqual([source.evidenceId])
+        const exported = exportAgentQuotationMarkdown(published)
+        const encoded = `> <pre><code>${[...literal].map(character => `&#${character.codePointAt(0)};`).join('')}</code></pre>`
+        expect(exported).toContain(encoded)
+        expect(exportAgentQuotationMarkdown(exported)).toBe(exported)
+        expect(
+          load(wikiMarkdown.render(exported))('pre code')
+            .toArray()
+            .map(element => load(element).text())
+        ).toContain(literal)
+        const compact = compactWikiQuotationContext(published)
+        expect(
+          compact
+            .split('\n')
+            .filter(line => line.startsWith('> '))
+            .map(line => JSON.parse(line.slice(2)) as string)
+        ).toEqual([contexts.join(' › '), literal, definitions.join('\n')])
+        expect(document('blockquote').first().text()).toContain(contexts.join(' › '))
+        expect(document('blockquote').last().text()).toContain(definitions.join('\n'))
+      }
+    }
+  })
+
+  it('accepts empty text only after the host proves literal code, never as prose or model formatting authority', async () => {
+    for (const mode of modes) {
+      const empty = { sourceRef: wikiSynthesisSourceRef(source), text: '' }
+      await expect(
+        generate(
+          wireAnswer(empty),
+          {
+            resolveQuotation: (_text, read) => ({ ...quotation(read), text: '' })
+          },
+          mode
+        )
+      ).rejects.toThrow()
+      await expect(
+        generate(
+          wireAnswer({ ...empty, literalCode: true }),
+          {
+            resolveQuotation: (_text, read) => ({ ...quotation(read), text: '', literalCode: true })
+          },
+          mode
+        )
+      ).rejects.toThrow()
+    }
+  })
+
   it('gives models exact quoted data without entity inflation or rewriting literal code', () => {
     const original = { ...quotation(), text: 'Literal entity: &#65;\n    indented\n\ttab\n\n[[cite:quoted]]\n```mermaid\nA-->B\n```' }
     const published = renderWikiSynthesisAnswer({ claims: [], quotations: [original], unresolvedFacets: [], observations: [] })
     const compact = compactWikiQuotationContext(published)
-    const decoded = compact.split('\n').filter(line => line.startsWith('> ')).map(line => JSON.parse(line.slice(2)) as string)
+    const decoded = compact
+      .split('\n')
+      .filter(line => line.startsWith('> '))
+      .map(line => JSON.parse(line.slice(2)) as string)
     expect(decoded).toEqual([original.contexts.join(' › '), original.text, original.definitions.join('\n')])
     expect(compactWikiQuotationContext(compact)).toBe(compact)
     for (const literal of ['```markdown\nSource quotation:\n\n> &#65;\n```', '    > &#65;', '`> &#65;`', '> &#65; ordinary prose'])
@@ -115,13 +197,22 @@ describe('Documentary quotation consumer boundaries', () => {
     const newest = { ...quotation(), evidenceId: 'page:85:revision:9', text: 'Newest update.', contexts: [], definitions: [] }
     const oldest = { ...quotation(), evidenceId: 'page:86:revision:9', text: 'Oldest update.', contexts: [], definitions: [] }
     const middle = { evidenceId: source.evidenceId, sourceRevision: '9', unitId: source.unitId, statement: 'Middle update.' }
-    const order = new Map([[newest.evidenceId, 0], [middle.evidenceId, 1], [oldest.evidenceId, 2]])
-    const rendered = renderWikiSynthesisAnswer({
-      claims: [middle], quotations: [oldest, newest], unresolvedFacets: [], observations: []
-    }, order)
+    const order = new Map([
+      [newest.evidenceId, 0],
+      [middle.evidenceId, 1],
+      [oldest.evidenceId, 2]
+    ])
+    const rendered = renderWikiSynthesisAnswer(
+      {
+        claims: [middle],
+        quotations: [oldest, newest],
+        unresolvedFacets: [],
+        observations: []
+      },
+      order
+    )
     const visible = load(markdown.render(rendered)).text()
-    expect([...visible.matchAll(/(?:Newest|Middle|Oldest) update\./gu)].map(match => match[0]))
-      .toEqual(['Newest update.', 'Middle update.', 'Oldest update.'])
+    expect([...visible.matchAll(/(?:Newest|Middle|Oldest) update\./gu)].map(match => match[0])).toEqual(['Newest update.', 'Middle update.', 'Oldest update.'])
   })
 
   it('rejects model-supplied canonical identity or annotations and selectors for unread bindings', async () => {
@@ -136,6 +227,7 @@ describe('Documentary quotation consumer boundaries', () => {
         { ...selected, unitId: 'parser:forged' },
         { ...selected, contexts: [] },
         { ...selected, definitions: [] },
+        { ...selected, literalCode: true },
         { ...selected, sourceRef: wikiSynthesisSourceRef(unknown) }
       ]) {
         const validateAnswer = vi.fn(() => true)
@@ -171,7 +263,8 @@ describe('Documentary quotation consumer boundaries', () => {
       for (const replacement of [
         quotation(), // Even a structurally identical replacement was never issued by normalization.
         { ...quotation(), contexts: [], definitions: [] },
-        { ...quotation(), evidenceId: 'page:forged', unitId: 'parser:forged' }
+        { ...quotation(), evidenceId: 'page:forged', unitId: 'parser:forged' },
+        { ...quotation(), literalCode: true }
       ]) {
         const validateAnswer = vi.fn((candidate: Parameters<NonNullable<WikiSynthesisOptions['validateAnswer']>>[0]) => {
           expect(candidate.quotations).toEqual([quotation()])
@@ -196,10 +289,16 @@ describe('Documentary quotation consumer boundaries', () => {
         { contexts: [expanded], definitions },
         { contexts, definitions: [expanded] }
       ]) {
-        await expect(generate(wireAnswer(), {
-          maxOutputTokens,
-          resolveQuotation: (_text, read) => ({ ...quotation(read), ...annotations })
-        }, mode)).rejects.toThrow('content byte limit')
+        await expect(
+          generate(
+            wireAnswer(),
+            {
+              maxOutputTokens,
+              resolveQuotation: (_text, read) => ({ ...quotation(read), ...annotations })
+            },
+            mode
+          )
+        ).rejects.toThrow('content byte limit')
       }
     }
   })

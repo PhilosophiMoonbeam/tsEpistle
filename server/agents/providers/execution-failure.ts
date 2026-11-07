@@ -1,3 +1,4 @@
+import { AGENT_RESPONSE_ISSUES, type AgentResponseIssue } from '../../../shared/agents/contracts.ts'
 import { AGENT_PDF_ERRORS, type AgentPdfErrorCode, AgentPdfPreparationError } from '../pdf-preparation.ts'
 import { AgentRepositoryError } from '../repository.ts'
 import { AgentProviderAttemptError } from './factory.ts'
@@ -108,7 +109,15 @@ export interface AgentExecutionFailureContextDiagnostics {
   readonly omittedResultCount?: number
 }
 
+export interface AgentExecutionFailureResponseDiagnostics {
+  readonly phase?: 'collection' | 'wiki_synthesis' | 'wiki_coverage'
+  readonly outputTokenLimit?: number
+  readonly reasoningTokens?: number
+}
+
 export interface AgentExecutionFailureDiagnostics {
+  readonly responseIssue?: AgentResponseIssue
+  readonly response?: AgentExecutionFailureResponseDiagnostics
   readonly usageIssue?: AgentExecutionFailureUsageIssue
   readonly usageField?: AgentExecutionFailureUsageField
   readonly prior?: AgentExecutionFailureUsageReceipt
@@ -363,9 +372,23 @@ const safeContext = (value: unknown): AgentExecutionFailureContextDiagnostics | 
 const safeEnum = <T extends readonly string[]>(value: unknown, values: T): T[number] | undefined =>
   typeof value === 'string' && (values as readonly string[]).includes(value) ? (value as T[number]) : undefined
 
+const safeResponse = (value: unknown): AgentExecutionFailureResponseDiagnostics | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const response: { phase?: NonNullable<AgentExecutionFailureResponseDiagnostics['phase']>; outputTokenLimit?: number; reasoningTokens?: number } = {}
+  const phase = safeEnum(safeProperty(value, 'phase'), ['collection', 'wiki_synthesis', 'wiki_coverage'] as const)
+  if (phase !== undefined) response.phase = phase
+  for (const field of ['outputTokenLimit', 'reasoningTokens'] as const) {
+    const item = safeNonNegativeInteger(safeProperty(value, field))
+    if (item !== undefined) response[field] = item
+  }
+  return Object.keys(response).length > 0 ? response : undefined
+}
+
 export const normalizeAgentExecutionFailureDiagnostics = (value: unknown): AgentExecutionFailureDiagnostics | undefined => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
   const diagnostics: {
+    responseIssue?: AgentResponseIssue
+    response?: AgentExecutionFailureResponseDiagnostics
     usageIssue?: AgentExecutionFailureUsageIssue
     usageField?: AgentExecutionFailureUsageField
     prior?: AgentExecutionFailureUsageReceipt
@@ -375,6 +398,10 @@ export const normalizeAgentExecutionFailureDiagnostics = (value: unknown): Agent
     transportKind?: AgentProviderTransportKind
     providerErrorCode?: string
   } = {}
+  const responseIssue = safeEnum(safeProperty(value, 'responseIssue'), AGENT_RESPONSE_ISSUES)
+  if (responseIssue !== undefined) diagnostics.responseIssue = responseIssue
+  const response = safeResponse(safeProperty(value, 'response'))
+  if (response !== undefined) diagnostics.response = response
   const usageIssue = safeEnum(safeProperty(value, 'usageIssue'), AGENT_USAGE_ISSUES)
   if (usageIssue !== undefined) diagnostics.usageIssue = usageIssue
   const usageField = safeEnum(safeProperty(value, 'usageField'), AGENT_USAGE_FIELDS)

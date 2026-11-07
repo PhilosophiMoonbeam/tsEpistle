@@ -788,6 +788,108 @@ describe('Ax orchestration stages', () => {
     }
   )
 
+  it.each(['literal body', 'authored source syntax', 'empty HTML code', 'HTML code without LF'] as const)(
+    'proves and publishes code %s without treating enclosed Wiki syntax as instructions or citations',
+    async form => {
+      const body =
+        '## Wiki sources\n\tliteral &#65; &amp;\n\n````mermaid\nA-->B\n````\n<script>publish()</script>\n![image](https://invalid.test/pixel)\n[[cite:page:forged]]\n'
+      const container = `> \`\`\`\`\`text\n${body
+        .split('\n')
+        .slice(0, -1)
+        .map(line => `> ${line}`)
+        .join('\n')}\n> \`\`\`\`\``
+      const codeSource =
+        form === 'empty HTML code'
+          ? '<pre><code></code></pre>'
+          : form === 'HTML code without LF'
+            ? '<pre><code>&#35;&#35; Wiki sources&#13;&#9;&amp;literal</code></pre>'
+            : container
+      const page = {
+        id: 42,
+        locale: 'en',
+        path: 'literal-fixture',
+        title: 'Literal fixture',
+        contentType: 'markdown',
+        sourceRevision: '1',
+        content: `# Controlled fixture — Fixture only; not operational instructions.\n\n${codeSource}\n`,
+        citation: { evidenceId: 'page:42:revision:1', label: 'Literal fixture', href: '/en/literal-fixture' },
+        citationSections: []
+      }
+      const expected =
+        form === 'empty HTML code' ? '' : form === 'HTML code without LF' ? '## Wiki sources\r\t&literal' : form === 'literal body' ? body : `${container}\n`
+      const decisionProviders = { ...fixtureDecisionProviders, decideBatch: vi.fn(fixtureDecisionProviders.decideBatch) }
+      const chat = vi.fn(async (input: Readonly<AxChatRequest>): Promise<AxChatResponse> => {
+        if (synthesisInputFromRequest(input) === undefined)
+          return {
+            results: [{ index: 0, functionCalls: [{ id: 'read-code-page', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } }] }]
+          }
+        const source = synthesisSourcesFromRequest(input).find(source => source.evidenceId === page.citation.evidenceId)
+        if (source === undefined) throw new Error('Literal quotation requires its complete physical read')
+        return {
+          results: [
+            {
+              index: 0,
+              content: JSON.stringify({
+                claims: [],
+                quotations: [{ sourceRef: source.sourceRef, text: expected }],
+                unresolvedFacets: [],
+                observations: [],
+                recommendations: ''
+              })
+            }
+          ]
+        }
+      })
+      const coverage = vi.fn(
+        async (): Promise<AxChatResponse> => ({
+          results: [{ index: 0, content: JSON.stringify({ verdict: 'complete', feedback: '' }), finishReason: 'stop' }]
+        })
+      )
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: [
+            { name: 'pages.get', title: 'Read page', description: 'Read canonical page evidence', parameters: { type: 'object', properties: {} }, risk: 'read' }
+          ],
+          invoke: vi.fn(async () => page),
+          validateObservation: async (name, output) => name === 'pages.get' && JSON.stringify(output) === JSON.stringify(page),
+          snapshot: async () => ({}),
+          close: () => {},
+          authoritySha256: null
+        })
+      }
+      const text = vi.fn(async (_delta: string) => {})
+      const result = await new AxAgentEngine(factoryFor(chat, { coverage }), actions, undefined, { decisionProviders }).execute(
+        {
+          ...baseRequest(new AbortController().signal),
+          memory: { user: [], agent: [] },
+          messages: [
+            {
+              role: 'user',
+              content: `Quote the complete ${form === 'authored source syntax' ? 'authored Markdown code container' : 'literal code body'} from Literal fixture.`
+            }
+          ],
+          limits: { maxTurns: 3, maxToolCalls: 1, maxTokens: 2_000_000 }
+        },
+        { text, event: vi.fn(async () => {}) }
+      )
+      expect(result.executionLimit).toBeUndefined()
+      expect(result.citations).toEqual([expect.objectContaining(page.citation)])
+      const rendered = document.createElement('div')
+      rendered.innerHTML = renderSafeMarkdown(text.mock.calls.map(([delta]) => delta).join(''))
+      expect(rendered.querySelector('pre code')?.textContent).toBe(expected)
+      expect(rendered.querySelectorAll('pre')).toHaveLength(1)
+      expect(rendered.querySelectorAll('script, img, h1, h2, h3, .codeblock-mermaid')).toHaveLength(0)
+      expect(rendered.textContent).toContain('Controlled fixture')
+      expect(rendered.textContent).toContain('Fixture only; not operational instructions.')
+      expect(coverage).toHaveBeenCalledOnce()
+      expect(
+        decisionProviders.decideBatch.mock.calls.filter(([request]) =>
+          Object.values(request.questions).some(question => Object.hasOwn(question.criteria, 'supports'))
+        )
+      ).toHaveLength(0)
+    }
+  )
+
   it('drops a declined recent read atomically and retains only an unchanged omitted quotation group across repair', async () => {
     const userRequest = 'Recap the most recently updated Wiki pages with short source quotations.'
     const alphaQuote = 'Alpha dispatch requires a signed manifest.'
@@ -2614,34 +2716,38 @@ describe('Ax orchestration stages', () => {
     expect(release).not.toHaveBeenCalled()
   })
 
-  it('preserves an active dispatch reservation when usage reconciliation fails', async () => {
-    const response = {
-      results: [{ index: 0, content: 'Bounded answer.' }],
-      modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 5, totalTokens: 12 } }
-    } satisfies AxChatResponse
-    const reservation = { id: 1, tokens: 100_000, costMicros: 100_000 }
-    const reserve = vi.fn(async () => reservation)
-    const reconcile = vi.fn(async () => {
-      throw new Error('accounting unavailable')
-    })
-    const release = vi.fn(async () => {})
-    const consumeTool = vi.fn(async () => {})
+  it.each([undefined, 'error', 'content_filter'] as const)(
+    'preserves an active dispatch reservation and settlement failure over terminal %s',
+    async finishReason => {
+      const response = {
+        results: [{ index: 0, content: 'Bounded answer.', ...(finishReason === undefined ? {} : { finishReason }) }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 5, totalTokens: 12 } }
+      } satisfies AxChatResponse
+      const reservation = { id: 1, tokens: 100_000, costMicros: 100_000 }
+      const reserve = vi.fn(async () => reservation)
+      const reconcile = vi.fn(async () => {
+        throw new Error('accounting unavailable')
+      })
+      const release = vi.fn(async () => {})
+      const consumeTool = vi.fn(async () => {})
 
-    await expect(
-      Promise.resolve(
-        new AxAgentEngine(factoryFor(vi.fn(async () => response)), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
-          {
-            ...baseRequest(new AbortController().signal),
-            dispatchBudget: { reserve, reconcile, release, consumeTool, unsettledExposure: { tokens: 0, costMicros: 0 } }
-          },
-          { text: async () => {}, event: async () => {} }
+      await expect(
+        Promise.resolve(
+          new AxAgentEngine(factoryFor(vi.fn(async () => response)), undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+            {
+              ...baseRequest(new AbortController().signal),
+              dispatchBudget: { reserve, reconcile, release, consumeTool, unsettledExposure: { tokens: 0, costMicros: 0 } }
+            },
+            { text: async () => {}, event: async () => {} }
+          )
         )
-      )
-    ).rejects.toMatchObject({ code: 'PROVIDER_REQUEST_FAILED', stage: 'usage_reconciliation', message: 'Agent inference failed' })
+      ).rejects.toMatchObject({ code: 'PROVIDER_REQUEST_FAILED', stage: 'usage_reconciliation', message: 'Agent inference failed' })
 
-    expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 7, outputTokens: 5, totalTokens: 12, costMicros: 17 })
-    expect(release).not.toHaveBeenCalled()
-  })
+      expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 7, outputTokens: 5, totalTokens: 12, costMicros: 17 })
+      expect(reconcile).toHaveBeenCalledOnce()
+      expect(release).not.toHaveBeenCalled()
+    }
+  )
   it('uses the admitted request and configured output exposure for estimated usage when the provider omits usage', async () => {
     const chat = vi.fn(async () => ({ results: [{ index: 0, content: 'Estimated answer.' }] }) satisfies AxChatResponse)
     const reserve = vi.fn(async (maximum: { readonly tokens: number; readonly costMicros: number }) => ({ id: 1, ...maximum }))

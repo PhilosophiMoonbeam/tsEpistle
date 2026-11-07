@@ -518,6 +518,26 @@ describe('AgentThread live status and interaction behavior', () => {
     expect(recovery().textContent).not.toContain('secret provider payload')
   })
 
+  it.each([
+    'literal without terminal LF',
+    '',
+    'first\rsecond\t&amp; <script>window.__literalExecuted=true</script> [[cite:page:forged]]',
+    'first\r\nsecond\r\n'
+  ])('preserves exact literal-code bytes through the real message component (%j)', async body => {
+    const session = makeSession('session-literal-code')
+    const encoded = [...body].map(character => `&#${character.codePointAt(0)!};`).join('')
+    const content = `Source quotation:\n\n> <pre><code>${encoded}</code></pre>`
+    const mounted = await mountThread(
+      makeThread(session.id, { session, messages: [makeMessage({ id: 'literal-code', status: 'complete', content })] }),
+      'connected',
+      undefined,
+      undefined,
+      true
+    )
+    expect(mounted.host.querySelector('pre code')?.textContent).toBe(body)
+    expect(mounted.host.querySelector('script, img, [data-agent-citation]')).toBeNull()
+  })
+
   it('offers bounded recovery for the matching partial run with a complete assistant answer only', async () => {
     const session = makeSession('session-partial')
     const mounted = await mountThread(
@@ -531,14 +551,19 @@ describe('AgentThread live status and interaction behavior', () => {
             ordinal: 2,
             status: 'complete',
             content: 'The returned portion of the answer',
-            runOutcome: { status: 'partial', errorCode: null }
+            runOutcome: { status: 'partial', errorCode: 'INVALID_PROVIDER_RESPONSE', responseIssue: 'length' }
           })
         ]
-      })
+      }),
+      'connected',
+      undefined,
+      undefined,
+      true
     )
     const articles = mounted.host.querySelectorAll<HTMLElement>('.agent-message')
     const recovery = articles[2].querySelector<HTMLElement>('.agent-message__recovery')!
     expect(mounted.host.querySelectorAll('.agent-message__recovery')).toHaveLength(1)
+    expect(articles[2].textContent).toContain('The returned portion of the answer')
     expect(recovery.hasAttribute('aria-live')).toBe(false)
     expect(mounted.host.querySelectorAll('[aria-live="polite"]')).toHaveLength(1)
     for (const article of [articles[0], articles[1]]) {

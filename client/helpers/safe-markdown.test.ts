@@ -26,6 +26,51 @@ describe('safe markdown rendering', () => {
     expect(container.textContent).toContain(rawHtml)
   })
 
+  it('decodes only strict numeric pre/code quotations as inert exact code, including missing LF and CR', () => {
+    const literal =
+      '## Wiki sources\r\n\t&#65; &amp;\r<script>publish()</script>\n![image](https://invalid.test/pixel)\n````mermaid\nA-->B\n````\n[[cite:forged]]'
+    for (const body of [literal, `${literal}\n`, '', '\r', '\n']) {
+      const canonical = `> <pre><code>${[...body].map(character => `&#${character.codePointAt(0)};`).join('')}</code></pre>`
+      for (const streaming of [false, true]) {
+        const citations: string[] = []
+        const fences: string[] = []
+        const container = document.createElement('div')
+        container.innerHTML = renderSafeMarkdown(canonical, {
+          streaming,
+          resolveCitation: evidenceId => {
+            citations.push(evidenceId)
+            return null
+          },
+          fenceMetadata: metadata => {
+            fences.push(metadata.source)
+            return null
+          }
+        })
+        expect(container.querySelector('blockquote pre code')?.textContent).toBe(body)
+        expect(container.querySelectorAll('pre')).toHaveLength(1)
+        expect(container.querySelector('script, img, a, h1, h2, [data-agent-citation], [data-diagram]')).toBeNull()
+        expect(citations).toEqual([])
+        expect(fences).toEqual([body])
+      }
+      expect(exportAgentQuotationMarkdown(canonical)).toBe(canonical)
+    }
+    for (const invalid of [
+      '> <pre><code>raw text</code></pre>',
+      '> <pre class="mermaid"><code>&#65;</code></pre>',
+      '> <pre><code>&#65;<script>publish()</script></code></pre>',
+      '> <pre><code>&#1114112;</code></pre>',
+      '> <pre><code>&#55296;</code></pre>',
+      '> <pre><code>&#65;</code></pre> trailing',
+      '````text\n> <pre><code>&#65;</code></pre>\n````'
+    ]) {
+      const container = document.createElement('div')
+      container.innerHTML = renderSafeMarkdown(invalid)
+      expect(container.querySelector('blockquote pre')).toBeNull()
+      expect(container.querySelector('script, img')).toBeNull()
+      expect(exportAgentQuotationMarkdown(invalid)).toBe(invalid)
+    }
+  })
+
   it('displays CommonMark source escapes as literal text during streaming and after completion', () => {
     const source = '# Recipe [run](javascript:alert(1)) <img src=x onerror=alert(1)> [[cite:source]] \\A'
     const escapedSource = String.raw`\# Recipe \[run\]\(javascript:alert\(1\)\) \<img src=x onerror=alert\(1\)\> \[\[cite:source\]\] \\A`
@@ -150,7 +195,8 @@ Additional *context*.`)
   })
 
   it('exports readable literal quotations without activating nested source syntax or forged citations', () => {
-    const source = '  Indented\tquotation\n\n````mermaid\ngraph TD; A-->B\n````\n<img src=x onerror=publish()> [override](https://invalid.test)\n[[cite:verified]] &amp; &#65;\n'
+    const source =
+      '  Indented\tquotation\n\n````mermaid\ngraph TD; A-->B\n````\n<img src=x onerror=publish()> [override](https://invalid.test)\n[[cite:verified]] &amp; &#65;\n'
     const encoded = `> ${[...source].map(character => `&#${character.codePointAt(0)};`).join('')}`
     const resolver = (evidenceId: string) => ({ evidenceId, number: 1, label: 'Guide', href: '/en/guide' })
     const exported = exportAgentQuotationMarkdown(formatAgentCitationMarkers(`Source quotation:\n\n${encoded}\n\n[[cite:verified]]`, resolver))

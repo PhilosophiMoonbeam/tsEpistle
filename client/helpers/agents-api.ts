@@ -16,6 +16,7 @@ import {
   AGENT_PRESET_IDS,
   AGENT_TASK_KINDS,
   AGENT_TERMINAL_RUN_STATUSES,
+  AGENT_RESPONSE_ISSUES,
   AGENT_TOOL_CALL_NAMES,
   type AgentConversationFolderView,
   type AgentEvent,
@@ -110,7 +111,9 @@ const Message = z.object({
   currentPage: AgentCurrentPageHintSchema.nullable().optional(),
   id: Uuid,
   runId: Uuid.nullable(),
-  runOutcome: z.object({ status: z.enum(AGENT_TERMINAL_RUN_STATUSES), errorCode: z.string().nullable() }).optional(),
+  runOutcome: z
+    .object({ status: z.enum(AGENT_TERMINAL_RUN_STATUSES), errorCode: z.string().nullable(), responseIssue: z.enum(AGENT_RESPONSE_ISSUES).optional() })
+    .optional(),
   ordinal: z.number().int().nonnegative(),
   role: z.enum(['user', 'assistant']),
   status: z.enum(['pending', 'streaming', 'complete', 'failed', 'cancelled']),

@@ -4,6 +4,7 @@ import { z } from 'zod'
 import {
   AGENT_ACTION_NAMES,
   AGENT_PRESET_IDS,
+  AGENT_RESPONSE_ISSUES,
   AGENT_PROPOSAL_STATUSES,
   AGENT_TOOL_CALL_NAMES,
   AGENT_TOOL_CONTROL_NAMES,
@@ -21,6 +22,7 @@ import {
   type AgentPresetId,
   type AgentProposalView,
   type AgentRunView,
+  type AgentResponseIssue,
   type AgentRunWorkingPhase,
   type AgentSessionSkillView,
   type AgentSessionView,
@@ -54,6 +56,7 @@ const toolControlNames = new Set<string>(AGENT_TOOL_CONTROL_NAMES)
 
 const runStatusSchema = z.enum(['queued', 'running', 'awaiting_approval', 'succeeded', 'partial', 'failed', 'cancelled', 'recovery_required'])
 const proposalStatusSchema = z.enum(AGENT_PROPOSAL_STATUSES)
+const responseIssueSchema = z.enum(AGENT_RESPONSE_ISSUES)
 const approvalStatusSchema = z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled'])
 const riskSchema = z.enum(['read', 'open-world-read', 'proposal', 'reversible-write', 'destructive-write'])
 const toolRiskSchema = z.union([riskSchema, z.literal('external')])
@@ -629,7 +632,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
     if (runId) prioritizedRunIds.add(runId)
   }
   const selectedRunIds = [...prioritizedRunIds].slice(0, THREAD_RUN_LIMIT)
-  const runQuery = knex<ProjectAgentRunInput & { readonly userMessageId: string }>('agentRuns')
+  const runQuery = knex<ProjectAgentRunInput & { readonly userMessageId: string; readonly assistantMessageId: string }>('agentRuns')
     .where('sessionId', sessionId)
     .andWhere('ownerId', ownerId)
     .orderBy('queuedAt', 'desc')
@@ -738,6 +741,23 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
   const approvals = new Map(approvalRows.map(row => [row.proposalId, approvalView(row)]))
   const sourceContexts = new Map<string, Pick<AgentMessageView, 'knowledgeContext' | 'currentPage'>>()
   const ownedRunsById = new Map(runRows.map(run => [run.id, run]))
+  const responseIssues = new Map<string, AgentResponseIssue>()
+  for (const event of events) {
+    const run = ownedRunsById.get(event.runId)
+    if (
+      !run ||
+      event.attempt !== run.attempts ||
+      event.sequence !== run.eventSequence ||
+      !((run.status === 'failed' && event.type === 'run.failed') || (run.status === 'partial' && event.type === 'run.partial')) ||
+      event.data.runId !== run.id ||
+      event.data.status !== run.status
+    )
+      continue
+    const diagnostics = event.data.diagnostics
+    if (typeof diagnostics !== 'object' || diagnostics === null || Array.isArray(diagnostics)) continue
+    const issue = responseIssueSchema.safeParse(Reflect.get(diagnostics, 'responseIssue'))
+    if (issue.success) responseIssues.set(run.id, issue.data)
+  }
   const messagePresets = new Map<string, AgentPresetId>()
   for (const row of sourceContextRows) {
     try {
@@ -784,6 +804,7 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
   const messages: AgentMessageView[] = messageRows.map(message => {
     const grounding = googleSearchGrounding(message.googleSearchGrounding)
     const run = message.role === 'assistant' && message.runId ? runsById.get(message.runId) : undefined
+    const responseIssue = run && ownedRunsById.get(run.id)?.assistantMessageId === message.id ? responseIssues.get(run.id) : undefined
     const presetId =
       message.role === 'user' && message.runId && ownedRunsById.get(message.runId)?.userMessageId === message.id ? messagePresets.get(message.id) : undefined
     return {
@@ -794,7 +815,9 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
       status: message.status,
       content: message.content,
       citations: citations(message.citations),
-      ...(run && isTerminalAgentRunStatus(run.status) ? { runOutcome: { status: run.status, errorCode: run.errorCode } } : {}),
+      ...(run && isTerminalAgentRunStatus(run.status)
+        ? { runOutcome: { status: run.status, errorCode: run.errorCode, ...(responseIssue === undefined ? {} : { responseIssue }) } }
+        : {}),
       ...(grounding === undefined ? {} : { googleSearchGrounding: grounding }),
       ...(mediaRows.some(media => media.messageId === message.id)
         ? { media: mediaRows.filter(media => media.messageId === message.id).map(projectAgentMedia) }

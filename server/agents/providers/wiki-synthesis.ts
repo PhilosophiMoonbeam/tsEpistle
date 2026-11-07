@@ -188,6 +188,7 @@ export interface WikiSynthesisQuotation {
   readonly sourceRevision: string
   readonly unitId: string
   readonly text: string
+  readonly literalCode?: true
   readonly contexts: readonly string[]
   readonly definitions: readonly string[]
 }
@@ -306,17 +307,19 @@ const attachmentClaimSchema = z
     statement: z.string().min(1).describe('Nonempty requested content of the provided native file identified by mediaId, using the attachment format above.')
   })
   .strict()
-const quotationSchema = z.object({ sourceRef: claimSchema.shape.sourceRef, text: z.string().min(1) }).strict()
+const quotationSchema = z.object({ sourceRef: claimSchema.shape.sourceRef, text: z.string() }).strict()
 const canonicalQuotationSchema = z
   .object({
     evidenceId: evidenceIdSchema,
     sourceRevision: z.string().min(1),
     unitId: z.string().regex(/^read:\S+$/u),
-    text: z.string().min(1),
+    text: z.string(),
+    literalCode: z.literal(true).optional(),
     contexts: z.array(z.string().min(1)),
     definitions: z.array(z.string().min(1))
   })
   .strict()
+  .refine(quotation => quotation.text.length > 0 || quotation.literalCode === true, 'Empty quotations require host-proved literal code.')
 
 const instructions = `# Goal
 Answer userRequest at its requested level of detail using the complete original reads and exact host-admitted observations. Inspect all reads for requested facts, author references and governing qualifications. Include only requested content and the qualifications needed to interpret it, not unrequested fields, contacts or background.
@@ -335,6 +338,7 @@ For a multi-section summary, use useful concise sections or a short list with on
 When reporting an author-defined quantity or timing target, explicitly retain the source-defined event, actor or mechanism that counts, its operating window and exclusions, and what it does not promise. Do not substitute the label alone for those governing conditions, or omit them because they occur outside the selected table or paragraph.
 When a requested fact comes from a linked read, bind its values and exceptions to that read. A referring page proves the reference, not the target's facts. Keep source-specific conditions together; omit an unnecessary extra claim from a traversal read rather than generalizing its narrower rule.
 For requested faithful quotations, use quotations with exactly sourceRef and text when enabled: copy one complete author paragraph, list item, original list/table container or full literal code block unchanged from a complete read. No sentence subsets, projected table fields, altered syntax, cross-unit combinations, title metadata or bounded excerpts. The host alone resolves parser ownership and supplies mandatory governing context, reference definitions and citations; never put these annotations in wire fields. This documentary channel reports what the source says, not independent world truth or operation completion. Do not replace requested paraphrases with large unrequested quotations. Ordinary claims, including exact-looking claims, remain independently Native-verified.
+For code quotations, copy the exact literal body including tabs, blank lines and terminal newline, not its fence or blockquote container.
 Return unique zero-based unresolvedFacets indices for unsupported or unanswered requestFacets. If neither a complete read nor an explicitly admitted bounded recent-excerpt binding exists, return claims: []. Select observations only as unique exact safe single lines from availableObservations; no prose, table, heading, list or reference-definition formatting. Give recommendations only when requested, as standalone imperative or modal suggestions or questions; no declarative explanations, causal premises or additional factual sentences. Put supported factual premises in claims.
 Classify obligations by the original userRequest, not a facet label: a default source facet does not turn an operation-only request into a page-content question. Select the exact delivered proposal status and applied result identity from availableObservations. An applied receipt establishes that operation and its reported result identity without a source read; pending, approved, denied, expired, cancelled, partial or unavailable results never prove application. Private operationEvidence, when present, supplies the exact approved diff and historical result to establish which requested operation was fulfilled; report only the availableObservations, never that private proof as answer text. A null or undisclosed result page is not proof of deletion. Do not turn a completed reviewed edit or its preparatory reading into unrequested post-operation research, or mark it unresolved merely because claims is empty. Receipts and operationEvidence cannot establish current page content, source facts, duplicate absence, a recent recap or unrelated work. Independently requested post-write verification, current-state confirmation and content research require fresh eligible content claims. Mark only genuinely unsupported or unfinished requested details unresolved, preserving those details in mixed operation-and-fact requests.
 When operationEvidence marks reviewedChange.currentRunReview:true, the matching proposal's host-provided review record is part of this run's output. Its exact diff can fulfil a preparatory request to show or propose the change for approval; a later applied receipt reports the subsequent approval outcome. Do not duplicate that diff solely to satisfy the preparatory review step. An explicitly requested copy in the final answer remains an output obligation; an old or unselected proposal record cannot supply it.
@@ -538,7 +542,7 @@ export const validateWikiSynthesisShape = (answer: WikiSynthesisAnswer): true | 
         quotation.definitions.some(hasUnsafeControlCharacters)
     )
   )
-    return 'Documentary quotations require exact read attribution and safe nonempty text with host-owned scope.'
+    return 'Documentary quotations require exact read attribution and safe text with host-owned scope; only proved literal code may be empty.'
   if (answer.observations.some(observation => !safeObservation(observation)))
     return 'Observations must be safe complete single lines without citation or rendering control syntax.'
   const recommendations = answer.recommendations ?? ''
@@ -569,13 +573,17 @@ export const renderWikiSynthesisAttachmentClaimStatement = (claim: WikiSynthesis
   // Numeric text entities cannot become Markdown or pre-Markdown Wiki markers.
   `Provided file ${[...claim.filename].map(character => `&#${character.codePointAt(0)!};`).join('')}:\n\n${claim.statement.trim()}`
 
-const inertQuotation = (text: string): string => `> ${[...text].map(character => `&#${character.codePointAt(0)!};`).join('')}`
+const quotationEntities = (text: string): string => [...text].map(character => `&#${character.codePointAt(0)!};`).join('')
+const inertQuotation = (text: string): string => `> ${quotationEntities(text)}`
+
+// Numeric-only HTML preserves exact code bytes, including absent LF and literal CR.
+const inertCodeQuotation = (text: string): string => `> <pre><code>${quotationEntities(text)}</code></pre>`
 
 /** All source syntax stays inert; mandatory scope remains outside the quoted unit. */
 export const renderWikiSynthesisQuotation = (quotation: WikiSynthesisQuotation): string =>
   [
     ...(quotation.contexts.length === 0 ? [] : [`Source context:\n\n${inertQuotation(quotation.contexts.join(' › '))}`]),
-    `Source quotation:\n\n${inertQuotation(quotation.text)}`,
+    `Source quotation:\n\n${quotation.literalCode === true ? inertCodeQuotation(quotation.text) : inertQuotation(quotation.text)}`,
     ...(quotation.definitions.length === 0 ? [] : [`Source reference syntax:\n\n${inertQuotation(quotation.definitions.join('\n'))}`])
   ].join('\n\n')
 
@@ -583,7 +591,8 @@ export const renderWikiSynthesisQuotation = (quotation: WikiSynthesisQuotation):
 const compactQuotation = (text: string): string => `> ${JSON.stringify(text)}`
 
 /** Lossless model-only quotation view; never source evidence or publication Markdown. */
-export const compactWikiQuotationContext = (content: string): string => mapEncodedAgentQuotationParagraphs(content, markdown, compactQuotation)
+export const compactWikiQuotationContext = (content: string): string =>
+  mapEncodedAgentQuotationParagraphs(content, markdown, compactQuotation, compactQuotation)
 
 /** Source channels share presentation order, never proof or semantic authority. */
 export function* wikiSynthesisContributions(

@@ -841,6 +841,67 @@ describe('durable agent repositories', () => {
     expect(projected.messages.map(message => message.content)).toEqual(['Question', ''])
   })
 
+  it('projects only a safe response issue from the matching terminal assistant and latest owned attempt', async () => {
+    const options = { memorySigningSecret: 'agent-memory-test-signing-secret', profileResolutionToken: () => 'token' }
+    const privateData = 'PRIVATE_RESPONSE_CANARY'
+    await terminalizeAgentRun(knex, {
+      runId,
+      ownerId: 7,
+      status: 'failed',
+      expected: { statuses: ['running'] },
+      assistant: { status: 'failed' },
+      errorCode: 'INVALID_PROVIDER_RESPONSE',
+      eventData: {
+        diagnostics: {
+          responseIssue: 'length',
+          response: { phase: 'wiki_synthesis', outputTokenLimit: 8192, reasoningTokens: 8192 },
+          message: privateData,
+          providerErrorCode: privateData
+        }
+      }
+    })
+    const history = await projectAgentThread(knex, 7, sessionId, options)
+    expect(history.messages.find(message => message.id === assistantMessageId)?.runOutcome).toEqual({
+      status: 'failed',
+      errorCode: 'INVALID_PROVIDER_RESPONSE',
+      responseIssue: 'length'
+    })
+    expect(history.messages.find(message => message.id === userMessageId)).not.toHaveProperty('runOutcome')
+    expect(JSON.stringify(history)).not.toContain(privateData)
+    expect(JSON.stringify(history)).not.toContain('reasoningTokens')
+    expect(JSON.stringify(history)).not.toContain('outputTokenLimit')
+    await expect(projectAgentThread(knex, 8, sessionId, options)).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND' })
+
+    const terminal = (await listOwnedAgentEvents(knex, 7, runId)).find(event => event.type === 'run.failed')!
+    for (const responseIssue of [undefined, 'unknown', privateData]) {
+      const data = JSON.stringify({ ...terminal.data, diagnostics: { responseIssue, response: { outputTokenLimit: 8192 } } })
+      await knex('agentEvents')
+        .where({ id: terminal.id })
+        .update({ data, dataSha256: createHash('sha256').update(data).digest('hex') })
+      const reopened = await projectAgentThread(knex, 7, sessionId, options)
+      expect(reopened.messages.find(message => message.id === assistantMessageId)?.runOutcome).not.toHaveProperty('responseIssue')
+    }
+    for (const binding of [{ runId: '00000000-0000-4000-8000-000000000099' }, { status: 'partial' }]) {
+      const data = JSON.stringify({ ...terminal.data, ...binding })
+      await knex('agentEvents')
+        .where({ id: terminal.id })
+        .update({ data, dataSha256: createHash('sha256').update(data).digest('hex') })
+      const mismatched = await projectAgentThread(knex, 7, sessionId, options)
+      expect(mismatched.messages.find(message => message.id === assistantMessageId)?.runOutcome).not.toHaveProperty('responseIssue')
+    }
+    const data = JSON.stringify(terminal.data)
+    await knex('agentEvents')
+      .where({ id: terminal.id })
+      .update({ data, dataSha256: createHash('sha256').update(data).digest('hex') })
+    for (const patch of [{ attempts: 2 }, { ownerId: 8 }, { assistantMessageId: userMessageId }]) {
+      await knex('agentRuns')
+        .where({ id: runId })
+        .update({ attempts: 1, ownerId: 7, assistantMessageId, ...patch })
+      const isolated = await projectAgentThread(knex, 7, sessionId, options)
+      expect(isolated.messages.find(message => message.id === assistantMessageId)?.runOutcome?.responseIssue).toBeUndefined()
+    }
+  })
+
   it('recovers only safe original user scope from queued context while keeping old corrupt history readable and owner fenced', async () => {
     const eventId = '00000000-0000-4000-8000-000000000099'
     const hint = { id: 42, locale: 'en', path: 'original/page', observedUpdatedAt: '2026-08-16T00:00:00.000Z' }

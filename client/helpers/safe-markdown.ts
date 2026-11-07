@@ -1,6 +1,6 @@
 import DOMPurify from 'dompurify'
 import MarkdownIt, { type Env, type Token } from 'markdown-it'
-import { mapEncodedAgentQuotationParagraphs } from '../../shared/agents/quotation-markdown.ts'
+import { installAgentCodeQuotationRule, mapEncodedAgentQuotationParagraphs } from '../../shared/agents/quotation-markdown.ts'
 
 export interface SafeMarkdownCitation {
   readonly evidenceId?: string
@@ -33,6 +33,7 @@ interface MarkdownEnvironment extends Env {
 const citationMarker = /^\[\[cite:([^\]\s]{1,128})\]\]/
 const incompleteCitationMarker = /\[\[cite:[^\]\s]{0,128}\]?$/
 const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true, typographer: false })
+installAgentCodeQuotationRule(markdown)
 
 const escapeHtml = (value: string): string =>
   value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;')
@@ -48,8 +49,7 @@ const readableQuotation = (text: string): string => {
   return `> ${fence}text\n> ${body}${/[\r\n]$/u.test(text) ? fence : `\n> ${fence}`}`
 }
 
-export const exportAgentQuotationMarkdown = (content: string): string =>
-  mapEncodedAgentQuotationParagraphs(content, markdown, readableQuotation)
+export const exportAgentQuotationMarkdown = (content: string): string => mapEncodedAgentQuotationParagraphs(content, markdown, readableQuotation)
 
 const containsControlCharacter = (value: string): boolean => {
   for (let index = 0; index < value.length; index += 1) {
@@ -151,7 +151,7 @@ markdown.renderer.rules.fence = (tokens, index, options, env, renderer) => {
     kind: 'fence'
   }
   const rendered = defaultFenceRenderer ? defaultFenceRenderer(tokens, index, options, env, renderer) : renderer.renderToken(tokens, index, options)
-  return addFenceMetadata(rendered, (env as MarkdownEnvironment | undefined)?.safeMarkdown, metadata)
+  return addFenceMetadata(rendered.replaceAll('\r', '&#13;'), (env as MarkdownEnvironment | undefined)?.safeMarkdown, metadata)
 }
 
 const defaultCodeBlockRenderer = markdown.renderer.rules.code_block
@@ -227,6 +227,7 @@ export const renderSafeMarkdown = (content: string, options?: SafeMarkdownOption
   if (options?.streaming) trimTrailingStreamingMarker(tokens)
   if (options?.normalizeCitationParagraphs && options.resolveCitation) normalizeCitationParagraphs(tokens)
   const rendered = markdown.renderer.render(tokens, markdown.options, environment)
+  // HTML re-parsing normalizes raw CR; character references retain the code data.
   return DOMPurify.sanitize(rendered, {
     ALLOW_DATA_ATTR: false,
     ALLOWED_TAGS: [
@@ -271,5 +272,5 @@ export const renderSafeMarkdown = (content: string, options?: SafeMarkdownOption
       'target',
       'title'
     ]
-  })
+  }).replaceAll('\r', '&#13;')
 }

@@ -2882,6 +2882,13 @@
       "recoveryContext": "This request exceeds the context limit. Start a new conversation or reduce selected sources and attachments before sending a shorter request.",
       "recoveryOutput": "The response reached its output limit. Review the partial answer, then ask for a shorter answer or an explicit continuation.",
       "recoveryTokenBudget": "The request reached its token budget. Narrow the request or choose an available larger budget before sending it again.",
+      "responseIssue": {
+        "length": "The provider reached its output limit before completing the response.",
+        "refusal": "The provider declined or filtered the response.",
+        "malformed_output": "The provider returned an unusable response format.",
+        "response_limit": "The response exceeded a supported processing limit.",
+        "provider_error": "The provider reported a response error."
+      },
       "noLongerAvailable": "{{filename}} · No longer available",
       "detachedContext": "{{filename}} · Detached from context",
       "addFileNextMessage": "Add this file to the next message again?",

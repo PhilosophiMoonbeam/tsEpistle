@@ -375,7 +375,8 @@ const decorateRenderedHtml = (html: string): string => {
     output.textContent = t('common:agentMarkdown.renderingMermaidDiagram')
     shell.insertBefore(output, sourceDisclosure)
   }
-  return template.innerHTML
+  // Preserve literal CR when v-html parses this serialized tree once more.
+  return template.innerHTML.replaceAll('\r', '&#13;')
 }
 
 const renderMarkdown = (): string => {

@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AxAIGoogleGeminiChatRequest, AxAIService, AxChatRequest, AxChatResponse } from '@ax-llm/ax'
+import { ai, AxAIOpenAIResponsesModel } from '@ax-llm/ax'
 import { renderSafeMarkdown } from '../../../client/helpers/safe-markdown.ts'
 import { AGENT_TOOL_NAMES, type AgentActionName, type AgentEvent, type AgentEventData } from '../../../shared/agents/contracts.ts'
 import type { DecisionBatchRequest, DecisionBatchResult } from '../../../shared/agents/decision-providers.ts'
@@ -1762,7 +1764,11 @@ describe('Ax agent engine', () => {
   }
 
   const typedRootFixture = (
-    generate: (input: Readonly<AxChatRequest>, attempt: number) => AxChatResponse | ReadableStream<AxChatResponse>,
+    generate: (
+      input: Readonly<AxChatRequest>,
+      attempt: number,
+      options?: Parameters<AxAIService['chat']>[1]
+    ) => AxChatResponse | ReadableStream<AxChatResponse> | Promise<AxChatResponse | ReadableStream<AxChatResponse>>,
     revokeAfterSnapshot = false,
     collectorDraft?: string,
     source?: {
@@ -1787,7 +1793,7 @@ describe('Ax agent engine', () => {
     const chat = vi.fn(async (input: Readonly<AxChatRequest>, options?: Parameters<AxAIService['chat']>[1]) => {
       if (synthesisSourcesFromRequest(input).length > 0) {
         if (options?.abortSignal) dispatchSignals.push(options.abortSignal)
-        return generate(input, ++attempts)
+        return generate(input, ++attempts, options)
       }
       const control = sourceReadRequested ? synthesisCollectionControl(input) : undefined
       if (control !== undefined) {
@@ -1887,6 +1893,7 @@ describe('Ax agent engine', () => {
         { text, event }
       )
     return {
+      factory,
       production,
       staging,
       execute,
@@ -2156,43 +2163,82 @@ describe('Ax agent engine', () => {
     expect(fixture.outstanding.size).toBe(0)
   })
 
-  it('cancels a completed unknown binding early while retaining unreported paid exposure', async () => {
+  it('cancels a response-byte limit violation without repair or a fabricated usage receipt', async () => {
     const cancel = vi.fn(async () => {})
-    const fixture = typedRootFixture((input, attempt) => {
-      const source = synthesisSourcesFromRequest(input).find(unit => unit.text.includes(fixture.production))!
-      if (attempt === 1)
-        return new ReadableStream<AxChatResponse>({
+    const fixture = typedRootFixture(
+      () =>
+        new ReadableStream<AxChatResponse>({
           start(controller) {
-            controller.enqueue({
-              results: [{ index: 0, content: `{"claims":[${JSON.stringify({ sourceRef: 'sAAAAAAAAAAAAAAAA', statement: fixture.production })}` }]
-            })
+            controller.enqueue({ results: [{ index: 0, content: 'x'.repeat(1_000_000) }] })
           },
           cancel
         })
-      return typedFixtureReceipt(synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fixture.production }] }))
-    })
-    const result = await fixture.execute()
+    )
+    await expect(fixture.execute()).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
     expect(cancel).toHaveBeenCalledOnce()
     expect(fixture.dispatchSignals[0]!.aborted).toBe(true)
-    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(fixture.production)
-    expect(result.totalTokens).toBe(29)
+    expect(fixture.attempts).toBe(1)
+    expect(fixture.text).not.toHaveBeenCalled()
     expect(fixture.outstanding.size).toBe(1)
-    const rejection = fixture.event.mock.calls.find(
-      ([type, data]) =>
-        type === 'model.turn' &&
-        typeof data === 'object' &&
-        data !== null &&
-        'performance' in data &&
-        questionRecord(data.performance).structuralRejection === true
-    )
-    const performance = questionRecord(questionRecord(rejection?.[1]).performance)
-    expect(performance.providerUsageReported).toBe(false)
-    expect(performance.totalTokensReported).toBeNull()
-    expect(fixture.dispatchBudget.unsettledExposure).toEqual({
-      tokens: performance.unknownExposureTokens,
-      costMicros: performance.unknownExposureCostMicros
+    expect(fixture.dispatchBudget.unsettledExposure.tokens).toBeGreaterThan(0)
+    expect(fixture.settled).toHaveLength(2)
+    expect(fixture.settled.every(receipt => receipt.totalTokens > 0)).toBe(true)
+    expect(fixture.event.mock.calls.filter(([type, data]) => type === 'model.turn' && questionRecord(data).outcome === 'answer_rejected')).toEqual([])
+    expect(JSON.stringify(fixture.event.mock.calls)).not.toContain('sAAAAAAAAAAAAAAAA')
+  })
+
+  it('settles a complete streamed source rejection before its single repair without exposing the rejected binding', async () => {
+    const cancel = vi.fn(async () => {})
+    const fixture = typedRootFixture((input, attempt) => {
+      const source = synthesisSourcesFromRequest(input).find(unit => unit.text.includes(fixture.production))!
+      if (attempt > 1) return typedFixtureReceipt(synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fixture.production }] }))
+      const rejected = synthesisFixtureAnswer(input, { claims: [{ ...source, statement: fixture.production }] })
+      const wire = JSON.parse(rejected)
+      wire.claims[0].sourceRef = 'sAAAAAAAAAAAAAAAA'
+      return new ReadableStream<AxChatResponse>({
+        start(controller) {
+          controller.enqueue({ results: [{ index: 0, content: JSON.stringify(wire) }] })
+          controller.enqueue({ ...typedFixtureReceipt(''), results: [{ index: 0, finishReason: 'stop' }] })
+          controller.close()
+        },
+        cancel
+      })
     })
-    expect(performance.unknownExposureTokens).toBe(Number(performance.serializedRequestBytes) + 4_000)
+    const result = await fixture.execute()
+    expect(cancel).not.toHaveBeenCalled()
+    expect(fixture.attempts).toBe(2)
+    expect(fixture.outstanding.size).toBe(0)
+    expect(fixture.settled.filter(receipt => receipt.totalTokens === 12)).toHaveLength(3)
+    expect(result.totalTokens).toBe(41)
+    expect(result.totalTokens).toBe(fixture.settled.reduce((sum, receipt) => sum + receipt.totalTokens, 0))
+    expect(result.executionLimit).toBeUndefined()
+    expect(visibleWikiText(fixture.text.mock.calls.map(([delta]) => delta).join(''))).toContain(fixture.production)
+    expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain('sAAAAAAAAAAAAAAAA')
+  })
+
+  it('releases a synthesis reservation when the provider throws before dispatch without retry or usage', async () => {
+    const fixture = typedRootFixture(() => {
+      throw new Error('Synthesis must not reach the scripted HTTP entry')
+    })
+    const create = fixture.factory.create.bind(fixture.factory)
+    const beforeHttp = vi.fn(() => {
+      throw new Error('private pre-HTTP fixture failure')
+    })
+    fixture.factory.create = async (...args) => {
+      const provider = await create(...args)
+      const chat = provider.service.chat.bind(provider.service)
+      provider.service.chat = async (input, options) => (synthesisSourcesFromRequest(input).length > 0 ? beforeHttp() : chat(input, options))
+      return provider
+    }
+    await expect(fixture.execute()).rejects.toMatchObject({ stage: 'provider_request' })
+    expect(beforeHttp).toHaveBeenCalledOnce()
+    expect(fixture.attempts).toBe(0)
+    expect(fixture.outstanding.size).toBe(0)
+    expect(fixture.dispatchBudget.unsettledExposure).toEqual({ tokens: 0, costMicros: 0 })
+    expect(fixture.settled).toHaveLength(2)
+    expect(fixture.settled.every(receipt => receipt.totalTokens > 0)).toBe(true)
+    expect(fixture.text).not.toHaveBeenCalled()
+    expect(JSON.stringify(fixture.event.mock.calls)).not.toContain('private pre-HTTP fixture failure')
   })
 
   it.each([
@@ -2217,7 +2263,13 @@ describe('Ax agent engine', () => {
         }
       })
     })
-    await expect(fixture.execute()).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+    await expect(fixture.execute()).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_RESPONSE',
+      diagnostics: {
+        responseIssue: finishReason === 'error' ? 'provider_error' : 'refusal',
+        response: { phase: 'wiki_synthesis', outputTokenLimit: 4_000 }
+      }
+    })
     expect(fixture.attempts).toBe(1)
     expect(fixture.invoke).toHaveBeenCalledOnce()
     expect(fixture.text).not.toHaveBeenCalled()
@@ -2225,32 +2277,163 @@ describe('Ax agent engine', () => {
     expect(fixture.settled.filter(usage => usage.totalTokens === 12)).toHaveLength(2)
   })
 
-  it.each(['error', 'content_filter'] as const)(
-    'rejects failed-terminal synthesis cancelled before EOF while retaining unknown paid exposure (%s)',
-    async finishReason => {
-      const cancel = vi.fn(async () => {})
-      const fixture = typedRootFixture(() => {
-        return new ReadableStream<AxChatResponse>({
-          start(controller) {
-            controller.enqueue({
-              ...typedFixtureReceipt(''),
-              results: [{ index: 0, finishReason, content: `{"claims":[${JSON.stringify({ sourceRef: 'sAAAAAAAAAAAAAAAA', statement: fixture.production })}` }]
-            })
-          },
-          cancel
+  // Both package entrypoints are installed production surfaces. Feed their
+  // actual SSE adapters into the same admitted synthesis/accounting boundary.
+  for (const entrypoint of ['esm', 'cjs'] as const) {
+    it.each([
+      { itemStatus: 'incomplete', reason: 'max_output_tokens', issue: 'length' },
+      { itemStatus: 'completed', reason: 'max_output_tokens', issue: 'length' },
+      { itemStatus: 'incomplete', reason: 'content_filter', issue: 'refusal' },
+      { itemStatus: 'incomplete', reason: 'unknown_provider_reason', issue: 'provider_error' },
+      { itemStatus: 'failed', reason: 'max_output_tokens', issue: 'provider_error' },
+      { itemStatus: 'incomplete', priorReason: 'unknown_provider_reason', reason: 'max_output_tokens', issue: 'provider_error' },
+      { itemStatus: 'incomplete', priorReason: 'content_filter', reason: 'max_output_tokens', issue: 'refusal' },
+      { itemStatus: 'incomplete', reason: undefined, issue: undefined },
+      { itemStatus: 'incomplete', reason: 'max_output_tokens', issue: 'missing_usage' }
+    ] as const)(`preserves real ${entrypoint} Responses item/terminal semantics ($itemStatus, $reason, $issue)`, async scenario => {
+      const { itemStatus, reason, issue } = scenario
+      const priorReason = 'priorReason' in scenario ? scenario.priorReason : undefined
+      const sdk =
+        entrypoint === 'esm'
+          ? { ai, AxAIOpenAIResponsesModel }
+          : (createRequire(import.meta.url)('@ax-llm/ax') as { ai: typeof ai; AxAIOpenAIResponsesModel: typeof AxAIOpenAIResponsesModel })
+      const partial = '{"claims":['
+      const frames = [
+        { type: 'response.created', response: { id: 'response_fixture', object: 'response', status: 'in_progress', output: [] } },
+        {
+          type: 'response.output_item.added',
+          output_index: 0,
+          item: { id: 'message_fixture', type: 'message', status: 'in_progress', role: 'assistant', content: [] }
+        },
+        { type: 'response.output_text.delta', item_id: 'message_fixture', output_index: 0, content_index: 0, delta: partial },
+        {
+          type: 'response.output_item.done',
+          output_index: 0,
+          item: {
+            id: 'message_fixture',
+            type: 'message',
+            status: itemStatus,
+            role: 'assistant',
+            content: [{ type: 'output_text', text: partial, annotations: [] }]
+          }
+        },
+        ...(priorReason === undefined
+          ? []
+          : [
+              {
+                type: 'response.incomplete',
+                response: {
+                  id: 'response_fixture',
+                  object: 'response',
+                  status: 'incomplete',
+                  incomplete_details: { reason: priorReason },
+                  output: [],
+                  usage: { input_tokens: 13, output_tokens: 9, total_tokens: 22, output_tokens_details: { reasoning_tokens: 5 } }
+                }
+              }
+            ]),
+        ...(reason === undefined
+          ? []
+          : [
+              {
+                type: 'response.incomplete',
+                response: {
+                  id: 'response_fixture',
+                  object: 'response',
+                  status: 'incomplete',
+                  incomplete_details: { reason },
+                  output: [],
+                  ...(issue === 'missing_usage'
+                    ? {}
+                    : { usage: { input_tokens: 13, output_tokens: 9, total_tokens: 22, output_tokens_details: { reasoning_tokens: 5 } } })
+                }
+              }
+            ])
+      ]
+      const fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ stream: true, max_output_tokens: 4_000 })
+        return new Response(`${frames.map(frame => `event: ${frame.type}\ndata: ${JSON.stringify(frame)}\n\n`).join('')}data: [DONE]\n\n`, {
+          headers: { 'content-type': 'text/event-stream' }
         })
       })
-      await expect(fixture.execute()).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
-      expect(cancel).toHaveBeenCalledOnce()
+      const service = sdk.ai({
+        name: 'openai-responses',
+        apiKey: 'fixture-key',
+        config: { model: sdk.AxAIOpenAIResponsesModel.GPT41 },
+        options: { fetch: fetch as typeof globalThis.fetch }
+      })
+      const fixture = typedRootFixture((input, _attempt, options) => service.chat(input, options))
+      if (issue === 'length') {
+        const result = await fixture.execute()
+        expect(result.outputLimited).toBe(true)
+        expect(result.citations).toBeUndefined()
+        expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(partial)
+        expect(fixture.event).toHaveBeenCalledWith('model.turn', expect.objectContaining({ finishReason: 'length', outputTokens: 9 }))
+      } else if (issue === undefined || issue === 'missing_usage') {
+        await expect(fixture.execute()).rejects.toMatchObject({ code: 'PROVIDER_USAGE_INVALID' })
+        expect(fixture.settled.filter(usage => usage.totalTokens === 22)).toHaveLength(0)
+      } else {
+        await expect(fixture.execute()).rejects.toMatchObject({
+          code: 'INVALID_PROVIDER_RESPONSE',
+          diagnostics: {
+            responseIssue: issue,
+            current: { inputTokens: 13, outputTokens: 9, totalTokens: 22 },
+            response: { phase: 'wiki_synthesis', outputTokenLimit: 4_000, reasoningTokens: 5 }
+          }
+        })
+        expect(fixture.text).not.toHaveBeenCalled()
+      }
+      expect(fetch).toHaveBeenCalledOnce()
       expect(fixture.attempts).toBe(1)
-      expect(fixture.invoke).toHaveBeenCalledOnce()
-      expect(fixture.text).not.toHaveBeenCalled()
-      expect(fixture.outstanding.size).toBe(1)
-      expect(fixture.settled.filter(usage => usage.totalTokens === 12)).toHaveLength(1)
-    }
-  )
+      expect(fixture.settled.filter(usage => usage.totalTokens === 22)).toHaveLength(issue === undefined || issue === 'missing_usage' ? 0 : 1)
+      if (issue !== undefined && issue !== 'missing_usage') {
+        expect(fixture.settled.find(usage => usage.totalTokens === 22)).toMatchObject({ inputTokens: 13, outputTokens: 9, totalTokens: 22, costMicros: 31 })
+        expect(fixture.outstanding.size).toBe(0)
+      }
+    })
+  }
 
-  it('does not repair a structurally rejected length-limited synthesis stream', async () => {
+  it.each(['malformed_output', 'response_limit'] as const)('labels observed host %s without publishing or claiming a complete receipt', async issue => {
+    const fixture = typedRootFixture(() => ({
+      results: [{ index: 0, content: issue === 'response_limit' ? 'x'.repeat(1_000_001) : (42 as unknown as string) }],
+      modelUsage: { ai: 'fixture', model: 'gpt-test', tokens: { promptTokens: 13, completionTokens: 9, totalTokens: 22 } }
+    }))
+    await expect(fixture.execute()).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_RESPONSE',
+      diagnostics: { responseIssue: issue, response: { phase: 'wiki_synthesis', outputTokenLimit: 4_000 } }
+    })
+    expect(fixture.attempts).toBe(1)
+    expect(fixture.text).not.toHaveBeenCalled()
+    expect(fixture.settled.filter(usage => usage.totalTokens === 22)).toHaveLength(0)
+  })
+
+  it('recognizes a real SDK refusal without exposing its provider text or claiming EOF usage', async () => {
+    const refusal = 'PRIVATE_PROVIDER_REFUSAL_CANARY'
+    const service = ai({
+      name: 'openai-responses',
+      apiKey: 'fixture-key',
+      config: { model: AxAIOpenAIResponsesModel.GPT41 },
+      options: {
+        fetch: async () =>
+          new Response(`data: ${JSON.stringify({ type: 'response.content_part.added', item_id: 'refused_message', part: { type: 'refusal', refusal } })}\n\n`, {
+            headers: { 'content-type': 'text/event-stream' }
+          })
+      }
+    })
+    const fixture = typedRootFixture((input, _attempt, options) => service.chat(input, options))
+    const failure = await fixture.execute().catch((error: unknown) => error)
+    expect(failure).toMatchObject({
+      code: 'INVALID_PROVIDER_RESPONSE',
+      diagnostics: { responseIssue: 'refusal', response: { phase: 'wiki_synthesis', outputTokenLimit: 4_000 } }
+    })
+    expect(JSON.stringify(failure)).not.toContain(refusal)
+    expect(fixture.text).not.toHaveBeenCalled()
+    expect(fixture.attempts).toBe(1)
+    expect(fixture.settled).toHaveLength(2)
+    expect(fixture.outstanding.size).toBe(1)
+  })
+
+  it('settles a structurally rejected length-limited synthesis at EOF without repair', async () => {
     const fixture = typedRootFixture(() => {
       return new ReadableStream<AxChatResponse>({
         start(controller) {
@@ -2259,15 +2442,18 @@ describe('Ax agent engine', () => {
               { index: 0, finishReason: 'length', content: `{"claims":[${JSON.stringify({ sourceRef: 'sAAAAAAAAAAAAAAAA', statement: fixture.production })}` }
             ]
           })
+          controller.enqueue({ ...typedFixtureReceipt(''), results: [] })
+          controller.close()
         }
       })
     })
     const result = await fixture.execute()
     expect(fixture.attempts).toBe(1)
     expect(result.outputLimited).toBe(true)
-    expect(result.totalTokens).toBe(17)
+    expect(result.totalTokens).toBe(29)
     expect(fixture.text.mock.calls.map(([delta]) => delta).join('')).not.toContain(fixture.production)
-    expect(fixture.outstanding.size).toBe(1)
+    expect(fixture.outstanding.size).toBe(0)
+    expect(result.totalTokens).toBe(fixture.settled.reduce((sum, usage) => sum + usage.totalTokens, 0))
   })
 
   it('rechecks live source authorization after snapshot persistence and before publication', async () => {

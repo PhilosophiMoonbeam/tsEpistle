@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import {
   type AxAIService,
   type AxAIServiceOptions,
+  AxAIRefusalError,
   AxAssertionError,
   type AxChatRequest,
   type AxChatResponse,
@@ -69,7 +70,12 @@ import {
   applyAgentCompactionWindow,
   planAgentContextCompaction
 } from './context-compaction.ts'
-import { AgentExecutionFailure, type AgentExecutionFailureStage, classifyAgentExecutionFailure } from './execution-failure.ts'
+import {
+  AgentExecutionFailure,
+  type AgentExecutionFailureDiagnostics,
+  type AgentExecutionFailureStage,
+  classifyAgentExecutionFailure
+} from './execution-failure.ts'
 import { assertExternalMcpResultMedia, type ExternalMcpEngineBinding, ExternalMcpEngineContext } from './external-mcp-engine.ts'
 import {
   AgentProviderFactory,
@@ -96,6 +102,7 @@ import {
 import { extractRootRequestMetadata, ROOT_REQUEST_COVERAGE_INSTRUCTIONS, type RootRequestFacet, type RootResponseMetadata } from './request-coverage.ts'
 import type { AxActionSession } from './session-harness.ts'
 import {
+  getSourceCodeLiteral,
   isSourceSentenceAbbreviation,
   type ParsedSourceDocument,
   parseSourceDocument,
@@ -135,7 +142,6 @@ import {
   compactWikiQuotationContext,
   wikiSynthesisContributions,
   createWikiSynthesisProgram,
-  createWikiSynthesisStreamGuard,
   encodeWikiSynthesisSources,
   renderWikiSynthesisAnswer,
   renderWikiSynthesisAttachmentClaimStatement,
@@ -3773,9 +3779,6 @@ interface TurnResult extends AgentTokenUsage {
     readonly cachedInputTokensReported: number | null
     readonly cacheCreationInputTokensReported: number | null
     readonly totalTokensReported: number | null
-    readonly unknownExposureTokens?: number
-    readonly unknownExposureCostMicros?: number
-    readonly structuralRejection?: boolean
     readonly synthesisFrame?: Readonly<Record<string, string | number | boolean | null>>
   }
 }
@@ -3828,13 +3831,18 @@ interface ProviderResponseAccumulator {
   finishReason?: AxChatResponseResult['finishReason']
 }
 
-const invalidProviderResponse = (message: string): never => {
-  throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', message, 502)
+function invalidProviderResponse(message: string, responseIssue: AgentExecutionFailureDiagnostics['responseIssue'] = 'malformed_output'): never {
+  throw Object.assign(new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', message, 502), { agentDiagnostics: { responseIssue } })
 }
+
+const classifyProviderResponseFailure = (error: unknown, stage: AgentExecutionFailureStage): AgentExecutionFailure =>
+  error instanceof AxAIRefusalError
+    ? new AgentExecutionFailure('INVALID_PROVIDER_RESPONSE', stage, undefined, { responseIssue: 'refusal' })
+    : classifyAgentExecutionFailure(error, stage)
 
 const boundedProviderStringBytes = (value: string, maximumBytes: number, message: string): number => {
   const bytes = Buffer.byteLength(value, 'utf8')
-  if (bytes > maximumBytes) invalidProviderResponse(message)
+  if (bytes > maximumBytes) invalidProviderResponse(message, 'response_limit')
   return bytes
 }
 
@@ -3860,7 +3868,7 @@ const measureStructuredValue = (value: unknown, limits: AgentProviderResourceLim
   let bytes = 0
 
   const addBytes = (delta: number): void => {
-    if (!Number.isSafeInteger(delta) || delta < 0 || bytes > limits.maxStructuredBytes - delta) invalidProviderResponse(message)
+    if (!Number.isSafeInteger(delta) || delta < 0 || bytes > limits.maxStructuredBytes - delta) invalidProviderResponse(message, 'response_limit')
     bytes += delta
   }
 
@@ -3893,9 +3901,9 @@ const measureStructuredValue = (value: unknown, limits: AgentProviderResourceLim
   }
 
   const visit = (currentValue: unknown, depth: number): void => {
-    if (depth > limits.maxStructuredDepth) invalidProviderResponse(message)
+    if (depth > limits.maxStructuredDepth) invalidProviderResponse(message, 'response_limit')
     values += 1
-    if (values > limits.maxStructuredValues) invalidProviderResponse(message)
+    if (values > limits.maxStructuredValues) invalidProviderResponse(message, 'response_limit')
 
     if (currentValue === null) {
       addBytes(4)
@@ -3929,8 +3937,8 @@ const measureStructuredValue = (value: unknown, limits: AgentProviderResourceLim
       const arrayValue = objectValue as readonly unknown[]
       ancestors.add(objectValue)
       addBytes(2)
-      if (arrayValue.length > limits.maxStructuredValues - values) invalidProviderResponse(message)
-      if (frames.length >= limits.maxStructuredDepth + 1) invalidProviderResponse(message)
+      if (arrayValue.length > limits.maxStructuredValues - values) invalidProviderResponse(message, 'response_limit')
+      if (frames.length >= limits.maxStructuredDepth + 1) invalidProviderResponse(message, 'response_limit')
       frames.push({ kind: 'array', value: arrayValue, depth, index: 0 })
       return
     }
@@ -3947,16 +3955,17 @@ const measureStructuredValue = (value: unknown, limits: AgentProviderResourceLim
     try {
       for (const key in objectValue) {
         if (!Object.hasOwn(objectValue, key)) continue
-        if (keys.length >= limits.maxStructuredValues - values) invalidProviderResponse(message)
+        if (keys.length >= limits.maxStructuredValues - values) invalidProviderResponse(message, 'response_limit')
         keys.push(key)
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof AgentRepositoryError) throw error
       invalidProviderResponse(message)
     }
     keys.sort((left, right) => left.localeCompare(right))
     ancestors.add(objectValue)
     addBytes(2)
-    if (frames.length >= limits.maxStructuredDepth + 1) invalidProviderResponse(message)
+    if (frames.length >= limits.maxStructuredDepth + 1) invalidProviderResponse(message, 'response_limit')
     frames.push({ kind: 'object', value: objectValue, keys, depth, index: 0 })
   }
 
@@ -4037,13 +4046,13 @@ const hasControlCharacter = (value: string): boolean => {
 
 const addIncomingBytes = (state: ProviderResponseAccumulator, bytes: number, limits: AgentProviderResourceLimits): void => {
   if (!Number.isSafeInteger(bytes) || bytes < 0 || state.incomingBytes > limits.incomingBytes - bytes)
-    invalidProviderResponse('Provider response exceeded its cumulative fragment work limit')
+    invalidProviderResponse('Provider response exceeded its cumulative fragment work limit', 'response_limit')
   state.incomingBytes += bytes
 }
 
 const addRetainedBytes = (state: ProviderResponseAccumulator, delta: number, limits: AgentProviderResourceLimits): void => {
   if (!Number.isSafeInteger(delta) || (delta > 0 && state.retainedBytes > limits.retainedBytes - delta) || (delta < 0 && state.retainedBytes < -delta))
-    invalidProviderResponse('Provider response exceeded its retained byte limit')
+    invalidProviderResponse('Provider response exceeded its retained byte limit', 'response_limit')
   state.retainedBytes += delta
 }
 
@@ -4064,7 +4073,7 @@ const appendCalls = (
     if (!Array.isArray(functionCalls)) invalidProviderResponse('Provider returned invalid action calls')
     for (const call of functionCalls) {
       state.argumentFragments++
-      if (state.argumentFragments > limits.maxArgumentFragments) invalidProviderResponse('Provider returned too many action fragments')
+      if (state.argumentFragments > limits.maxArgumentFragments) invalidProviderResponse('Provider returned too many action fragments', 'response_limit')
       if (typeof call !== 'object' || call === null || typeof call.id !== 'string' || call.id.length < 1 || hasControlCharacter(call.id))
         invalidProviderResponse('Provider emitted an invalid action call ID')
       const idBytes = boundedProviderStringBytes(call.id, MAX_PROVIDER_IDENTIFIER_BYTES, 'Provider emitted an invalid action call ID')
@@ -4074,8 +4083,7 @@ const appendCalls = (
         invalidProviderResponse('Provider emitted an invalid action name')
       if (typeof streamedName === 'string') boundedProviderStringBytes(streamedName, MAX_PROVIDER_IDENTIFIER_BYTES, 'Provider emitted an invalid action name')
       const providerName = streamedName || prior?.providerName
-      if (typeof providerName !== 'string' || providerName.length === 0)
-        throw new AgentRepositoryError('INVALID_PROVIDER_RESPONSE', 'Provider omitted an action name', 502)
+      if (typeof providerName !== 'string' || providerName.length === 0) invalidProviderResponse('Provider omitted an action name')
       if (actionNames !== undefined && !actionNames.has(providerName)) invalidProviderResponse('Provider requested an unavailable action')
       if (prior && streamedName && prior.providerName !== streamedName) invalidProviderResponse('Provider changed an action name while streaming')
       const nextParams = call.function?.params
@@ -4086,7 +4094,7 @@ const appendCalls = (
       addIncomingBytes(state, incomingBytes, limits)
       const mappedName = actionNames?.get(providerName) ?? providerName
       if (prior === undefined) {
-        if (state.calls.size >= limits.maxCalls) invalidProviderResponse('Provider emitted too many action calls')
+        if (state.calls.size >= limits.maxCalls) invalidProviderResponse('Provider emitted too many action calls', 'response_limit')
         const baseBytes = idBytes + Buffer.byteLength(providerName, 'utf8') + Buffer.byteLength(mappedName, 'utf8') + 32
         addRetainedBytes(state, baseBytes + incomingBytes, limits)
         state.calls.set(call.id, {
@@ -4100,7 +4108,8 @@ const appendCalls = (
         continue
       }
       if (typeof prior.params === 'string' && typeof normalizedParams === 'string') {
-        if (prior.argumentBytes > limits.argumentBytes - incomingBytes) invalidProviderResponse('Provider action arguments exceeded their limit')
+        if (prior.argumentBytes > limits.argumentBytes - incomingBytes)
+          invalidProviderResponse('Provider action arguments exceeded their limit', 'response_limit')
         prior.stringFragments.push(normalizedParams)
         prior.argumentBytes += incomingBytes
         prior.params = normalizedParams
@@ -4127,7 +4136,7 @@ const providerBlockBytes = (block: unknown, limits: AgentProviderResourceLimits)
     signature === undefined ? 0 : boundedProviderStringBytes(signature, limits.continuationBytes, 'Provider continuation state exceeded its byte limit')
   const envelopeBytes = 32
   if (signatureBytes > limits.continuationBytes - envelopeBytes || dataBytes > limits.continuationBytes - envelopeBytes - signatureBytes)
-    invalidProviderResponse('Provider continuation state exceeded its byte limit')
+    invalidProviderResponse('Provider continuation state exceeded its byte limit', 'response_limit')
   return dataBytes + signatureBytes + envelopeBytes
 }
 
@@ -4142,7 +4151,7 @@ const appendThoughtBlocks = (
   if (!Array.isArray(rawBlocks)) invalidProviderResponse('Provider returned invalid continuation blocks')
   for (const rawBlock of rawBlocks) {
     state.thoughtFragments++
-    if (state.thoughtFragments > limits.maxThoughtFragments) invalidProviderResponse('Provider returned too many continuation fragments')
+    if (state.thoughtFragments > limits.maxThoughtFragments) invalidProviderResponse('Provider returned too many continuation fragments', 'response_limit')
     const incomingBytes = providerBlockBytes(rawBlock, limits)
     addIncomingBytes(state, incomingBytes, limits)
     const preserved = provider.preserveThoughtBlock?.(result.id ?? '', rawBlock)
@@ -4155,9 +4164,9 @@ const appendThoughtBlocks = (
     const previous = state.thoughtBlocks.get(key)
     const nextContinuationBytes = state.continuationBytes - (previous?.bytes ?? 0) + bytes
     if (!Number.isSafeInteger(nextContinuationBytes) || nextContinuationBytes > limits.continuationBytes)
-      invalidProviderResponse('Provider continuation state exceeded its byte limit')
+      invalidProviderResponse('Provider continuation state exceeded its byte limit', 'response_limit')
     if (previous === undefined && state.thoughtBlocks.size >= limits.maxContinuationBlocks)
-      invalidProviderResponse('Provider returned too many continuation blocks')
+      invalidProviderResponse('Provider returned too many continuation blocks', 'response_limit')
     addRetainedBytes(state, bytes - (previous?.bytes ?? 0), limits)
     state.continuationBytes = nextContinuationBytes
     state.thoughtBlocks.set(key, { block: preserved, bytes })
@@ -6319,7 +6328,6 @@ export class AxAgentEngine implements AgentEngine {
     metadataContext?: Parameters<typeof extractRootRequestMetadata>[1],
     synthesis?: {
       readonly request: Readonly<AxChatRequest>
-      readonly guard?: (fragment: string) => string | undefined
     },
     authorizeEvidence?: () => Promise<void>,
     cachePhase: WikiCachePhase = 'collection',
@@ -6350,10 +6358,10 @@ export class AxAgentEngine implements AgentEngine {
     let totalTokens = 0
     let completeUsage: AgentProviderUsage | undefined
     let observedUsage: AgentProviderUsage | undefined
+    let reasoningTokens: number | undefined
     let reportedCachedInputTokens: number | null = null
     let reportedCacheCreationInputTokens: number | null = null
     let responseAccepted = false
-    let structuralIssue: string | undefined
     const synthesisNames = synthesis === undefined ? undefined : new Map((synthesis.request.functions ?? []).map(fn => [fn.name, fn.name]))
     if (synthesisNames !== undefined && [...synthesisNames.keys()].some(name => name !== '__axOutput'))
       throw new AgentRepositoryError('INVALID_PROVIDER_REQUEST', 'Synthesis cannot offer application tools', 500)
@@ -6367,12 +6375,39 @@ export class AxAgentEngine implements AgentEngine {
         return
       accumulator.finishReason = finishReason
     }
+    const responseFailure = (error: unknown, stage: AgentExecutionFailureStage): AgentExecutionFailure => {
+      const failure = classifyProviderResponseFailure(error, stage)
+      if (failure.code !== 'INVALID_PROVIDER_RESPONSE' || failure.stage === 'usage_reconciliation' || failure.stage === 'host_persistence') return failure
+      const responseIssue =
+        accumulator.finishReason === 'error'
+          ? 'provider_error'
+          : accumulator.finishReason === 'content_filter' || failure.diagnostics?.responseIssue === 'refusal'
+            ? 'refusal'
+            : accumulator.finishReason === 'length'
+              ? 'length'
+              : failure.diagnostics?.responseIssue
+      return new AgentExecutionFailure(failure.code, failure.stage, failure.providerStatus, {
+        ...failure.diagnostics,
+        ...(responseIssue === undefined ? {} : { responseIssue }),
+        transportKind: provider.transportKind,
+        ...(responseAccepted && completeUsage !== undefined ? { current: completeUsage } : {}),
+        response: {
+          ...(cachePhase === 'compaction'
+            ? {}
+            : { phase: cachePhase === 'synthesis' ? 'wiki_synthesis' : cachePhase === 'coverage' ? 'wiki_coverage' : 'collection' }),
+          outputTokenLimit: maxOutputTokens,
+          ...(reasoningTokens === undefined ? {} : { reasoningTokens })
+        }
+      })
+    }
     const accept = async (response: AxChatResponse): Promise<void> => {
       if (typeof response !== 'object' || response === null || !Array.isArray(response.results))
         invalidProviderResponse('Provider returned an invalid response')
       accumulator.responseFragments++
-      if (accumulator.responseFragments > limits.maxResponseFragments) invalidProviderResponse('Provider returned too many response fragments')
-      if (response.results.length > limits.maxResultRecords - accumulator.resultRecords) invalidProviderResponse('Provider returned too many result records')
+      if (accumulator.responseFragments > limits.maxResponseFragments)
+        invalidProviderResponse('Provider returned too many response fragments', 'response_limit')
+      if (response.results.length > limits.maxResultRecords - accumulator.resultRecords)
+        invalidProviderResponse('Provider returned too many result records', 'response_limit')
       const responseUsage = readAgentProviderUsage(provider.transportKind, response)
       if (responseUsage !== null) {
         observedUsage = acceptCumulativeAgentProviderUsage(observedUsage ?? null, responseUsage)
@@ -6382,6 +6417,11 @@ export class AxAgentEngine implements AgentEngine {
         reportedCachedInputTokens = observedUsage.cachedInputTokens ?? null
         reportedCacheCreationInputTokens = observedUsage.cacheCreationInputTokens ?? null
       }
+      // Reasoning is already included in output usage: retain only the provider
+      // count for diagnosis, never add it to settlement or model-visible input.
+      const reportedReasoningTokens = response.modelUsage?.tokens?.reasoningTokens
+      if (typeof reportedReasoningTokens === 'number' && Number.isSafeInteger(reportedReasoningTokens) && reportedReasoningTokens >= 0)
+        reasoningTokens = reportedReasoningTokens
       appendCalls(accumulator, response.results, synthesisNames ?? tools?.actionNames, limits)
       for (const result of response.results) {
         accumulator.resultRecords++
@@ -6396,18 +6436,16 @@ export class AxAgentEngine implements AgentEngine {
           const contentLimit = provider.transportKind === 'legacy-completions' ? 128_000 : limits.fragmentBytes
           const bytes = boundedProviderStringBytes(result.content, contentLimit, 'Provider response content fragment is too large')
           addIncomingBytes(accumulator, bytes, limits)
-          if (accumulator.contentBytes > limits.contentBytes - bytes) invalidProviderResponse('Provider response content exceeded its byte limit')
+          if (accumulator.contentBytes > limits.contentBytes - bytes)
+            invalidProviderResponse('Provider response content exceeded its byte limit', 'response_limit')
           addRetainedBytes(accumulator, bytes, limits)
           accumulator.contentBytes += bytes
           accumulator.contentFragments.push(result.content)
-          if (synthesis !== undefined && structuralIssue === undefined) structuralIssue = synthesis.guard?.(result.content)
+          // Source/schema proof belongs to final Ax/host validation after EOF
+          // and settlement. Only resource/transport failures interrupt this
+          // bounded buffer; an incomplete receipt cannot authorize a repair.
         }
         appendThoughtBlocks(accumulator, provider, result, limits)
-        if (synthesis !== undefined && structuralIssue === undefined) {
-          for (const call of result.functionCalls ?? []) {
-            if (typeof call.function.params === 'string') structuralIssue = synthesis.guard?.(call.function.params)
-          }
-        }
       }
     }
     const serializationStartedAt = performance.now()
@@ -6570,7 +6608,7 @@ export class AxAgentEngine implements AgentEngine {
       } finally {
         await preparedMedia.cleanup().catch(() => {})
       }
-      throw classifyAgentExecutionFailure(error, 'provider_request')
+      throw responseFailure(error, 'provider_request')
     }
     let failureStage: AgentExecutionFailureStage = 'provider_response'
     let estimatedUsage = false
@@ -6585,7 +6623,7 @@ export class AxAgentEngine implements AgentEngine {
         try {
           while (true) {
             const item = await withAgentSourceAuthorization(preparedMedia.authorizeSourceInputs, () => reader.read()).catch(error => {
-              throw classifyAgentExecutionFailure(error, 'provider_stream')
+              throw classifyProviderResponseFailure(error, 'provider_stream')
             })
             if (item.done) {
               streamReachedEof = true
@@ -6594,12 +6632,6 @@ export class AxAgentEngine implements AgentEngine {
             if (firstChunkAt === null) firstChunkAt = performance.now()
             try {
               await accept(item.value)
-              if (structuralIssue !== undefined && dispatchBudget !== undefined) {
-                dispatchAbortController.abort(new Error('Synthesis structural invariant failed'))
-                cancelAttempted = true
-                await Promise.race([reader.cancel(PROVIDER_STREAM_CANCEL_REASON).catch(() => {}), new Promise<void>(resolve => setTimeout(resolve, 1_000))])
-                break
-              }
             } catch (error) {
               throw classifyAgentExecutionFailure(error, 'provider_response')
             }
@@ -6635,41 +6667,6 @@ export class AxAgentEngine implements AgentEngine {
         completeUsage = observedUsage
         providerEndedAt = performance.now()
       }
-      if (structuralIssue !== undefined && completeUsage === undefined) {
-        // Cancellation cannot establish the provider's final usage. Keep the
-        // dispatched reservation outstanding; runtime settles its exposure
-        // separately from measured usage, including after a bounded repair.
-        if (accumulator.finishReason === 'error') invalidProviderResponse('Provider terminated synthesis with an error')
-        if (accumulator.finishReason === 'content_filter') invalidProviderResponse('Provider filtered its synthesis response')
-        await releaseUndispatchedReservation()
-        return {
-          content: '',
-          calls: [],
-          thoughtBlocks: [],
-          inputTokens: 0,
-          outputTokens: 0,
-          totalTokens: 0,
-          costMicros: 0,
-          rootFramingIssue: structuralIssue,
-          ...(accumulator.finishReason === undefined ? {} : { finishReason: accumulator.finishReason }),
-          performance: {
-            serializedRequestBytes: exposure.serializedRequestBytes,
-            serializationMs,
-            admissionMs,
-            dispatchToFirstChunkMs: firstChunkAt === null ? null : firstChunkAt - dispatchedAt,
-            providerElapsedMs: providerEndedAt - dispatchedAt,
-            settlementMs: 0,
-            providerUsageReported: false,
-            inputTokensReported: null,
-            cachedInputTokensReported: null,
-            cacheCreationInputTokensReported: null,
-            totalTokensReported: null,
-            unknownExposureTokens: exposure.totalExposureTokens,
-            unknownExposureCostMicros: admittedCostMicros,
-            structuralRejection: true
-          }
-        }
-      }
       if (completeUsage === undefined) {
         if (provider.capabilities.usage !== 'estimated')
           throw new AgentRepositoryError('PROVIDER_USAGE_INVALID', 'Provider returned incomplete or invalid token usage', 502)
@@ -6683,7 +6680,7 @@ export class AxAgentEngine implements AgentEngine {
       const metadata: RootResponseMetadata =
         metadataContext === undefined || synthesis !== undefined ? { content: rawContent } : extractRootRequestMetadata(rawContent, metadataContext)
       const content = metadata.content
-      let framingIssue = metadata.framingIssue ?? structuralIssue
+      let framingIssue = metadata.framingIssue
       const hasAnswerCoverage = metadata.answerCoveragePresent === true
       if (hasAnswerCoverage && (accumulator.calls.size > 0 || /^\s*<wiki-tool-call>/u.test(content)))
         framingIssue = 'Root answer coverage cannot accompany an action call'
@@ -6738,8 +6735,8 @@ export class AxAgentEngine implements AgentEngine {
       // The host buffers streams before AxGen.forward; its parser does not
       // reject every failed terminal. Retain the EOF receipt, but never turn
       // failed provider work into an answer, action, or validation replay.
-      if (accumulator.finishReason === 'error') invalidProviderResponse('Provider terminated its response with an error')
-      if (accumulator.finishReason === 'content_filter') invalidProviderResponse('Provider filtered its response')
+      if (accumulator.finishReason === 'error') invalidProviderResponse('Provider terminated its response with an error', 'provider_error')
+      if (accumulator.finishReason === 'content_filter') invalidProviderResponse('Provider filtered its response', 'refusal')
       const memorySection = request.memoryContextDelivered === undefined ? null : frozenMemorySection(request)
       if (
         memorySection !== null &&
@@ -6796,8 +6793,7 @@ export class AxAgentEngine implements AgentEngine {
           throw classifyAgentExecutionFailure(settlementError, 'usage_reconciliation')
         }
       }
-      if (error instanceof AgentExecutionFailure) throw error
-      throw classifyAgentExecutionFailure(error, originalFailureStage)
+      throw responseFailure(error, originalFailureStage)
     } finally {
       if (responseFailed) await preparedMedia.cleanup().catch(() => {})
       else await preparedMedia.cleanup()
@@ -6942,7 +6938,8 @@ export class AxAgentEngine implements AgentEngine {
       const candidates = bound.documentUnits
         .filter(
           unit =>
-            (unit.text === text || (unit.kind === 'code' && unit.closure.unit.visibleText === text)) &&
+            (unit.text === text ||
+              (unit.kind === 'code' && (unit.closure.unit.visibleText === text || getSourceCodeLiteral(unit.closure.unit, source.text) === text))) &&
             bound.document.units.includes(unit.closure.unit) &&
             unit.closure.units.every(member => bound.document.units.includes(member)) &&
             unit.closure.contexts.every(context => bound.document.contexts.includes(context)) &&
@@ -6967,6 +6964,7 @@ export class AxAgentEngine implements AgentEngine {
         sourceRevision: source.sourceRevision,
         unitId: source.unitId,
         text: proof.text,
+        ...(proof.source.kind === 'code' ? { literalCode: true as const } : {}),
         contexts: proof.contexts,
         definitions: proof.definitions
       }
@@ -7233,7 +7231,7 @@ export class AxAgentEngine implements AgentEngine {
           true,
           false,
           undefined,
-          { request: generationRequest, guard: createWikiSynthesisStreamGuard(sources, { maxOutputTokens, inputMediaSources, resolveQuotation }) },
+          { request: generationRequest },
           authorizeSourceInputs,
           'synthesis',
           generationOptions
@@ -9632,6 +9630,8 @@ export class AxAgentEngine implements AgentEngine {
             (error.code === 'AGENT_TOKEN_BUDGET_LIMITED' || error.code === 'AGENT_QUOTA_EXHAUSTED')
           )
             return await publishExecutionLimit(error.code === 'AGENT_QUOTA_EXHAUSTED' ? 'quota' : 'tokens')
+          if (error instanceof AgentExecutionFailure && error.code === 'INVALID_PROVIDER_RESPONSE' && error.diagnostics?.response !== undefined)
+            throw new AgentExecutionFailure(error.code, error.stage, error.providerStatus, { ...error.diagnostics, providerTurn: turn + 1 })
           throw error
         } finally {
           if (sequence !== finalizationSequence) await sequence?.close()
@@ -9987,13 +9987,20 @@ export class AxAgentEngine implements AgentEngine {
                     : {
                         quotations: nativeDraft.answer.quotations.map(quotation => {
                           const source = nativeDraft.readSources.get(canonicalJson([quotation.evidenceId, quotation.sourceRevision, quotation.unitId]))
-                          if (source?.kind !== 'source-read' || !source.complete || !nativeDraft.quotationProofs?.has(quotation))
+                          const proof = nativeDraft.quotationProofs?.get(quotation)
+                          if (source?.kind !== 'source-read' || !source.complete || proof === undefined)
                             throw new AgentRepositoryError(
                               'WIKI_VERIFICATION_BINDING_INVALID',
                               'Coverage quotation lacks its complete host-proved physical read',
                               409
                             )
-                          return { readRef: source.readId, text: quotation.text, contexts: quotation.contexts, definitions: quotation.definitions }
+                          return {
+                            readRef: source.readId,
+                            text: quotation.text,
+                            ...(proof.source.kind === 'code' ? { literalCode: true as const } : {}),
+                            contexts: quotation.contexts,
+                            definitions: quotation.definitions
+                          }
                         })
                       }),
                   reads: [...nativeDraft.readSources.values()].map(source => {

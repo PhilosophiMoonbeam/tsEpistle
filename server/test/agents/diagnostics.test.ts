@@ -288,19 +288,29 @@ describe('agent conversation diagnostics', () => {
     db = await createUsageDatabase()
     await insertUsageRun(db, runId, { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostMicros: null })
     await db('agentRuns').where({ id: runId }).update({ status: 'partial', attempts: 2 })
-    await appendEvent(db, 1, 'run.failed', { errorCode: 'OLD_FAILURE', diagnostics: { failureStage: 'old-attempt' } })
+    await appendEvent(db, 1, 'run.failed', { errorCode: 'OLD_FAILURE', diagnostics: { responseIssue: 'refusal', response: { phase: 'collection' } } })
     await appendEvent(
       db,
       2,
       'run.partial',
       {
-        errorCode: 'AGENT_EVIDENCE_REJECTED',
-        diagnostics: { failureStage: 'verification', safeErrorId: 'wiki-rejected' }
+        errorCode: 'INVALID_PROVIDER_RESPONSE',
+        diagnostics: {
+          responseIssue: 'length',
+          response: { phase: 'wiki_synthesis', outputTokenLimit: 8192, reasoningTokens: 8170, body: 'PRIVATE_RESPONSE_CANARY' },
+          providerTurn: 4,
+          message: 'PRIVATE_RESPONSE_CANARY'
+        }
       },
       2
     )
     const exported = (await exportAgentSessionDiagnostics(db, sessionId)) as unknown as DiagnosticExportView
-    expect(exported.runs[0]!.failureContext).toEqual({ failureStage: 'verification', safeErrorId: 'wiki-rejected' })
+    expect(exported.runs[0]!.failureContext).toEqual({
+      responseIssue: 'length',
+      response: { phase: 'wiki_synthesis', outputTokenLimit: 8192, reasoningTokens: 8170 },
+      providerTurn: 4
+    })
+    expect(JSON.stringify(exported.runs[0]!.failureContext)).not.toContain('PRIVATE_RESPONSE_CANARY')
   })
 
   it('separates completed transport with semantic rejection from accepted answers and execution failure', async () => {

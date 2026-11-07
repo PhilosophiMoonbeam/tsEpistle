@@ -145,6 +145,33 @@ describe('Wiki coverage input binding', () => {
     expect(() => encodeWikiCoverageInput({ ...valid, claims: [{ readRef: 'r1', statement: ' ' }] })).toThrow()
   })
 
+  it('retains an empty host-proved code quotation without admitting empty prose or facts', () => {
+    const quotation = { readRef: 'r1', text: '', literalCode: true as const, contexts: ['Fixture only'], definitions: [] }
+    const candidate = { ...input(), claims: [], quotations: [quotation] }
+    expect(JSON.parse(encodeWikiCoverageInput(candidate).quotations!)).toEqual([quotation])
+    for (const text of ['', ' \n ']) {
+      expect(() => encodeWikiCoverageInput({ ...candidate, quotations: [{ readRef: 'r1', text, contexts: [], definitions: [] }] })).toThrow()
+      expect(() => encodeWikiCoverageInput({ ...candidate, claims: [{ readRef: 'r1', statement: text }] })).toThrow()
+    }
+    expect(() => encodeWikiCoverageInput({ ...candidate, reads: [] })).toThrow()
+    expect(() =>
+      encodeWikiCoverageInput({
+        ...candidate,
+        reads: [
+          {
+            ...candidate.reads[0]!,
+            complete: false,
+            excerpt: {
+              representation: 'recent-excerpt',
+              representationMetadata: '{}',
+              readReceipts: [{ actionCallId: 'read', actionName: 'pages.listRecent' }]
+            }
+          }
+        ]
+      })
+    ).toThrow()
+  })
+
   it('rejects unresolved facets outside the request and repeated indices', () => {
     for (const unresolvedFacets of [[1], [-1], [0.5], [0, 0], [Number.NaN]]) {
       expect(() => encodeWikiCoverageInput({ ...input(), unresolvedFacets })).toThrow()

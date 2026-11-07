@@ -271,6 +271,10 @@ export interface AgentGoogleSearchGrounding {
 export const AGENT_PRESET_IDS = ['page-summary', 'wiki-overview', 'page-connections', 'wiki-connections', 'catch-up'] as const
 export type AgentPresetId = (typeof AGENT_PRESET_IDS)[number]
 
+/** Evidence observed on a failed response; absent for unknown or historical causes. */
+export const AGENT_RESPONSE_ISSUES = ['length', 'refusal', 'malformed_output', 'response_limit', 'provider_error'] as const
+export type AgentResponseIssue = (typeof AGENT_RESPONSE_ISSUES)[number]
+
 export interface AgentMessageView {
   /** User messages only: the explicitly submitted preset, never inferred from content. */
   readonly presetId?: AgentPresetId
@@ -282,7 +286,7 @@ export interface AgentMessageView {
   readonly id: string
   readonly runId: string | null
   /** Present only when the matching assistant run is terminal and selected in the bounded thread window. */
-  readonly runOutcome?: { readonly status: AgentTerminalRunStatus; readonly errorCode: string | null }
+  readonly runOutcome?: { readonly status: AgentTerminalRunStatus; readonly errorCode: string | null; readonly responseIssue?: AgentResponseIssue }
   readonly ordinal: number
   readonly role: AgentMessageRole
   readonly status: AgentMessageStatus
