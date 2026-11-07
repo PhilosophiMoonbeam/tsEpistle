@@ -19,22 +19,18 @@ export const installAgentCodeQuotationRule = (markdown: MarkdownIt): void => {
     const tokens = state.tokens
     for (let index = 1; index + 1 < tokens.length; index++) {
       const open = tokens[index]!
-      const inline = tokens[index + 1]!
       const htmlBlock = open.type === 'html_block'
-      if (tokens[index - 1]!.type !== 'blockquote_open') continue
-      if (htmlBlock) {
-        if (open.map === null || open.map[1] !== open.map[0] + 1 || inline.type !== 'blockquote_close') continue
-      } else if (
-        index + 3 >= tokens.length ||
-        open.type !== 'paragraph_open' ||
-        inline.type !== 'inline' ||
-        inline.map === null ||
-        inline.map[1] !== inline.map[0] + 1 ||
-        tokens[index + 2]!.type !== 'paragraph_close' ||
-        tokens[index + 3]!.type !== 'blockquote_close'
+      const body = htmlBlock ? open : tokens[index + 1]!
+      if (
+        tokens[index - 1]!.type !== 'blockquote_open' ||
+        body.map === null ||
+        body.map[1] !== body.map[0] + 1 ||
+        tokens[index + (htmlBlock ? 1 : 3)]?.type !== 'blockquote_close' ||
+        (!htmlBlock &&
+          (open.type !== 'paragraph_open' || body.type !== 'inline' || tokens[index + 2]!.type !== 'paragraph_close'))
       )
         continue
-      const text = decodeCodeQuotation(htmlBlock ? open.content.replace(/\n$/u, '') : inline.content)
+      const text = decodeCodeQuotation(htmlBlock ? body.content.replace(/\n$/u, '') : body.content)
       if (text === null) continue
       open.type = 'fence'
       open.tag = 'code'
