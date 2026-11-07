@@ -155,7 +155,8 @@ import {
   type WikiSynthesisRead,
   type WikiSynthesisReferenceIndex,
   type WikiSynthesisSource,
-  wikiSynthesisSourceRef
+  wikiSynthesisSourceRef,
+  encodeWikiSynthesisAnswer
 } from './wiki-synthesis.ts'
 import { WIKI_SYNTHESIS_CALIBRATION } from './wiki-synthesis-calibration.ts'
 import type { WikiVerificationPlan, WikiVerificationSource } from './wiki-verification.ts'
@@ -10177,7 +10178,7 @@ export class AxAgentEngine implements AgentEngine {
               if (!semantic.valid && !selectedRecentPartial) {
                 synthesisRejectionStage = 'native_support'
                 assessment = { ...assessment, valid: false, issues: [...assessment.issues, ...semantic.issues] }
-                result = { ...result, rootRejectedDraft: canonicalJson(nativeDraft.answer) }
+                result = { ...result, rootRejectedDraft: canonicalJson(encodeWikiSynthesisAnswer(nativeDraft.answer)) }
               }
               const operationObservations = nativeDraft.answer.observations.filter(line => nativeDraft.operationObservations.has(line))
               const requiresOperationCoverage =
@@ -10235,7 +10236,7 @@ export class AxAgentEngine implements AgentEngine {
                   synthesisRejectionStage = 'coverage'
                   coverageAuditFeedback = audit.feedback
                   assessment = { ...assessment, valid: false, issues: [...assessment.issues, `Requested coverage: ${audit.verdict}.`] }
-                  result = { ...result, rootRejectedDraft: canonicalJson(nativeDraft.answer) }
+                  result = { ...result, rootRejectedDraft: canonicalJson(encodeWikiSynthesisAnswer(nativeDraft.answer)) }
                 }
               }
             } catch (error) {

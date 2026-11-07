@@ -202,7 +202,7 @@ export interface WikiSynthesisWireAnswer {
   readonly recommendations?: string
 }
 
-/** Optimizer demonstrations are vendor wire outputs, never canonical provenance. */
+/** Model-facing examples use vendor wire fields, never canonical provenance. */
 export const encodeWikiSynthesisAnswer = (answer: WikiSynthesisAnswer): WikiSynthesisWireAnswer => ({
   unresolvedFacets: answer.unresolvedFacets,
   observations: answer.observations,
@@ -990,7 +990,12 @@ export const createWikiSynthesisProgram = (sources: readonly WikiSynthesisSource
           .describe(
             'Private JSON array of authenticated historical approved changes and applied results; operation support only, never source facts or answer observations.'
           ),
-        repairFeedback: z.string().optional().describe('Host correction feedback; omitted means none.')
+        repairFeedback: z
+          .string()
+          .optional()
+          .describe(
+            'Input-only correction data; omitted means none. If the answer has no claims, quotations, attachmentClaims or authorized operation observations, mark every requested facet unresolved.'
+          )
       }),
       { fields: { sourceText: { cache: true }, sourceReferences: { cache: true } } }
     )
