@@ -50,7 +50,7 @@ Supported APIs and exported modes describe intended scope. Only recorded command
 | Module | Focus | Guide |
 | --- | --- | --- |
 | [01-signatures.ts](examples/01-signatures.ts) | String and fluent signature contracts | [Signatures](references/signature.md) |
-| [02-generation.ts](examples/02-generation.ts) | Structured generation, memory/few-shot examples and direct generator chaining | [Generators](references/gen.md), [Overview](references/llm.md#memory-and-examples) |
+| [02-generation.ts](examples/02-generation.ts) | Structured generation, memory/few-shot examples and extraction → host rule → explanation | [Generators](references/gen.md), [Overview](references/llm.md#memory-and-examples) |
 | [03-tools-streaming.ts](examples/03-tools-streaming.ts) | Tool execution and streamed results | [Generators](references/gen.md) |
 | [28-advanced-generation.ts](examples/28-advanced-generation.ts) | Advanced execution, recovery and evaluation contracts | [Generators](references/gen.md) |
 
@@ -63,7 +63,7 @@ Supported APIs and exported modes describe intended scope. Only recorded command
 | [27-provider-replay.ts](examples/27-provider-replay.ts) | Provider replay and cache boundaries | [Providers](references/ai.md) |
 | [33-browser-ai.ts](examples/33-browser-ai.ts) | Chrome-only adapter fixtures and [browser entry](examples/browser/chrome-ai.html); model inference remains unqualified | [Providers](references/ai.md#chrome-built-in-ai-typescriptjavascript-only) |
 | [34-vercel.ts](examples/34-vercel.ts) | Real Vercel adapter, typed output and stream consumption | [Providers](references/ai.md#vercel-ai-sdk-integration) |
-| [06-decisions.ts](examples/06-decisions.ts) | Typesafe and OpenAI Decisions; typed values and native evidence | [Typesafe](references/typesafe.md), [OpenAI Decisions](references/ai.md#openai-decisions) |
+| [06-decisions.ts](examples/06-decisions.ts) | Typesafe and OpenAI Decisions; native evidence, scalar/evidence threshold ownership and applicability gating | [Typesafe](references/typesafe.md), [OpenAI Decisions](references/ai.md#openai-decisions) |
 | [07-images.ts](examples/07-images.ts) | Image decisions and experimental localization | [Typesafe](references/typesafe.md), [Signatures](references/signature.md) |
 | [08-refinement.ts](examples/08-refinement.ts) | Complete-candidate selection and refinement | [Refine](references/refine.md) |
 | [09-agents.ts](examples/09-agents.ts) | Agent construction and scoped tools | [Core agents](references/agent.md) |
@@ -93,8 +93,8 @@ Supported APIs and exported modes describe intended scope. Only recorded command
 
 | Module | Focus | Guide |
 | --- | --- | --- |
-| [16-flow.ts](examples/16-flow.ts) | Typed dependencies, scoped session control, async/parallel map and real OpenTelemetry lifecycle | [Flows](references/flow.md) |
-| [26-architecture.ts](examples/26-architecture.ts) | The architecture guide’s five application patterns | [Architecture](references/architecture.md#11-compose-small-patterns-and-stage-verification), [Overview](references/llm.md) |
+| [16-flow.ts](examples/16-flow.ts) | Typed dependencies, native score-rubric evidence, scoped session control, async/parallel map and real OpenTelemetry lifecycle | [Flows](references/flow.md) |
+| [26-architecture.ts](examples/26-architecture.ts) | Five application patterns; `evidence-aware-ticket` composes atomic Jev judgments with authoritative facts, ordered host rules and optional prose | [Architecture](references/architecture.md#11-compose-small-patterns-and-stage-verification), [Jev policy](references/typesafe.md#atomic-judgments-and-host-policy) |
 
 Use `npm --prefix examples run list -- MODULE_BASENAME` to find the exact case ID. Read that case's `run(ctx)`, imports and referenced helpers—not the corpus—then run `npm --prefix examples run offline -- CASE_ID`. Return to the guide for constraints; examples demonstrate selected contracts, not every supported combination.
 

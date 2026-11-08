@@ -47,7 +47,7 @@ Use `.withEvidence()` on boolean/class fields or `f.score(levels).withEvidence()
 
 Both default to `jev-latest`. Set the adapter's model with `config.model`; set native defaults with `model`. Native `listModels()` retrieves the provider's catalog without changing configured Ax model aliases.
 
-Boolean conversion uses `noul >= trueThreshold`; the default is `0.5`, and the finite threshold must be in `[0, 1]`. It applies to all booleans on that provider instance, is never sent to the server, and does not affect native probabilities. Choice preserves the selected label without an automatic confidence cutoff.
+Scalar boolean conversion uses `noul >= trueThreshold`; the default is `0.5`, and the finite threshold must be in `[0, 1]`. It applies to scalar booleans on that provider instance. Boolean evidence uses its field threshold, default `0.5`, independently of the provider threshold. Neither local policy is sent to the server; native Noul remains unthresholded. Choice preserves the selected label without an automatic confidence cutoff. For ordered rules and uncertainty handling, read [Atomic judgments and host policy](references/typesafe.md#atomic-judgments-and-host-policy).
 
 Value descriptions from `boolean(true "...", false "...")` and `class "support, billing"(support "...", billing "...")` become native criteria. The same annotations render as readable descriptions for conventional providers. See [signatures](references/signature.md) for string and fluent `.describeValues(...)` forms. Original resource: https://github.com/ax-llm/ax/blob/main/src/ax/skills/ax-signature.md.
 

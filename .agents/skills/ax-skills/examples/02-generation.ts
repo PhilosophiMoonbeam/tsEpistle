@@ -128,24 +128,24 @@ export const examples: readonly Example[] = [
   },
   {
     id: '02-generation/direct-generator-chain',
-    title: 'Application-owned extraction then policy-guided return routing',
-    features: ['two AxGen programs', 'direct composition', 'typed intermediate output', 'application-owned policy'],
+    title: 'Extract reported facts, apply a host return rule, then explain',
+    features: ['two AxGen programs', 'direct composition', 'typed intermediate output', 'deterministic host policy'],
     modes: ['offline'],
     async run(ctx) {
       const extract = ax('customerNote:string -> orderCode:string, daysSinceDelivery:number, itemOpened:boolean');
-      const route = ax(f()
+      const explain = ax(f()
         .input('orderCode', f.string())
         .input('daysSinceDelivery', f.number())
         .input('itemOpened', f.boolean())
         .input('returnPolicy', f.string())
-        .output('returnRoute', f.class(['standard_return', 'manual_review'] as const))
+        .input('returnRoute', f.string('Host-selected route: standard_return or manual_review'))
         .output('reasonText', f.string())
         .build());
-      route.setInstruction('Apply the supplied return policy to the extracted order facts. Do not invent order facts or policy exceptions.');
+      explain.setInstruction('Explain the supplied host-selected return route. Do not select another route or invent order facts.');
       const returnPolicy = 'Standard returns require an unopened item delivered at most 30 days ago. Otherwise route to manual_review.';
       const replies = [
         answer('Order Code: ORD-104\nDays Since Delivery: 12\nItem Opened: true'),
-        answer('Return Route: manual_review\nReason Text: ORD-104 is within 30 days, but the item was opened.'),
+        answer('Reason Text: ORD-104 is within 30 days, but the item was opened, so the host selected manual_review.'),
       ];
       let calls = 0;
       const model = scriptedAI((request, index) => {
@@ -163,28 +163,30 @@ export const examples: readonly Example[] = [
           assert(input.includes('12'));
           assert(input.includes('true'));
           assert(input.includes(returnPolicy));
+          assert(input.includes('manual_review'));
           assert(!input.includes('arrived 12 days ago'), 'The second generator consumes typed facts, not the original prose');
         }
         return reply;
       });
-      const facts = await extract.forward(model, {
+      const reportedFacts = await extract.forward(model, {
         customerNote: 'ORD-104 arrived 12 days ago; I opened it.',
       }, options(ctx));
-      assert.deepEqual(facts, { orderCode: 'ORD-104', daysSinceDelivery: 12, itemOpened: true });
-      // Ordinary application control flow is enough for a fixed two-step chain.
-      const decision = await route.forward(model, { ...facts, returnPolicy }, options(ctx));
-      assert.equal(decision.returnRoute, 'manual_review');
-      assert(decision.reasonText.includes(facts.orderCode));
-      assert.match(decision.reasonText, /opened/);
-      const reviewQueue = decision.returnRoute === 'manual_review'
-        ? [{ orderCode: facts.orderCode, daysSinceDelivery: facts.daysSinceDelivery, itemOpened: facts.itemOpened }]
-        : [];
+      assert.deepEqual(reportedFacts, { orderCode: 'ORD-104', daysSinceDelivery: 12, itemOpened: true });
+      // Extracted customer claims are not authoritative order-system facts.
+      // This demonstration routes those claims to a local queue, never authorizes a return.
+      const returnRoute = !reportedFacts.itemOpened && reportedFacts.daysSinceDelivery <= 30
+        ? 'standard_return' : 'manual_review';
+      const reviewQueue = returnRoute === 'manual_review' ? [{ ...reportedFacts }] : [];
+      const explanation = await explain.forward(model, { ...reportedFacts, returnPolicy, returnRoute }, options(ctx));
+      assert.equal(returnRoute, 'manual_review');
+      assert(explanation.reasonText.includes(reportedFacts.orderCode));
+      assert.match(explanation.reasonText, /opened/);
       assert.deepEqual(reviewQueue, [{ orderCode: 'ORD-104', daysSinceDelivery: 12, itemOpened: true }]);
       assert.equal(extract.getChatLog().length, 1);
-      assert.equal(route.getChatLog().length, 1);
+      assert.equal(explain.getChatLog().length, 1);
       assert.equal(calls, 2);
-      return { facts, decision, reviewQueue,
-        proof: 'Finite model fixtures; real Ax parsing and direct data handoff, not a model-quality evaluation. Local review queue only; no return is authorized.' };
+      return { reportedFacts, returnRoute, explanation, reviewQueue,
+        proof: 'Finite model fixtures; real Ax parsing and direct data handoff. Host code selects the route and queue before prose; prose cannot reselect them. No return is authorized.' };
     },
   },
   {

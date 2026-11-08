@@ -3,8 +3,9 @@ import {
   agent, ai, ax, AxAgentContextMap, AxAIServiceStatusError,
   AxBalancer, AxInMemoryEventStore, AxMockAIService, AxProgram,
   AxPushEventSource, axAIOpenAIAudioDefaultConfig,
-  eventPath, eventRoute, eventRuntime, eventTarget, flow,
-  type AxAIService, type AxChatResponse, type AxGenStreamingOut,
+  eventPath, eventRoute, eventRuntime, eventTarget, flow, typesafe,
+  type AxAIService, type AxAITypesafeQuestions, type AxAITypesafeResponse,
+  type AxChatResponse, type AxGenStreamingOut,
   type AxProgramForwardOptions, type AxProgramStreamingForwardOptions,
 } from '@ax-llm/ax';
 import { options, scriptedAI, type Example } from './support.js';
@@ -55,47 +56,188 @@ export const examples: readonly Example[] = [
     features: ['architecture', 'evidence-aware-ticket', 'typesafe', 'native-evidence', 'hybrid-generation', 'authorization-boundary'],
     modes: ['offline', 'live'],
     async run(ctx) {
+      const questions = {
+        reportsUnauthorized: { type: 'noul', instructions: 'Does the customer report a charge or account activity they did not authorize?' },
+        requestsHuman: { type: 'noul', instructions: 'Does the customer explicitly request a human representative?' },
+        threatensLegal: { type: 'noul', instructions: 'Does the customer threaten legal action?' },
+        wantsRefund: { type: 'noul', instructions: 'Does the customer request a refund?' },
+        wantsCancel: { type: 'noul', instructions: 'Does the customer request subscription cancellation?' },
+        openToOffer: { type: 'noul', instructions: 'Does the customer express willingness to consider a retention offer?' },
+      } as const satisfies AxAITypesafeQuestions;
+      // Independent means no answer consumes another answer, not statistical independence.
+      type QuestionId = keyof typeof questions;
+      type Judgment = false | true | 'unknown';
+      type Outcome = 'fraud-review' | 'human-legal-handoff' | 'refund-proposal'
+        | 'refund-team-review' | 'retention-proposal' | 'answer' | 'uncertainty-review';
+      type Facts = { eligible: boolean; alreadyRefunded: boolean; amountCents: number; activeSubscription: boolean };
+      type RuleId = 'R1-fraud' | 'R2-human-legal' | 'R3-refund' | 'R4-retention' | 'R5-answer';
+      type Selection = { outcome: Outcome; winningRule: RuleId; evaluated: { ruleId: RuleId; match: Judgment }[] };
+      const questionIds = Object.keys(questions) as QuestionId[];
+      const thresholds = { id: 'ticket-thresholds-v1', falseAtMost: 0.3, trueAtLeast: 0.7 } as const;
+      const classify = (p: number): Judgment => p <= thresholds.falseAtMost ? false
+        : p >= thresholds.trueAtLeast ? true : 'unknown';
+      const selectOutcome = (j: Record<QuestionId, Judgment>, facts: Facts): Selection => {
+        const evaluated: Selection['evaluated'] = [];
+        const selected = (outcome: Outcome, winningRule: RuleId) => ({ outcome, winningRule, evaluated });
+        evaluated.push({ ruleId: 'R1-fraud', match: j.reportsUnauthorized });
+        if (j.reportsUnauthorized === true) return selected('fraud-review', 'R1-fraud');
+        if (j.reportsUnauthorized === 'unknown') return selected('uncertainty-review', 'R1-fraud');
+        // A true disjunct settles OR even if the other judgment is unknown.
+        const humanOrLegal = j.requestsHuman === true || j.threatensLegal === true ? true
+          : j.requestsHuman === false && j.threatensLegal === false ? false : 'unknown';
+        evaluated.push({ ruleId: 'R2-human-legal', match: humanOrLegal });
+        if (humanOrLegal === true) return selected('human-legal-handoff', 'R2-human-legal');
+        if (humanOrLegal === 'unknown') return selected('uncertainty-review', 'R2-human-legal');
+        const refund = facts.eligible && !facts.alreadyRefunded ? j.wantsRefund : false;
+        evaluated.push({ ruleId: 'R3-refund', match: refund });
+        if (refund === true) return selected(
+          facts.amountCents <= 2500 ? 'refund-proposal' : 'refund-team-review', 'R3-refund');
+        if (refund === 'unknown') return selected('uncertainty-review', 'R3-refund');
+        // Any false conjunct settles AND; inactive subscriptions and declined
+        // offers make other retention uncertainty irrelevant.
+        const retention = !facts.activeSubscription || j.wantsCancel === false || j.openToOffer === false ? false
+          : j.wantsCancel === true && j.openToOffer === true ? true : 'unknown';
+        evaluated.push({ ruleId: 'R4-retention', match: retention });
+        if (retention === true) return selected('retention-proposal', 'R4-retention');
+        if (retention === 'unknown') return selected('uncertainty-review', 'R4-retention');
+        evaluated.push({ ruleId: 'R5-answer', match: true });
+        return selected('answer', 'R5-answer');
+      };
+      type Scenario = {
+        id: string; conversation: string; facts?: Partial<Facts>;
+        // Order: unauthorized, human, legal, refund, cancel, offer.
+        probabilities: readonly [number, number, number, number, number, number];
+        expected: Outcome; rule: RuleId;
+      };
+      const scenarios: readonly Scenario[] = [
+        { id: 'fraud-overlap', conversation: 'I did not authorize this charge. Get a human or I will sue. Refund me and cancel; I might consider an offer.',
+          probabilities: [0.7, 0.9, 0.9, 0.9, 0.9, 0.9], expected: 'fraud-review', rule: 'R1-fraud' },
+        { id: 'human-or-unknown-legal', conversation: 'I need a human and a refund. This may become a legal matter.',
+          probabilities: [0.1, 0.9, 0.5, 0.9, 0.1, 0.1], expected: 'human-legal-handoff', rule: 'R2-human-legal' },
+        { id: 'legal-or-unknown-human', conversation: 'I will sue. Perhaps a person could help; refund me.',
+          probabilities: [0.1, 0.5, 0.9, 0.9, 0.1, 0.1], expected: 'human-legal-handoff', rule: 'R2-human-legal' },
+        { id: 'refund-2500-over-retention', conversation: 'Refund me and cancel, though I would consider an offer.',
+          probabilities: [0.1, 0.1, 0.1, 0.9, 0.9, 0.9], expected: 'refund-proposal', rule: 'R3-refund' },
+        { id: 'refund-2501', conversation: 'Please refund my payment.', facts: { amountCents: 2501 },
+          probabilities: [0.1, 0.1, 0.1, 0.9, 0.1, 0.1], expected: 'refund-team-review', rule: 'R3-refund' },
+        { id: 'refund-ineligible', conversation: 'Please refund my payment.', facts: { eligible: false },
+          probabilities: [0.1, 0.1, 0.1, 0.9, 0.1, 0.1], expected: 'answer', rule: 'R5-answer' },
+        { id: 'already-paid-unknown-refund-retention', conversation: 'Maybe return my money. Cancel, but I would consider an offer.', facts: { alreadyRefunded: true },
+          probabilities: [0.1, 0.1, 0.1, 0.5, 0.9, 0.9], expected: 'retention-proposal', rule: 'R4-retention' },
+        { id: 'unknown-fraud-high-edge', conversation: 'I may not have authorized this. Refund me.',
+          probabilities: [0.699999, 0.1, 0.1, 0.9, 0.1, 0.1], expected: 'uncertainty-review', rule: 'R1-fraud' },
+        { id: 'unknown-handoff', conversation: 'Perhaps someone should handle this. Refund me.',
+          probabilities: [0.1, 0.5, 0.1, 0.9, 0.1, 0.1], expected: 'uncertainty-review', rule: 'R2-human-legal' },
+        { id: 'unknown-refund', conversation: 'Maybe return my money. Cancel; I would consider an offer.',
+          probabilities: [0.1, 0.1, 0.1, 0.5, 0.9, 0.9], expected: 'uncertainty-review', rule: 'R3-refund' },
+        { id: 'retention', conversation: 'Cancel my subscription, but I am open to a retention offer.',
+          probabilities: [0.1, 0.1, 0.1, 0.1, 0.9, 0.9], expected: 'retention-proposal', rule: 'R4-retention' },
+        { id: 'inactive-irrelevant-unknowns', conversation: 'I might cancel or consider an offer.', facts: { activeSubscription: false },
+          probabilities: [0.1, 0.1, 0.1, 0.1, 0.5, 0.5], expected: 'answer', rule: 'R5-answer' },
+        { id: 'no-cancel-unknown-offer', conversation: 'Do not cancel. Perhaps an offer would help.',
+          probabilities: [0.1, 0.1, 0.1, 0.1, 0.1, 0.5], expected: 'answer', rule: 'R5-answer' },
+        { id: 'unknown-cancel-no-offer', conversation: 'I may cancel, but I will not consider offers.',
+          probabilities: [0.1, 0.1, 0.1, 0.1, 0.5, 0.1], expected: 'answer', rule: 'R5-answer' },
+        { id: 'uncertain-retention', conversation: 'Cancel my subscription. I might consider an offer.',
+          probabilities: [0.1, 0.1, 0.1, 0.1, 0.9, 0.5], expected: 'uncertainty-review', rule: 'R4-retention' },
+        { id: 'all-negative', conversation: 'Where can I find the usage guide?',
+          probabilities: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1], expected: 'answer', rule: 'R5-answer' },
+        { id: 'inclusive-thresholds', conversation: 'Cancel my subscription; I would consider an offer.',
+          probabilities: [0.3, 0.3, 0.3, 0.3, 0.7, 0.7], expected: 'retention-proposal', rule: 'R4-retention' },
+        { id: 'unknown-fraud-low-edge', conversation: 'I am unsure whether I authorized this. Refund me.',
+          probabilities: [0.300001, 0.1, 0.1, 0.9, 0.1, 0.1], expected: 'uncertainty-review', rule: 'R1-fraud' },
+      ];
+      const activeScenarios = ctx.mode === 'live' ? scenarios.slice(0, 1) : scenarios;
       let decisionRequests = 0;
-      // A functioning isolated System One HTTP fixture exercises the real Jev
-      // adapter/decoder. These probabilities are scripted, not calibrated data.
-      const fixtureDecisions = ai({
-        name: 'typesafe', apiKey: 'offline-fixture-not-a-secret', apiURL: 'https://decision-fixture.invalid',
+      let currentScenario: Scenario | undefined;
+      const fixtureDecisions = typesafe({
+        apiKey: 'offline-fixture-not-a-secret', apiURL: 'https://decision-fixture.invalid',
         options: { fetch: async (_url, init) => {
           decisionRequests++;
-          assert.ok(init?.body && String(init.body).includes('questions'));
+          assert.ok(currentScenario && init?.body);
+          const request = JSON.parse(String(init.body));
+          assert.deepEqual(request.state, { conversation: currentScenario.conversation });
+          assert.deepEqual(request.questions, questions);
           return Response.json({
-            model: 'jev-latest', usage: { input_tokens: 30, output_tokens: 5 },
-            answers: {
-              urgent: { type: 'noul', noul: 0.96 },
-              team: { type: 'choice', choice: 'engineering', probabilities: { support: 0.05, billing: 0.05, engineering: 0.9 }, confidence: 0.9 },
-            },
+            model: 'jev-latest', usage: { input_tokens: 60, output_tokens: 6 },
+            answers: Object.fromEntries(questionIds.map((id, index) =>
+              [id, { type: 'noul', noul: currentScenario!.probabilities[index] }])),
           });
         } },
       });
-      const decisionProgram = ax('ticketText:string -> urgent:boolean(evidence, threshold 0.9), team:class "support, billing, engineering"(evidence)');
-      const ticket = { id: 'T-104', text: 'Checkout fails for all customers; nobody can complete a payment.' };
-      const decision = await decisionProgram.forward(ctx.mode === 'live' ? ctx.decisions : fixtureDecisions, { ticketText: ticket.text }, { ...options(ctx), modelConfig: {} });
-      assert.equal(decision.urgent.provenance.source, 'native');
-      assert.equal(decision.team.provenance.source, 'native');
-      assert.ok(['support', 'billing', 'engineering'].includes(decision.team.value));
-      const explain = ax('ticketId:string, ticketText:string, assignedTeam:string, urgent:boolean -> caseId:string, ownerTeam:string, explanation:string');
-      explain.addAssert(({ caseId, ownerTeam }) => caseId === ticket.id && ownerTeam === decision.team.value,
-        'Preserve the application ticket ID and the selected decision team');
-      const generative = ctx.mode === 'live' ? ctx.ai : scriptedAI([
-        reply('Case Id: T-104\nOwner Team: engineering\nExplanation: Engineering should investigate the checkout outage; payments are blocked for all customers.'),
-      ]);
-      const result = await explain.forward(generative, {
-        ticketId: ticket.id, ticketText: ticket.text, assignedTeam: decision.team.value, urgent: decision.urgent.value,
-      }, options(ctx));
-      assert.ok(result.explanation.length > 0);
-      if (ctx.mode === 'offline') assert.equal(decisionRequests, 1);
-      const proposedAction = { ticketId: result.caseId, team: result.ownerTeam, urgent: decision.urgent.value };
-      const dispatchedActions: typeof proposedAction[] = [];
-      // No authenticated approval was supplied. A model choice is a proposal.
-      assert.equal(dispatchedActions.length, 0);
+      type Handoff = { ticketId: string; selectedOutcome: Outcome };
+      const dispatchedActions: Handoff[] = [];
+      // Host-only approval ledger; neither model receives it or an execution tool.
+      const approvals = new Set<string>();
+      const dispatchIfApproved = (proposal: Handoff) => {
+        if (!approvals.has(JSON.stringify(proposal))) return;
+        dispatchedActions.push(proposal); // Only a volatile dispatch recorder; no payment/cancellation capability.
+      };
+      const records: {
+        scenarioId: string; ticketId: string; facts: Facts;
+        raw: AxAITypesafeResponse<typeof questions>;
+        judgments: Record<QuestionId, Judgment>;
+        selection: Selection;
+        explanation: { caseId: string; outcome: string; explanation: string };
+      }[] = [];
+      for (const [index, scenario] of activeScenarios.entries()) {
+        currentScenario = scenario;
+        const ticketId = `T-${104 + index}`;
+        const facts: Facts = { eligible: true, alreadyRefunded: false, amountCents: 2500, activeSubscription: true, ...scenario.facts };
+        assert.ok(Number.isSafeInteger(facts.amountCents) && facts.amountCents >= 0);
+        // Only conversation crosses this boundary. Eligibility, ledger, cents and
+        // subscription status are authoritative fixture facts retained by the host.
+        const raw = await (ctx.mode === 'live' ? ctx.nativeDecisions : fixtureDecisions).systemOne({
+          state: { conversation: scenario.conversation }, questions,
+        }, { abortSignal: ctx.signal });
+        assert.ok(raw.model.length > 0);
+        const judgments = {} as Record<QuestionId, Judgment>;
+        for (const id of questionIds) {
+          assert.equal(raw.answers[id].type, 'noul');
+          const p = raw.answers[id].noul;
+          assert.ok(Number.isFinite(p) && p >= 0 && p <= 1);
+          judgments[id] = classify(p);
+        }
+        const selection = selectOutcome(judgments, facts);
+        if (ctx.mode === 'offline') {
+          assert.equal(selection.outcome, scenario.expected, scenario.id);
+          assert.equal(selection.winningRule, scenario.rule, scenario.id);
+        }
+        const handoff: Handoff = { ticketId, selectedOutcome: selection.outcome };
+        const explain = ax('ticketId:string, selectedOutcome:string "Host-owned outcome: fraud-review, human-legal-handoff, refund-proposal, refund-team-review, retention-proposal, answer, or uncertainty-review" -> caseId:string, outcome:class "fraud-review, human-legal-handoff, refund-proposal, refund-team-review, retention-proposal, answer, uncertainty-review", explanation:string "Briefly explain the host-selected outcome as pending, not an executed action"');
+        explain.addAssert(({ caseId, outcome }) => caseId === handoff.ticketId && outcome === handoff.selectedOutcome,
+          'Preserve the host ticket ID and outcome; do not select or execute a different action');
+        const generative = ctx.mode === 'live' ? ctx.ai : scriptedAI([
+          reply(`Case Id: ${ticketId}\nOutcome: ${selection.outcome}\nExplanation: The host selected ${selection.outcome}; any proposed action remains pending approval.`),
+        ]);
+        const explanation = await explain.forward(generative, handoff, options(ctx));
+        assert.equal(explanation.caseId, ticketId);
+        assert.equal(explanation.outcome, selection.outcome);
+        assert.ok(explanation.explanation.length > 0);
+        dispatchIfApproved(handoff);
+        assert.equal(dispatchedActions.length, 0);
+        records.push({ scenarioId: scenario.id, ticketId, facts, raw, judgments, selection, explanation });
+      }
+      if (ctx.mode === 'offline') assert.equal(decisionRequests, scenarios.length);
+      const bounded = records[0]!;
       return {
-        decision, explanation: result, proposedAction, dispatchedActions,
-        design: 'Two small programs beat a Jev actor: Jev owns the flat decision, a generative provider owns prose, the application owns approval. Native evidence is provenance, not a correctness or calibration guarantee.',
+        scenarios: records.length,
+        outcomes: records.map(({ scenarioId, selection }) => ({ scenarioId, outcome: selection.outcome })),
+        dispatchedActions: dispatchedActions.length,
+        trace: {
+          ticketId: bounded.ticketId, model: bounded.raw.model,
+          provenance: { source: 'native', provider: 'typesafe', model: bounded.raw.model },
+          thresholds,
+          questionSetVersion: 'ticket-signals-v1', policyVersion: 'ticket-policy-v1',
+          judgments: questionIds.map((questionId) => ({
+            questionId, probability: bounded.raw.answers[questionId].noul, judgment: bounded.judgments[questionId],
+          })),
+          facts: bounded.facts, factsProvenance: 'host fixture: eligibility policy, refund ledger, integer-cent billing record, subscription record',
+          evaluatedRules: bounded.selection.evaluated, winningRule: bounded.selection.winningRule,
+          outcome: bounded.selection.outcome,
+        },
+        design: 'One six-Noul request per conversation; explicit host policy owns ordered routing, authoritative facts and approval. A separate generative provider explains the typed host outcome. Raw native responses stay in internal records; only one bounded trace is returned.',
+        proofBoundary: 'Offline scenarios prove scripted transport, policy, typed handoff and zero unapproved dispatch effects—not judgment quality or calibration. Thresholds are illustrative; live runs one scenario and asserts contracts, not fixture probabilities. No payment or subscription executor is connected.',
       };
     },
   },

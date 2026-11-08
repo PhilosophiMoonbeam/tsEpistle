@@ -58,9 +58,14 @@ wf.execute('analyzer', (state) => ({ sourceText: state.processorResult.processed
 
 ## Node Definition
 
-For a Typesafe/Jev decision node, use required boolean/class outputs and pass
-its results to a later generative step when prose is needed. Native scoring
-requires an explicit rubric through `typesafe(...).systemOne(...)`. See [Typesafe/Jev integration](references/typesafe.md) for TypeScript integration and the two-program hybrid pattern. Original upstream resource: [Typesafe](https://github.com/ax-llm/ax/blob/main/src/ax/skills/ax-typesafe.md).
+For a Typesafe/Jev judgment node, use required boolean/class outputs or explicit
+`score`-rubric signatures and pass results to a later generative step when prose
+is needed. The direct `typesafe(...).systemOne(...)` client is needed only for
+advanced request shapes such as structured criteria. Keep authoritative facts,
+ordered policy and effects in host code; preserve uncertain higher-priority
+rules before lower-priority branches. See [Atomic judgments and host policy](references/typesafe.md#atomic-judgments-and-host-policy)
+and [Typesafe/Jev integration](references/typesafe.md) for TypeScript contracts
+and the two-program hybrid pattern. Original upstream resource: [Typesafe](https://github.com/ax-llm/ax/blob/main/src/ax/skills/ax-typesafe.md).
 
 ```typescript
 // String signature (creates AxGen automatically)

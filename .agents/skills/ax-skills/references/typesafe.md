@@ -78,7 +78,7 @@ const decision = await triage.forward(model, {
 // decision.team: 'support' | 'billing' | 'engineering'
 ```
 
-`trueThreshold` defaults to `0.5`, must be finite in `[0, 1]`, and converts all provider-instance booleans using `noul >= trueThreshold` (equality included). This local policy is never sent to Typesafe. Choice returns its selected label without automatic confidence cutoff or abstention.
+`trueThreshold` defaults to `0.5`, must be finite in `[0, 1]`, and converts scalar booleans on that provider instance using `noul >= trueThreshold` (equality included). Boolean evidence instead uses its field `threshold`, default `0.5`, independently of the provider threshold. These local policies are never sent to Typesafe; native Noul remains unthresholded. Choice returns its selected label without automatic confidence cutoff or abstention.
 
 Field names/descriptions become question instructions. Boolean value descriptions map to `criteria.true`/`criteria.false`; class descriptions use exact label keys. Partial descriptions are allowed; undescribed class labels map to `null`. Duplicate/unknown keys and empty descriptions fail validation. Quote labels containing spaces/punctuation. Fluent equivalents: `f.boolean(...).describeValues({ true: '...', false: '...' })` and `f.class([...], ...).describeValues({ label: '...' })`.
 
@@ -175,6 +175,23 @@ Question design:
 - Test wording/thresholds against representative labeled inputs. Confidence describes distribution, not correctness.
 
 Provider guidance: [Noul](https://docs.typesafe.ai/primitives/noul), [Choice](https://docs.typesafe.ai/primitives/choice), [Score](https://docs.typesafe.ai/primitives/score), [official API types](https://github.com/typesafe-ai/typesafe-sdk-js/blob/main/src/types.ts).
+
+## Atomic judgments and host policy
+
+Jev supplies semantic judgments; code owns authoritative facts/calculations, ordered rules and effects. Keep Choice/Score and Ax decision APIs for their typed contracts, but do not bury an entire business policy in one Choice. Model-extracted values and customer claims are not system-of-record facts: verify eligibility, balances, amounts, identity and current status against authenticated records, and calculate exact comparisons in code.
+
+- Send bounded, relevant structured context with explicit source/field paths; separate customer assertions from verified records. Batch narrow, answer-independent questions over that context. “Independent” means no answer dependencies, not statistical independence, invariance after edits or a calibration guarantee. Questions needing another answer require a later call.
+- Retain raw Noul probabilities through native answers or boolean evidence. Define a host-owned three-valued policy: yes above an evaluated upper boundary, no below a lower boundary, uncertain between them, with explicit inclusive/exclusive boundaries. A scalar boolean alone cannot retain that uncertainty. Missing required facts also need an explicit unresolved outcome.
+- Evaluate multi-intent rules in priority order. For example: unauthorized-charge report → human/legal request → eligible refund → retention → ordinary answer. An uncertain higher-priority rule must trigger review, clarification or a defined safe hold before any lower-priority outcome; do not silently treat uncertainty as false. Dispatch authorized effects only after policy selection, separately from judgments and explanations.
+- Optional applicability gate: pair a forced Choice with a companion Noul asking whether any supplied option applies. Ignore the Choice when inapplicable; preserve review when applicability is uncertain. Choice confidence alone does not establish applicability. Likewise, pair Box with a presence judgment and ignore its region unless presence passes policy.
+- Optional speculative fan-out: ask answer-independent questions together even when only some branches will matter, then ignore irrelevant answers in code. Never let an irrelevant answer override a selected branch or authorize an effect.
+- Optional composite scoring: use one Score rubric per dimension, normalize each by its own final rubric index, and apply explicit application weights in code. Preserve component scores/distributions. A weighted aggregate is an application score, not a joint-event probability; multiplying judgments does not establish one either.
+- Keep privacy-aware traces with available model identity, question IDs/versions, raw probabilities, threshold/policy versions, evaluated rule IDs/order, selected/blocked outcome and fact source IDs/versions. Redact/minimize payloads and control access/retention; do not invent unavailable identities or log secrets to obtain observability.
+- After changing wording, context, model, thresholds, rules or facts contracts, run targeted evaluation on representative labeled cases: uncertain boundaries, overlapping intents, missing/stale facts, inapplicable Choice, absent Box targets and effect denial. Re-evaluate affected judgments and end-to-end policy; no automatic correctness or calibration follows from decomposition.
+
+Read [Don’t Call It a Decision Model](https://typesafe.ai/blog/dont-call-it-a-decision-model), [how to build with System One](https://docs.typesafe.ai/concepts/how-to-build-with-system-one), [confidence](https://docs.typesafe.ai/confidence), and TypeSafe [patterns](https://docs.typesafe.ai/patterns) for [probability routing](https://docs.typesafe.ai/patterns/probability-routing), [speculative fan-out](https://docs.typesafe.ai/patterns/fan-out) and [composite scoring](https://docs.typesafe.ai/patterns/composite-scoring). Treat thresholds as workload-specific policies, not portable error-rate guarantees.
+
+Selected examples: [26 architecture](examples/26-architecture.ts), `26-architecture/evidence-aware-ticket`; [06 decisions](examples/06-decisions.ts), `06-decisions/threshold-ownership` and `06-decisions/applicability-gate`. Read the architecture case for ordered host policy, then the decision cases for threshold ownership and applicability.
 
 ## Models, transport, and diagnostics
 

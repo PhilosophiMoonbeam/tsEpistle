@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {
-  ax, f, flow, runControl, AxMockAIService,
+  ai, ax, f, flow, runControl, AxMockAIService,
   type AxAIServiceOptions, type AxChatRequest, type AxChatResponse,
   type AxChatSession, type AxChatSessionEvent, type AxGenOut, type AxRunControlEvent,
 } from '@ax-llm/ax';
@@ -15,6 +15,51 @@ const reply = (content: string): AxChatResponse => ({
 });
 
 export const examples: readonly Example[] = [
+  {
+    id: '16-flow/typesafe-rubric-score',
+    title: 'Run an explicit native rubric score through a real Flow node',
+    features: ['flow', 'typesafe', 'explicit score rubric', 'native evidence', 'one batch'],
+    modes: ['offline'],
+    async run(ctx) {
+      const levels = ['Minor inconvenience', 'Feature impaired', 'Core task blocked'] as const;
+      const judge = ax(f().input('ticket', f.string())
+        .output('severity', f.score(levels, 'Customer impact').withEvidence()).build());
+      const workflow = flow<{ ticket: string }>()
+        .node('judgeImpact', judge)
+        .execute('judgeImpact', (state) => ({ ticket: state.ticket }))
+        .returns((state) => ({ severity: state.judgeImpactResult.severity }));
+      let calls = 0;
+      // Inject HTTP I/O only: Flow execution and adapter serialization/decoding stay real.
+      const aiTypesafe = ai({ name: 'typesafe', apiKey: 'isolated-fixture-not-a-secret', options: {
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          assert.equal(new URL(request.url).pathname, '/v1/systemone');
+          const body = await request.json() as {
+            questions: Record<string, { type: string; criteria: unknown }>;
+          };
+          assert.deepEqual(Object.keys(body.questions), ['severity']);
+          assert.equal(body.questions.severity?.type, 'score');
+          assert.deepEqual(body.questions.severity?.criteria, levels);
+          calls++;
+          return Response.json({ model: 'jev-fixture', answers: {
+            severity: { type: 'score', score: 1.8, probabilities: { '0': 0.1, '1': 0.4, '2': 0.5 },
+              legend: { '0': levels[0], '1': levels[1], '2': levels[2] }, confidence: 0.75 },
+          }, usage: { input_tokens: 24, output_tokens: 5 } });
+        },
+      } });
+      const result = await workflow.forward(aiTypesafe, {
+        ticket: 'Checkout fails for every customer; payments cannot complete.',
+      }, { ...options(ctx), modelConfig: {} });
+      assert.equal(result.severity.value, 1.8); // Preserve the native fractional value, not weighted mean 1.4.
+      assert.deepEqual(result.severity.levels, levels);
+      assert.deepEqual(result.severity.probabilities, [0.1, 0.4, 0.5]);
+      assert.equal(result.severity.confidence, 0.75);
+      assert.deepEqual(result.severity.provenance, { source: 'native', provider: 'Typesafe', model: 'jev-fixture' });
+      assert.equal(calls, 1);
+      return { result, batches: calls,
+        proof: 'Injected HTTP fixture, not inference quality or calibration. f.score declares ordered rubric levels; an ordinary number field would not define a Typesafe rubric.' };
+    },
+  },
   {
     id: '16-flow/serial-contracts',
     title: 'Typed nodes: normalize → extract → explain with an actual dependency',

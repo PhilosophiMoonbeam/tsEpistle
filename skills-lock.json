@@ -125,7 +125,7 @@
       "ref": "main",
       "sourceType": "github",
       "skillPath": "skills/ax-skills/SKILL.md",
-      "computedHash": "69d0b370cd497d8fbaa51f1d23e60475e3c9e6744e667ab2bcfee6aed834dde7"
+      "computedHash": "2d39ad7b2b4e5b35ca15371c88a5cd1c24515dea17d0141d6c35bee72d8ad9e7"
     },
     "ax-typesafe": {
       "source": "ax-llm.github.io",

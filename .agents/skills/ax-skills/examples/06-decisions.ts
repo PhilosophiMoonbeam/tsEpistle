@@ -51,6 +51,91 @@ const evidenceAnswers = {
 
 export const examples: readonly Example[] = [
   {
+    id: '06-decisions/threshold-ownership',
+    title: 'Separate provider scalar conversion from field evidence thresholds',
+    features: ['typesafe adapter', 'scalar boolean', 'boolean evidence', 'local thresholds', 'one batch'],
+    modes: ['offline'],
+    async run(ctx) {
+      const fixture = decisionFixture({
+        scalar: { type: 'noul', noul: 0.6 },
+        defaultEvidence: { type: 'noul', noul: 0.6 },
+        explicitEvidence: { type: 'noul', noul: 0.6 },
+      }, (body) => {
+        const request = JSON.parse(body) as { questions: Record<string, { type: string }> };
+        assert(!Object.hasOwn(request, 'trueThreshold'));
+        assert(Object.values(request.questions).every((question) => !Object.hasOwn(question, 'threshold')));
+        assert.deepEqual(Object.keys(request.questions).sort(), ['defaultEvidence', 'explicitEvidence', 'scalar']);
+        assert(Object.values(request.questions).every((question) => question.type === 'noul'));
+      });
+      const program = ax(f().input('ticket', f.string())
+        .output('scalar', f.boolean('Core task blocked?'))
+        .output('defaultEvidence', f.boolean('Core task blocked?').withEvidence())
+        .output('explicitEvidence', f.boolean('Core task blocked?').withEvidence({ threshold: 0.9 }))
+        .build());
+      const result = await program.forward(fixture.model, { ticket }, decisionOptions(ctx));
+      assert.equal(result.scalar, false); // Provider trueThreshold is 0.9.
+      assert.equal(result.defaultEvidence.value, true);
+      assert.equal(result.defaultEvidence.threshold, 0.5);
+      assert.equal(result.explicitEvidence.value, false);
+      assert.equal(result.explicitEvidence.threshold, 0.9);
+      assert.equal(result.defaultEvidence.probability, 0.6);
+      assert.equal(result.explicitEvidence.probability, 0.6);
+      assert.equal(fixture.calls(), 1);
+      return { result, batches: fixture.calls(),
+        proof: 'Injected HTTP answers exercise real SDK conversion. Threshold ownership, not inference quality or calibration.' };
+    },
+  },
+  {
+    id: '06-decisions/applicability-gate',
+    title: 'Gate a native Choice with a separate applicability judgment',
+    features: ['native Choice', 'companion Noul', 'ordered host policy', 'uncertain review'],
+    modes: ['offline'],
+    async run(ctx) {
+      const questions = {
+        applicable: { type: 'noul', instructions: 'Does this message concern an invoice or payment dispute?' },
+        category: {
+          type: 'choice', instructions: 'If this is a billing dispute, which billing category best fits?',
+          criteria: { refund: 'A refund request', duplicate: 'A duplicate charge' },
+        },
+      } as const satisfies AxAITypesafeQuestions;
+      const fixtures = [
+        { name: 'no', probability: 0.02, expected: 'general' },
+        { name: 'yes', probability: 0.98, expected: 'refund' },
+        { name: 'uncertain', probability: 0.5, expected: 'review' },
+      ] as const;
+      const outcomes = [];
+      for (const fixture of fixtures) {
+        let calls = 0;
+        // Only HTTP I/O is injected; native request validation and decoding are real.
+        const client = typesafe({ apiKey: 'isolated-fixture-not-a-secret', options: {
+          fetch: async (input, init) => {
+            const request = new Request(input, init);
+            assert.equal(new URL(request.url).pathname, '/v1/systemone');
+            const body = await request.json() as { questions: unknown };
+            assert.deepEqual(body.questions, questions);
+            calls++;
+            return Response.json({ model: 'jev-fixture', answers: {
+              applicable: { type: 'noul', noul: fixture.probability },
+              category: { type: 'choice', choice: 'refund', probabilities: { refund: 0.96, duplicate: 0.04 }, confidence: 0.92 },
+            }, usage: { input_tokens: 20, output_tokens: 4 } });
+          },
+        } });
+        const result = await client.systemOne({ state: { message: `Declared ${fixture.name} transport fixture` }, questions }, { abortSignal: ctx.signal });
+        const p = result.answers.applicable.noul;
+        // Choice always selects within its supplied set; selection cannot establish applicability.
+        const route = p <= 0.1 ? 'general' : p >= 0.9 ? result.answers.category.choice : 'review';
+        assert.equal(result.answers.category.choice, 'refund');
+        assert.equal(result.answers.category.probabilities.refund, 0.96);
+        assert.equal(p, fixture.probability);
+        assert.equal(route, fixture.expected);
+        assert.equal(calls, 1);
+        outcomes.push({ fixture: fixture.name, answers: result.answers, route, batches: calls });
+      }
+      return { outcomes,
+        proof: 'Three finite injected HTTP fixtures; real SDK native decoding and host routing, not real inference or calibration. Questions have no sibling-answer dependencies.' };
+    },
+  },
+  {
     id: '06-decisions/adapter-values',
     title: 'Own boolean policy and class meanings in a typed decision signature',
     features: ['typesafe adapter', 'value descriptions', 'trueThreshold', 'scalar boolean/class'],
