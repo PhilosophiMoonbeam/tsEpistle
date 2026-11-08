@@ -367,6 +367,22 @@ describe('Wiki source-bound typed synthesis', () => {
     expect(createWikiSynthesisStreamGuard([bound], options)(JSON.stringify(combined))).toBeDefined()
   })
 
+  it('keeps reserved host-notice bytes unavailable to multibyte canonical synthesis output at the exact bound', async () => {
+    const statement = '界'.repeat(1_000)
+    const bound = { ...source, text: statement }
+    const prediction = answer({ claims: [{ ...answer().claims[0]!, statement }] })
+    const requiredBytes = Buffer.byteLength(JSON.stringify(prediction), 'utf8')
+    expect(requiredBytes).toBeGreaterThan(JSON.stringify(prediction).length)
+    for (const mode of ['native', 'json_object'] as const) {
+      const options = { maxOutputTokens: 1_024, contentByteLimit: () => requiredBytes }
+      const accepted = await generate(prediction, [bound], options, mode).result
+      expect(accepted.claims[0]!.statement).toBe(statement)
+      await expect(
+        generate(prediction, [bound], { ...options, contentByteLimit: () => requiredBytes - 1 }, mode).result
+      ).rejects.toBeInstanceOf(AxGenerateError)
+    }
+  })
+
   it('preserves explicitly emitted faithful quotations through both host validation boundaries', async () => {
     const literalStatement = 'Status: Illustrative and untested | Scope: External publication only | Required approvals: **two**.'
     const quoted = { ...source, text: `${literalStatement}\n${source.text}` }

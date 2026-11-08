@@ -944,7 +944,7 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     const everyCandidateVerified = pages.length === recent.data.pages.length
     return {
       ...recent.data,
-      exhausted: everyCandidateVerified ? recent.data.exhausted : true,
+      exhausted: everyCandidateVerified && recent.data.exhausted,
       pages
     }
   })

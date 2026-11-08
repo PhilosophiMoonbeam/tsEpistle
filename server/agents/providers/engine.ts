@@ -172,6 +172,8 @@ const MAX_SUBAGENT_CITATIONS = 20
 const MAX_PRESENTATION_DELTAS = 64
 const MIN_PRESENTATION_DELTA_CHARACTERS = 256
 const MAX_PRESENTATION_DELTA_CHARACTERS = 16_000
+// Match the durable root sink's UTF-16 character boundary in runtime.ts.
+const MAX_PUBLICATION_CHARACTERS = 128_000
 const PROVIDER_STREAM_CANCEL_REASON = 'provider stream failed'
 const MAX_PROVIDER_IDENTIFIER_BYTES = 256
 const MAX_CAPACITY_RESERVE_CALLS = 4
@@ -3580,6 +3582,8 @@ interface NativeDraft {
   readonly sourceOrder?: ReadonlyMap<string, number>
   readonly content: string
   readonly contentByteLimit: number
+  readonly contentCharacterLimit: number
+  readonly publicationByteLimit: number
   readonly trustedObservations: ReadonlySet<string>
   readonly operationObservations: ReadonlySet<string>
   /** Canonical claims supported by globally well-formed source-local Jev results. */
@@ -3681,7 +3685,7 @@ const restoreVerifiedRecentDraft = (draft: NativeDraft, retained: NativeDraft, l
     quotationProofs.set(quotation, proof)
   }
   const content = renderWikiSynthesisAnswer(answer, draft.sourceOrder)
-  if (Buffer.byteLength(content, 'utf8') > draft.contentByteLimit) return undefined
+  if (Buffer.byteLength(content, 'utf8') > draft.contentByteLimit || content.length > draft.contentCharacterLimit) return undefined
   return {
     ...draft,
     answer,
@@ -3752,12 +3756,19 @@ const selectVerifiedRecentDraft = (
     ...(selectedQuotations === undefined ? {} : { quotations: selectedQuotations }),
     unresolvedFacets: Array.from({ length: requestFacetCount }, (_value, index) => index)
   }
+  const content = renderWikiSynthesisAnswer(answer, draft.sourceOrder)
+  if (
+    Buffer.byteLength(JSON.stringify(answer), 'utf8') > draft.contentByteLimit ||
+    Buffer.byteLength(content, 'utf8') > draft.contentByteLimit ||
+    content.length > draft.contentCharacterLimit
+  )
+    return undefined
   return {
     ...draft,
     answer,
     ...(restored?.quotationProofs === undefined ? {} : { quotationProofs: restored.quotationProofs }),
     allRequestFacetsUnresolved: true,
-    content: renderWikiSynthesisAnswer(answer, draft.sourceOrder),
+    content,
     semanticSupport: new Set(selectedClaims.map(claim => canonicalJson(claim)))
   }
 }
@@ -4369,7 +4380,15 @@ const boundedChatPrompt = (
   return { chatPrompt, maxOutputTokens: requestedMaxOutputTokens }
 }
 
-const presentAcceptedContent = async (content: string, sink: AgentEngineSink, assertPublicationFresh?: () => Promise<void>): Promise<void> => {
+const presentAcceptedContent = async (
+  content: string,
+  sink: AgentEngineSink,
+  assertPublicationFresh?: () => Promise<void>,
+  contentByteLimit = Number.MAX_SAFE_INTEGER
+): Promise<void> => {
+  // Admit the complete publication before the first durable delta, not its fragments.
+  if (content.length > MAX_PUBLICATION_CHARACTERS || Buffer.byteLength(content, 'utf8') > contentByteLimit)
+    invalidProviderResponse('Complete assistant publication exceeded its admitted content limit.', 'response_limit')
   if (content.length === 0) return
   const deltaCharacters = Math.min(
     MAX_PRESENTATION_DELTA_CHARACTERS,
@@ -5295,13 +5314,64 @@ const partialCoverageDisclosure = (omittedCount: number, notExecutedCount: numbe
 // Reserve the longest finite host notice, not its defensive output-size ceiling.
 const CAPACITY_COVERAGE_RESERVE = partialCoverageDisclosure(MAX_TOOL_CALLS, MAX_TOOL_CALLS)
 
-const recentExcerptDisclosure = (citationIds: readonly string[], evidenceView: ReadonlyMap<string, CitationEvidence>): string =>
-  citationIds.some(evidenceId => {
+const recentSourceScopeDisclosure = (
+  citationIds: readonly string[],
+  evidenceView: ReadonlyMap<string, CitationEvidence>,
+  currentWindows: readonly RecentEvidenceCoverage[],
+  reserve = false
+): string => {
+  const lines: string[] = []
+  const citedIds = new Set(citationIds)
+  const describedWindows = new Set<string>()
+  let additionalWindows = false
+  for (const window of currentWindows) {
+    if (!window.evidenceIds.some(evidenceId => citedIds.has(evidenceId) && evidenceView.has(evidenceId))) continue
+    let availableCount = 0
+    for (const evidenceId of window.evidenceIds) if (evidenceView.has(evidenceId)) availableCount++
+    const complete = window.windowComplete && availableCount === window.returnedCount
+    const limit = window.requestedLimit === null ? 'requested limit unknown' : `requested limit ${window.requestedLimit}`
+    const exhaustion =
+      window.exhausted === null
+        ? 'exhaustion unknown'
+        : window.exhausted
+          ? 'selected collection scope exhausted'
+          : 'selected collection scope exhaustion not established'
+    const description = `${window.returnedCount} returned results; ${limit}; ${exhaustion}; ${
+      complete ? 'complete returned window available' : 'complete returned window not established'
+    }.`
+    if (describedWindows.has(description)) continue
+    // Keep whole notices, never clipped markers or a source/title catalog.
+    if (!reserve && describedWindows.size === 4) {
+      additionalWindows = true
+      continue
+    }
+    describedWindows.add(description)
+    lines.push(`Current recent collection window: ${description}`)
+  }
+  if (reserve && lines.length > 4) {
+    // Every tuple is ASCII. The four longest notices bound any selected subset
+    // in both bytes and characters, independently of citation order.
+    lines.sort((left, right) => right.length - left.length)
+    lines.length = 4
+    additionalWindows = true
+  }
+  if (additionalWindows) lines.push('Additional cited current collection windows are bounded separately; no combined inventory is established.')
+  if (lines.length > 0)
+    lines.push('These are bounded selected-scope results, not a Wiki-wide inventory. Returned-result counts are not counts of supported summaries or proof of full-page completeness.')
+  let citedRecentExcerpt = false
+  let truncated = false
+  for (const evidenceId of citationIds) {
     const evidence = evidenceView.get(evidenceId)
-    return evidence?.binding.representation === 'recent-excerpt' && metadataRecord(evidence.binding.representationMetadata)?.contentTruncated === true
-  })
-    ? '\n\nRecent page content is shown as bounded opening excerpts; one or more excerpts were truncated.'
-    : ''
+    if (evidence?.binding.representation !== 'recent-excerpt') continue
+    citedRecentExcerpt = true
+    if (metadataRecord(evidence.binding.representationMetadata)?.contentTruncated === true) truncated = true
+  }
+  if (citedRecentExcerpt) {
+    lines.push('Recent-page excerpt evidence establishes only delivered opening text, not unread content or revision differences.')
+    if (truncated) lines.push('One or more delivered excerpts were truncated; their unread suffixes remain unestablished.')
+  }
+  return lines.length === 0 ? '' : `\n\n${lines.join('\n\n')}`
+}
 const requestEvidenceDisclosure = (facets: readonly RootRequestFacet[] | undefined, unresolved: readonly number[], unestablishedCoverage: boolean): string => {
   const coverageLimit =
     'Coverage of the requested scope was not established for this answer; the cited findings do not establish that missing information is absent.'
@@ -6868,6 +6938,7 @@ export class AxAgentEngine implements AgentEngine {
       readonly coverage: Parameters<typeof assessDraft>[2]
       readonly assessableContent: (content: string) => string
       readonly reserveRepair: boolean
+      readonly publicationReserve: string
       readonly contextMeasurements?: Map<string, number>
       readonly authorizeEvidence: () => Promise<void>
     },
@@ -7022,11 +7093,16 @@ export class AxAgentEngine implements AgentEngine {
       quotationProofs.set(quotation, proof)
       return quotation
     }
+    const reservedPublicationBytes = Buffer.byteLength(input.publicationReserve, 'utf8')
+    let publicationByteLimit = deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes
+    const contentByteLimit = (): number => Math.max(0, publicationByteLimit - reservedPublicationBytes)
+    const contentCharacterLimit = Math.max(0, MAX_PUBLICATION_CHARACTERS - input.publicationReserve.length)
     const program = createWikiSynthesisProgram(sources, {
       structured,
       inputMediaSources,
       resolveQuotation,
       maxOutputTokens: () => maxOutputTokens,
+      contentByteLimit,
       observations: input.observations,
       facetCount: input.requestFacets.length,
       validateClaim: (claim, source) => {
@@ -7048,11 +7124,15 @@ export class AxAgentEngine implements AgentEngine {
         return failure === undefined ? true : rejectClaim(source, `exact-literals/${failure}`)
       },
       validateAnswer: (answer, content) => {
-        if (Buffer.byteLength(JSON.stringify(answer), 'utf8') > deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes) {
+        if (Buffer.byteLength(JSON.stringify(answer), 'utf8') > contentByteLimit()) {
           rejection = 'Canonical synthesis output exceeded its provider content byte limit.'
           return rejection
         }
         if (recentOrder !== undefined) content = renderWikiSynthesisAnswer(answer, recentOrder)
+        if (content.length > contentCharacterLimit) {
+          rejection = 'Rendered synthesis output exceeded its reserved publication character limit.'
+          return rejection
+        }
         rendered = content
         // Read identity and exact literal admission are mechanical; every claim
         // still requires independent Jev proof within its exact admitted scope.
@@ -7067,7 +7147,9 @@ export class AxAgentEngine implements AgentEngine {
           quotationProofs,
           ...(recentOrder === undefined ? {} : { sourceOrder: recentOrder }),
           content,
-          contentByteLimit: deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes,
+          contentByteLimit: contentByteLimit(),
+          contentCharacterLimit,
+          publicationByteLimit,
           trustedObservations: new Set(input.observations),
           operationObservations: new Set(input.operationObservations)
         }
@@ -7238,6 +7320,7 @@ export class AxAgentEngine implements AgentEngine {
             'dispatch_admission'
           )
         maxOutputTokens = Math.min(maxOutputTokens, contextOutputAllowance, budgetOutputAllowance)
+        publicationByteLimit = deriveAgentProviderResourceLimits(maxOutputTokens).contentBytes
         const exposure = planningExposure
         const repairExposure = input.reserveRepair
           ? safeUsageAddition(exposure.totalExposureTokens, SYNTHESIS_RESERVE_CHARACTERS, 'Typed correction exposure')
@@ -7960,7 +8043,9 @@ export class AxAgentEngine implements AgentEngine {
       let retainedRecentDraft: NativeDraft | undefined
       let retainedRecentEvidence: ReadonlyMap<string, CitationEvidence> | undefined
       let coverageAuditAttempted = false
-      let retainedRecentPublication: { readonly draft: NativeDraft; readonly evidence: ReadonlyMap<string, CitationEvidence> } | undefined
+      let retainedRecentPublication:
+        | { readonly draft: NativeDraft; readonly evidence: ReadonlyMap<string, CitationEvidence>; readonly sourceScopeDisclosure: string }
+        | undefined
       let repairFeedback: SynthesisRepairFeedback | undefined
       // Complete native support requests are run-local proofs, not another
       // dispatch: reuse must never add the original receipt to usage twice.
@@ -8454,7 +8539,24 @@ export class AxAgentEngine implements AgentEngine {
         const historicalScope = historicalRecentWindows.length === 0
           ? ''
           : `\nHistorical retained collection actionCallIds: ${canonicalJson(historicalRecentWindows.map(window => window.actionCallId))}. These rows provide previously observed page facts only, never this turn's current recent-window inventory. A current most-recent listing or recap requires a fresh collection window; without one, leave that request unresolved.`
-        return `${contextPlan.intent}\n\nHost-observed recent-page collection scope (not page facts or additional request obligations):\n${canonicalJson(windows)}${historicalScope}\nFor a requested bounded recent listing or recap, requestedLimit is an upper bound. Only windowComplete:true certifies that the eligible accessible action window reached that limit or actual exhaustion with all returned rows available. A smaller exhausted complete window is not by itself an unresolved request facet. Cover every returned page with an available exact read; disclose missing requested evidence or unread content. Incidental recent research does not expand an ordinary question. This scope establishes no Wiki-wide absence, exclusivity, revision differences or unread-suffix coverage. Keep every other unsupported request facet unresolved.`
+        return `${contextPlan.intent}\n\nHost-observed recent-page collection scope (not page facts or additional request obligations):\n${canonicalJson(windows)}${historicalScope}\nFor a requested bounded recent listing or recap, requestedLimit is an upper bound. Only windowComplete:true certifies that the eligible accessible action window reached that limit or actual exhaustion with all returned rows available. A smaller exhausted complete window is not by itself an unresolved request facet. Cover every returned page with an available exact read. The host separately renders collection-window and delivered-excerpt limits; do not encode this metadata as Wiki claims or model observations. Keep missing requested page facts unresolved; the host disclosure does not supply them. Incidental recent research does not expand an ordinary question. This scope establishes no Wiki-wide absence, exclusivity, revision differences or unread-suffix coverage. Keep every other unsupported request facet unresolved.`
+      }
+      const synthesisPublicationReserve = (
+        evidenceView: ReadonlyMap<string, CitationEvidence>,
+        candidateWindow?: RecentEvidenceCoverage | null
+      ): string => {
+        const windows = candidateWindow ? [...recentWindows, candidateWindow] : recentWindows
+        const facets =
+          contextPlan.requestFacets ??
+          (contextPlan.intent.length > 0
+            ? [{ start: 0, end: contextPlan.intent.length, quote: contextPlan.intent, coverage: 'source' as const }]
+            : [])
+        // Cover any selected subset and every potentially unresolved facet,
+        // including the output-limited path, without converting tokens to bytes.
+        return `${recentSourceScopeDisclosure([...evidenceView.keys()], evidenceView, windows, true)}${partialCoverageDisclosure(
+          executedOmittedCount(),
+          notExecutedActionCallIds.size
+        )}${evidenceConflictDisclosure(evidenceConflictIds.size > 0)}${requestEvidenceDisclosure(facets, facets.map((_facet, index) => index), true)}\n\n${OUTPUT_LIMIT_DISCLOSURE}`
       }
       const nudgedRecentBodyReads = new Set<string>()
       const recentBodyReadIds = (includeNudged = false): readonly string[] | undefined => {
@@ -9706,6 +9808,7 @@ export class AxAgentEngine implements AgentEngine {
                 },
                 assessableContent: content => assessableActionStatusContent(content, deliveredAttributedLines, deliveredBrowserAttributions),
                 reserveRepair: rejectedDraftCount === 0 && turn + 1 < maxTurns,
+                publicationReserve: synthesisPublicationReserve(dispatchEvidence),
                 contextMeasurements: synthesisContextMeasurements,
                 authorizeEvidence: async () => {
                   // A mixed native batch also carries its internal responses.
@@ -9943,6 +10046,7 @@ export class AxAgentEngine implements AgentEngine {
           let coverageOutputLimited = false
           let coverageResponseDiagnostics: TurnResult['responseDiagnostics']
           let coverageAuditFeedback: string | undefined
+          let sourceScopeDisclosure: string | undefined
           let selectedRecentPartial = false
           const hostInvalidBeforeSemanticVerification = !assessment.valid
           let synthesisRejectionStage: 'pre_native_framing' | 'pre_native_host' | 'native_support' | 'coverage' | undefined =
@@ -9965,9 +10069,15 @@ export class AxAgentEngine implements AgentEngine {
             coverageAuditAttempted = true
             const conversationContext = wikiConversationContext(conversation)
             const operationEvidence = requiresOperationCoverage ? await currentOperationEvidence() : undefined
+            sourceScopeDisclosure = recentSourceScopeDisclosure(
+              [...new Set([...nativeDraft.answer.claims, ...(nativeDraft.answer.quotations ?? [])].map(item => item.evidenceId))],
+              scopeEvidence,
+              recentWindows
+            )
             const coverageInput = encodeWikiCoverageInput({
               userRequest: userRequestWithRecentScope(scopeEvidence),
               ...(conversationContext === undefined ? {} : { conversationContext }),
+              ...(sourceScopeDisclosure.length === 0 ? {} : { sourceScopeDisclosure }),
               requestFacets: contextPlan.requestFacets?.map(facet => facet.quote) ?? [contextPlan.intent],
               unresolvedFacets: nativeDraft.answer.unresolvedFacets,
               ...(coverageObservations.length === 0 ? {} : { observations: coverageObservations }),
@@ -10204,7 +10314,7 @@ export class AxAgentEngine implements AgentEngine {
                   rejectedDraftCount === 0 &&
                   retainedRecentDraft !== undefined
                 )
-                  retainedRecentPublication = { draft: orderVerifiedRecentDraft(retainedRecentDraft), evidence }
+                  retainedRecentPublication = { draft: orderVerifiedRecentDraft(retainedRecentDraft), evidence, sourceScopeDisclosure: sourceScopeDisclosure! }
                 // A valid incomplete audit can narrow completion, never source support.
                 // Preserve unchanged, wholly verified recent contributions on the final attempt.
                 if (
@@ -10338,7 +10448,7 @@ export class AxAgentEngine implements AgentEngine {
             if (!structured) {
               const disclosure = outputLimitDisclosureFor(publishFragment)
               const publishedContent = publishFragment
-                ? `${result.content}${recentExcerptDisclosure(assessment.citationIds, assessmentEvidence)}${partialCoverageDisclosure(
+                ? `${result.content}${sourceScopeDisclosure ?? recentSourceScopeDisclosure(assessment.citationIds, assessmentEvidence, recentWindows)}${partialCoverageDisclosure(
                     executedOmittedCount(),
                     notExecutedActionCallIds.size
                   )}${evidenceConflictDisclosure(evidenceConflictIds.size > 0)}${requestDisclosure}\n\n${disclosure}`
@@ -10349,7 +10459,8 @@ export class AxAgentEngine implements AgentEngine {
                 sink,
                 publishFragment && (assessment.citationIds.length > 0 || publicationVerificationEvidence !== undefined)
                   ? assertAssessmentPublicationFresh
-                  : undefined
+                  : undefined,
+                result.rootNativeDraft?.publicationByteLimit ?? deriveAgentProviderResourceLimits(bounded.maxOutputTokens).contentBytes
               )
             }
             const citations = !structured && publishFragment ? answerCitations(assessment.citationIds, assessmentEvidence) : []
@@ -10405,7 +10516,7 @@ export class AxAgentEngine implements AgentEngine {
               const audit = await auditDraftCoverage(retained, retainedEvidence, false, retained.answer.observations, retainedEvidence)
               if (coverageOutputLimited || (audit.verdict !== 'complete' && audit.verdict !== 'incomplete'))
                 return await publishExecutionLimit('evidence')
-              retainedRecentPublication = { draft: retained, evidence: retainedEvidence }
+              retainedRecentPublication = { draft: retained, evidence: retainedEvidence, sourceScopeDisclosure: sourceScopeDisclosure! }
             }
             const retainedResult = {
               ...result,
@@ -10423,6 +10534,7 @@ export class AxAgentEngine implements AgentEngine {
             result = retainedResult
             assessment = retainedAssessment
             assessmentEvidence = retainedEvidence
+            sourceScopeDisclosure = retainedRecentPublication.sourceScopeDisclosure
             publicationVerificationEvidence = retainedEvidence
             requestDisclosure = requestEvidenceDisclosure(contextPlan.requestFacets, retained.answer.unresolvedFacets, unestablishedCoverage)
             rootMetadataStripped = true
@@ -10554,12 +10666,13 @@ export class AxAgentEngine implements AgentEngine {
           if (
             (request.purpose ?? 'root') === 'root' &&
             result.rootNativeDraft !== undefined &&
-            Buffer.byteLength(acceptedBaseContent, 'utf8') > result.rootNativeDraft.contentByteLimit
+            (Buffer.byteLength(acceptedBaseContent, 'utf8') > result.rootNativeDraft.contentByteLimit ||
+              acceptedBaseContent.length > result.rootNativeDraft.contentCharacterLimit)
           )
-            throw new AgentRepositoryError('PROVIDER_RESPONSE_TOO_LARGE', 'Canonical synthesis output exceeded its admitted content byte limit.', 502)
+            invalidProviderResponse('Canonical synthesis output exceeded its admitted content limit.', 'response_limit')
           const acceptedContent = request.specialist
             ? result.content
-            : `${acceptedBaseContent}${(request.purpose ?? 'root') === 'root' ? recentExcerptDisclosure(assessment.citationIds, assessmentEvidence) : ''}${partialCoverageDisclosure(
+            : `${acceptedBaseContent}${(request.purpose ?? 'root') === 'root' ? (sourceScopeDisclosure ?? recentSourceScopeDisclosure(assessment.citationIds, assessmentEvidence, recentWindows)) : ''}${partialCoverageDisclosure(
                 executedOmittedCount(),
                 notExecutedActionCallIds.size
               )}${(request.purpose ?? 'root') === 'root' ? evidenceConflictDisclosure(evidenceConflictIds.size > 0) : ''}${requestDisclosure}`
@@ -10591,7 +10704,8 @@ export class AxAgentEngine implements AgentEngine {
           await presentAcceptedContent(
             acceptedContent,
             sink,
-            assessment.citationIds.length > 0 || publicationVerificationEvidence !== undefined ? assertAssessmentPublicationFresh : undefined
+            assessment.citationIds.length > 0 || publicationVerificationEvidence !== undefined ? assertAssessmentPublicationFresh : undefined,
+            result.rootNativeDraft?.publicationByteLimit ?? deriveAgentProviderResourceLimits(bounded.maxOutputTokens).contentBytes
           )
           // Partial selection is final: spend only its reserved coverage audit.
           // Other accepted answers may compact opportunistically for the next turn.
@@ -10760,6 +10874,7 @@ export class AxAgentEngine implements AgentEngine {
                   coverage: { ...coverage, partialCoverage: { omittedCount: executedOmittedCount(), notExecutedCount: notExecutedActionCallIds.size } },
                   assessableContent: content => content,
                   reserveRepair: false,
+                  publicationReserve: synthesisPublicationReserve(prospectiveEvidence, collection.recent),
                   authorizeEvidence: async () => {
                     if (await reauthorizeEvidencePrompt(new Map()))
                       throw new AgentRepositoryError('AGENT_EVIDENCE_INVALID', 'Native synthesis context is no longer authorized', 409)
@@ -11557,6 +11672,7 @@ export class AxAgentEngine implements AgentEngine {
                 coverage: { ...coverage, partialCoverage: { omittedCount: executedOmittedCount(), notExecutedCount: notExecutedActionCallIds.size } },
                 assessableContent: content => assessableActionStatusContent(content, attributedLines, browserAttributions),
                 reserveRepair: false,
+                publicationReserve: synthesisPublicationReserve(preflightEvidence),
                 contextMeasurements: synthesisContextMeasurements,
                 authorizeEvidence: async () => {
                   if (await reauthorizeEvidencePrompt(new Map()))

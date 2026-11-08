@@ -381,7 +381,7 @@ describe('permission-safe page read actions', () => {
       expect(continued.nextOffset).toBeNull()
       expect(await execute('pages.listRecent', { limit: 2 }, scenario.context)).toMatchObject({
         pages: [],
-        exhausted: true
+        exhausted: false
       })
       expect(await execute('pages.related', { pageId: 42, limit: 5, cursor: null }, scenario.context)).toEqual({
         pages: [],
@@ -1253,12 +1253,12 @@ describe('permission-safe page read actions', () => {
     const { execute } = setup({ get: async () => page({ contentType: 'html' }) })
     await expect(Promise.resolve(execute('pages.readForPatch', { pageId: 42 }))).rejects.toMatchObject({ code: 'UNSUPPORTED_CONTENT_TYPE' })
   })
-  it('returns bounded current recent evidence for the requested locale and caller limit', async () => {
+  it.each([true, false])('preserves exhaustion=%s for intact bounded current recent evidence', async exhausted => {
     const { execute, operations } = setup({
       listRecent: vi.fn(async () => ({
         kind: 'recent-page-evidence',
         requestedLimit: 2,
-        exhausted: true,
+        exhausted,
         pages: [
           {
             id: 42,
@@ -1279,7 +1279,7 @@ describe('permission-safe page read actions', () => {
     expect(await execute('pages.listRecent', { locale: 'en', limit: 2 })).toEqual({
       kind: 'recent-page-evidence',
       requestedLimit: 2,
-      exhausted: true,
+      exhausted,
       pages: [
         {
           id: 42,
@@ -1297,6 +1297,50 @@ describe('permission-safe page read actions', () => {
       ]
     })
     expect(operations.listRecent).toHaveBeenCalledWith({ locale: 'en', limit: 2, requester: principal })
+  })
+
+  it.each([
+    ['changed revision', true],
+    ['changed revision', false],
+    ['revoked access', true],
+    ['revoked access', false]
+  ] as const)('does not establish exhaustion after %s drops a candidate from an exhausted=%s window', async (loss, exhausted) => {
+    const { execute, operations } = setup({
+      listRecent: vi.fn(async () => ({
+        kind: 'recent-page-evidence',
+        requestedLimit: 2,
+        exhausted,
+        pages: [
+          {
+            id: 42,
+            locale: 'en',
+            path: 'docs/start',
+            title: 'Start',
+            contentType: 'markdown',
+            sourceRevision: '8',
+            updatedAt: '2026-08-17T00:00:00.000Z',
+            content: '# Start',
+            sourceContentCharacters: 7,
+            contentTruncated: false,
+            citation: { evidenceId: 'page:42:revision:8', label: 'Start', href: '/en/docs/start' }
+          }
+        ]
+      })),
+      get: vi.fn(async () => {
+        if (loss === 'revoked access') throw new PageNotFound()
+        return page({ sourceRevision: '9', content: '# Changed source' })
+      })
+    })
+
+    expect(await execute('pages.listRecent', { locale: 'en', limit: 2 })).toEqual({
+      kind: 'recent-page-evidence',
+      requestedLimit: 2,
+      exhausted: false,
+      pages: []
+    })
+    expect(operations.listRecent).toHaveBeenCalledOnce()
+    expect(operations.get).toHaveBeenCalledOnce()
+    expect(operations.get).toHaveBeenCalledWith({ id: 42, requester: principal })
   })
   it('rejects legacy metadata-only recent results instead of treating them as evidence', async () => {
     const { execute } = setup({ listRecent: async () => [{ id: 42 }] })

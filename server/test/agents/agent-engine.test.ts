@@ -18,7 +18,7 @@ import { parseChildEvidencePacket } from '../../agents/orchestration.ts'
 import { prepareAgentPdf } from '../../agents/pdf-preparation.ts'
 import { reduceAgentEvents } from '../../agents/projection.ts'
 import { type AgentActionSessionProvider, AxAgentEngine } from '../../agents/providers/engine.ts'
-import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/providers/factory.ts'
+import { deriveAgentProviderResourceLimits, type AgentProviderFactory, type ProviderThoughtBlock } from '../../agents/providers/factory.ts'
 import { preserveGeminiContinuation } from '../../agents/providers/gemini.ts'
 import type { AxHarnessFunction } from '../../agents/providers/session-harness.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
@@ -7948,55 +7948,85 @@ describe('Ax agent engine', () => {
     expect(close).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps a streamed length reason through trailing usage-only data', async () => {
-    const stream = new ReadableStream<AxChatResponse>({
-      start(controller) {
-        controller.enqueue({ results: [{ index: 0, content: 'Bounded partial answer.' }] })
-        controller.enqueue({ results: [{ index: 0, finishReason: 'length' }] })
-        controller.enqueue({
-          results: [{ index: 0, finishReason: 'stop' }],
-          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 17, completionTokens: 29, totalTokens: 46 } }
-        })
-        controller.close()
-      }
-    })
-    const chat = vi.fn(async () => stream)
-    const factory = {
-      create: async () => ({
-        service: rootFixtureService(chat),
-        capabilities: {
-          streaming: true,
-          toolCalling: 'native',
-          parallelToolCalls: false,
-          structuredOutput: 'native-json-schema',
-          usage: 'stream',
-          cancellation: true,
-          maxContextTokens: 100_000,
-          maxOutputTokens: 4_000
-        },
-        transportKind: 'openai-chat',
-        model: 'gpt-test',
-        capabilityRevision: 'cap-1',
-        pricingRevision: 'price-1',
-        pricing
+  it.each(['small', 'character bound', 'character overflow', 'multibyte byte bound', 'multibyte byte overflow'] as const)(
+    'keeps a streamed length reason and admits its complete publication atomically at %s',
+    async boundary => {
+      const prefix = 'Bounded partial answer.'
+      const suffix = '\n\nThe provider reached its output limit before completing this response. Submit an explicit follow-up to continue.'
+      const byteLimit = deriveAgentProviderResourceLimits(8_192).contentBytes
+      const multibyte = boundary.startsWith('multibyte')
+      const allowance = multibyte ? byteLimit - Buffer.byteLength(prefix + suffix, 'utf8') : 128_000 - prefix.length - suffix.length
+      const content =
+        boundary === 'small'
+          ? prefix
+          : `${prefix}${multibyte ? `${'界'.repeat(Math.floor(allowance / 3))}${'x'.repeat(allowance % 3)}` : 'x'.repeat(allowance)}${boundary.endsWith('overflow') ? 'x' : ''}`
+      const fits = !boundary.endsWith('overflow')
+      const stream = new ReadableStream<AxChatResponse>({
+        start(controller) {
+          for (let offset = 0; offset < content.length; offset += 4_000)
+            controller.enqueue({ results: [{ index: 0, content: content.slice(offset, offset + 4_000) }] })
+          controller.enqueue({ results: [{ index: 0, finishReason: 'length' }] })
+          controller.enqueue({
+            results: [{ index: 0, finishReason: 'stop' }],
+            modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 17, completionTokens: 29, totalTokens: 46 } }
+          })
+          controller.close()
+        }
       })
-    } as unknown as AgentProviderFactory
-    const text = vi.fn(async (_delta: string) => {})
-    const event = vi.fn(async (...args: [string, unknown]) => {
-      void args
-    })
+      const chat = vi.fn(async () => stream)
+      const factory = {
+        create: async () => ({
+          service: rootFixtureService(chat),
+          capabilities: {
+            streaming: true,
+            toolCalling: 'native',
+            parallelToolCalls: false,
+            structuredOutput: 'native-json-schema',
+            usage: 'stream',
+            cancellation: true,
+            maxContextTokens: 1_000_000,
+            maxOutputTokens: 8_192
+          },
+          transportKind: 'openai-chat',
+          model: 'gpt-test',
+          capabilityRevision: 'cap-1',
+          pricingRevision: 'price-1',
+          pricing
+        })
+      } as unknown as AgentProviderFactory
+      let durable = ''
+      const text = vi.fn(async (delta: string) => {
+        if (delta.length > 16_000 || durable.length + delta.length > 128_000)
+          throw new AgentRepositoryError('INVALID_ENGINE_DELTA', 'Inference engine emitted an invalid text delta', 500)
+        durable += delta
+      })
+      const event = vi.fn(async (...args: [string, unknown]) => {
+        void args
+      })
 
-    const input = request(new AbortController().signal)
-    const result = await new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
-      { ...input, run: { ...input.run, executionMode: 'generation-only' }, purpose: 'root' },
-      { text, event }
-    )
+      const input = request(new AbortController().signal)
+      const execution = new AxAgentEngine(factory, undefined, undefined, { decisionProviders: fixtureDecisionProviders }).execute(
+        { ...input, run: { ...input.run, executionMode: 'generation-only' }, purpose: 'root', limits: { maxOutputTokens: 8_192 } },
+        { text, event }
+      )
+      if (!fits) {
+        await expect(execution).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+        expect(text).not.toHaveBeenCalled()
+        expect(durable).toBe('')
+        expect(chat).toHaveBeenCalledOnce()
+        expect(event).toHaveBeenCalledWith('model.turn', expect.objectContaining({ finishReason: 'length' }))
+        return
+      }
+      const result = await execution
 
-    expect(chat).toHaveBeenCalledOnce()
-    expect(result).toMatchObject({ inputTokens: 17, outputTokens: 29, totalTokens: 46, outputLimited: true })
-    expect(text.mock.calls.map(([delta]) => delta).join('')).toMatch(/^Bounded partial answer\..*output limit/isu)
-    expect(event).toHaveBeenCalledWith('model.turn', expect.objectContaining({ finishReason: 'length', inputTokens: 17, outputTokens: 29, totalTokens: 46 }))
-  })
+      expect(chat).toHaveBeenCalledOnce()
+      expect(result).toMatchObject({ inputTokens: 17, outputTokens: 29, totalTokens: 46, outputLimited: true })
+      expect(durable).toBe(content + suffix)
+      if (boundary === 'character bound') expect(durable.length).toBe(128_000)
+      if (boundary === 'multibyte byte bound') expect(Buffer.byteLength(durable, 'utf8')).toBe(byteLimit)
+      expect(event).toHaveBeenCalledWith('model.turn', expect.objectContaining({ finishReason: 'length', inputTokens: 17, outputTokens: 29, totalTokens: 46 }))
+    }
+  )
 
   it('withholds an invalid length-limited evidence correction without another provider call', async () => {
     const chat = vi
@@ -12401,6 +12431,80 @@ describe('request-derived evidence coverage', () => {
       }
     }
   )
+
+  it.each([1_700, 1_747])('admits a whole host-annotated recent quotation publication atomically at %i source characters', async size => {
+    const qualification = ' Approval is required.'
+    const rows = Array.from({ length: 12 }, (_unused, index) => {
+      const id = 210 + index
+      const content = `${'x'.repeat(size)}${qualification}`
+      return {
+        ...recentRows[0]!,
+        id,
+        title: `Record ${id}`,
+        path: `records/${id}`,
+        content,
+        sourceContentCharacters: content.length,
+        contentTruncated: false,
+        citation: { evidenceId: `page:${id}:revision:7`, label: `Record ${id}`, href: `/en/records/${id}` }
+      }
+    })
+    // The documentary renderer expands source text into inert numeric entities.
+    // The larger candidate itself fits the sink; its required footer does not.
+    const base = rows
+      .map(row => `Source quotation:\n\n> ${[...row.content].map(character => `&#${character.codePointAt(0)!};`).join('')}\n\n[[cite:${row.citation.evidenceId}]]`)
+      .join('\n\n')
+    const footer =
+      '\n\nCurrent recent collection window: 12 returned results; requested limit 12; selected collection scope exhausted; complete returned window available.\n\nThese are bounded selected-scope results, not a Wiki-wide inventory. Returned-result counts are not counts of supported summaries or proof of full-page completeness.\n\nRecent-page excerpt evidence establishes only delivered opening text, not unread content or revision differences.'
+    const fits = size === 1_700
+    expect(base.length).toBeLessThanOrEqual(128_000)
+    expect(base.length + footer.length <= 128_000).toBe(fits)
+    const answer = (input: Readonly<AxChatRequest>) => {
+      const sources = synthesisSourcesFromRequest(input)
+      return JSON.stringify({
+        claims: [],
+        quotations: rows.map(row => ({
+          sourceRef: sources.find(source => source.evidenceId === row.citation.evidenceId)!.sourceRef,
+          text: row.content
+        })),
+        unresolvedFacets: [],
+        observations: [],
+        recommendations: ''
+      })
+    }
+    const fixture = questionFixture(
+      'native',
+      [
+        { calls: [{ id: 'publication-boundary-recent', name: 'pages.listRecent', arguments: { limit: 12 } }] },
+        { answer },
+        { answer }
+      ],
+      () => ({ kind: 'recent-page-evidence', requestedLimit: 12, exhausted: true, pages: rows }),
+      [],
+      { maxContextTokens: 1_000_000, maxOutputTokens: 8_192 }
+    )
+    let durable = ''
+    fixture.text.mockImplementation(async delta => {
+      if (delta.length > 16_000 || durable.length + delta.length > 128_000)
+        throw new AgentRepositoryError('INVALID_ENGINE_DELTA', 'Inference engine emitted an invalid text delta', 500)
+      durable += delta
+    })
+    const result = await fixture.execute('Quote each of the 12 most recently updated records verbatim, preserving its required approval.', {
+      maxTurns: 4,
+      maxToolCalls: 1,
+      maxOutputTokens: 8_192
+    })
+    if (fits) {
+      expect(durable).toBe(base + footer)
+      expect(result.citations).toHaveLength(12)
+      expect(result.executionLimit).toBeUndefined()
+    } else {
+      // Rejection may publish an honest inability, never a prefix of this candidate.
+      expect(durable).not.toContain('Source quotation:')
+      expect(durable).not.toContain('&#120;')
+      expect(durable).not.toContain('[[cite:')
+      expect(result.citations).toBeUndefined()
+    }
+  })
 
   it.each(['native', 'prompt'] as const)(
     'preserves exhausted recent scope through synthesis and the coverage audit without optional metadata on %s',
