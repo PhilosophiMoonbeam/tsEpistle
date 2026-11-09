@@ -126,6 +126,8 @@ Client Lodash consumers use static `lodash-es` imports so unused methods can be 
 
 Shared JavaScript chunks use content-hash-only URLs to avoid repeating descriptive module names throughout imports and preload lists. Entry names, full production source maps, legal notices, and semantic manifest identities remain available. Asset-isolation checks inspect each manifest key, source, name, and file independently; opaque emitted filenames must not hide an initially loaded scene, Three, Tres, or shader dependency. Keep every existing bundle ceiling and closure assertion.
 
+For `tsEpistle-bql`, the maintainer separately approved a 256 KiB aggregate-only allowance in `tsEpistle-bql.40`. Its fixed ceiling is 14,216 KiB; this does not relax any initial/setup, largest-chunk, login-isolation, lazy-scene or closure guard.
+
 ### Fast development CI and full qualification
 
 Normal main pushes and pull requests use `bun run ci:fast`: the complete static/typecheck/build/ordinary suite with at most four isolated test workers. The hosted workflow also runs the complete PostgreSQL 18 suite when its risk classifier requires it. Only positively allowlisted frontend/documentation changes may omit native coverage; an unknown, empty, or unavailable diff requires it. Fast success is not full qualification and never writes `last-passed.json`.

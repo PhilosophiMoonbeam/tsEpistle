@@ -88,7 +88,10 @@ const LARGEST_JAVASCRIPT_CHUNK_RAW_LIMIT = 1_565 * KiB
 // Reader leading-title deduplication has a further user-approved 2 KiB aggregate allowance.
 // MAYA Wiki Agent lifecycle/recovery fixes have a user-approved 4 KiB aggregate allowance;
 // the reduced-owner diagnostic build measured 13,958.8 KiB. Every other budget is unchanged.
-const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 13_960 * KiB
+// BQL's reviewed editor/reader/governance wave has a user-approved 256 KiB aggregate allowance.
+// Same-dependency parent: 13,959.8 KiB; first immutable BQL build: 14,146.7 KiB.
+// All initial/setup, largest-chunk, login-isolation and lazy-scene ceilings remain unchanged.
+const ALL_JAVASCRIPT_CHUNKS_RAW_LIMIT = 14_216 * KiB
 
 export function findManifestKey(manifest: Manifest, source: string): string {
   if (manifest[source]) return source
