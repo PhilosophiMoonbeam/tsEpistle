@@ -75,7 +75,8 @@ const errors = {
   }),
   AuthRequired: CustomError('AuthRequired', {
     message: 'You must be authenticated to access this resource.',
-    code: 1019
+    code: 1019,
+    status: 401
   }),
   AuthTFAFailed: CustomError('AuthTFAFailed', {
     message: 'Incorrect TFA Security Code.',
@@ -195,7 +196,8 @@ const errors = {
   }),
   PageUpdateForbidden: CustomError('PageUpdateForbidden', {
     message: 'You are not authorized to update this page.',
-    code: 6009
+    code: 6009,
+    status: 403
   }),
   PageViewForbidden: CustomError('PageViewForbidden', {
     message: 'You are not authorized to view this page.',

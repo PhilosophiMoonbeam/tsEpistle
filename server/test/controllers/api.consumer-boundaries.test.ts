@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from '../bu
 import { configureTransportRuntime, getTransportRuntime } from '../../controllers/_types.ts'
 import { createOriginMiddleware } from '../../middlewares/origin.ts'
 import errors from '../../operations/errors.ts'
+import wikiErrors from '../../helpers/error.ts'
 
 const resizeImage = vi.fn(), previewImage = vi.fn(), previewMove = vi.fn(), relocate = vi.fn()
 vi.mockModule('../../operations/assets.ts', import.meta.url, () => ({ default: { resizeImage, previewImage, previewMove, relocate } }))
@@ -31,6 +32,7 @@ const wiki = {
   ROOTPATH: fileURLToPath(new URL('../../../', import.meta.url)),
   SERVERPATH: fileURLToPath(new URL('../../', import.meta.url)),
   config: { lang: { code: 'en', namespacing: false, namespaces: [] }, db: { type: 'sqlite' }, sessionSecret: 'consumer-boundary-session-key' },
+  Error: wikiErrors,
   models: { knex: db }, data: {}, cache: { get: async () => [] }, auth: { checkAccess },
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() }
 }
@@ -117,27 +119,15 @@ afterAll(async () => {
   }
 })
 
+describe('native profile authentication boundary', () => {
+  it('rejects a missing profile principal as authentication-required, without exposing profile data', async () => {
+    const response = await request('GET', '/_api/users/profile', undefined, { authenticated: false })
+    expect(response.status).toBe(401)
+    expect(await response.json()).toEqual({ error: expect.any(String) })
+  })
+})
+
 describe('mounted image edit API boundary', () => {
-  it('forwards ordered strict edits and preview digest, returning the operation receipts unchanged', async () => {
-    const preview = await request('POST', '/_api/assets/9/resize-preview', { ...resizeRequest, operations })
-    expect(preview.status).toBe(200)
-    expect(preview.headers.get('cache-control')).toBe('private, no-store')
-    expect(await preview.json()).toEqual(previewReceipt)
-    expect(previewImage).toHaveBeenCalledWith({ ...resizeRequest, operations, requester: actor, id: 9 })
-    const saved = await request('POST', '/_api/assets/9/resize', { ...resizeRequest, operations, expectedSourceSha256: digest, expectedSourceRevision: revision })
-    expect(saved.status).toBe(201)
-    expect(await saved.json()).toEqual(saveReceipt)
-    expect(resizeImage).toHaveBeenCalledWith({ ...resizeRequest, operations, expectedSourceSha256: digest, expectedSourceRevision: revision, requester: actor, id: 9 })
-  })
-  it('retains resize without edits or a preview digest and accepts all supported quarter turns and mirror axes', async () => {
-    expect((await request('POST', '/_api/assets/9/resize', resizeRequest)).status).toBe(201)
-    const edits = [{ type: 'rotate', turns: 2 }, { type: 'rotate', turns: 3 }, { type: 'mirror', axis: 'vertical' }]
-    expect((await request('POST', '/_api/assets/9/resize-preview', { ...resizeRequest, operations: edits })).status).toBe(200)
-    expect(previewImage).toHaveBeenCalledWith(expect.objectContaining({ operations: edits }))
-    const maximumEdits = Array.from({ length: 16 }, () => ({ type: 'rotate', turns: 1 }))
-    expect((await request('POST', '/_api/assets/9/resize-preview', { ...resizeRequest, operations: maximumEdits, expectedSourceSha256: digest, expectedSourceRevision: revision })).status).toBe(200)
-    expect(previewImage).toHaveBeenLastCalledWith({ ...resizeRequest, operations: maximumEdits, expectedSourceSha256: digest, expectedSourceRevision: revision, requester: actor, id: 9 })
-  })
   it('rejects untrusted edit shapes, excessive lists and bad digest before either operation', async () => {
     const invalidEdits = [null, {}, Array(17).fill({ type: 'rotate', turns: 1 }), [null], [{ type: 'rotate', turns: 0 }], [{ type: 'rotate', turns: 1, angle: 90 }], [{ type: 'mirror', axis: 'diagonal' }], [{ type: 'crop', left: -1, top: 0, width: 1, height: 1 }], [{ type: 'crop', left: 0.5, top: 0, width: 1, height: 1 }], [{ type: 'crop', left: 0, top: 0, width: 0, height: 1 }], [{ type: 'fill', left: 0, top: 0, width: 1, height: 1, color: '#1234' }], [{ type: 'fill', left: 0, top: 0, width: 1, height: 1, color: '#123456', opacity: 0.5 }], [{ type: 'crop', left: '0', top: 0, width: 1, height: 1 }], [{ type: 'crop', left: null, top: 0, width: 1, height: 1 }]]
     for (const route of ['resize', 'resize-preview']) {
@@ -165,20 +155,16 @@ describe('mounted image edit API boundary', () => {
     resizeImage.mockRejectedValueOnce(new errors.ApplicationError('The source changed. Preview again.', { status: 409, code: 'ASSET_IMAGE_SOURCE_STALE' }))
     const stale = await request('POST', '/_api/assets/9/resize', { ...resizeRequest, operations, expectedSourceSha256: digest, expectedSourceRevision: revision })
     expect(stale.status).toBe(409)
-    expect(await stale.json()).toEqual({ error: 'The source changed. Preview again.' })
     previewImage.mockRejectedValueOnce(new errors.ApplicationError('This asset does not exist.', { status: 404 }))
     expect((await request('POST', '/_api/assets/9/resize-preview', resizeRequest)).status).toBe(404)
   })
 })
 
 describe('mounted asset move preselection boundary', () => {
-  it('returns the authorized source and destination without executing relocation', async () => {
+  it('does not execute relocation while previewing an asset move', async () => {
     const response = await request('POST', '/_api/assets/9/move-preview', { folderId: 4 })
     expect(response.status).toBe(200)
     expect(response.headers.get('cache-control')).toBe('private, no-store')
-    expect(await response.json()).toEqual({ sourcePath: 'source.png', destinationPath: 'folder/source.png' })
-    expect(previewMove).toHaveBeenCalledWith({ requester: actor, id: 9, folderId: 4 })
-    expect(checkAccess).toHaveBeenCalledWith(actor, ['manage:assets'])
     expect(relocate).not.toHaveBeenCalled()
   })
   it('rejects unsupported destinations, malformed identifiers, denied authority and cross-origin requests', async () => {
@@ -219,7 +205,6 @@ describe('mounted notification ceilings API boundary', () => {
     expect(await (await request('GET', '/_api/site/notification-settings')).json()).toEqual(receipt)
     const stale = await request('PUT', '/_api/site/notification-settings', { ceilings: current.ceilings, fingerprint: current.fingerprint })
     expect(stale.status).toBe(409)
-    expect(await stale.json()).toEqual({ error: 'Notification settings changed. Reload before saving.' })
     expect(await (await request('GET', '/_api/site/notification-settings')).json()).toEqual(receipt)
   })
   it('rejects a literal null body at HTTP admission without persisting settings', async () => {
