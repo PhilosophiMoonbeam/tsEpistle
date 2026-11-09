@@ -61,10 +61,13 @@ function normalizeExtension(input: unknown, fallbackMessage: string): ContentExt
 
 export async function fetchContentExtensions(
   fetchImpl: FetchImpl,
-  fallbackMessage = 'Content extensions could not be loaded.'
+  fallbackMessage = 'Content extensions could not be loaded.',
+  signal?: AbortSignal
 ): Promise<ContentExtensionsStatus> {
   const response = await sameOriginJsonFetch(fetchImpl, '/_api/content-extensions', {
     credentials: 'same-origin',
+    cache: 'no-store',
+    signal,
     headers: {
       Accept: 'application/json'
     }

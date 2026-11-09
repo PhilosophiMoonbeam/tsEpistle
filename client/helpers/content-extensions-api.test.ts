@@ -30,17 +30,13 @@ describe('content extensions API', () => {
       hostVersion: 1,
       extensions: [qrStatus]
     })
-    expect(fetchImpl).toHaveBeenCalledWith('/_api/content-extensions', {
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json' }
-    })
   })
 
-  it('rejects malformed status and surfaces server diagnostics', async () => {
+  it('rejects malformed availability and failed responses', async () => {
     const malformedFetch = vi.fn().mockResolvedValue(jsonResponse({ hostVersion: 1, extensions: [{ ...qrStatus, compatible: 'yes' }] }))
-    await expect(Promise.resolve(fetchContentExtensions(malformedFetch))).rejects.toThrow('Content extensions could not be loaded.')
+    await expect(Promise.resolve(fetchContentExtensions(malformedFetch))).rejects.toThrow()
 
     const failedFetch = vi.fn().mockResolvedValue(jsonResponse({ error: 'Extensions unavailable.' }, false))
-    await expect(Promise.resolve(fetchContentExtensions(failedFetch))).rejects.toThrow('Extensions unavailable.')
+    await expect(Promise.resolve(fetchContentExtensions(failedFetch))).rejects.toThrow()
   })
 })

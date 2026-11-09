@@ -290,7 +290,7 @@ export const hydrateContentExtensions = (root: ParentNode, fetchImpl: FetchLike 
     void import('./content-extension-runtimes/youtube.ts').then(
       ({ hydrateYoutube }) => {
         if (controller.signal.aborted) return
-        for (const figure of youtubeFigures) cleanups.push(hydrateYoutube(figure))
+        for (const figure of youtubeFigures) cleanups.push(hydrateYoutube(figure, fetchImpl, controller.signal))
       },
       () => {}
     )

@@ -208,11 +208,23 @@ describe('content extension browser runtime', () => {
       </figure>`
     document.body.append(root)
 
-    const cleanup = hydrateContentExtensions(root, vi.fn())
+    const cleanup = hydrateContentExtensions(root, async () => new Response(JSON.stringify({
+      hostVersion: 1,
+      extensions: [{
+        key: 'youtube',
+        version: 1,
+        title: 'YouTube player',
+        description: 'Load a privacy-enhanced YouTube player only after reader consent.',
+        icon: 'mdi-youtube',
+        isEnabled: true,
+        compatible: true,
+        diagnostic: null
+      }]
+    }), { headers: { 'content-type': 'application/json' } }))
     try {
       expect(root.querySelector('iframe[src^="https://"]')).toBeNull()
       await vi.waitFor(() => {
-        root.querySelector<HTMLButtonElement>('.content-extension--youtube button')!.click()
+        root.querySelector<HTMLButtonElement>('.content-extension--youtube button')?.click()
         expect(root.querySelector<HTMLIFrameElement>('.content-extension--youtube iframe')?.src).toBe(
           'https://www.youtube-nocookie.com/embed/abc123_DEF?start=12'
         )
