@@ -465,7 +465,11 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       render: typeof storedRender === 'string' ? storedRender : '',
       sourceRevision: page.sourceRevision,
       locale: typeof req.user?.localeCode === 'string' ? req.user.localeCode : pageArgs.locale,
-      presentation: req.user,
+      presentation: {
+        timezone: req.user?.timezone ?? req.user?.tz,
+        dateFormat: req.user?.dateFormat ?? req.user?.df,
+        timeFormat: req.user?.timeFormat ?? req.user?.tf
+      },
       listIndex: args => pageOperations.listIndex({ ...args, ...(req.user === undefined ? {} : { requester: req.user }) })
     })
     res.set('X-Wiki-Page', '1')

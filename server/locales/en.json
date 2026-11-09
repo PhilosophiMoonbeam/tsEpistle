@@ -1321,6 +1321,7 @@
     "pageUnlock": {
       "title": "This page is password-protected",
       "body": "Enter the page password to continue.",
+      "javascriptRequired": "Enable JavaScript to enter the page password.",
       "password": "Page password",
       "submit": "Unlock page",
       "unavailable": "This protected page is not available.",

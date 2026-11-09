@@ -3,3 +3,12 @@ extends master.pug
 block body
   #root.is-fullscreen
     unauthorized(action=action)
+  noscript
+    style.
+      #root { display: none; }
+    main.app-error(lang=siteConfig.lang dir=siteConfig.rtl ? 'rtl' : 'ltr' aria-labelledby='passive-status-title')
+      section.app-error-content
+        .app-error-workspace-title= config.title
+        h1#passive-status-title= t('common:unauthorized.title')
+        p.app-error-message= t('common:unauthorized.action.' + (action || 'view'))
+        a.app-error-home(href='/')= t('common:unauthorized.gohome')

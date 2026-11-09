@@ -11,7 +11,7 @@ const safeHref = (value: string): boolean => {
     const code = value.charCodeAt(index)
     if (code <= 32 || code === 92) return false
   }
-  return !/%(?:0[0-9a-f]|1[0-9a-f]|20|5c)/iu.test(value) &&
+  return !/%(?:0[0-9a-f]|1[0-9a-f]|5c)/iu.test(value) &&
     (value.startsWith('#') || (value.startsWith('/') && !value.startsWith('//')) || isSafeContentExtensionLink(value))
 }
 

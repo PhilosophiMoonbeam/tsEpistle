@@ -8,3 +8,12 @@ block body
       :return-to=JSON.stringify(returnTo)
       :error=JSON.stringify(error || '')
     )
+  noscript
+    style.
+      #root { display: none; }
+    main.app-error(lang=siteConfig.lang dir=siteConfig.rtl ? 'rtl' : 'ltr' aria-labelledby='passive-status-title')
+      section.app-error-content
+        .app-error-workspace-title= config.title
+        h1#passive-status-title= t('common:pageUnlock.title')
+        p.app-error-message= t('common:pageUnlock.javascriptRequired', { defaultValue: 'Enable JavaScript to enter the page password.' })
+        a.app-error-home(href='/')= t('common:pageUnlock.returnHome')

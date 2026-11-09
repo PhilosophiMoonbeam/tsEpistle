@@ -3,3 +3,12 @@ extends master.pug
 block body
   #root.is-fullscreen
     not-found(create-href=createHref, folder-locale=folderLocale, folder-path=folderPath)
+  noscript
+    style.
+      #root { display: none; }
+    main.app-error(lang=siteConfig.lang dir=siteConfig.rtl ? 'rtl' : 'ltr' aria-labelledby='passive-status-title')
+      section.app-error-content
+        .app-error-workspace-title= config.title
+        h1#passive-status-title= t('common:notfound.title')
+        p.app-error-message= t('common:notfound.subtitle')
+        a.app-error-home(href='/')= t('common:notfound.gohome')
