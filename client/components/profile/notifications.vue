@@ -6,8 +6,8 @@ v-container.profile-notification-preferences(fluid)
       p.text-body-small.mt-2(v-if='dirty', id='profile-notifications-reload-help') {{ nt('reloadBlocked') }}
     template(#actions)
       v-btn(variant='text', prepend-icon='mdi-refresh', :disabled='dirty || loading || saving || refreshingIdentity', :loading='loading || refreshingIdentity', :aria-describedby='dirty ? `profile-notifications-reload-help` : undefined', @click='refreshIdentity') {{ $t('profile:pages.reloadShort') }}
-  p(v-if='!ownerId', role='status') {{ nt('signIn') }}
-  p(v-else-if='loading', role='status') {{ nt('loading') }}
+  p(v-if='refreshingIdentity || loading', role='status') {{ nt('loading') }}
+  p(v-else-if='!ownerId && !error', role='status') {{ nt('signIn') }}
   v-alert.mb-4(v-if='error', type='error', variant='tonal', role='alert')
     div {{ error }}
     v-btn.mt-2(v-if='!saved || blocked', variant='text', :disabled='dirty || loading || saving || refreshingIdentity', @click='refreshIdentity') {{ nt('refresh') }}
@@ -248,7 +248,10 @@ watch(() => [ownerId.value, wikiStore.user.authVersion, wikiStore.offlineIdentit
   void load()
 }, { immediate: true, flush: 'sync' })
 watch(draft, () => { success.value = '' }, { deep: true, flush: 'sync' })
-onMounted(() => window.addEventListener(OFFLINE_SESSION_INVALIDATED_EVENT, invalidate))
+onMounted(() => {
+  window.addEventListener(OFFLINE_SESSION_INVALIDATED_EVENT, invalidate)
+  void refreshIdentity()
+})
 onBeforeUnmount(() => {
   disposed = true
   clear()

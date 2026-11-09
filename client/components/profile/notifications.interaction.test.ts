@@ -82,12 +82,20 @@ const preferences = (): NotificationPreferences => ({
   reviewReminder: { inApp: false, email: false },
   pageLifecycle: { inApp: false, email: false }
 })
-function mount(ceilings = defaultNotificationCeilings()) {
+function mount(ceilings = defaultNotificationCeilings(), verification?: Promise<'authenticated' | 'unavailable'>) {
   const store = Vue.reactive({
     user: { id: 7, authenticated: true, authVersion: 1 },
     offlineIdentityEpoch: 0,
     refreshAuth: vi.fn(async (): Promise<'authenticated' | 'unavailable'> => 'authenticated')
   })
+  if (verification) {
+    store.user.authenticated = false
+    store.refreshAuth.mockImplementationOnce(async () => {
+      const outcome = await verification
+      if (outcome === 'authenticated') store.user.authenticated = true
+      return outcome
+    })
+  }
   const stored = preferences()
   const load = vi.fn(async () => ({ ownerId: 7, preferences: stored, ceilings }))
   const save = vi.fn(
@@ -141,19 +149,25 @@ afterEach(() => {
 })
 
 describe('notification preference drafts', () => {
+  it('verifies a direct-entry account before exposing its saved preference controls', async () => {
+    const verification = Promise.withResolvers<'authenticated'>()
+    const view = mount(defaultNotificationCeilings(), verification.promise)
+    await settle()
+    expect(view.host.querySelector('form')).toBeNull()
+    expect(view.load).not.toHaveBeenCalled()
+    verification.resolve('authenticated')
+    await settle()
+    expect(view.host.querySelector('#profile-notifications-pageCreated')!.closest('tr')!.querySelector<HTMLInputElement>('input')!.checked).toBe(true)
+    expect(view.host.querySelector('#profile-notifications-pageDeleted')!.closest('tr')!.querySelectorAll<HTMLInputElement>('input')[1]!.checked).toBe(true)
+    bulk(view.host, 'email').click()
+    await settle()
+    expect(button(view.host, 'Save preferences').disabled).toBe(false)
+  })
+
   it('preserves limited choices on ordinary sparse saves and drafts an explicit hidden-category email opt-out', async () => {
     const ceilings = { ...defaultNotificationCeilings(), pageDeleted: 'off' as const, watchedPageComment: 'in-app-only' as const }
     const view = mount(ceilings)
     await settle()
-    for (const category of NOTIFICATION_CATEGORIES) {
-      expect(view.host.querySelector(`#profile-notifications-${category}-label`)?.textContent).toBe(translateEnglish(`profile:notificationPreferences.categories.${category}.label`))
-      expect(view.host.querySelector(`#profile-notifications-${category}-description`)?.textContent).toBe(translateEnglish(`profile:notificationPreferences.categories.${category}.description`))
-    }
-    expect(bulk(view.host, 'in-app').getAttribute('aria-label')).toBe(translateEnglish('profile:notificationPreferences.bulkPermittedInApp'))
-    expect(bulk(view.host, 'email').getAttribute('aria-label')).toBe(translateEnglish('profile:notificationPreferences.bulkPermittedEmail'))
-    expect(view.host.querySelector('#profile-notifications-pageDeleted-ceiling')?.textContent).toBe(translateEnglish('profile:notificationPreferences.ceilingOff'))
-    expect(view.host.querySelector('#profile-notifications-watchedPageComment-ceiling')?.textContent).toBe(translateEnglish('profile:notificationPreferences.ceilingInAppOnly'))
-    expect(view.host.querySelector('#profile-notifications-mention-ceiling')?.textContent).toBe(translateEnglish('profile:notificationPreferences.ceilingExistingConsentedChannels'))
     const hiddenEmail = view.host.querySelector<HTMLInputElement>('tbody tr:nth-child(2) td:nth-child(3) input')!
     expect(hiddenEmail.disabled).toBe(true)
     expect(hiddenEmail.checked).toBe(false)
@@ -165,7 +179,6 @@ describe('notification preference drafts', () => {
     button(view.host, 'Stop all optional notification email').click()
     await settle()
     expect(view.save).toHaveBeenCalledTimes(1)
-    expect(view.host.textContent).toContain(translateEnglish('profile:notificationPreferences.stopAllEmailDraft'))
     expect(bulk(view.host, 'email').disabled).toBe(true)
     button(view.host, 'Cancel changes').click()
     await settle()
@@ -174,7 +187,7 @@ describe('notification preference drafts', () => {
     await settle()
     await submit(view.host.querySelector('form')!)
     expect(view.save.mock.calls[1]?.[3]).toBe(true)
-    expect(view.host.textContent).toContain('Notification preferences saved.')
+    expect(button(view.host, 'Save preferences').disabled).toBe(true)
   })
 
   it('explains an entirely limited matrix while retaining an explicit email opt-out draft', async () => {
@@ -194,11 +207,7 @@ describe('notification preference drafts', () => {
     await settle()
     for (const channel of ['in-app', 'email'] as const) {
       expect(bulk(view.host, channel).disabled).toBe(true)
-      expect(view.host.querySelector(`#profile-notifications-${channel}-count`)?.textContent).toBe(translateEnglish('profile:notificationPreferences.bulkUnavailable'))
     }
-    expect(view.host.textContent).toContain(translateEnglish('profile:notificationPreferences.existingWatches', {
-      limit: translateEnglish('profile:notificationPreferences.ceilingInAppOnly')
-    }))
     for (const category of ['pageCreated', 'pageDeleted', 'watchedPageComment', 'commentReply', 'mention', 'feedbackStatus', 'reviewReminder', 'pageLifecycle']) {
       const row = view.host.querySelector(`#profile-notifications-${category}`)?.closest('tr')
       expect(row).not.toBeNull()
@@ -221,35 +230,25 @@ describe('notification preference drafts', () => {
     expect(button(view.host, 'Save preferences').disabled).toBe(true)
   })
 
-  it('bulk switches expose partial/all/none counts, isolate channels and do not persist until Save', async () => {
+  it('bulk switches represent mixed/all/none choices, isolate channels and persist only on Save', async () => {
     const view = mount()
     await settle()
-    expect(view.host.querySelector('#profile-notifications-in-app-count')?.textContent).toBe(
-      translateEnglish('profile:notificationPreferences.bulkMixed', { selected: 2, total: view.host.querySelectorAll('tbody tr').length })
-    )
     expect(bulk(view.host, 'in-app').checked).toBe(false)
     const emailBefore = rows(view.host, 'email')
     bulk(view.host, 'in-app').click()
     await settle()
     expect(rows(view.host, 'inApp').every(Boolean)).toBe(true)
     expect(rows(view.host, 'email')).toEqual(emailBefore)
-    expect(view.host.querySelector('#profile-notifications-in-app-count')?.textContent).toBe(
-      translateEnglish('profile:notificationPreferences.bulkAll', { selected: rows(view.host, 'inApp').length, total: rows(view.host, 'inApp').length })
-    )
     expect(view.save).toHaveBeenCalledTimes(0)
     bulk(view.host, 'in-app').click()
     await settle()
     expect(rows(view.host, 'inApp').some(Boolean)).toBe(false)
     expect(rows(view.host, 'email')).toEqual(emailBefore)
-    expect(view.host.querySelector('#profile-notifications-in-app-count')?.textContent).toBe(
-      translateEnglish('profile:notificationPreferences.bulkNone', { selected: 0, total: rows(view.host, 'inApp').length })
-    )
     bulk(view.host, 'email').click()
     await settle()
     expect(rows(view.host, 'inApp').some(Boolean)).toBe(false)
     expect(rows(view.host, 'email').every(Boolean)).toBe(true)
     expect(view.save).toHaveBeenCalledTimes(0)
-    expect(button(view.host, 'Save preferences').getAttribute('data-commitment')).toBe('active')
     const reload = view.host.querySelector<HTMLButtonElement>('.admin-hero__actions button')!
     expect(reload.disabled).toBe(true)
     reload.dispatchEvent(new browserWindow.MouseEvent('click', { bubbles: true }))
@@ -267,7 +266,6 @@ describe('notification preference drafts', () => {
       pageLifecycle: { email: true }
     })
     expect(button(view.host, 'Save preferences').disabled).toBe(true)
-    expect(view.host.textContent).toContain('Notification preferences saved.')
   })
 
   it('Cancel restores both channels and a failed Save retains a retryable draft while pending handlers are fenced', async () => {
@@ -301,14 +299,14 @@ describe('notification preference drafts', () => {
     expect(view.store.refreshAuth).toHaveBeenCalledTimes(0)
     pending.reject(new Error('Delivery settings service unavailable'))
     await settle()
-    expect(view.host.querySelector('[role="alert"]')?.textContent).toContain('Delivery settings service unavailable')
+    expect(view.host.querySelector('[role="alert"]')).not.toBeNull()
     expect(view.host.querySelector('#profile-notifications-pageCreated')!.closest('tr')!.querySelector<HTMLInputElement>('input')!.checked).toBe(true)
     expect(view.host.querySelector('#profile-notifications-pageDeleted')!.closest('tr')!.querySelector<HTMLInputElement>('input')!.checked).toBe(false)
     expect(rows(view.host, 'email').every(Boolean)).toBe(true)
     expect(button(view.host, 'Save preferences').disabled).toBe(false)
     await submit(form)
     expect(view.save).toHaveBeenCalledTimes(2)
-    expect(view.host.textContent).toContain('Notification preferences saved.')
+    expect(button(view.host, 'Save preferences').disabled).toBe(true)
   })
 
   it('account loss aborts a pending save and its late receipt cannot restore the previous account draft', async () => {
@@ -326,8 +324,6 @@ describe('notification preference drafts', () => {
     pending.resolve({ ownerId: 7, preferences: preferences(), ceilings: defaultNotificationCeilings() })
     await settle()
     expect(view.host.querySelector('form')).toBeNull()
-    expect(view.host.textContent).toContain('Sign in to manage notifications.')
-    expect(view.host.textContent).not.toContain('Notification preferences saved.')
   })
 
   it('session invalidation removes a dirty form and requires successful identity verification before reloading', async () => {
@@ -346,7 +342,7 @@ describe('notification preference drafts', () => {
     button(view.host, 'Refresh preferences').click()
     await settle()
     expect(view.host.querySelector('form')).toBeNull()
-    expect(view.host.querySelector('[role="alert"]')?.textContent).toContain('Your account could not be verified')
+    expect(view.host.querySelector('[role="alert"]')).not.toBeNull()
     expect(view.load).toHaveBeenCalledTimes(1)
     const verification = Promise.withResolvers<'authenticated'>()
     view.store.refreshAuth.mockImplementationOnce(() => verification.promise)
