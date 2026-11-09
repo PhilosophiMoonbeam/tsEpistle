@@ -138,7 +138,7 @@ import type { PageRatingView, PageRatingVote } from '../../shared/page-ratings.t
 import { wikiStore } from '../store/index.ts'
 import { renderSafeMarkdown } from '../helpers/safe-markdown.ts'
 import Cookies from 'js-cookie'
-import { safeLoginReturn } from '../helpers/login-return.ts'
+import { safeLoginReturn } from '../../shared/login-return.ts'
 
 const props = defineProps<{ pageId: number; discussionEnabled?: boolean }>()
 const emit = defineEmits<{ 'prepare-feedback': [content: string] }>()

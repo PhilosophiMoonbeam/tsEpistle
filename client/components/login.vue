@@ -383,7 +383,7 @@ import { newPasswordIssue } from '../../shared/security-policy.ts'
 
 import { defineAsyncComponent, defineComponent } from 'vue'
 import Cookies from 'js-cookie'
-import { resolveLoginReturn, safeLoginReturn } from '../helpers/login-return.ts'
+import { resolveLoginReturn, safeLoginReturn } from '../../shared/login-return.ts'
 import { wikiStore, resolvePendingOfflineLogoutAfterExplicitSignIn } from '@/store/index.ts'
 import { fetchAuthStrategies, submitAuthRequest, submitStatusRequest, type AuthResponse, type AuthStrategy } from '../helpers/auth-api'
 import { getErrorMessage } from '../helpers/root-ui-store'

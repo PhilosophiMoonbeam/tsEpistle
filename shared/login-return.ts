@@ -1,4 +1,4 @@
-import { hasAsciiControlCharacters } from '../../shared/text-safety.ts'
+import { hasAsciiControlCharacters } from './text-safety.ts'
 
 /** Root-relative navigation only. Used on both sides of the login cookie boundary. */
 export function safeLoginReturn (value: unknown): string | null {

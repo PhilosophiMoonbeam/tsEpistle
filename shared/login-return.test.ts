@@ -1,4 +1,4 @@
-import { describe, expect, it } from '../../server/test/bun-test.mts'
+import { describe, expect, it } from '../server/test/bun-test.mts'
 import { resolveLoginReturn, safeLoginReturn } from './login-return.ts'
 
 describe('login return cookie boundary', () => {

@@ -128,6 +128,8 @@ Shared JavaScript chunks use content-hash-only URLs to avoid repeating descripti
 
 For `tsEpistle-bql`, the maintainer separately approved a 256 KiB aggregate-only allowance in `tsEpistle-bql.40`. Its fixed ceiling is 14,216 KiB; this does not relax any initial/setup, largest-chunk, login-isolation, lazy-scene or closure guard.
 
+Policies needed by both browser and server runtime belong in `shared/`, not `client/`. Immutable runtime images include `server/`, `shared/` and compiled assets, but intentionally exclude browser source; migrate every consumer when relocating a shared policy.
+
 ### Fast development CI and full qualification
 
 Normal main pushes and pull requests use `bun run ci:fast`: the complete static/typecheck/build/ordinary suite with at most four isolated test workers. The hosted workflow also runs the complete PostgreSQL 18 suite when its risk classifier requires it. Only positively allowlisted frontend/documentation changes may omit native coverage; an unknown, empty, or unavailable diff requires it. Fast success is not full qualification and never writes `last-passed.json`.

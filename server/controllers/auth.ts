@@ -7,7 +7,7 @@ import {
   persistFederatedLoginSession
 } from '../helpers/federated-login.ts'
 import commonHelper from '../helpers/common.ts'
-import { resolveLoginReturn } from '../../client/helpers/login-return.ts'
+import { resolveLoginReturn } from '../../shared/login-return.ts'
 
 interface AuthenticationStrategy {
   key: string
