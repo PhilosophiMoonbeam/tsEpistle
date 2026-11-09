@@ -7,6 +7,7 @@ import {
   type NotificationSettingsResponse
 } from '../../shared/site-notifications.ts'
 import { accountSessionIsCurrent } from '../helpers/account-session.ts'
+import { canonicalJson } from '../helpers/canonical-json.ts'
 import { principalId, type PagePrincipal } from '../helpers/page-access.ts'
 import { lockNotificationSettings, NOTIFICATION_SETTINGS_KEY, readNotificationCeilings, type NotificationCeilingState } from '../jobs/notification-ceilings.ts'
 import errors from './errors.ts'
@@ -30,7 +31,7 @@ const authorize = async (tx: Knex.Transaction, requester: PagePrincipal | undefi
   if (!groups.some(group => ids.includes(group.id) && group.permissions.includes('manage:system')))
     return fail('Full system administration is required.', 403)
 }
-const fingerprint = (state: NotificationCeilingState): string => createHash('sha256').update(JSON.stringify(state)).digest('hex')
+const fingerprint = (state: NotificationCeilingState): string => createHash('sha256').update(canonicalJson(state)).digest('hex')
 export const getNotificationSettings = async (knex: Knex, requester: PagePrincipal | undefined): Promise<NotificationSettingsResponse> =>
   knex.transaction(async tx => {
     await authorize(tx, requester)

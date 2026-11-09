@@ -215,6 +215,20 @@ suite('PostgreSQL notification audience delivery and read projection', () => {
     await expect(getNotificationSettings(db, recipient)).rejects.toMatchObject({ status: 403 })
   })
 
+  it('keeps successful versions usable across category and channel cutoff transitions', async () => {
+    await db('groups').where('id', 3).update({ permissions: JSON.stringify(['manage:system', 'read:pages']) })
+    const initial = await getNotificationSettings(db, recipient)
+    const emailOnly = await updateNotificationSettings(db, recipient, { ceilings: { ...initial.ceilings, pageWatch: 'in-app-only' }, fingerprint: initial.fingerprint })
+    const earlierCategory = await updateNotificationSettings(db, recipient, { ceilings: { ...emailOnly.ceilings, pageCreated: 'off' }, fingerprint: emailOnly.fingerprint })
+    const bothChannels = await updateNotificationSettings(db, recipient, { ceilings: { ...earlierCategory.ceilings, pageWatch: 'off' }, fingerprint: earlierCategory.fingerprint })
+    await updateNotificationSettings(db, recipient, { ceilings: initial.ceilings, fingerprint: bothChannels.fingerprint })
+    await expect(updateNotificationSettings(db, recipient, {
+      ceilings: { ...initial.ceilings, pageDeleted: 'off' },
+      fingerprint: bothChannels.fingerprint
+    })).rejects.toMatchObject({ status: 409 })
+    expect((await getNotificationSettings(db, recipient)).ceilings).toEqual(initial.ceilings)
+  })
+
   it.each([
     ['pageWatch', 'page.updated', 'off', 0],
     ['pageWatch', 'page.updated', 'in-app-only', 1],
