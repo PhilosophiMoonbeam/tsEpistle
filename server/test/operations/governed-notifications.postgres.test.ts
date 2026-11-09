@@ -96,7 +96,7 @@ suite('native governed notification consumers', () => {
       const recipientChannels = await governed.snapshotFeedbackNotificationAudience(tx, event)
       await outbox.writeOutboxEvent(tx, { ...event, payload: { ...event.payload, recipientChannels } })
     })
-    return { boardId, eventId }
+    return { boardId, ideaId, eventId }
   }
   const invokeGoverned = async () => {
     const jobs = await new DurableJobStore(db).claim({ workerId: 'governed-mail', supportedIdentities: ['notify-governed@1'], limit: 10 })
@@ -382,7 +382,44 @@ suite('native governed notification consumers', () => {
       expect.objectContaining({ attempt: 0, status: 'unknown', duplicateAcknowledged: false })
     ])
   })
-  it('keeps authorized comment-linked feedback after ceilings change but removes it when that comment becomes hidden', async () => {
+  it.each(['comment permission', 'hidden comment', 'deleted comment', 'disabled discussion'] as const)('retains readable status and delivery receipts without exposing an optional %s', async restriction => {
+    if (restriction !== 'comment permission') {
+      await db('groups').where('id', 3).update({
+        permissions: JSON.stringify(['read:pages', 'write:pages', 'read:comments']),
+        pageRules: JSON.stringify([{ match: 'START', path: '', deny: false, roles: ['read:pages', 'write:pages', 'read:comments'], locales: [] }])
+      })
+    }
+    await db('settings').insert({ key: 'features', value: JSON.stringify({ featurePageComments: true }) })
+    await db('commentProviders').insert({ key: 'default', isEnabled: true }).onConflict('key').merge()
+    await db('comments').insert({ id: 501, pageId: 42, authorId: 8, name: 'Other', content: 'Private discussion detail', replyTo: 0, isHidden: false })
+    const { eventId, ideaId } = await feedbackEvent(false, 501)
+    await db('feedbackSubscriptions').insert({ ideaId, userId: 7, createdAt: new Date() })
+    if (restriction === 'hidden comment') await db('comments').where('id', 501).update({ isHidden: true })
+    else if (restriction === 'deleted comment') await db('comments').where('id', 501).delete()
+    else if (restriction === 'disabled discussion') await db('settings').where('key', 'features').update({ value: JSON.stringify({ featurePageComments: false }) })
+    await outbox.publishOutboxEvents(db)
+    await invokeGoverned()
+    const receipt = await db('governedNotificationReceipts').where('eventId', eventId).first()
+    expect(await db('governedNotificationReceipts').where('eventId', eventId)).toEqual([
+      expect.objectContaining({ userId: 7, channel: 'in-app', status: 'delivered' })
+    ])
+    const inbox = await notifications.listPageWatchNotifications(requester, undefined, 'browser')
+    expect(inbox.items).toEqual([expect.objectContaining({ category: 'feedbackStatus', pageId: 42, commentId: null })])
+    const entry = inbox.items[0]
+    if (!entry) throw new Error('Expected independently readable status entry')
+    expect(entry).not.toHaveProperty('content')
+    expect(entry).not.toHaveProperty('rootTransitionEventId')
+    await notifications.markPageWatchNotificationRead(requester, entry.id, 'browser')
+    expect((await db('pageWatchNotifications').where('id', entry.id).first()).readAt).not.toBeNull()
+    expect((await notifications.listPageWatchNotifications(requester, undefined, 'browser')).items)
+      .toEqual([expect.objectContaining({ id: entry.id, commentId: null })])
+    const visibleReceipts = await governed.listOwnGovernedNotificationReceipts({ knex: db, requester, sessionId: 'browser' })
+    expect(visibleReceipts.items).toEqual([expect.objectContaining({ id: receipt.id, status: 'delivered', canResend: false })])
+    expect(visibleReceipts.items[0]).not.toHaveProperty('commentId')
+    expect(visibleReceipts.items[0]).not.toHaveProperty('content')
+    expect(mailCalls).toBe(0)
+  })
+  it.each(['comment permission', 'hidden comment'] as const)('drops the optional anchor after losing %s while retaining readable feedback status', async restriction => {
     await db('groups').where('id', 3).update({
       permissions: JSON.stringify(['read:pages', 'write:pages', 'read:comments']),
       pageRules: JSON.stringify([{ match: 'START', path: '', deny: false, roles: ['read:pages', 'write:pages', 'read:comments'], locales: [] }])
@@ -396,19 +433,30 @@ suite('native governed notification consumers', () => {
     const initial = await notifications.listPageWatchNotifications(requester, undefined, 'browser')
     const entry = initial.items[0]
     if (!entry) throw new Error('Expected native comment-linked feedback entry')
+    expect(entry).toMatchObject({ category: 'feedbackStatus', commentId: 501 })
     for (const mode of ['off', 'existing-consented-channels'] as const) {
       await setCeiling('feedbackStatus', mode)
       expect((await notifications.listPageWatchNotifications(requester, undefined, 'browser')).items)
-        .toEqual([expect.objectContaining({ id: entry.id })])
+        .toEqual([expect.objectContaining({ id: entry.id, commentId: 501 })])
     }
-    await db('comments').where('id', 501).update({ isHidden: true })
+    if (restriction === 'hidden comment') await db('comments').where('id', 501).update({ isHidden: true })
+    else await db('groups').where('id', 3).update({
+      permissions: JSON.stringify(['read:pages', 'write:pages']),
+      pageRules: JSON.stringify([{ match: 'START', path: '', deny: false, roles: ['read:pages', 'write:pages'], locales: [] }])
+    })
     await notifications.markPageWatchNotificationRead(requester, entry.id, 'browser')
-    expect(await db('pageWatchNotifications').where('eventId', eventId)).toHaveLength(0)
-    expect((await notifications.listPageWatchNotifications(requester, undefined, 'browser')).items).toEqual([])
+    expect((await db('pageWatchNotifications').where('eventId', eventId).first()).readAt).not.toBeNull()
+    expect((await notifications.listPageWatchNotifications(requester, undefined, 'browser')).items)
+      .toEqual([expect.objectContaining({ id: entry.id, commentId: null })])
+    expect((await governed.listOwnGovernedNotificationReceipts({ knex: db, requester, sessionId: 'browser' })).items)
+      .toEqual([expect.objectContaining({ channel: 'in-app', status: 'delivered' })])
     expect(mailCalls).toBe(0)
   })
-  it('commits sending before SMTP, never replays unknown, and retains the unknown attempt after explicit warned resend', async () => {
-    const { eventId } = await feedbackEvent(true)
+  it('retains unknown status mail with an unreadable optional comment and permits only its owner to explicitly resend', async () => {
+    await db('settings').insert({ key: 'features', value: JSON.stringify({ featurePageComments: true }) })
+    await db('commentProviders').insert({ key: 'default', isEnabled: true }).onConflict('key').merge()
+    await db('comments').insert({ id: 501, pageId: 42, authorId: 8, name: 'Other', content: 'Private discussion detail', replyTo: 0, isHidden: false })
+    const { eventId } = await feedbackEvent(true, 501)
     await outbox.publishOutboxEvents(db)
     ambiguousMail = true
     const jobs = await invokeGoverned()

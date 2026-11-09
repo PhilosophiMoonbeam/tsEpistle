@@ -263,6 +263,8 @@
       "skipToContent": "Skip to content",
       "documentKind": "Knowledge",
       "pageView": "Page view",
+      "automatedLifecycleNotice": "Automated lifecycle notice",
+      "lifecycleNoticeRule": "Rule {{id}}",
       "viewArticle": "Article",
       "viewLinks": "Links",
       "watchingPage": "Watching this page",

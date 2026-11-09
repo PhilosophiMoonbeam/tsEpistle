@@ -25,6 +25,7 @@ block body
         createdAt: page.createdAt,
         updatedAt: page.updatedAt,
         sourceRevision: page.sourceRevision,
+        lifecycleNotices,
         authorName: pageFeatures.lastEditorVisible ? page.authorName : 'Unknown',
         authorId: pageFeatures.lastEditorVisible ? page.authorId : 0,
         editor: page.editorKey,
@@ -64,6 +65,11 @@ block body
           h1= page.title
           if page.description
             p= page.description
+        each notice in lifecycleNotices
+          aside(role='note' aria-labelledby=`passive-lifecycle-notice-${page.id}-${notice.ruleId}` data-lifecycle-rule-id=notice.ruleId)
+            strong(id=`passive-lifecycle-notice-${page.id}-${notice.ruleId}`)= t('common:page.automatedLifecycleNotice', { defaultValue: 'Automated lifecycle notice' })
+            p(style='white-space: pre-wrap; overflow-wrap: anywhere')= notice.text
+            small= t('common:page.lifecycleNoticeRule', { id: notice.ruleId, defaultValue: 'Rule {{id}}' })
         .contents!= passiveContent
   if injectCode.body
     != injectCode.body

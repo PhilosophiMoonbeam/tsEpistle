@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { z } from 'zod'
-import { PAGE_LIFECYCLE_LIMITS, PageLifecyclePreviewRequestSchema, PageLifecycleSaveRequestSchema, PageLifecycleRuleDefinitionSchema, pageLifecycleClockDisplay, pageLifecycleDue, pageLifecycleMoveDestination, pageLifecycleOriginalRelativePath, pageLifecycleSelectorMatches } from '../../shared/page-lifecycle.ts'
-import type { PageLifecycleClock, PageLifecycleEffect, PageLifecyclePreview, PageLifecyclePreviewPage, PageLifecyclePreviewRequest, PageLifecycleRuleDefinition, PageLifecycleRuleStatus } from '../../shared/page-lifecycle.ts'
+import { PAGE_LIFECYCLE_LIMITS, PageLifecyclePreviewRequestSchema, PageLifecycleSaveRequestSchema, PageLifecycleRuleDefinitionSchema, pageLifecycleClockDisplay, pageLifecycleDue, pageLifecycleMoveDestination, pageLifecycleOriginalRelativePath, pageLifecycleSelectorMatches, PageLifecycleNoticesSchema } from '../../shared/page-lifecycle.ts'
+import type { PageLifecycleClock, PageLifecycleEffect, PageLifecycleNotice, PageLifecyclePreview, PageLifecyclePreviewPage, PageLifecyclePreviewRequest, PageLifecycleRuleDefinition, PageLifecycleRuleStatus } from '../../shared/page-lifecycle.ts'
 import auth, { loadPageRuleAuthority } from '../core/auth.ts'
 import { writeOutboxEvent } from '../core/outbox.ts'
 import { DurableJobStore } from '../core/durable-jobs.ts'
@@ -17,6 +17,8 @@ import { observePageLifecycleBaseline } from '../helpers/page-lifecycle-clocks.t
 import Page from '../models/pages.ts'
 import errors from './errors.ts'
 import { DISCUSSION_SETTINGS_LOCK } from './discussion-settings.ts'
+import { publicationWindowOpen } from '../../shared/publication-window.ts'
+import { pageRequiresUnlock } from './page-protection.ts'
 
 const lifecyclePageColumns = ['id', 'sourceRevision', 'path', 'localeCode', 'visibility', 'ownerId', 'contentType', 'isPublished', 'publishStartDate', 'publishEndDate'] as const
 
@@ -334,7 +336,7 @@ export const resumePageLifecycleCycle = async (input: PageLifecycleInput) => Pag
 })
 
 /** Reader-only metadata: reload the current account/page context rather than trusting a retained reader projection. */
-export const readPageLifecycleNotices = async (input: { transaction: Knex.Transaction; page: PageVisibilityRecord & { id: number }; requester: PagePrincipal; authority: PageRuleAuthority }) => {
+export const readPageLifecycleNotices = async (input: { transaction: Knex.Transaction; page: PageVisibilityRecord & { id: number }; requester: PagePrincipal; authority: PageRuleAuthority; sessionId: string }): Promise<PageLifecycleNotice[]> => {
   if (!canReadPage(input.requester, input.page, input.authority)) return []
   const { transaction } = input, id = principalId(input.requester)
   const actor = id === null || isApiPrincipal(input.requester) ? null : await lockLifecycleActor(transaction, id, undefined, input.requester)
@@ -343,8 +345,11 @@ export const readPageLifecycleNotices = async (input: { transaction: Knex.Transa
   const current = await transaction<Omit<LifecyclePage, 'tags' | 'tagIds'>>('pages').select(...lifecyclePageColumns).where('id', input.page.id).forShare().first()
   if (!current) return []
   const tags = await transaction<{ tag: string }>('pageTags').join('tags', 'tags.id', 'pageTags.tagId').where('pageTags.pageId', current.id).select('tags.tag')
-  if (!canReadPage(requester, { ...current, tags }, authority)) return []
-  return transaction('pageLifecycleNotices as notice').join('pageLifecycleRules as rule', 'rule.id', 'notice.ruleId').where({ 'notice.pageId': current.id, 'rule.status': 'enabled' }).select('notice.ruleId', 'notice.text', 'notice.updatedAt').orderBy('notice.ruleId')
+  const page = { ...current, tags }
+  if (!canReadPage(requester, page, authority)) return []
+  if ((!current.isPublished || !publicationWindowOpen(current)) && !canWritePage(requester, page, authority)) return []
+  if (await pageRequiresUnlock({ requester, pageId: current.id, sessionId: input.sessionId, transaction, readOnly: true })) return []
+  return PageLifecycleNoticesSchema.parse(await transaction('pageLifecycleNotices as notice').join('pageLifecycleRules as rule', 'rule.id', 'notice.ruleId').where({ 'notice.pageId': current.id, 'rule.status': 'enabled' }).select('notice.ruleId', 'notice.text').orderBy('notice.ruleId').limit(PAGE_LIFECYCLE_LIMITS.enabledSite))
 }
 export const listPageLifecycleRules = async (input: PageLifecycleInput) => Page.knex().transaction(async transaction => {
   const actor = await interactiveActor(transaction, input), visible: LifecycleRule[] = []

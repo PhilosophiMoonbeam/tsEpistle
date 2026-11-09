@@ -322,6 +322,20 @@
               v-tab#page-view-article-tab(value='article' prepend-icon='mdi-file-document-outline') {{$t('common:page.viewArticle')}}
               v-tab#page-view-talk-tab(v-if='commentsEnabled && commentsPerms.read && !commentsExternal' value='talk' prepend-icon='mdi-forum-outline') {{$t('common:comments.title')}}
               v-tab#page-view-links-tab(v-if='linksVisible' value='links' prepend-icon='mdi-link-variant') {{$t('common:page.viewLinks')}}
+            //- Derived notices stay outside canonical renderer hydration and offline source.
+            aside.page-lifecycle-notice(
+              v-for='notice in lifecycleNotices'
+              v-show='printView || selectedPageView === `article`'
+              :key='notice.ruleId'
+              :lang='locale'
+              :dir='contentDirection'
+              role='note'
+              :aria-labelledby='`page-lifecycle-notice-${pageId}-${notice.ruleId}`'
+              :data-lifecycle-rule-id='notice.ruleId'
+            )
+              strong(:id='`page-lifecycle-notice-${pageId}-${notice.ruleId}`') {{$t('common:page.automatedLifecycleNotice', {defaultValue: 'Automated lifecycle notice'})}}
+              p {{notice.text}}
+              small {{$t('common:page.lifecycleNoticeRule', {id: notice.ruleId, defaultValue: 'Rule ' + notice.ruleId})}}
             article.contents(ref='container', v-show='printView || selectedPageView === `article`', :id='pageArticleId', role='tabpanel', :aria-labelledby='showPageViewTabs ? `page-view-article-tab` : pageTitleId', tabindex='-1', :lang='locale', :dir='contentDirection')
               template(v-if='$slots.contents')
                 slot(name='contents')
@@ -783,6 +797,7 @@ import { composeDiscussionAnnotation, onJumpDiscussionAnnotation } from '@/helpe
 import type { DiscussionAnnotationAnchor } from '../../../../shared/discussion-annotations.ts'
 import { fetchPage, verifyPageAccuracy } from '@/helpers/pages-api'
 import { PageAccuracyViewSchema, PAGE_ACCURACY_DAY_MS, type PageAccuracyView } from '../../../../shared/page-accuracy.ts'
+import type { PageLifecycleNotice } from '../../../../shared/page-lifecycle.ts'
 import { publicationBoundaryTimestamp, publicationWindowOpen } from '../../../../shared/publication-window.ts'
 import {
   buildOutlineTree,
@@ -1502,6 +1517,10 @@ export default defineComponent({
     sourceRevision: {
       type: String,
       default: ''
+    },
+    lifecycleNotices: {
+      type: Array as PropType<PageLifecycleNotice[]>,
+      required: true
     },
     tags: {
       type: Array as PropType<PageTag[]>,
@@ -6079,6 +6098,22 @@ export default defineComponent({
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-raised);
   box-shadow: var(--wiki-shadow-xs);
+}
+
+.page-lifecycle-notice {
+  margin-block: var(--wiki-space-4);
+  padding: var(--wiki-space-4);
+  border: 1px solid var(--wiki-surface-border);
+  border-inline-start: 3px solid var(--wiki-accent-warm);
+  border-radius: var(--wiki-control-radius);
+  overflow-wrap: anywhere;
+
+  p {
+    margin-block: var(--wiki-space-2);
+    white-space: pre-wrap;
+  }
+
+  small { color: var(--wiki-text-muted); }
 }
 
 .page-view-tabs ~ .comments-container {

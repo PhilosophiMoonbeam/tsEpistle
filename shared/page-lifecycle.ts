@@ -19,12 +19,16 @@ export const PageLifecycleConditionSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('comments-inactive'), days }),
   z.strictObject({ kind: z.literal('interval'), anchorAt: PageLifecycleUtcSchema, days })
 ])
+const lifecycleNoticeText = z.string().min(1).max(1000).refine(value => value.trim().length > 0 && !value.includes('\u0000'), 'Enter literal notice text')
 export const PageLifecycleEffectSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('add-tags'), tagIds: ids(10) }),
-  z.strictObject({ kind: z.literal('set-notice'), text: z.string().min(1).max(1000).refine(value => value.trim().length > 0 && !value.includes('\u0000'), 'Enter literal notice text') }),
+  z.strictObject({ kind: z.literal('set-notice'), text: lifecycleNoticeText }),
   z.strictObject({ kind: z.literal('propose-move'), destinationRootPath: PageLifecycleMovePathSchema, destinationLocale: z.literal('same'), template: z.enum(['original-relative-path', 'page-id']) }),
   z.strictObject({ kind: z.literal('notify'), audience: z.enum(['review-route', 'watchers']) })
 ])
+export const PageLifecycleNoticeSchema = z.strictObject({ ruleId: z.uuid(), text: lifecycleNoticeText })
+export const PageLifecycleNoticesSchema = z.array(PageLifecycleNoticeSchema).max(PAGE_LIFECYCLE_LIMITS.enabledSite)
+export type PageLifecycleNotice = z.infer<typeof PageLifecycleNoticeSchema>
 export type PageLifecycleSelector = z.infer<typeof PageLifecycleSelectorSchema>
 export type PageLifecycleCondition = z.infer<typeof PageLifecycleConditionSchema>
 export type PageLifecycleEffect = z.infer<typeof PageLifecycleEffectSchema>

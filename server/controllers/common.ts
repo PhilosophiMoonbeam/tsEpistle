@@ -28,6 +28,7 @@ import { resolveAssetBrandingView } from '../helpers/asset-branding.ts'
 import { projectPassivePage } from '../helpers/passive-page.ts'
 
 import { normalizePageFeatures } from '../../shared/page-features.ts'
+import { readPageLifecycleNotices } from '../operations/page-lifecycle.ts'
 
 const tmplCreateRegex = /^[0-9]+(,[0-9]+)?$/
 const normalizeDbBoolean = (value: unknown, fallback = false): boolean => {
@@ -377,7 +378,8 @@ export default function createCommonController(wiki: CommonWiki): express.Router
     res: Response,
     pageArgs: ParsedPageArgs,
     page: PageRecord,
-    effectivePermissions: EffectivePermissions
+    effectivePermissions: EffectivePermissions,
+    authority: PageRuleAuthority
   ): Promise<unknown> => {
     const i18n = getRequestI18n(req)
     i18n.changeLanguage(pageArgs.locale)
@@ -473,8 +475,13 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       listIndex: args => pageOperations.listIndex({ ...args, ...(req.user === undefined ? {} : { requester: req.user }) })
     })
     res.set('X-Wiki-Page', '1')
+    const lifecycleNotices = await wiki.models.knex.transaction(transaction => readPageLifecycleNotices({
+      transaction, page, requester: req.user, authority, sessionId: req.sessionID
+    }))
+
     return res.render('page', {
       page: readerPage,
+      lifecycleNotices,
       passiveContent,
       passiveLocale: pageArgs.locale,
       passiveDirection: i18n.dir(),
@@ -624,7 +631,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       _.set(res.locals, 'pageMeta.title', 'Page Not Found')
       return res.status(404).render('notfound', { action: 'view' })
     }
-    return renderResolvedPage(req, res, pageArgs, page, effectivePermissions)
+    return renderResolvedPage(req, res, pageArgs, page, effectivePermissions, authority)
   })
 
   /**
@@ -1238,7 +1245,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
         _.set(res, 'locals.siteConfig.rtl', i18n.dir() === 'rtl')
 
         if (page) {
-          return renderResolvedPage(req, res, pageArgs, page, effectivePermissions)
+          return renderResolvedPage(req, res, pageArgs, page, effectivePermissions, authority)
         } else if (pageArgs.path === 'home') {
           _.set(res.locals, 'pageMeta.title', 'Welcome')
           res.render('welcome', { locale: pageArgs.locale })

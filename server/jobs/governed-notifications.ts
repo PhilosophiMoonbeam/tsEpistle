@@ -25,6 +25,7 @@ interface Effect {
 interface NotificationContent {
   page: NotificationPage & { title: string; path: string; localeCode: string; visibility: 'public' | 'private' }
   email: string; actorName: string; eventType: string; action: MailPageWatchAction
+  commentId: number | null
   outcomes?: LifecycleNotificationOutcome[]
 }
 interface Projection extends NotificationContent {
@@ -178,6 +179,7 @@ const projectGovernedNotificationContext = async (tx: Knex.Transaction, effect: 
   if (!canReadNotificationPage(recipient, currentPage, authority)) return null
   let consent = purpose === 'delivery' ? await channels(tx, effect) : { inAppEnabled: false, emailEnabled: false }
   let eventType: string, action: MailPageWatchAction, actorName = ''
+  let commentId: number | null = null
   let outcomes: LifecycleNotificationOutcome[] | undefined
   if (effect.category === 'reviewReminder') {
     const sourceRevision = effect.sourceRevision
@@ -220,9 +222,10 @@ const projectGovernedNotificationContext = async (tx: Knex.Transaction, effect: 
         }
         consent = { inAppEnabled: inApp && admitted.inAppEnabled, emailEnabled: email && admitted.emailEnabled }
       } else if (payload.commentId !== null && payload.commentId !== undefined) {
-        const commentId = Number(payload.commentId)
-        const access = await loadDiscussionNotificationAccess(tx, [effect.pageId], [commentId], recipient, sessionId)
-        if (!canReadDiscussionNotification(recipient, currentPage, commentId, authority, access)) return null
+        // Status authority is independent of this optional discussion anchor.
+        const optionalCommentId = Number(payload.commentId)
+        const access = await loadDiscussionNotificationAccess(tx, [effect.pageId], [optionalCommentId], recipient, sessionId)
+        if (canReadDiscussionNotification(recipient, currentPage, optionalCommentId, authority, access)) commentId = optionalCommentId
       }
       const actor = await tx('users').where('id', Number(payload.actorId)).first('name')
       actorName = typeof actor?.name === 'string' ? actor.name : ''
@@ -272,7 +275,7 @@ const projectGovernedNotificationContext = async (tx: Knex.Transaction, effect: 
     }
   }
   if (purpose === 'delivery' && !consent.inAppEnabled && !consent.emailEnabled) return null
-  return { page: currentPage, email: typeof recipient.email === 'string' ? recipient.email : '', ...consent, actorName, eventType, action, ...(outcomes === undefined ? {} : { outcomes }) }
+  return { page: currentPage, email: typeof recipient.email === 'string' ? recipient.email : '', ...consent, actorName, eventType, action, commentId, ...(outcomes === undefined ? {} : { outcomes }) }
 }
 
 export const projectGovernedNotification = (tx: Knex.Transaction, effect: Effect, requester?: PagePrincipal, sessionId: string | null = null): Promise<Projection | null> =>

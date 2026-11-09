@@ -32,11 +32,20 @@ const getPage = async (args: { path: string; locale: string; visibility: string;
 beforeAll(async () => {
   await translations.init({ lng: 'fr', fallbackLng: 'en', defaultNS: 'common', ns: ['common'], resources: { en: english } })
   const knex = Object.assign(vi.fn((table: string) => {
-    const query = { where: (..._args: unknown[]) => query, delete: async () => 0, first: async () => table === 'pageAccessPasswords' && protectedPage ? { version: 1 } : table === 'pageUnlockGrants' && unlocked ? { pageId: 7 } : undefined, select: async () => [] }
+    const query = {
+      where: (..._args: unknown[]) => query, whereIn: (..._args: unknown[]) => query, orderBy: (..._args: unknown[]) => query, forShare: () => query,
+      delete: async () => 0,
+      first: async () => table === 'pageAccessPasswords' && protectedPage ? { version: 1 } : table === 'pageUnlockGrants' && unlocked ? { pageId: 7 } : undefined,
+      select: (..._args: unknown[]) => query,
+      then: (resolve: (rows: unknown[]) => unknown) => Promise.resolve([]).then(resolve)
+    }
     return query
-  }), { client: { pool: { numFree: () => 1, numUsed: () => 0 } } })
+  }), {
+    client: { pool: { numFree: () => 1, numUsed: () => 0 } },
+    transaction: async (callback: (transaction: unknown) => Promise<unknown>): Promise<unknown> => callback(knex)
+  })
   const wiki = {
-    config, auth: {
+    config, configSvc: {}, events: {}, logger: console, startedAt: {}, auth: {
       checkAccess: () => false, checkPageAccess: () => allowed,
       loadPageRuleAuthority: async (requester: unknown) => ({ requester, permissions: ['read:pages'], groups: [], tagAliases: {} }),
       getEffectivePermissions: () => ({ pages: { read: allowed, write: false }, history: { read: false }, source: { read: false } })

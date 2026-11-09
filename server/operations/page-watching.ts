@@ -492,7 +492,7 @@ export const listPageWatchNotifications = async (
           continue
         }
         items.push({
-          id: String(row.id), pageId, eventType: projection.eventType, category: routing.category, commentId: null,
+          id: String(row.id), pageId, eventType: projection.eventType, category: routing.category, commentId: projection.commentId,
           actorName: projection.actorName, title: projection.page.title, path: projection.page.path, localeCode: projection.page.localeCode,
           visibility: projection.page.visibility, createdAt: wireTimestamp(row.createdAt), readAt: row.readAt === null ? null : wireTimestamp(row.readAt),
           ...(projection.outcomes === undefined ? {} : { outcomes: projection.outcomes })

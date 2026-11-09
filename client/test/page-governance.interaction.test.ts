@@ -33,6 +33,8 @@ Bun.plugin({ name: 'governance-mounted-native-sfc', setup(builder) {
   })
 } })
 const Board = (await import('../components/feedback/feedback-board.vue')).default as Component
+// The SFC compiler plugin above must be installed before loading this real form.
+const Submit = (await import('../components/feedback/feedback-submit.vue')).default as Component
 const Routing = (await import('../components/page-review-routing.vue')).default as Component
 const Lifecycle = (await import('../components/page-lifecycle.vue')).default as Component
 const Governance = (await import('../components/page-governance.vue')).default as Component
@@ -171,6 +173,84 @@ describe('mounted governed board journeys', () => {
     expect(button(view.host, 'Choose location and open full editor').disabled).toBe(true)
     expect(writes(view.fetch)).toHaveLength(0)
   })
+  it('retains proposal and existing-page admission drafts through fresh same-board search, sort and filter responses, including a retired query', async () => {
+    const oldRequest = Promise.withResolvers<Response>()
+    let oldSignal: AbortSignal | null | undefined, revision = 2
+    const view = await mount(Board, { ...boardProps }, async (url, init) => {
+      if (url.includes('/duplicates?')) return json([])
+      if (new URL(url, 'http://localhost').searchParams.get('q') === 'superseded') { oldSignal = init?.signal; return oldRequest.promise }
+      return json({ ...listing([], 'no-matches'), board: { ...board, boardRevision: String(++revision) } })
+    })
+    change(input(view.host, 'Proposed title for optional duplicate discovery'), 'Unsent proposal')
+    input(view.host, 'Explicitly attach the page I create').click()
+    change(input(view.host, 'Canonical page ID'), '19')
+    change(input(view.host, 'Current source revision'), '12')
+    input(view.host, 'I deliberately attach this existing canonical page').click()
+    await settle()
+    const assertDraft = () => {
+      expect(input(view.host, 'Proposed title for optional duplicate discovery').value).toBe('Unsent proposal')
+      expect(input(view.host, 'Canonical page ID').value).toBe('19')
+      expect(input(view.host, 'Current source revision').value).toBe('12')
+      expect(input(view.host, 'Explicitly attach the page I create').checked).toBe(true)
+      expect(input(view.host, 'I deliberately attach this existing canonical page').checked).toBe(true)
+    }
+    change(input(view.host, 'Search permitted proposals'), 'superseded'); submit(view.host.querySelector('form')!); await settle()
+    assertDraft()
+    change(input(view.host, 'Search permitted proposals'), 'Editor'); submit(view.host.querySelector('form')!); await settle()
+    expect(oldSignal?.aborted).toBe(true)
+    assertDraft()
+    change(view.host.querySelector('select')!, 'trending'); await settle()
+    assertDraft()
+    const planned = [...view.host.querySelectorAll<HTMLInputElement>('input[type=checkbox]')].find(item => item.value === 'planned')!
+    planned.click(); await settle()
+    assertDraft()
+    oldRequest.resolve(json(listing([{ ...idea, title: 'Late superseded result' }]))); await settle()
+    expect(view.host.textContent).not.toContain('Late superseded result')
+    assertDraft()
+    expect(writes(view.fetch)).toHaveLength(0)
+  })
+  for (const boundary of ['board', 'owner', 'session generation'] as const) {
+    it(`retires admission drafts and late suggestion/submission results on a verified ${boundary} transition`, async () => {
+      const duplicate = Promise.withResolvers<Response>(), attachment = Promise.withResolvers<Response>(), submitted = vi.fn()
+      let signal: AbortSignal | null | undefined
+      const view = await mount(Submit, { ...boardProps, onSubmitted: submitted }, async (url, init) => {
+        if (url.includes('/duplicates?')) { signal = init?.signal; return duplicate.promise }
+        if (url.endsWith('/submit')) return attachment.promise
+        throw new Error(`Unexpected request ${url}`)
+      })
+      change(input(view.host, 'Proposed title for optional duplicate discovery'), 'Old owner draft')
+      input(view.host, 'Explicitly attach the page I create').click()
+      change(input(view.host, 'Canonical page ID'), '19')
+      change(input(view.host, 'Current source revision'), '12')
+      input(view.host, 'I deliberately attach this existing canonical page').click()
+      submit(input(view.host, 'Canonical page ID').closest('form')!); await settle()
+      expect(writes(view.fetch)).toHaveLength(1)
+      view.props.board = { ...board, boardRevision: '3' }; await settle()
+      expect(input(view.host, 'Proposed title for optional duplicate discovery').value).toBe('Old owner draft')
+      expect(input(view.host, 'Canonical page ID').closest('fieldset')?.disabled).toBe(true)
+      if (boundary === 'board') view.props.board = { ...board, id: ruleId }
+      else {
+        if (boundary === 'owner') wikiStore.user.id = 6
+        else wikiStore.user.authVersion = 5
+        view.props.authorityKey = JSON.stringify([wikiStore.user.id, wikiStore.user.authVersion, wikiStore.offlineIdentityEpoch, 'authenticated', false, wikiStore.user.permissions])
+      }
+      await settle()
+      expect(signal?.aborted).toBe(true)
+      expect(input(view.host, 'Proposed title for optional duplicate discovery').value).toBe('')
+      expect(input(view.host, 'Canonical page ID').value).toBe('')
+      expect(input(view.host, 'Current source revision').value).toBe('')
+      expect(input(view.host, 'Explicitly attach the page I create').checked).toBe(false)
+      expect(input(view.host, 'I deliberately attach this existing canonical page').checked).toBe(false)
+      expect(input(view.host, 'Canonical page ID').closest('fieldset')?.disabled).toBe(false)
+      input(view.host, 'I deliberately attach this existing canonical page').click()
+      duplicate.resolve(json([{ ...idea, title: 'Retired duplicate suggestion' }]))
+      attachment.resolve(json({ ideaId, ideaRevision: '4' })); await settle()
+      expect(view.host.textContent).not.toContain('Retired duplicate suggestion')
+      expect(view.host.querySelector('[role=alert]')).toBeNull()
+      expect(input(view.host, 'I deliberately attach this existing canonical page').checked).toBe(true)
+      expect(submitted).not.toHaveBeenCalled()
+    })
+  }
   it('lets an admitted author restore withdrawn membership without treating authorship as source editing authority', async () => {
     setLocation('/en/board?statuses=withdrawn')
     const ownWithdrawn = { ...idea, state: 'withdrawn' as const, canModerate: false, canWithdraw: false, canRestore: true, canEditSource: false }

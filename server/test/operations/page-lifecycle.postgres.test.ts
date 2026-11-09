@@ -291,9 +291,11 @@ suite('native PostgreSQL lifecycle authority, receipt and lease fences', () => {
     expect(await db('pageHistory')).toHaveLength(1)
     expect(await db('pageLifecycleNotices')).toHaveLength(1)
     expect(await db('pageLifecycleActionReceipts').orderBy('effectIndex')).toMatchObject([{ state: 'applied' }, { state: 'applied' }])
+    const authority = await loadPageRuleAuthority(owner)
+    const currentPage = await db.transaction(transaction => operations.lockLifecycleNativePage(transaction, 42))
+    if (!currentPage) throw new Error('The owned reader fixture page is missing')
     await db.transaction(async transaction => {
-      const authority = await loadPageRuleAuthority(owner, transaction), currentPage = await operations.lockLifecycleNativePage(transaction, 42)
-      expect(await operations.readPageLifecycleNotices({ transaction, page: currentPage!, requester: owner, authority })).toEqual([])
+      expect(await operations.readPageLifecycleNotices({ transaction, page: currentPage, requester: owner, authority, sessionId: 'native-lifecycle-human' })).toEqual([])
     })
   })
   it('refuses stale target previews and selectors wider than 1000 admitted pages without a partial save', async () => {
@@ -389,20 +391,21 @@ suite('native PostgreSQL lifecycle authority, receipt and lease fences', () => {
   })
   it('does not use a stale manager session or reader projection to disclose current rules and notices', async () => {
     const rule = await save(), job = await queued(); await run(job)
-    const retained = await db.transaction(async transaction => {
-      const authority = await loadPageRuleAuthority(owner, transaction), currentPage = await operations.lockLifecycleNativePage(transaction, 42)
-      if (!currentPage) throw new Error('The owned reader fixture page is missing')
-      expect(await operations.readPageLifecycleNotices({ transaction, page: currentPage, requester: owner, authority })).toHaveLength(1)
-      return { page: currentPage, authority }
+    const authority = await loadPageRuleAuthority(owner)
+    const currentPage = await db.transaction(transaction => operations.lockLifecycleNativePage(transaction, 42))
+    if (!currentPage) throw new Error('The owned reader fixture page is missing')
+    const retained = { page: currentPage, authority }
+    await db.transaction(async transaction => {
+      expect(await operations.readPageLifecycleNotices({ transaction, ...retained, requester: owner, sessionId: 'native-lifecycle-human' })).toEqual([{ ruleId: rule.ruleId, text: 'Review this page; literal <b>not HTML</b>.' }])
     })
     await db('pages').where('id', 42).update({ visibility: 'private', ownerId: manager.id })
     await db.transaction(async transaction => {
-      expect(await operations.readPageLifecycleNotices({ transaction, ...retained, requester: owner })).toEqual([])
+      expect(await operations.readPageLifecycleNotices({ transaction, ...retained, requester: owner, sessionId: 'native-lifecycle-human' })).toEqual([])
     })
     await db('pages').where('id', 42).update({ visibility: 'public', ownerId: null })
     await db('users').where('id', owner.id).update({ authVersion: 1 })
     await db.transaction(async transaction => {
-      expect(await operations.readPageLifecycleNotices({ transaction, ...retained, requester: owner })).toEqual([])
+      expect(await operations.readPageLifecycleNotices({ transaction, ...retained, requester: owner, sessionId: 'native-lifecycle-human' })).toEqual([])
     })
     await scopeManager()
     await db('users').where('id', manager.id).update({ authVersion: 1 })
@@ -411,6 +414,34 @@ suite('native PostgreSQL lifecycle authority, receipt and lease fences', () => {
     await expect(operations.setPageLifecycleRuleStatus({ requester: manager, sessionId: 'stale-manager', ruleId: rule.ruleId, expectedRevision: rule.revision, action: 'cancel' })).rejects.toMatchObject({ name: 'LIFECYCLE_AUTHOR_UNAVAILABLE', status: 403 })
     expect(await db('pageLifecycleRules').where('id', rule.ruleId).first()).toMatchObject({ status: 'enabled', revision: 1 })
     expect(await db('pageLifecycleNotices')).toHaveLength(1)
+  })
+  it('rechecks publication and session-bound password admission for a retained notice projection', async () => {
+    const text = '<b>Literal automated notice</b>\nSecond line', rule = await save(await definition([{ kind: 'set-notice', text }]))
+    await run(await queued())
+    const authority = await loadPageRuleAuthority(owner)
+    const retained = await db.transaction(transaction => operations.lockLifecycleNativePage(transaction, 42))
+    if (!retained) throw new Error('The owned reader fixture page is missing')
+    const expected = [{ ruleId: rule.ruleId, text }]
+    const read = () => db.transaction(transaction => operations.readPageLifecycleNotices({
+      transaction, page: retained, requester: owner, authority, sessionId: 'current-reader-session'
+    }))
+    const roles = ['read:pages']
+    await db('groups').where('id', 3).update({ permissions: JSON.stringify(roles), pageRules: JSON.stringify([{ match: 'START', path: '', deny: false, roles }]) })
+    expect(await read()).toEqual(expected)
+    await db('pages').where('id', 42).update({ isPublished: false })
+    expect(await read()).toEqual([])
+    await db('pages').where('id', 42).update({ isPublished: true, publishStartDate: new Date((await current()).valueOf() + 86_400_000).toISOString() })
+    expect(await read()).toEqual([])
+    await db('pages').where('id', 42).update({ publishStartDate: '' })
+    await db('pageAccessPasswords').insert({ pageId: 42, passwordHash: 'canonical-hash', version: 1, updatedBy: owner.id })
+    expect(await read()).toEqual([])
+    await db('pageUnlockGrants').insert({ id: 'reader-grant', pageId: 42, sessionId: 'another-reader-session', userId: owner.id, passwordVersion: 1, expiresAt: new Date((await current()).valueOf() + 60_000) })
+    expect(await read()).toEqual([])
+    await db('pageUnlockGrants').where('id', 'reader-grant').update({ sessionId: 'current-reader-session' })
+    expect(await read()).toEqual(expected)
+    await db('pageAccessPasswords').where('pageId', 42).update({ version: 2 })
+    expect(await read()).toEqual([])
+    expect(await db('pageLifecycleNotices').select('ruleId', 'text')).toEqual(expected)
   })
   it('admits only explicit native watcher channels consented for lifecycle at the effect commit', async () => {
     await db('pageWatchers').insert({ pageId: 42, userId: 8, emailEnabled: true, inAppEnabled: true })

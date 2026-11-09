@@ -40,7 +40,7 @@ watch(createOpen, (open, previous) => {
     }
   })
 })
-watch(() => [props.board.id, props.authorityKey], () => { generation++; suggestionGeneration++; controller?.abort(); title.value = ''; acknowledged.value = false; existingAcknowledged.value = false; existingId.value = null; sourceRevision.value = ''; suggestions.value = []; createOpen.value = false; busy.value = false; error.value = ''; suggesting.value = false })
+watch([() => props.board.id, () => props.authorityKey], () => { generation++; suggestionGeneration++; controller?.abort(); title.value = ''; acknowledged.value = false; existingAcknowledged.value = false; existingId.value = null; sourceRevision.value = ''; suggestions.value = []; createOpen.value = false; busy.value = false; error.value = ''; suggesting.value = false })
 watch(() => props.ready, ready => { if (!ready) { generation++; suggestionGeneration++; controller?.abort(); createOpen.value = false; busy.value = false; suggesting.value = false } })
 watch([title, existingId, sourceRevision, acknowledged, existingAcknowledged], () => emit('dirty', Boolean(title.value || existingId.value || sourceRevision.value || acknowledged.value || existingAcknowledged.value)))
 watch(busy, value => emit('busy', value))

@@ -85,6 +85,7 @@ const payload = (): WikiPagePayload => ({
     createdAt: '2026-08-01T00:00:00.000Z',
     updatedAt: '2026-08-31T00:00:00.000Z',
     sourceRevision: '7',
+    lifecycleNotices: [],
     tags: [{ tag: 'guide', title: 'Guide' }],
     authorName: 'Editor',
     authorId: 7,

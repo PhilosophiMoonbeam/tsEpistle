@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { PageBrandingViewSchema } from '../../shared/page-branding.ts'
 import { normalizePageFeatures } from '../../shared/page-features.ts'
 import { decodeBase64Json } from './base64'
+import { PageLifecycleNoticesSchema } from '../../shared/page-lifecycle.ts'
 
 const WikiPageTagSchema = z.object({
   tag: z.string(),
@@ -18,6 +19,7 @@ const WikiPagePropsSchema = z.object({
   updatedAt: z.string(),
   sourceRevision: z.string(),
   tags: z.array(WikiPageTagSchema),
+  lifecycleNotices: PageLifecycleNoticesSchema,
   authorName: z.string(),
   authorId: z.number().int().nonnegative(),
   editor: z.string(),
