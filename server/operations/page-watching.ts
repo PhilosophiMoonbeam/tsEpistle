@@ -20,6 +20,8 @@ import {
   loadDeletedNotificationScopes,
   loadDiscussionNotificationAccess
 } from '../jobs/notification-access.ts'
+import { lockNotificationSettings, readNotificationCeilings } from '../jobs/notification-ceilings.ts'
+import { projectGovernedInboxRow } from '../jobs/governed-notifications.ts'
 
 const { ApplicationError } = errors
 
@@ -241,7 +243,10 @@ const readPreferences = async (database: Knex | Knex.Transaction, userId: number
     pageDeleted: { inApp: false, email: false },
     watchedPageComment: { inApp: false, email: false },
     commentReply: { inApp: false, email: false },
-    mention: { inApp: false, email: false }
+    mention: { inApp: false, email: false },
+    feedbackStatus: { inApp: false, email: false },
+    reviewReminder: { inApp: false, email: false },
+    pageLifecycle: { inApp: false, email: false }
   }
   const rows = await database<NotificationPreferenceRow>('userNotificationPreferences')
     .where('userId', userId)
@@ -249,16 +254,20 @@ const readPreferences = async (database: Knex | Knex.Transaction, userId: number
     .select('category', 'inAppEnabled', 'emailEnabled')
   for (const row of rows)
     preferences[row.category] = { inApp: row.inAppEnabled === true || row.inAppEnabled === 1, email: row.emailEnabled === true || row.emailEnabled === 1 }
-  return { ownerId: userId, preferences }
+  const { ceilings } = await readNotificationCeilings(database)
+  return { ownerId: userId, preferences, ceilings }
 }
 
 const preferencePatch = (input: unknown): NotificationPreferencesPatch => {
   const invalid = (): never => {
     throw new ApplicationError('Invalid notification preferences', { status: 400, code: 'INVALID_INPUT' })
   }
-  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== 1 || !Object.hasOwn(input, 'preferences')) return invalid()
+  if (!input || typeof input !== 'object' || Array.isArray(input) ||
+    Object.keys(input).some(key => key !== 'preferences' && key !== 'stopAllEmail') || !Object.hasOwn(input, 'preferences') ||
+    (Object.hasOwn(input, 'stopAllEmail') && Reflect.get(input, 'stopAllEmail') !== true)) return invalid()
   const preferences: unknown = Reflect.get(input, 'preferences')
-  if (!preferences || typeof preferences !== 'object' || Array.isArray(preferences) || Object.keys(preferences).length === 0) return invalid()
+  if (!preferences || typeof preferences !== 'object' || Array.isArray(preferences) ||
+    (Object.keys(preferences).length === 0 && Reflect.get(input, 'stopAllEmail') !== true)) return invalid()
   for (const [category, channels] of Object.entries(preferences)) {
     if (
       !NOTIFICATION_CATEGORIES.some(known => known === category) ||
@@ -287,9 +296,17 @@ export const updateNotificationPreferences = async (requester: PagePrincipal | u
   const patch = preferencePatch(input)
   return wiki.models.knex.transaction(async transaction => {
     await currentPreferenceOwner(transaction, userId)
+    await lockNotificationSettings(transaction)
+    const { ceilings } = await readNotificationCeilings(transaction)
     for (const category of NOTIFICATION_CATEGORIES) {
-      const channels = patch[category]
-      if (!channels) continue
+      const requested = patch[category]
+      if (!requested) continue
+      const mode = ceilings[category]
+      const channels = {
+        ...(mode === 'off' || requested.inApp === undefined ? {} : { inApp: requested.inApp }),
+        ...(mode !== 'existing-consented-channels' || requested.email === undefined ? {} : { email: requested.email })
+      }
+      if (Object.keys(channels).length === 0) continue
       const updatedAt = new Date()
       const changes = {
         ...(channels.inApp === undefined ? {} : { inAppEnabled: channels.inApp }),
@@ -300,6 +317,15 @@ export const updateNotificationPreferences = async (requester: PagePrincipal | u
         .insert({ userId, category, inAppEnabled: channels.inApp ?? false, emailEnabled: channels.email ?? false, updatedAt })
         .onConflict(['userId', 'category'])
         .merge(changes)
+    }
+    if (Reflect.get(input as object, 'stopAllEmail') === true) {
+      const updatedAt = new Date()
+      // Explicit opt-out includes every stored category, including categories absent from this client.
+      await transaction('userNotificationPreferences').where('userId', userId).update({ emailEnabled: false, updatedAt })
+      await transaction('pageWatchers').where('userId', userId).update({ emailEnabled: false })
+      await transaction('userNotificationPreferences')
+        .insert({ userId, category: 'allEmailStopped', emailEnabled: false, inAppEnabled: false, updatedAt })
+        .onConflict(['userId', 'category']).merge({ emailEnabled: false, updatedAt })
     }
     return readPreferences(transaction, userId)
   })
@@ -459,6 +485,20 @@ export const listPageWatchNotifications = async (
         purgeNotificationIds.push(String(row.id))
         continue
       }
+      if (routing.category === 'feedbackStatus' || routing.category === 'reviewReminder' || routing.category === 'pageLifecycle') {
+        const projection = await wiki.models.knex.transaction(transaction => projectGovernedInboxRow(transaction, row, userId, requester, sessionId))
+        if (!projection) {
+          purgeNotificationIds.push(String(row.id))
+          continue
+        }
+        items.push({
+          id: String(row.id), pageId, eventType: projection.eventType, category: routing.category, commentId: null,
+          actorName: projection.actorName, title: projection.page.title, path: projection.page.path, localeCode: projection.page.localeCode,
+          visibility: projection.page.visibility, createdAt: wireTimestamp(row.createdAt), readAt: row.readAt === null ? null : wireTimestamp(row.readAt),
+          ...(projection.outcomes === undefined ? {} : { outcomes: projection.outcomes })
+        })
+        continue
+      }
       const currentPage = Number.isSafeInteger(pageId) && pageId > 0 ? currentPages.get(pageId) : undefined
       const page = currentPage ?? deletedPages.get(row.eventId)
       if (
@@ -537,6 +577,14 @@ export const markPageWatchNotificationRead = async (requester: PagePrincipal | u
   if (!row) return
   const routing = notificationRouting(row)
   if (routing && routing.category !== 'pageWatch') await wiki.models.knex.transaction(transaction => currentPreferenceOwner(transaction, userId))
+  if (routing && (routing.category === 'feedbackStatus' || routing.category === 'reviewReminder' || routing.category === 'pageLifecycle')) {
+    await wiki.models.knex.transaction(async transaction => {
+      const projection = await projectGovernedInboxRow(transaction, row, userId, requester, sessionId)
+      if (!projection) await transaction('pageWatchNotifications').where({ id, userId }).delete()
+      else await transaction('pageWatchNotifications').where({ id, userId }).update({ readAt: new Date() })
+    })
+    return
+  }
   const pageId = Number(row.pageId)
   const currentPages = await loadCurrentNotificationPages([pageId])
   const currentPage = currentPages.get(pageId)

@@ -2,7 +2,7 @@ import { constants as fsConstants } from 'node:fs'
 import { link, lstat, mkdir, open, opendir, readdir, realpath, rename, rmdir, unlink, type FileHandle } from 'node:fs/promises'
 import type { Dir, Stats } from 'node:fs'
 import path from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 const COPY_CHUNK_BYTES = 64 * 1024
 
@@ -425,6 +425,29 @@ export class StorageFileHandle {
     return contents.subarray(0, offset)
   }
 
+  /** Hash the admitted descriptor without allocating a second asset-sized buffer. */
+  async sha256Bounded(maxBytes: number): Promise<string> {
+    this.assertOpen()
+    assertLimit(maxBytes)
+    const before = await this.#handle.stat()
+    assertRegular(before, this.relativePath)
+    assertExpectedIdentity(this.identity, identityOf(before), this.relativePath)
+    if (before.size > maxBytes) throw new RangeError(`Local storage file exceeds ${maxBytes} bytes: ${this.relativePath}`)
+    const hash = createHash('sha256')
+    const chunk = Buffer.allocUnsafe(Math.min(COPY_CHUNK_BYTES, before.size + 1))
+    let offset = 0
+    while (offset < before.size) {
+      const result = await this.#handle.read(chunk, 0, Math.min(chunk.length, before.size - offset), offset)
+      if (result.bytesRead === 0) throw rejectPath(this.relativePath, 'Local storage file changed during hashing')
+      hash.update(chunk.subarray(0, result.bytesRead))
+      offset += result.bytesRead
+    }
+    const probe = await this.#handle.read(chunk, 0, 1, offset)
+    if (probe.bytesRead !== 0) throw rejectPath(this.relativePath, 'Local storage file grew during hashing')
+    assertExpectedIdentity(identityOf(before), identityOf(await this.#handle.stat()), this.relativePath)
+    return hash.digest('hex')
+  }
+
   async copyTo(destination: FileHandle, maxBytes: number): Promise<number> {
     this.assertOpen()
     return copyBounded(this, destination, maxBytes)
@@ -497,6 +520,7 @@ export class StorageRootHandle {
   readonly #canonicalRoot: string
   readonly #rootAnchor: FileHandle
   readonly #rootIdentity: StorageFileIdentity
+  readonly sourceIdentity: string
   #closed = false
   #closePromise: Promise<void> | undefined
 
@@ -504,6 +528,7 @@ export class StorageRootHandle {
     this.#canonicalRoot = canonicalRoot
     this.#rootAnchor = rootAnchor
     this.#rootIdentity = rootIdentity
+    this.sourceIdentity = createHash('sha256').update(canonicalRoot).update(`\0${rootIdentity.dev}\0${rootIdentity.ino}`).digest('hex')
   }
 
   get closed(): boolean {

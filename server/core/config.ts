@@ -100,6 +100,14 @@ function requireDatabaseEnvironment(value: unknown): void {
   }
 }
 
+function normalizeHttpPort(value: unknown, source: string): number {
+  const port = typeof value === 'number' || typeof value === 'string' ? Number(value) : NaN
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid HTTP listener port from ${source}: expected an integer from 1 to 65535.`)
+  }
+  return port
+}
+
 // Installation-scoped draft identity; INSTANCE_ID remains process/replica-scoped.
 const OFFLINE_DRAFT_SITE_ID_CONFIG_KEY = 'offlineDraftSiteId' as const
 const OFFLINE_DRAFT_SITE_ID_ENVIRONMENT_VARIABLE = 'OFFLINE_DRAFT_SITE_ID' as const
@@ -234,6 +242,10 @@ const configService: ConfigService = {
         console.info(chalk.blue('DB_PASS_FILE is defined. Will use secret from file.'))
         mergedConfig.db.pass = fs.readFileSync(process.env.DB_PASS_FILE, 'utf8').trim()
       }
+      const usesPortFallback = Number(mergedConfig.port) < 1 || Boolean(process.env.HEROKU)
+      mergedConfig.port = usesPortFallback
+        ? normalizeHttpPort(process.env.PORT || 80, process.env.PORT ? 'PORT environment variable' : 'default fallback')
+        : normalizeHttpPort(mergedConfig.port, 'selected configuration file/defaults (after interpolation)')
       if (!isAppConfig(mergedConfig)) throw new Error('Configuration file contains invalid values')
       appconfig = mergedConfig
       appdata = loadedData
@@ -246,9 +258,6 @@ const configService: ConfigService = {
       process.exit(1)
     }
 
-    if (Number(appconfig.port) < 1 || process.env.HEROKU) {
-      appconfig.port = process.env.PORT || 80
-    }
 
     const offlineDraftSiteId = configuredOfflineDraftSiteId()
     if (offlineDraftSiteId !== undefined) appconfig[OFFLINE_DRAFT_SITE_ID_CONFIG_KEY] = offlineDraftSiteId
@@ -273,6 +282,7 @@ const configService: ConfigService = {
       }
       const canonicalConfig = wiki.config
       const reloadedConfig = mergeSavedConfiguration(conf, canonicalConfig) as AppConfig
+      if (Object.hasOwn(conf, 'port')) reloadedConfig.port = normalizeHttpPort(conf.port, 'saved setting "port"')
       // An omitted publication-window field means no schedule, not the previous notice’s window.
       if (Object.hasOwn(conf, 'banner')) reloadedConfig.banner = _.cloneDeep(conf.banner)
       const configuredSiteId = configuredOfflineDraftSiteId()

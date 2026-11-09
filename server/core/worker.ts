@@ -24,6 +24,8 @@ const workerWiki: WorkerWiki = {
   SERVERPATH: path.join(process.cwd(), 'server'),
   Error: errorTypes,
   configSvc: configService,
+  // Jobs use database.init(): worker identity, UTC and schema initialization
+  // therefore run on every new worker-pool connection, just as in the web pool.
   CONNECTION_ROLE: 'worker'
 }
 globalThis.WIKI = workerWiki

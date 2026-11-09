@@ -102,7 +102,8 @@ v-container.admin-utilities(fluid)
                       dd {{ line.value }}
                   v-alert.mt-3(v-if='hasPartialResult(selectedReceipt)' color='warning' variant='tonal' density='compact') {{ $t(`admin:utilities.receiptRecordsAggregateCounts`) }}
                   .text-body-small.mt-3 {{ $t(`admin:utilities.receiptId`) }} #[code {{ selectedReceipt.id }}]
-                  .text-body-small.mt-1 {{ $t(`admin:utilities.requested`, { createdAt: new Date(selectedReceipt.createdAt).toLocaleString(), interpolation: { escapeValue: false } }) }}
+                  .text-body-small.mt-1
+                    time(:datetime='selectedReceipt.createdAt') {{ $t(`admin:utilities.requested`, { createdAt: receiptTimestamp(selectedReceipt.createdAt), interpolation: { escapeValue: false } }) }}
                   .text-body-small.mt-1 {{ selectedReceipt.apiKeyId ? $t(`admin:utilities.apiKey`, { apiKeyId: selectedReceipt.apiKeyId, interpolation: { escapeValue: false } }) : selectedReceipt.actorId ? $t(`admin:utilities.user`, { actorId: selectedReceipt.actorId, interpolation: { escapeValue: false } }) : $t(`admin:utilities.system`) }}
                   .text-body-small.mt-1 {{ $t(`admin:utilities.reason`, { reason: selectedReceipt.reason, interpolation: { escapeValue: false } }) }}
                   .text-body-small.mt-1(v-if='selectedReceipt.acknowledgedAt') {{ $t(`admin:utilities.uncertaintyAcknowledgedLaterRecorded`) }}
@@ -130,6 +131,7 @@ import {
   type UtilitiesOperationRequest
 } from '../../helpers/utilities-workspace-api.ts'
 import type { Translate } from '../../helpers/use-translate.ts'
+import { helpers } from '../../helpers/index.ts'
 
 const tools = markRaw([
   { key: 'auth', title: 'admin:utilities.authenticationCleanup', subtitle: 'admin:utilities.sessionGuestRecovery', icon: 'mdi-shield-key-outline', component: 'UtilityAuth' },
@@ -149,6 +151,7 @@ const tools = markRaw([
     icon: 'mdi-database-import-outline',
     component: 'UtilityImportv1'
   },
+  { key: 'hedgedoc', title: 'HedgeDoc import', subtitle: 'Review and resume your private live-note import', icon: 'mdi-note-plus-outline', component: 'UtilityHedgedoc' },
   { key: 'telemetry', title: 'admin:utilities.telemetryTitle', subtitle: 'admin:utilities.privacyPreferenceClientIdentity', icon: 'mdi-radar', component: 'UtilityTelemetry' }
 ] as const)
 
@@ -199,6 +202,7 @@ export default defineComponent({
     UtilityExport: defineAsyncComponent(() => import('./admin-utilities-export.vue')),
     UtilityCache: defineAsyncComponent(() => import('./admin-utilities-cache.vue')),
     UtilityImportv1: defineAsyncComponent(() => import('./admin-utilities-importv1.vue')),
+    UtilityHedgedoc: defineAsyncComponent(() => import('./admin-utilities-hedgedoc.vue')),
     UtilityTelemetry: defineAsyncComponent(() => import('./admin-utilities-telemetry.vue'))
   },
   data: () => ({
@@ -282,6 +286,9 @@ export default defineComponent({
     return this.canLeave()
   },
   methods: {
+    receiptTimestamp(value: string): string {
+      return Number.isNaN(new Date(value).getTime()) ? 'Invalid Date' : String(helpers.formatMoment(value, 'L LT'))
+    },
     beforeUnload(event: BeforeUnloadEvent) {
       if (this.busy || this.pendingRequest || this.recoveryStorageUnavailable || this.draftDirty) {
         event.preventDefault()

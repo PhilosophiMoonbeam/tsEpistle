@@ -366,7 +366,45 @@
         "pageDeleted": "Page deleted",
         "watchedPageComment": "Comment on a watched page",
         "commentReply": "Reply in your discussion",
-        "mention": "You were mentioned"
+        "mention": "You were mentioned",
+        "feedbackStatus": "Feedback status changed",
+        "reviewReminder": "Review reminder",
+        "pageLifecycle": "Automated lifecycle result"
+      },
+      "scheduledOrigin": "Scheduled notification",
+      "lifecycleProposed": "Move proposed — human review required",
+      "lifecycleMoved": "Human-reviewed move completed",
+      "lifecycleResult": "Automated lifecycle result available",
+      "emailUnknown": "Email acceptance is unknown. Automatic resend is disabled.",
+      "resendWarning": "Resending may deliver a duplicate email. Continue only after reviewing the unknown attempt.",
+      "deliveryOutcomes": "Check notification delivery outcomes",
+      "checkingDeliveryOutcomes": "Checking notification delivery outcomes…",
+      "noDeliveryOutcomes": "No currently permitted delivery outcomes in this recent window.",
+      "acknowledgeResend": "I understand that this may send a duplicate email.",
+      "resendEmail": "Resend email deliberately",
+      "deliveryStatus": {
+        "pending": "Queued",
+        "sending": "External handoff in progress; delivery not yet confirmed",
+        "delivered": "Delivered in the workspace",
+        "sent": "Email handoff acknowledged",
+        "suppressed": "Suppressed by current access or consent",
+        "unknown": "Email acceptance unknown; no automatic resend",
+        "failed": "Delivery failed before external handoff"
+      },
+      "outcomeKind": {
+        "add-tags": "Tags",
+        "set-notice": "Lifecycle notice",
+        "propose-move": "Human-reviewed move"
+      },
+      "outcomeState": {
+        "applied": "Applied",
+        "skipped": "Skipped; no change made",
+        "proposed": "Proposed; no move made",
+        "fulfilled": "Completed by an authorized human",
+        "blocked": "Blocked",
+        "failed": "Failed",
+        "suspended": "Suspended",
+        "cancelled": "Cancelled"
       },
       "pageChanges": "Page changes",
       "recentPageChanges": "Recent page changes",
@@ -3156,6 +3194,36 @@
     }
   },
   "admin": {
+    "notificationSettings": {
+      "title": "Notification delivery limits",
+      "help": "These limits apply only to optional notifications, including existing per-page watches. Required approval tasks and existing inbox entries are unchanged. Allowing channels never opts anyone in. Suppressed queued channels will not replay after re-enabling.",
+      "loading": "Loading notification limits…",
+      "save": "Save notification limits",
+      "cancel": "Cancel notification changes",
+      "reload": "Reload notification limits",
+      "saved": "Notification limits saved.",
+      "requestFailed": "Notification settings could not be saved or loaded.",
+      "invalidResponse": "Invalid notification settings response.",
+      "loadFailed": "Notification settings could not be loaded.",
+      "saveFailed": "Notification settings could not be saved.",
+      "discardConfirm": "Discard notification limit changes?",
+      "categories": {
+        "pageCreated": "Page created",
+        "pageDeleted": "Page deleted",
+        "watchedPageComment": "Comment on a watched page",
+        "commentReply": "Replies in your discussions",
+        "mention": "Mention",
+        "pageWatch": "Existing per-page watches",
+        "feedbackStatus": "Feedback status",
+        "reviewReminder": "Review reminders",
+        "pageLifecycle": "Page lifecycle results"
+      },
+      "modes": {
+        "off": "Off",
+        "inAppOnly": "In-app only",
+        "existingConsentedChannels": "Existing consented channels"
+      }
+    },
     "decisionProviders": {
       "loadingDecisionProviders": "Loading decision providers",
       "discardUnsavedChanges": "Discard unsaved changes?",
@@ -10712,19 +10780,72 @@
       "subtitle": "Your contributions on pages you can currently read. Hidden or locked discussions are not included."
     },
     "notificationPreferences": {
-      "bulkInApp": "Enable In-App for all displayed events",
-      "bulkEmail": "Enable Email for all displayed events",
+      "bulkPermittedInApp": "Enable In-App for all administrator-permitted displayed events",
+      "bulkPermittedEmail": "Enable Email for all administrator-permitted displayed events",
       "bulkAll": "All enabled: {{selected}} of {{total}}.",
       "bulkNone": "None enabled: {{selected}} of {{total}}.",
       "bulkMixed": "Some enabled: {{selected}} of {{total}}.",
-      "bulkHelp": "Header switches change only the displayed events in that channel. Save preferences to apply your changes, or Cancel changes to discard them.",
+      "bulkHelp": "Header switches change only administrator-permitted displayed channels. Save preferences to apply changes, or Cancel changes to discard them.",
       "description": "Choose which events appear in your inbox or are sent by email. New categories are off until you enable and save them.",
-      "existingWatches": "These settings do not change your existing per-page watches or approval inbox.",
+      "perPageWatchChoices": "Per-page watch choices are managed on each page. Stop all optional notification email also opts existing watches out of email. Your approval inbox is unchanged.",
+      "existingWatches": "Existing per-page watches: {{limit}}.",
       "reloadBlocked": "Save or cancel your changes before reloading preferences.",
       "deliveryPreferences": "Delivery preferences",
       "event": "Event",
       "inApp": "In-App",
-      "email": "Email"
+      "email": "Email",
+      "signIn": "Sign in to manage notifications.",
+      "loading": "Loading your notification preferences…",
+      "refresh": "Refresh preferences",
+      "ceilingHelp": "Administrator limits never enable a channel or erase your stored choices. Limited channels stay unchanged when you save. Required approval tasks are not affected.",
+      "ceilingOff": "Administrator limit: off; stored choices are retained",
+      "ceilingInAppOnly": "Administrator limit: in-app only; stored email choices are retained",
+      "ceilingExistingConsentedChannels": "Existing consented channels allowed",
+      "bulkUnavailable": "No displayed events permitted by the administrator.",
+      "stopAllEmail": "Stop all optional notification email",
+      "stopAllEmailHelp": "This drafts an email opt-out for every category, including hidden categories and existing per-page watches. Required approval tasks are not affected. Save preferences to apply it.",
+      "stopAllEmailDraft": "All optional notification email will stop when you save.",
+      "save": "Save preferences",
+      "cancel": "Cancel changes",
+      "sessionChanged": "Your session changed. Refresh preferences before making changes.",
+      "loadFailed": "Notification preferences could not be loaded.",
+      "accountUnverified": "Your account could not be verified. Sign in or try again.",
+      "saved": "Notification preferences saved.",
+      "saveFailed": "Notification preferences could not be saved. Your changes have not been discarded.",
+      "categories": {
+        "pageCreated": {
+          "label": "Page created",
+          "description": "A page you are allowed to read is created."
+        },
+        "pageDeleted": {
+          "label": "Page deleted",
+          "description": "A page you are allowed to access is deleted."
+        },
+        "watchedPageComment": {
+          "label": "Comment on a watched page",
+          "description": "A new discussion contribution is posted on a page you watch."
+        },
+        "commentReply": {
+          "label": "Replies in your discussions",
+          "description": "Someone replies in a discussion you participate in."
+        },
+        "mention": {
+          "label": "Mention",
+          "description": "Someone mentions you in an authorized discussion."
+        },
+        "feedbackStatus": {
+          "label": "Feedback status changes",
+          "description": "Status changes for ideas you submitted or explicitly follow. Voting alone never subscribes you. Both channels start off."
+        },
+        "reviewReminder": {
+          "label": "Review reminders",
+          "description": "Due reminders from explicitly enabled review routing where you currently have read and write authority. Both channels start off."
+        },
+        "pageLifecycle": {
+          "label": "Page lifecycle results",
+          "description": "Automated lifecycle outcomes for pages you watch or currently review. A proposed move is not a completed move. Both channels start off."
+        }
+      }
     },
     "externalMcpOAuth": {
       "title": "External tool connections",
@@ -11026,7 +11147,27 @@
         "created": "{{actor}} created this page",
         "watchedComment": "{{actor}} commented on this page",
         "commentReply": "{{actor}} replied to your discussion",
-        "mention": "{{actor}} mentioned you in a discussion"
+        "mention": "{{actor}} mentioned you in a discussion",
+        "feedbackStatus": "Feedback status changed",
+        "reviewReminder": "This page is due for deliberate human review; this reminder does not attest accuracy",
+        "lifecycleResult": "Automated lifecycle result available",
+        "lifecycleProposed": "A page move is proposed and awaits human review; no move has occurred",
+        "lifecycleMoved": "A human-reviewed page move completed"
+      },
+      "outcomeKind": {
+        "add-tags": "Tags",
+        "set-notice": "Lifecycle notice",
+        "propose-move": "Human-reviewed move"
+      },
+      "outcomeState": {
+        "applied": "Applied",
+        "skipped": "Skipped; no change made",
+        "proposed": "Proposed; no move made",
+        "fulfilled": "Completed by an authorized human",
+        "blocked": "Blocked",
+        "failed": "Failed",
+        "suspended": "Suspended",
+        "cancelled": "Cancelled"
       }
     },
     "test": {

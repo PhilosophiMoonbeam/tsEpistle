@@ -18,6 +18,7 @@ import 'katex/dist/contrib/mhchem.mjs'
 import { renderMarkdownCodeFence } from '../../../../shared/markdown-code-fence.ts'
 import mdImsize from '../../../../shared/markdown-it-image-size.ts'
 import markdownItQuoteAttribution from '../../../../shared/markdown-it-quote-attribution.ts'
+import { preserveNativeTableSpans } from '../../../../shared/markdown-it-native-table-spans.ts'
 import { decodeBase64Text } from '../../../helpers/base64.ts'
 import {
   MERMAID_MAX_DIAGRAMS_PER_ROOT,
@@ -63,6 +64,7 @@ export function createWikiMarkdownRenderer(wikiLinks: WikiLinkOptions = WIKI_LIN
     .use(mdFootnote)
     .use(mdImsize)
     .use(markdownItQuoteAttribution)
+  preserveNativeTableSpans(markdown)
   if (wikiLinks.enabled) {
     markdown.inline.ruler.after('html_inline', 'wiki_link', (state, silent) => {
       const source = state.src.slice(state.pos)

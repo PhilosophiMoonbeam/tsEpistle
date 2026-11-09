@@ -5,6 +5,7 @@ import _ from 'lodash'
 import pageOperations from '../../operations/pages.ts'
 import errors from '../../operations/errors.ts'
 import { linkPageLocaleRelation, listPageLocaleRelations, unlinkPageLocaleRelation } from '../../operations/page-locale-relations.ts'
+import { reviewPageConversion } from '../../operations/page-conversion.ts'
 import { canReadPage, canWritePage, managesSystem, principalId, type PageVisibility } from '../../helpers/page-access.ts'
 import { isApiPrincipal } from '../../helpers/api-principal.ts'
 import { canViewRestrictedPageFields, projectPageFields } from '../../helpers/page-field-projection.ts'
@@ -36,6 +37,8 @@ import {
   DeletedPageRecoveryRestoreRequestSchema
 } from '../../../shared/deleted-page-recovery.ts'
 import { PAGE_CREATION_OWNER_HEADER } from '../../../shared/page-creation.ts'
+import { FeedbackCreateAdmissionSchema } from '../../../shared/page-feedback.ts'
+import { governanceInput, governanceUuid, requireGovernanceBrowser } from './governance-http.ts'
 
 const router = express.Router()
 
@@ -676,6 +679,29 @@ router.get('/preview', async (req, res, next) => {
   }
 })
 
+router.get('/link-suggestions', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
+  if (Object.keys(req.query).some(key => /^(locale|pathPrefix|limit)\[/.test(key)))
+    return res.status(400).json({ error: 'Link suggestion values must be scalar' })
+  if (typeof req.query.locale !== 'string' || typeof req.query.pathPrefix !== 'string')
+    return res.status(400).json({ error: 'locale and pathPrefix must be strings' })
+  if (req.query.limit !== undefined && typeof req.query.limit !== 'string')
+    return res.status(400).json({ error: 'limit must be a positive integer' })
+  const limit = req.query.limit === undefined ? undefined : parsePositiveIntegerQuery(req.query.limit)
+  if (limit === null) return res.status(400).json({ error: 'limit must be a positive integer' })
+  try {
+    return res.json(await pageOperations.linkSuggestions({
+      ...pageOperationContext(req),
+      locale: req.query.locale,
+      pathPrefix: req.query.pathPrefix,
+      ...(limit === undefined ? {} : { limit })
+    }))
+  } catch (err) {
+    return sendOperationError(res, next, err, 'Page link suggestions failed')
+  }
+})
+
 router.get('/search', async (req, res, next) => {
   res.set('Cache-Control', 'private, no-store')
   res.vary('Cookie')
@@ -834,6 +860,12 @@ router.get('/creation-origins/agent-answers/:sessionId/:messageId', async (req, 
 
 router.post('/', async (req, res, next) => {
   const body = requestBody(req)
+  if (Object.hasOwn(body, 'feedbackSubmission')) {
+    setPrivatePageHeaders(res)
+    try { body.feedbackSubmission = governanceInput(FeedbackCreateAdmissionSchema, body.feedbackSubmission) }
+    catch (error) { next(error); return }
+    if (!requireGovernanceBrowser(req, res)) return
+  }
   if (Object.hasOwn(body, 'creationRequestId') || Object.hasOwn(body, 'creationOrigin')) {
     setPrivatePageHeaders(res)
     if (!requirePageCreationOwner(req, res)) return
@@ -1163,16 +1195,55 @@ router.delete('/:id/watch', async (req, res, next) => {
   }
 })
 
+router.post('/:id/convert/review', async (req, res, next) => {
+  setPrivatePageHeaders(res)
+  const id = parsePositiveIntegerParam(req, res)
+  if (id === null) return
+  const controller = new AbortController()
+  const abort = (): void => controller.abort()
+  const close = (): void => {
+    if (!res.writableEnded) abort()
+  }
+  req.once('aborted', abort)
+  res.once('close', close)
+  if (req.aborted || res.destroyed) abort()
+  try {
+    const review = await reviewPageConversion(id, req.body, {
+      requester: req.user,
+      sessionId: req.sessionID,
+      signal: controller.signal
+    })
+    if (!controller.signal.aborted) res.json(review)
+  } catch (err) {
+    if (!controller.signal.aborted) sendOperationError(res, next, err, 'Page conversion review failed')
+  } finally {
+    req.off('aborted', abort)
+    res.off('close', close)
+  }
+})
+
 router.post('/:id/convert', async (req, res, next) => {
+  setPrivatePageHeaders(res)
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   const expectedSourceRevision = requiredSourceRevision(req, res)
   if (expectedSourceRevision === null) return
+  const body = requestBody(req)
+  if (Object.keys(body).some(key => !['editor', 'expectedSourceRevision', 'reviewToken'].includes(key)) || typeof body.editor !== 'string') {
+    return res.status(400).json({ error: 'Choose an editor and the current source revision.' })
+  }
+  if (body.reviewToken !== undefined && (typeof body.reviewToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/u.test(body.reviewToken))) {
+    return res.status(400).json({ error: 'reviewToken must be a valid conversion review token' })
+  }
   try {
-    const editor = _.get(req, 'body.editor')
     await pageOperations.convert({
       ...pageOperationContext(req),
-      input: { id, expectedSourceRevision, ...(typeof editor === 'string' ? { editor } : {}) }
+      input: {
+        id,
+        editor: body.editor,
+        expectedSourceRevision,
+        ...(body.reviewToken === undefined ? {} : { reviewToken: body.reviewToken })
+      }
     })
     res.json({ message: 'Page has been converted.' })
   } catch (err) {
@@ -1217,6 +1288,12 @@ router.post('/:id/move', async (req, res, next) => {
   const expectedSourceRevision = requiredSourceRevision(req, res)
   if (expectedSourceRevision === null) return
   const body = requestBody(req)
+  if (Object.hasOwn(body, 'lifecycleProposalId')) {
+    setPrivatePageHeaders(res)
+    try { body.lifecycleProposalId = governanceUuid(body.lifecycleProposalId) }
+    catch (error) { next(error); return }
+    if (!requireGovernanceBrowser(req, res)) return
+  }
   const destinationLocale = body.destinationLocale
   const destinationPath = body.destinationPath
   if (typeof destinationLocale !== 'string' || typeof destinationPath !== 'string') {
@@ -1233,6 +1310,7 @@ router.post('/:id/move', async (req, res, next) => {
         destinationLocale,
         destinationPath,
         expectedSourceRevision,
+        ...(typeof body.lifecycleProposalId === 'string' ? { lifecycleProposalId: body.lifecycleProposalId } : {}),
         ...(typeof body.reviewToken === 'string' ? { reviewToken: body.reviewToken } : {}),
         ...(Object.hasOwn(body, 'updateLinks') ? { updateLinks: body.updateLinks } : {})
       }

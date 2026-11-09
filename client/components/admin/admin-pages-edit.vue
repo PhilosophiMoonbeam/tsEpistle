@@ -26,6 +26,7 @@
               <v-btn type="button" variant="flat" color="primary" :loading="pageFeatureBusy" :disabled="pageFeatureSaveDisabled" @click="savePageFeatures">{{ $t('admin:pagesEdit.saveFeatures') }}</v-btn>
             </div>
           </section>
+          <page-governance v-if="canViewStewardContacts" :page-id="page.id" :source-revision="page.sourceRevision" :locale="page.locale" :path="page.path" :ready="!loading && resolvedPageRouteId === page.id" :writer="canViewStewardContacts" :manage="managesSystem || wikiCanManagePages" :attestation-href="`${pageUrl}#page-accuracy-review-${page.id}`" @dirty="governanceDirty = $event" @busy="governanceBusy = $event" />
           <details class="page-technical"><summary>{{ $t('admin:pagesEdit.technicalIdentityPageRemoval') }}</summary><dl class="page-detail-values"><div><dt>{{ $t('admin:pagesEdit.sourceRevision') }}</dt><dd>{{ page.sourceRevision }}</dd></div><div><dt>{{ $t('admin:pagesEdit.contentHash') }}</dt><dd><code>{{ page.hash }}</code></dd></div><div><dt>{{ $t('admin:pagesEdit.editorContentType') }}</dt><dd><span v-if="page.editor">{{ page.editor }} / </span>{{ page.contentType }}</dd></div></dl><div class="page-danger"><div><strong>{{ $t('admin:pagesEdit.deletePage') }}</strong><p>{{ $t('admin:pagesEdit.removesPageAssociatedHistory') }}</p></div><v-btn variant="outlined" color="error" :disabled="loading || publicationDirty || publicationBusy || pageFeatureDirty || pageFeatureBusy" @click="deletePageDialog = true">{{ $t('admin:pagesEdit.deletePage2') }}</v-btn></div></details>
         </section>
         <section v-if="publicationAvailable" v-show="section === 'publication'" id="page-panel-publication" role="tabpanel" aria-labelledby="page-tab-publication"><admin-page-publication-settings :page="page" :now="now" @dirty="publicationDirty = $event" @busy="publicationBusy = $event" @saved="publicationSaved" /></section><section v-else v-show="section === 'publication'" id="page-panel-publication-unavailable" role="tabpanel" :aria-label="$t('admin:pagesEdit.publicationControlsUnavailable')"><div class="page-section-intro"><span class="pages-kicker">{{ $t('admin:pagesEdit.publicationScheduling') }}</span><h2>{{ $t('admin:pagesEdit.publicationDetailsRestricted') }}</h2><p>{{ $t('admin:pagesEdit.pageCanReviewedBut') }}</p></div></section>
@@ -41,12 +42,14 @@
   </v-container>
 </template>
 <script lang='ts'>
+import { helpers } from '../../helpers/index.ts'
 import { confirmDiscard, requestConfirmation } from '../common/confirm-dialog.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import * as _ from 'lodash-es'
 import AdminPagePublicationSettings from './admin-page-publication-settings.vue'
 import AdminPageAccess from './admin-page-access.vue'
+import PageGovernance from '../page-governance.vue'
 import { pageHref, publicationState } from '../../helpers/admin-pages'
 import { deletePage as deletePageById, fetchPage, type PageDetails } from '../../helpers/pages-api'
 import { updatePageFeatures } from '../../helpers/pages-api'
@@ -65,7 +68,7 @@ export default {
 
   components: {
     AsyncState,
-    AdminPagePublicationSettings, AdminPageAccess
+    AdminPagePublicationSettings, AdminPageAccess, PageGovernance
   },
   data() {
     return {
@@ -78,6 +81,8 @@ export default {
       clock: null as ReturnType<typeof setInterval> | null,
       publicationDirty: false,
       publicationBusy: false,
+      governanceDirty: false,
+      governanceBusy: false,
       pageFeaturesDraft: null as PageFeatures | null,
       pageFeaturesBase: null as PageFeatures | null,
       pageFeatureDraftPageId: null as number | null,
@@ -94,6 +99,7 @@ export default {
   },
   computed: {
     managesSystem(): boolean { return wikiStore.user.permissions.includes('manage:system') },
+    wikiCanManagePages(): boolean { return wikiStore.user.permissions.includes('manage:pages') },
     pageUrl(): string { return this.page ? pageHref(this.page) : '#' },
     publicationAvailable(): boolean {
       const page = this.page
@@ -129,7 +135,7 @@ export default {
   },
   methods: {
     pageHref,
-    formatDate(value: string | null | undefined): string { return value ? new Date(value).toLocaleString() : this.$t('admin:pagesEdit.noBoundary') },
+    formatDate(value: string | null | undefined): string { return value ? (Number.isNaN(new Date(value).valueOf()) ? 'Invalid Date' : String(helpers.formatMoment(value, 'L LT'))) : this.$t('admin:pagesEdit.noBoundary') },
     resetPageFeatures() {
       const page = this.page
       if (!page) {
@@ -170,17 +176,20 @@ export default {
       }
     },
     setSection(section: string) { if (section === 'publication' && !this.publicationAvailable) return; this.section = section; this.$router.replace({ hash: '#' + section }) },
-    protectUnload(event: BeforeUnloadEvent) { if (this.publicationDirty || this.publicationBusy || this.pageFeatureDirty || this.pageFeatureBusy || this.accessOpen || this.accessBusy) { event.preventDefault(); event.returnValue = '' } },
+    protectUnload(event: BeforeUnloadEvent) { if (this.publicationDirty || this.publicationBusy || this.pageFeatureDirty || this.pageFeatureBusy || this.accessOpen || this.accessBusy || this.governanceDirty || this.governanceBusy) { event.preventDefault(); event.returnValue = '' } },
     manageAccess(mode: string, event: Event) { this.accessActivator = event.currentTarget instanceof HTMLElement ? event.currentTarget : null; this.accessMode = mode; this.accessOpen = true },
     async accessChanged() { wikiStore.showNotification({ message: this.$t('admin:pagesEdit.pageAccessUpdated'), style: 'success', icon: 'check' }); await this.loadPage() },
     async canLeave(): Promise<boolean> {
-      if (this.pageFeatureBusy || this.publicationBusy || this.accessBusy) return false
+      if (this.pageFeatureBusy || this.publicationBusy || this.accessBusy || this.governanceBusy) return false
       if (this.accessOpen && !(await requestConfirmation({ title: this.$t('admin:pagesEdit.leaveAccessReview'), confirmLabel: this.$t('admin:pagesEdit.leaveReview'), cancelLabel: this.$t('admin:pagesEdit.stay') }))) return false
       if (this.publicationDirty && !(await confirmDiscard(this.$t('admin:pagesEdit.discardUnsavedPublicationChanges')))) return false
       if (this.pageFeatureDirty && !(await confirmDiscard(this.$t('admin:pagesEdit.discardUnsavedPageFeature')))) return false
-      return !this.pageFeatureBusy && !this.publicationBusy && !this.accessBusy
+      if (this.governanceDirty && !(await confirmDiscard('Discard unsaved review-routing or lifecycle governance changes?'))) return false
+      return !this.pageFeatureBusy && !this.publicationBusy && !this.accessBusy && !this.governanceBusy
     },
     async refreshDetails() {
+      if (this.governanceBusy) return
+      if (this.governanceDirty && !(await confirmDiscard('Discard unsaved governance changes and reload current page authority?'))) return
       if ((this.publicationDirty || this.pageFeatureDirty) && !(await confirmDiscard(this.$t('admin:pagesEdit.discardUnsavedPublicationPage')))) return
       if (this.pageFeatureDirty) this.resetPageFeatures()
       await this.loadPage()

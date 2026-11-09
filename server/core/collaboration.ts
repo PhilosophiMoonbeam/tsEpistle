@@ -6,6 +6,7 @@ import type { Socket } from 'node:net'
 import jwt, { type JwtPayload } from 'jsonwebtoken'
 import type { Knex } from 'knex'
 import { WebSocket, WebSocketServer, type RawData } from 'ws'
+import * as Y from 'yjs'
 
 import { canWritePage } from '../helpers/page-access.ts'
 import type { PageRuleAuthority } from '../helpers/group-access.ts'
@@ -14,18 +15,27 @@ import {
   COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE,
   COLLABORATION_FORMAT,
   COLLABORATION_MAX_UPDATE_BYTES,
+  COLLABORATION_MAX_PRESENCE_PARTICIPANTS,
+  COLLABORATION_MAX_RECENT_RANGES,
+  COLLABORATION_PRESENCE_TTL_MS,
+  COLLABORATION_RECENT_TTL_MS,
+  COLLABORATION_TEXT_KEY,
   COLLABORATION_PROTOCOL_VERSION,
   COLLABORATION_UPDATE_VERSION,
   COLLABORATION_WEBSOCKET_PATH,
   COLLABORATION_WEBSOCKET_PROTOCOL,
   decodeCollaborationUpdate,
   parseCollaborationClientMessage,
+  resolveCollaborationRange,
+  resolveCollaborationRecent,
+  type CollaborationParticipant,
+  type CollaborationAwareness,
   type CollaborationConflictReason,
   type CollaborationClientMessage,
   type CollaborationServerMessage,
   type CollaborationSession
 } from '../../shared/collaboration.ts'
-import { CollaborationRoomStore, type CollaborationPageRecord } from './collaboration-store.ts'
+import { CollaborationRoomStore, type CollaborationPageRecord, type CollaborationRoomRecord } from './collaboration-store.ts'
 
 const { ApplicationError } = errors
 
@@ -81,6 +91,10 @@ interface CollaborationSocket {
   queue: Promise<void>
   pendingMessages: number
   acceptingUpdates: boolean
+  presence: { participant: CollaborationParticipant; recentUntil: number } | null
+  presenceWindow: number
+  presenceMessages: number
+  recentItems: Array<{ client: number; from: number; to: number; expiresAt: number }>
 }
 interface CollaborationMount {
   webSocketServer: WebSocketServer
@@ -163,6 +177,8 @@ class CollaborationServiceImpl implements CollaborationService {
   private readonly clients = new Map<number, Set<CollaborationSocket>>()
   private initialized = false
   private store: CollaborationRoomStore | null = null
+  private readonly presenceDocuments = new Map<number, { document: Y.Doc; generation: number; revision: number }>()
+  private presenceTimer: ReturnType<typeof setInterval> | null = null
 
   private readonly onRemoteRoomUpdated = (value?: unknown): void => {
     const pageId = value && typeof value === 'object' ? Reflect.get(value, 'pageId') : undefined
@@ -201,6 +217,26 @@ class CollaborationServiceImpl implements CollaborationService {
       wiki.events.outbound.on(event, this.onAuthorizationChanged)
     }
     this.initialized = true
+    this.presenceTimer = setInterval(() => {
+      for (const [pageId, clients] of this.clients) {
+        const now = Date.now()
+        let changed = false
+        for (const client of clients) {
+          if (!client.presence) continue
+          if (client.presence.participant.expiresAt <= now) {
+            client.presence = null
+            client.recentItems = []
+            if (client.acceptingUpdates) send(client.socket, { type: 'awareness', generation: client.generation, self: null, peers: [] })
+            changed = true
+          } else if (client.presence.recentUntil <= now && client.presence.participant.recent.length) {
+            client.presence.participant.recent = []
+            changed = true
+          }
+        }
+        if (changed) void this.broadcastAwareness(pageId).catch(() => {})
+      }
+    }, 1_000)
+    this.presenceTimer.unref()
     return this
   }
 
@@ -373,7 +409,11 @@ class CollaborationServiceImpl implements CollaborationService {
       connectionId: randomUUID(),
       queue: Promise.resolve(),
       pendingMessages: 0,
-      acceptingUpdates: false
+      acceptingUpdates: false,
+      presence: null,
+      presenceWindow: 0,
+      presenceMessages: 0,
+      recentItems: []
     }
     const roomClients = this.clients.get(claims.pageId) ?? new Set<CollaborationSocket>()
     roomClients.add(client)
@@ -438,6 +478,7 @@ class CollaborationServiceImpl implements CollaborationService {
 
   private async receive(client: CollaborationSocket, raw: RawData): Promise<void> {
     let message: CollaborationClientMessage
+    let isAwareness = false
     try {
       const bytes = Array.isArray(raw)
         ? Buffer.concat(raw)
@@ -446,14 +487,57 @@ class CollaborationServiceImpl implements CollaborationService {
           : Buffer.from(new Uint8Array(raw))
       const text = bytes.toString('utf8')
       if (Buffer.byteLength(text, 'utf8') > COLLABORATION_MAX_UPDATE_BYTES * 2) throw new TypeError('Collaboration message is too large')
-      message = parseCollaborationClientMessage(JSON.parse(text))
+      const parsed: unknown = JSON.parse(text)
+      isAwareness = Boolean(parsed && typeof parsed === 'object' && Reflect.get(parsed, 'type') === 'awareness')
+      if (isAwareness) {
+        const now = Date.now()
+        if (now - client.presenceWindow >= 1_000) {
+          client.presenceWindow = now
+          client.presenceMessages = 0
+        }
+        client.presenceMessages += 1
+        if (client.presenceMessages > 8) {
+          if (Reflect.get(parsed as object, 'enabled') === false && client.presence) {
+            client.presence = null
+            client.recentItems = []
+            void this.broadcastAwareness(client.pageId).catch(() => {})
+          }
+          return
+        }
+      }
+      message = parseCollaborationClientMessage(parsed)
     } catch (error) {
+      if (isAwareness) {
+        client.presence = null
+        client.recentItems = []
+        send(client.socket, { type: 'awareness', generation: client.generation, self: null, peers: [] })
+        void this.broadcastAwareness(client.pageId).catch(() => {})
+        return
+      }
       getWiki().logger.warn(error)
       this.conflict(client, 'protocol-error')
       return
     }
     if (message.generation !== client.generation) {
+      if (message.type === 'awareness') {
+        client.presence = null
+        client.recentItems = []
+        send(client.socket, { type: 'awareness', generation: client.generation, self: null, peers: [] })
+        void this.broadcastAwareness(client.pageId).catch(() => {})
+        return
+      }
       this.conflict(client, 'draft-discarded')
+      return
+    }
+    if (message.type === 'awareness') {
+      try {
+        await this.receiveAwareness(client, message)
+      } catch {
+        client.presence = null
+        client.recentItems = []
+        send(client.socket, { type: 'awareness', generation: client.generation, self: null, peers: [] })
+        void this.broadcastAwareness(client.pageId).catch(() => {})
+      }
       return
     }
     try {
@@ -469,16 +553,31 @@ class CollaborationServiceImpl implements CollaborationService {
         if (client.acceptingUpdates) this.conflict(client, 'page-changed')
         return
       }
+      const update = decodeCollaborationUpdate(message.update, COLLABORATION_MAX_UPDATE_BYTES)
+      // Replayed state and multi-author aggregates have no recent-edit author.
+      const freshItems = client.presence
+        ? Y.decodeUpdate(Y.diffUpdate(update, Y.encodeStateVectorFromUpdate(decodeCollaborationUpdate(room.state)))).structs
+        : []
+      const singleAuthor = new Set(freshItems.map(item => item.id.client)).size === 1
       const result = await this.roomStore().apply(
         client.pageId,
         client.generation,
         client.connectionId,
-        decodeCollaborationUpdate(message.update, COLLABORATION_MAX_UPDATE_BYTES),
+        update,
         client.userId
       )
       if (!result) {
         this.conflict(client, 'draft-discarded')
         return
+      }
+      const now = Date.now()
+      client.recentItems = client.recentItems.filter(item => item.expiresAt > now)
+      if (singleAuthor && client.presence) {
+        client.recentItems.push(...freshItems.filter(item => item instanceof Y.Item).map(item => ({
+          client: item.id.client, from: item.id.clock, to: item.id.clock + item.length - 1,
+          expiresAt: now + COLLABORATION_RECENT_TTL_MS
+        })))
+        client.recentItems = client.recentItems.slice(-COLLABORATION_MAX_RECENT_RANGES)
       }
       const roomClients = this.clients.get(client.pageId)
       if (roomClients) {
@@ -513,24 +612,146 @@ class CollaborationServiceImpl implements CollaborationService {
 
   private conflict(client: CollaborationSocket, reason: CollaborationConflictReason): void {
     client.acceptingUpdates = false
+    client.presence = null
+    client.recentItems = []
+    void this.broadcastAwareness(client.pageId).catch(() => {})
     send(client.socket, { type: 'conflict', reason })
     client.socket.close(reason === 'draft-discarded' ? COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE : 4409, reason)
   }
 
   private removeClient(client: CollaborationSocket): void {
     const store = this.store
+    client.acceptingUpdates = false
+    client.presence = null
+    client.recentItems = []
     if (store) void store.leave(client.connectionId).catch(error => getWiki().logger.warn(error))
     const roomClients = this.clients.get(client.pageId)
     if (!roomClients) return
     roomClients.delete(client)
-    if (roomClients.size === 0) this.clients.delete(client.pageId)
-    else this.broadcastPresence(client.pageId)
+    if (roomClients.size === 0) {
+      this.clients.delete(client.pageId)
+      this.presenceDocuments.get(client.pageId)?.document.destroy()
+      this.presenceDocuments.delete(client.pageId)
+    } else {
+      this.broadcastPresence(client.pageId)
+      void this.broadcastAwareness(client.pageId).catch(() => {})
+    }
   }
 
   private broadcastPresence(pageId: number): void {
     const roomClients = this.clients.get(pageId)
     if (!roomClients) return
     for (const client of roomClients) send(client.socket, { type: 'presence', participants: roomClients.size })
+  }
+
+  private presenceText(room: CollaborationRoomRecord): Y.Text {
+    let cached = this.presenceDocuments.get(room.pageId)
+    if (cached && cached.generation !== room.generation) {
+      cached.document.destroy()
+      this.presenceDocuments.delete(room.pageId)
+      cached = undefined
+    }
+    if (!cached) {
+      cached = { document: new Y.Doc(), generation: room.generation, revision: -1 }
+      this.presenceDocuments.set(room.pageId, cached)
+    }
+    if (cached.revision !== room.revision) {
+      Y.applyUpdate(cached.document, decodeCollaborationUpdate(room.state))
+      cached.revision = room.revision
+    }
+    return cached.document.getText(COLLABORATION_TEXT_KEY)
+  }
+
+  private async receiveAwareness(client: CollaborationSocket, message: CollaborationAwareness): Promise<void> {
+    // This branch never writes a room, contributor, connection, or source record.
+    const now = Date.now()
+    const clients = this.clients.get(client.pageId)
+    const room = await this.roomStore().get(client.pageId)
+    if (!clients?.has(client) || !client.acceptingUpdates || client.socket.readyState !== WebSocket.OPEN) return
+    if (!room || room.generation !== client.generation) {
+      this.conflict(client, 'draft-discarded')
+      return
+    }
+    const authorization = await this.authorized(client.pageId, client.userId, client.authVersion)
+    if (!authorization) {
+      this.conflict(client, this.enabled() ? 'permission-revoked' : 'disabled')
+      return
+    }
+    if (room.baseSourceRevision !== String(authorization.page.sourceRevision) ||
+      timestamp(room.baseUpdatedAt) !== timestamp(authorization.page.updatedAt)) {
+      this.conflict(client, 'page-changed')
+      return
+    }
+    if (!message.enabled || (!client.presence && [...clients].filter(peer => peer.presence).length >= COLLABORATION_MAX_PRESENCE_PARTICIPANTS)) {
+      client.presence = null
+      client.recentItems = []
+      send(client.socket, { type: 'awareness', generation: client.generation, self: null, peers: [] })
+    } else {
+      const text = this.presenceText(room)
+      const selection = message.selection && resolveCollaborationRange(text, message.selection) ? message.selection : null
+      let recentUntil = now + COLLABORATION_RECENT_TTL_MS
+      const recent = message.recent.filter(range => {
+        const start = range.start.item, end = range.end.item
+        const item = start && end && client.recentItems.find(candidate => candidate.expiresAt > now && candidate.client === start.client &&
+          candidate.client === end.client && candidate.from <= start.clock && candidate.to >= end.clock)
+        if (!item || !resolveCollaborationRecent(text, range).length) return false
+        recentUntil = Math.min(recentUntil, item.expiresAt)
+        return true
+      })
+      const token = client.presence?.participant.token ?? randomUUID()
+      client.presence = {
+        participant: { token, label: `Participant ${token.slice(0, 8)}`, selection, recent, expiresAt: now + COLLABORATION_PRESENCE_TTL_MS },
+        recentUntil
+      }
+    }
+    await this.broadcastAwareness(client.pageId)
+  }
+
+  private async broadcastAwareness(pageId: number): Promise<void> {
+    const clients = this.clients.get(pageId)
+    if (!clients) return
+    const candidates = [...clients].filter(client => client.presence && client.acceptingUpdates && client.socket.readyState === WebSocket.OPEN)
+    if (!candidates.length) {
+      this.presenceDocuments.get(pageId)?.document.destroy()
+      this.presenceDocuments.delete(pageId)
+      return
+    }
+    const authorized = await Promise.all(candidates.map(async client => ({ client, authorization: await this.authorized(pageId, client.userId, client.authVersion) })))
+    const room = await this.roomStore().get(pageId)
+    if (!room || this.clients.get(pageId) !== clients) return
+    const now = Date.now()
+    const current = authorized.filter(({ client, authorization }) => {
+      if (!authorization || room.generation !== client.generation ||
+        room.baseSourceRevision !== String(authorization.page.sourceRevision) ||
+        timestamp(room.baseUpdatedAt) !== timestamp(authorization.page.updatedAt)) {
+        client.presence = null
+        this.conflict(client, !authorization ? 'permission-revoked' : 'page-changed')
+        return false
+      }
+      return clients.has(client) && client.acceptingUpdates && client.socket.readyState === WebSocket.OPEN &&
+        client.presence !== null && client.presence.participant.expiresAt > now
+    })
+    if (!current.length) {
+      this.presenceDocuments.get(pageId)?.document.destroy()
+      this.presenceDocuments.delete(pageId)
+      return
+    }
+    const text = this.presenceText(room)
+    for (const { client } of current) {
+      const presence = client.presence!
+      if (presence.participant.selection && !resolveCollaborationRange(text, presence.participant.selection)) presence.participant.selection = null
+      presence.participant.recent = presence.recentUntil <= now ? [] :
+        presence.participant.recent.filter(range => resolveCollaborationRecent(text, range).length > 0)
+    }
+    for (const { client } of current) {
+      if (!client.presence || !client.acceptingUpdates) continue
+      send(client.socket, {
+        type: 'awareness',
+        generation: room.generation,
+        self: client.presence.participant.token,
+        peers: current.filter(peer => peer.client !== client && peer.client.presence).map(peer => peer.client.presence!.participant)
+      })
+    }
   }
 
   private async broadcastDurableState(pageId: number): Promise<void> {
@@ -763,6 +984,10 @@ class CollaborationServiceImpl implements CollaborationService {
         wiki.events.inbound.off(event, this.onAuthorizationChanged)
         wiki.events.outbound.off(event, this.onAuthorizationChanged)
       }
+      clearInterval(this.presenceTimer ?? undefined)
+      this.presenceTimer = null
+      for (const cached of this.presenceDocuments.values()) cached.document.destroy()
+      this.presenceDocuments.clear()
       this.clients.clear()
       this.initialized = false
       this.store = null

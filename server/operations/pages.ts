@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto'
 import { publicationBoundaryTimestamp, publicationWindowOpen } from '../../shared/publication-window.ts'
+import { unescape as unescapePath } from 'node:querystring'
+import { LocaleCodeSchema, localePolicyFromConfiguration, localeReadingPath } from '../../shared/locale-policy.ts'
 import { CollaborationRoomStore } from '../core/collaboration-store.ts'
 import { openPageMoveReviewCursor, pageMoveSessionDigest, sealPageMoveReviewCursor, signPageMoveReviewToken } from '../helpers/page-move-review-token.ts'
 import type { PageMoveReviewTokenPayload } from '../helpers/page-move-review-token.ts'
 import { rewriteMovedPageLinks } from '../helpers/page-move-link-rewrite.ts'
 import type { PageMoveLinkRewriteResult } from '../helpers/page-move-link-rewrite.ts'
+import { listContentExtensions } from '../content-extensions/operations.ts'
 import taxonomy from './taxonomy.ts'
 import { resolveTagName } from '../helpers/tag-aliases.ts'
 import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
@@ -64,6 +67,9 @@ import { authorizePageCreationAccount, readLiveNotePublication } from './live-no
 import { authorizeAgentAnswerCreationOrigin, lockPageCreationOwner } from '../helpers/page-creation-origin.ts'
 import { VerifyPageAccuracyInputSchema, type PageAccuracyView } from '../../shared/page-accuracy.ts'
 import { attestPageAccuracy, readPageAccuracy } from '../helpers/page-accuracy.ts'
+import { FeedbackCreateAdmissionSchema } from '../../shared/page-feedback.ts'
+import { prepareFeedbackSubmission, admitCreatedFeedbackIdea } from './page-feedback.ts'
+import type { CanonicalTransactionHook } from '../models/pages.ts'
 const MOVE_REVIEW_PAGE_SIZE = 20
 const MOVE_REVIEW_CANDIDATE_BATCH = 100
 const MOVE_REVIEW_SCAN_LIMIT = 10_000
@@ -111,6 +117,7 @@ const moveRendererConfiguration = async (): Promise<{
   absoluteLinks: boolean
   markdownAllowHTML: boolean
   wikiLinksEnabled: boolean
+  linksGridEnabled: boolean
   digest: string
 }> => {
   const getPipeline = wiki.models.renderers?.getRenderingPipeline
@@ -125,19 +132,22 @@ const moveRendererConfiguration = async (): Promise<{
     wikiLinksEnabled = typeof markdownConfig === 'object' && markdownConfig !== null && Reflect.get(markdownConfig, 'wikilinks') === true
     absoluteLinks = typeof htmlConfig === 'object' && htmlConfig !== null && Reflect.get(htmlConfig, 'absoluteLinks') === true
   }
+  const linksGridEnabled = (await listContentExtensions()).extensions.some(extension =>
+    extension.key === 'links-grid' && extension.version === 1 && extension.isEnabled && extension.compatible
+  )
   const defaultLocale = wiki.config.lang.code
   const namespaced = wiki.config.lang.namespacing === true
   const digest = moveSourceDigest(
-    JSON.stringify({ version: MOVE_LINK_REWRITE_VERSION, defaultLocale, namespaced, absoluteLinks, markdownAllowHTML, wikiLinksEnabled })
+    JSON.stringify({ version: MOVE_LINK_REWRITE_VERSION, defaultLocale, namespaced, absoluteLinks, markdownAllowHTML, wikiLinksEnabled, linksGridEnabled })
   )
-  return { defaultLocale, namespaced, absoluteLinks, markdownAllowHTML, wikiLinksEnabled, digest }
+  return { defaultLocale, namespaced, absoluteLinks, markdownAllowHTML, wikiLinksEnabled, linksGridEnabled, digest }
 }
 
 const moveRewrite = (
   page: PageSourceRecord,
   oldTarget: { locale: string; path: string },
   newTarget: { locale: string; path: string },
-  config: { defaultLocale: string; namespaced: boolean; absoluteLinks: boolean; markdownAllowHTML: boolean; wikiLinksEnabled: boolean }
+  config: { defaultLocale: string; namespaced: boolean; absoluteLinks: boolean; markdownAllowHTML: boolean; wikiLinksEnabled: boolean; linksGridEnabled: boolean }
 ) =>
   rewriteMovedPageLinks({
     source: page.content,
@@ -149,7 +159,8 @@ const moveRewrite = (
     namespaced: config.namespaced,
     absoluteLinks: config.absoluteLinks,
     markdownAllowHTML: config.markdownAllowHTML,
-    wikiLinksEnabled: config.wikiLinksEnabled
+    wikiLinksEnabled: config.wikiLinksEnabled,
+    linksGridEnabled: config.linksGridEnabled
   })
 
 const currentLinkReceipt = async (pageId: number, revision: string): Promise<boolean> => {
@@ -173,7 +184,7 @@ const evaluateMoveCandidate = async (input: {
   sessionId: string
   oldTarget: { locale: string; path: string }
   newTarget: { locale: string; path: string }
-  config: { defaultLocale: string; namespaced: boolean; absoluteLinks: boolean; markdownAllowHTML: boolean; wikiLinksEnabled: boolean }
+  config: { defaultLocale: string; namespaced: boolean; absoluteLinks: boolean; markdownAllowHTML: boolean; wikiLinksEnabled: boolean; linksGridEnabled: boolean }
   candidateConfirmedByIndex: boolean
   allowUnindexedSource?: boolean
 }): Promise<MoveReviewEvaluation | null> => {
@@ -306,7 +317,8 @@ const reviewMoveLinks = async (input: OperationInput): Promise<unknown> => {
     namespaced: config.namespaced,
     absoluteLinks: config.absoluteLinks,
     markdownAllowHTML: config.markdownAllowHTML,
-    wikiLinksEnabled: config.wikiLinksEnabled
+    wikiLinksEnabled: config.wikiLinksEnabled,
+    linksGridEnabled: config.linksGridEnabled
   }
   const sessionDigest = pageMoveSessionDigest(wiki.config.sessionSecret, sessionId)
   const now = Date.now()
@@ -732,6 +744,7 @@ interface PrivateSearchRankRow {
   matchedFields?: SearchMatchField[]
 }
 interface WikiPageOperations {
+  lang?: { localeCodes?: string[] }
   data: {
     searchEngine?: {
       query(query: string, options: SearchOptions): Promise<SearchResponse>
@@ -756,7 +769,7 @@ interface WikiPageOperations {
     db: { type: string }
     editors?: { available?: unknown }
     host: string
-    lang: { code: string; namespacing?: boolean }
+    lang: { code: string; namespacing?: boolean; namespaces?: string[] }
     search?: { maxHits?: number }
     sessionSecret: string
   }
@@ -1169,6 +1182,10 @@ const mutationPayload = (input: OperationInput, omitted: readonly string[] = [])
     'okfRestoreRevision',
     'replaceOkfMetadata',
     'skipStorage',
+    'forceStorageImportWrite',
+    'transaction',
+    'canonicalTransactionHook',
+    'unattendedLifecycle',
     'user',
     'requester',
     'sessionId',
@@ -1309,10 +1326,15 @@ const list = async (input: OperationInput) => {
         })
     ).map(normalizePageBooleans)
 
+  const now = Date.now()
+  const eligible = (page: PageRecord): boolean =>
+    canReadPage(requester, page, authority) &&
+    (page.visibility !== 'public' || (page.isPublished && publicationWindowOpen(page, now)) || canWritePage(requester, page, authority))
+
   if (args.limit === undefined) {
     const pages = await fetchCandidates(0)
     return pages
-      .filter(page => canReadPage(requester, page, authority))
+      .filter(eligible)
       .slice(args.offset)
       .map(page => ({ ...page, tags: page.tags.map(tag => tag.tag) }))
   }
@@ -1324,7 +1346,7 @@ const list = async (input: OperationInput) => {
     const candidates = await fetchCandidates(candidateOffset, batchLimit)
     candidateOffset += candidates.length
     for (const page of candidates) {
-      if (!canReadPage(requester, page, authority)) continue
+      if (!eligible(page)) continue
       if (authorizedOffset < args.offset) {
         authorizedOffset++
       } else {
@@ -2301,6 +2323,98 @@ const rankedSearchResult = (result: SearchResult, query: string): RankedSearchRe
   }
 }
 const escapeLikePattern = (value: string): string => value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')
+
+const LINK_SUGGESTION_LIMIT = 50
+const LINK_SUGGESTION_BATCH = 100
+const LINK_SUGGESTION_SCAN_LIMIT = 1000
+
+const linkSuggestionScope = (input: OperationInput): { locale: string; prefix: string; privateOnly: boolean } => {
+  const invalid = (): never => {
+    throw new ApplicationError('The link suggestion path or locale is invalid.', { code: 'INVALID_INPUT', status: 400 })
+  }
+  if (typeof input.locale !== 'string' || !LocaleCodeSchema.safeParse(input.locale).success) return invalid()
+  if (typeof input.pathPrefix !== 'string' || input.pathPrefix.length > 2048) return invalid()
+  // Match the reader's single URL decode and configured locale spelling. Unlike
+  // parsePath, a partial root is not a complete page name: never turn it into home.
+  let prefix = unescapePath(input.pathPrefix).trim()
+  if (prefix.length > 1024 || /[\p{Cc}\\?"|<>:*#]/u.test(prefix) || prefix.startsWith('//')) return invalid()
+  if (prefix.startsWith('/')) prefix = prefix.slice(1)
+  if (prefix.includes('//') || prefix.split('/').some(segment => segment === '.' || segment.includes('..'))) return invalid()
+  try {
+    encodeURIComponent(prefix)
+  } catch {
+    return invalid()
+  }
+  const currentLocale = input.locale
+  const knownLocales = [...(wiki.lang?.localeCodes ?? []), wiki.config.lang.code, ...(wiki.config.lang.namespaces ?? [])]
+  let locale = knownLocales.find(code => code.toLowerCase() === currentLocale.toLowerCase()) ?? currentLocale
+  const privateOnly = prefix === '_private' || prefix.startsWith('_private/')
+  if (privateOnly) prefix = prefix === '_private' ? '' : prefix.slice('_private/'.length)
+  const first = prefix.split('/')[0] ?? ''
+  const knownLocale = knownLocales.find(code => code.toLowerCase() === first.toLowerCase())
+  // This is the native reader's locale-prefix recognition, including manually
+  // typed two-letter locale roots; longer locale codes must be installed.
+  if (knownLocale !== undefined || /^[A-Z]{2}(?:-[A-Z]{2})?$/iu.test(first)) {
+    locale = knownLocale ?? first
+    prefix = prefix.length === first.length ? '' : prefix.slice(first.length + 1)
+  }
+  return { locale, prefix, privateOnly }
+}
+
+const linkSuggestions = async (input: OperationInput): Promise<{
+  items: Array<{ id: number; title: string; locale: string; path: string; visibility: PageVisibility; href: string }>
+}> => {
+  const { locale, prefix, privateOnly } = linkSuggestionScope(input)
+  const limit = input.limit === undefined ? 10 : positiveInteger(input.limit, 'limit')
+  if (limit > LINK_SUGGESTION_LIMIT)
+    throw new ApplicationError(`limit must not exceed ${LINK_SUGGESTION_LIMIT}`, { code: 'INVALID_INPUT', status: 400 })
+  const policy = localePolicyFromConfiguration(wiki.config)
+  return wiki.models.knex.transaction(async transaction => {
+    // Do not accept a retained authority supplied by a client or earlier search.
+    const authority = await authorityFor(input, transaction)
+    const now = new Date()
+    const items: Array<{ id: number; title: string; locale: string; path: string; visibility: PageVisibility; href: string }> = []
+    let scanned = 0
+    while (items.length < limit && scanned < LINK_SUGGESTION_SCAN_LIMIT) {
+      const batchLimit = Math.min(LINK_SUGGESTION_BATCH, LINK_SUGGESTION_SCAN_LIMIT - scanned)
+      const candidates = await wiki.models.pages
+        .query(transaction)
+        .select('pages.id', 'pages.title', 'pages.localeCode', 'pages.path', 'pages.visibility', 'pages.ownerId',
+          'pages.isPublished', 'pages.isSearchable', 'pages.publishStartDate', 'pages.publishEndDate')
+        .withGraphFetched('tags')
+        .modifyGraph('tags', builder => { builder.select('tag') })
+        .modify(query => {
+          scopePageQuery(query, input.requester, { table: 'pages' })
+          applyAgentScope(query, input.agentScope)
+          query.where('pages.localeCode', locale).where('pages.isSearchable', true)
+          if (privateOnly) query.where('pages.visibility', 'private')
+          query.whereRaw("LOWER(??) LIKE LOWER(?) ESCAPE '\\'", ['pages.path', `${escapeLikePattern(prefix)}%`])
+          query.orderBy(transaction.raw('length(??) - length(replace(??, ?, ?))', ['pages.path', 'pages.path', '/', '']), 'asc')
+          query.orderBy(transaction.raw('LOWER(??)', ['pages.path']), 'asc').orderBy('pages.path', 'asc')
+            .orderBy('pages.visibility', 'asc').orderBy('pages.id', 'asc').limit(batchLimit).offset(scanned)
+        })
+      scanned += candidates.length
+      for (const rawPage of candidates) {
+        const page = normalizePageBooleans(rawPage)
+        if (!page.isSearchable || !pageMatchesAgentScope(page, input.agentScope) || !canReadPage(input.requester, page, authority)) continue
+        if (page.visibility === 'public') {
+          if (!page.isPublished || !publicationWindowOpen(page, now.valueOf())) continue
+        } else if (page.visibility !== 'private' || page.ownerId !== principalId(input.requester)) continue
+        if (await pageRequiresUnlock({
+          requester: input.requester, pageId: page.id, sessionId: typeof input.sessionId === 'string' ? input.sessionId : '',
+          now, transaction, readOnly: true
+        })) continue
+        const href = page.visibility === 'private'
+          ? pageRoute(page)
+          : localeReadingPath(policy, page.localeCode, page.path.split('/').map(encodeURIComponent).join('/'))
+        items.push({ id: page.id, title: page.title, locale: page.localeCode, path: page.path, visibility: page.visibility, href })
+        if (items.length === limit) break
+      }
+      if (candidates.length < batchLimit) break
+    }
+    return { items }
+  }, { isolationLevel: 'repeatable read' })
+}
 
 const privateSearchFilters = ({
   locale,
@@ -3423,7 +3537,10 @@ const answerCreationInventory = async (input: OperationInput): Promise<PageCreat
 }
 
 const create = (input: OperationInput): unknown => {
-  const payload = mutationPayload(input, ['ownerId', 'isPrivate', 'privateNS'])
+  const raw = recordValue(input.input, 'input')
+  const feedback = raw.feedbackSubmission === undefined ? undefined : FeedbackCreateAdmissionSchema.safeParse(raw.feedbackSubmission)
+  if (feedback !== undefined && !feedback.success) throw new ApplicationError('Invalid feedback submission acknowledgement.', { code: 'INVALID_INPUT', status: 400 })
+  const payload = mutationPayload(input, ['ownerId', 'isPrivate', 'privateNS', 'feedbackSubmission'])
   if (payload.isSearchable !== undefined) payload.isSearchable = optionalBoolean(payload.isSearchable, 'isSearchable')
   if (Object.hasOwn(payload, 'changeReason')) payload.changeReason = saveChangeReason(payload.changeReason)
   if (isPageEditorKey(payload.editor) && !normalizeAvailableEditors(wiki.config.editors?.available).includes(payload.editor)) {
@@ -3441,6 +3558,18 @@ const create = (input: OperationInput): unknown => {
         }
       }
     : {}
+  if (feedback?.success) {
+    const admission = { ...feedback.data, requester: input.requester, sessionId: typeof input.sessionId === 'string' ? input.sessionId : '' }
+    return wiki.models.knex.transaction(async transaction => {
+      if (payload.creationRequestId !== undefined || payload.creationOrigin !== undefined) await lockPageCreationOwner(transaction, input.requester)
+      await prepareFeedbackSubmission(transaction, admission)
+      const canonicalTransactionHook: CanonicalTransactionHook = async (canonicalTransaction, result) => {
+        if (canonicalTransaction !== transaction) throw new Error('Feedback creation transaction mismatch')
+        await admitCreatedFeedbackIdea(canonicalTransaction, { ...admission, pageId: result.id, expectedSourceRevision: result.sourceRevision })
+      }
+      return wiki.models.pages.createPage(withRequester({ ...payload, visibility, ...brandingContext, transaction, canonicalTransactionHook }, input.requester))
+    })
+  }
   return wiki.models.pages.createPage(
     withRequester(
       {
@@ -3504,10 +3633,13 @@ const setPublication = async (input: OperationInput): Promise<unknown> => {
 const convert = async (input: OperationInput): Promise<unknown> => {
   const payload = mutationPayload(input, ['visibility', 'ownerId', 'isPrivate', 'privateNS'])
   await assertUnlocked(input, positiveInteger(payload.id, 'id'))
-  return wiki.models.pages.convertPage(withRequester(payload, input.requester))
+  return wiki.models.pages.convertPage(withRequester({ ...payload, sessionId: typeof input.sessionId === 'string' ? input.sessionId : '' }, input.requester))
 }
 const move = async (input: OperationInput): Promise<unknown> => {
   const raw = recordValue(input.input, 'input')
+  if (raw.lifecycleProposalId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(raw.lifecycleProposalId))) {
+    throw new ApplicationError('A valid lifecycle proposal ID is required.', { code: 'INVALID_INPUT', status: 400 })
+  }
   if (raw.updateLinks !== undefined && typeof raw.updateLinks !== 'boolean') {
     throw new ApplicationError('updateLinks must be a boolean.', { code: 'INVALID_INPUT', status: 400 })
   }
@@ -3806,6 +3938,7 @@ export default {
   getSource,
   getTree,
   getVersion,
+  linkSuggestions,
   list,
   listIndex,
   listLinks,

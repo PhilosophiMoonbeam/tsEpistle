@@ -7,6 +7,7 @@ import {
   persistFederatedLoginSession
 } from '../helpers/federated-login.ts'
 import commonHelper from '../helpers/common.ts'
+import { resolveLoginReturn } from '../../client/helpers/login-return.ts'
 
 interface AuthenticationStrategy {
   key: string
@@ -139,25 +140,10 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
       res.set('Cache-Control', 'no-store')
       res.cookie('jwt', authResult.jwt, commonHelper.getCookieOpts())
 
-      const loginRedirectValue: unknown = req.cookies['loginRedirect']
-      const loginRedirect = typeof loginRedirectValue === 'string' ? loginRedirectValue : undefined
-      const isValidRedirect = loginRedirect !== undefined && loginRedirect.startsWith('/') && !loginRedirect.startsWith('//') && !loginRedirect.includes('://')
-      if (loginRedirect === '/' && authResult.redirect) {
-        res.clearCookie('loginRedirect')
-        res.redirect(authResult.redirect)
-      } else if (isValidRedirect) {
-        res.clearCookie('loginRedirect')
-        res.redirect(loginRedirect)
-      } else {
-        if (loginRedirect) {
-          res.clearCookie('loginRedirect')
-        }
-        if (authResult.redirect) {
-          res.redirect(authResult.redirect)
-        } else {
-          res.redirect('/')
-        }
-      }
+      const target = resolveLoginReturn(req.cookies['loginRedirect'], authResult.redirect)
+      res.clearCookie('loginRedirect', { path: '/' })
+      // Do not render cached page data or replay an intended rating.
+      res.redirect(target)
     } catch (err) {
       if (!res.headersSent) clearFederatedLoginCookie(res, providerKey)
       next(err)

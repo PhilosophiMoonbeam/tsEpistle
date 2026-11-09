@@ -22,6 +22,9 @@ import { createPageWatchNotificationHandler, type PageWatchWikiContext } from '.
 import { cleanupSiteLogoRevisions, createSiteLogoProcessHandler } from './site-logo-process.ts'
 import { createAssetRelocationHandler } from './asset-relocation.ts'
 import { createStorageMutationHandler } from './storage-mutations.ts'
+import { createPageReviewReminderHandler, retainPageReviewReminders } from './page-review-reminders.ts'
+import { createPageLifecycleHandler, cleanupPageLifecycle } from './page-lifecycle.ts'
+import { governedReviewNotificationAdapter, createGovernedNotificationHandler, cleanupGovernedNotifications } from './governed-notifications.ts'
 
 const cleanupRetentionMs = 30 * 24 * 60 * 60 * 1_000
 const cleanupBatchSize = 500
@@ -74,6 +77,20 @@ export const cleanupDurableJobs: DurableJobHandler = async (job, { knex, signal 
     }
     signal.throwIfAborted()
   })
+}
+
+const cleanupGovernanceAndDurableJobs: DurableJobHandler = async (job, context) => {
+  const { knex, signal } = context
+  signal.throwIfAborted()
+  await retainPageReviewReminders(knex)
+  signal.throwIfAborted()
+  const lifecycleHasMore = await cleanupPageLifecycle(knex, signal)
+  signal.throwIfAborted()
+  const notificationHasMore = await cleanupGovernedNotifications(knex)
+  if (lifecycleHasMore || notificationHasMore) await new DurableJobStore(knex).enqueue({
+    type: 'cleanup-durable-jobs', version: 1, payload: {}, maxAttempts: 3, deduplicationKey: `cleanup-governance:${job.id}`
+  })
+  await cleanupDurableJobs(job, context)
 }
 
 const hasLiteralCommentSubscription = (value: unknown, eventType: string): boolean => {
@@ -254,7 +271,7 @@ export const createDurableJobHandlers = (
     'storage-action@1': createStorageActionHandler(),
     'storage-mutation@1': createStorageMutationHandler(),
     'storage-mutation@2': createStorageMutationHandler(),
-    'cleanup-durable-jobs@1': cleanupDurableJobs,
+    'cleanup-durable-jobs@1': cleanupGovernanceAndDurableJobs,
     'cleanup-site-logo@1': cleanupSiteLogoRevisions,
     'process-site-logo@1': createSiteLogoProcessHandler(1),
     'process-site-logo@2': createSiteLogoProcessHandler(2),
@@ -264,5 +281,8 @@ export const createDurableJobHandlers = (
     'rerender-content-extension@1': createContentExtensionRerenderHandler(wiki),
     'deliver-webhook@1': createWebhookDeliveryHandler(sessionSecret, wiki as unknown as CommentWebhookWikiContext),
     'notify-page-watcher@1': createPageWatchNotificationHandler(wiki),
+    'page-review-reminder@1': createPageReviewReminderHandler(governedReviewNotificationAdapter),
+    'page-lifecycle@1': createPageLifecycleHandler(),
+    'notify-governed@1': createGovernedNotificationHandler(),
     'asset-relocation@1': createAssetRelocationHandler()
   } satisfies Record<DurableJobIdentity, DurableJobHandler>)

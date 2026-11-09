@@ -2,11 +2,9 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import compression from 'compression'
-import { ConnectSessionKnexStore } from 'connect-session-knex'
 import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import express, { type ErrorRequestHandler, type Express, type RequestHandler } from 'express'
-import session from 'express-session'
 import type { Knex } from 'knex'
 import _ from 'lodash'
 import favicon from 'serve-favicon'
@@ -40,6 +38,7 @@ import { configureTransportRuntime } from './controllers/_types.ts'
 import createAgentsHostController from './controllers/agents-host.ts'
 import apiController, { type ApiRuntime } from './controllers/api/index.ts'
 import { liveNotePrivacyHeaders } from './controllers/api/live-notes.ts'
+import { governanceBodyParserError, governancePreBodyPrivacy } from './controllers/api/governance-http.ts'
 import { OFFLINE_DRAFT_KEY_PATH, OFFLINE_READING_KEY_PATH, offlineDraftKeyPrivacyHeaders } from './controllers/api/offline.ts'
 import { siteLogoPreBodyRouter } from './controllers/api/site-logo.ts'
 import { userAvatarPreBodyRouter } from './controllers/api/user-avatar.ts'
@@ -57,6 +56,7 @@ import mail from './core/mail.ts'
 import { PageProjectionLifecycle } from './core/page-mutation-outbox.ts'
 import type { PageRenderPublicationFence } from './core/page-mutation-outbox.ts'
 import system from './core/system.ts'
+import { BrowserSessionStore } from './helpers/browser-session-store.ts'
 import { loadMcpApiPrincipal } from './helpers/personal-mcp.ts'
 import pageHelper from './helpers/page.ts'
 import { sessionCookieOptions } from './helpers/session-cookie.ts'
@@ -240,6 +240,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   app.use(OFFLINE_DRAFT_KEY_PATH, offlineDraftKeyPrivacyHeaders)
   app.use(OFFLINE_READING_KEY_PATH, offlineDraftKeyPrivacyHeaders)
   app.use('/_api/live-notes', liveNotePrivacyHeaders)
+  app.use(governancePreBodyPrivacy)
   const agentLimits = parseAgentOperationalLimits(wiki.config.agents)
   app.set('views', path.join(wiki.SERVERPATH, 'views'))
   app.set('view engine', 'pug')
@@ -291,15 +292,14 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
 
   app.use(cookieParser())
   const currentSessionCookieOptions = sessionCookieOptions(() => wiki.config.host)
+  const browserSessionStore = new BrowserSessionStore({ knex: wiki.models.knex })
+  await browserSessionStore.ready
   app.use(
-    session({
+    browserSessionStore.middleware({
       secret: wiki.config.sessionSecret,
       resave: false,
       saveUninitialized: false,
-      cookie: currentSessionCookieOptions,
-      store: new ConnectSessionKnexStore({
-        knex: wiki.models.knex
-      })
+      cookie: currentSessionCookieOptions
     })
   )
   app.use((req, _res, next) => {
@@ -565,7 +565,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
         clearInterval(projectionTimer)
         clearInterval(maintenanceTimer)
         const runtime = agentRuntime
-        const pending = [runtime ? Promise.resolve().then(() => runtime.shutdown()) : undefined, agentRun, knowledgeRun, projectionRun, maintenanceRun].filter(
+        const pending = [browserSessionStore.close(), runtime ? Promise.resolve().then(() => runtime.shutdown()) : undefined, agentRun, knowledgeRun, projectionRun, maintenanceRun].filter(
           (promise): promise is Promise<unknown> => promise !== undefined
         )
         const results = await Promise.allSettled(pending)
@@ -596,6 +596,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   app.use('/_api/users/profile/avatar', userAvatarPreBodyRouter)
   const jsonBodyParser = express.json({ limit: wiki.config.bodyParserLimit ?? '5mb' })
   app.use('/_api', jsonBodyParser, apiController)
+  app.use(governanceBodyParserError)
   app.use('/api/v1', jsonBodyParser, apiV1Controller)
 
   app.use(seoMiddleware)
@@ -683,8 +684,11 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     next(error)
   })
 
-  const handleError: ErrorRequestHandler = (error: HttpError, req, res, _next) => {
-    void _next
+  const handleError: ErrorRequestHandler = (error: HttpError, req, res, next) => {
+    if (res.headersSent) {
+      next(error)
+      return
+    }
     if (req.path === '/graphql') {
       res.status(error.status || 500).json({
         data: {},

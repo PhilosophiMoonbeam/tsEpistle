@@ -32,7 +32,7 @@ type AssetRow = {
   filename?: string
   folderId?: number | null
   metadata?: unknown
-  getAssetPath?: () => Promise<string>
+  getAssetPath?: (transaction?: Knex.Transaction) => Promise<string>
 }
 type AssetQuery = {
   findById(id: number): Promise<AssetRow | undefined>
@@ -382,21 +382,21 @@ export const persistAssetBrandingUnavailable = async (
   return mergeBrandingMetadata(assetId, unavailable(sourceSha256, reason))
 }
 
-const assetPathForAuthorization = async (assetId: number): Promise<{ asset: AssetRow; assetPath: string }> => {
-  const asset = await runtime().models.assets.query().findById(assetId)
+const assetPathForAuthorization = async (assetId: number, transaction?: Knex.Transaction): Promise<{ asset: AssetRow; assetPath: string }> => {
+  const asset = await runtime().models.assets.query(transaction).findById(assetId)
   if (!asset || typeof asset.getAssetPath !== 'function') throw new ApplicationError('Asset not found', { status: 404, code: 'ASSET_NOT_FOUND' })
-  const assetPath = await asset.getAssetPath()
+  const assetPath = await asset.getAssetPath(transaction)
   if (typeof assetPath !== 'string' || assetPath.length < 1 || assetPath.length > 512)
     throw new ApplicationError('Asset not found', { status: 404, code: 'ASSET_NOT_FOUND' })
   return { asset, assetPath }
 }
 
-const authorizeAssetPath = async (input: { assetPath: string; requester: PageRequester; sessionId: string }): Promise<void> => {
+const authorizeAssetPath = async (input: { assetPath: string; requester: PageRequester; sessionId: string; transaction?: Knex.Transaction }): Promise<void> => {
   const wiki = runtime()
-  const authority = await wiki.auth.loadPageRuleAuthority(input.requester)
+  const authority = await wiki.auth.loadPageRuleAuthority(input.requester, input.transaction)
   if (!wiki.auth.checkPageAccess(input.requester, ['manage:system', 'read:assets'], { path: input.assetPath }, authority))
     throw new ApplicationError('Asset not found', { status: 404, code: 'ASSET_NOT_FOUND' })
-  if (await protectedAssetRequiresUnlock({ requester: input.requester, assetPath: input.assetPath, sessionId: input.sessionId }))
+  if (await protectedAssetRequiresUnlock({ requester: input.requester, assetPath: input.assetPath, sessionId: input.sessionId, ...(input.transaction === undefined ? {} : { transaction: input.transaction }), readOnly: input.transaction !== undefined }))
     throw new ApplicationError('Access denied', { status: 403, code: 'ASSET_LOCKED' })
 }
 
@@ -440,13 +440,27 @@ export const resolveAssetBrandingView = async (input: {
   return view.success ? view.data : null
 }
 
-export const authorizePageBrandingAssignment = async (input: { assetId: number; requester: PageRequester; sessionId: string }): Promise<void> => {
+export const authorizePageBrandingAssignment = async (input: { assetId: number; requester: PageRequester; sessionId: string; transaction?: Knex.Transaction }): Promise<void> => {
   if (!Number.isSafeInteger(input.assetId) || input.assetId < 1) throw new ApplicationError('Asset not found', { status: 404, code: 'ASSET_NOT_FOUND' })
-  const { asset, assetPath } = await assetPathForAuthorization(input.assetId)
-  await authorizeAssetPath({ assetPath, requester: input.requester, sessionId: input.sessionId })
+  const { asset, assetPath } = await assetPathForAuthorization(input.assetId, input.transaction)
+  await authorizeAssetPath({ assetPath, requester: input.requester, sessionId: input.sessionId, ...(input.transaction === undefined ? {} : { transaction: input.transaction }) })
   let branding = currentReadyBranding(asset)
   if (!branding && brandingFromMetadata(asset.metadata) === null && hasBrandingMember(asset.metadata)) {
-    const refreshed = await refreshAssetBranding(input.assetId)
+    let refreshed: AssetBrandingMetadata | null
+    if (input.transaction) {
+      // Admission must not join a global single-flight task that owns another connection,
+      // nor persist derived metadata outside the caller's rollback boundary.
+      const reservation = reserveAssetBrandingAnalysis(input.assetId)
+      try {
+        const data = await input.transaction<{ id: number; data: Buffer | Uint8Array }>('assetData').where({ id: input.assetId }).first('data')
+        const bytes = toBufferView(data?.data)
+        refreshed = bytes ? await analyzeAssetBranding(bytes) : null
+      } finally {
+        releaseAssetBrandingAnalysis(reservation)
+      }
+    } else {
+      refreshed = await refreshAssetBranding(input.assetId)
+    }
     branding = refreshed?.state === 'ready' ? refreshed : null
   }
   if (!branding) throw new ApplicationError('Asset branding is unavailable', { status: 422, code: 'BRANDING_UNAVAILABLE' })

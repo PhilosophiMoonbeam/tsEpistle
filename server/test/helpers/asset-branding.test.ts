@@ -32,7 +32,7 @@ const checkPageAccess = vi.fn(
     authority: TestAuthority
   ): boolean => authority?.requester === user && permissionAllowed(user, permissions)
 )
-const loadPageRuleAuthority = vi.fn(async (suppliedRequester: TestRequester) => authorityFor(suppliedRequester))
+const loadPageRuleAuthority = vi.fn(async (suppliedRequester: TestRequester, _transaction?: Knex.Transaction) => authorityFor(suppliedRequester))
 
 const digest = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 
@@ -69,10 +69,27 @@ describe('asset branding analysis and cache cutover', () => {
       table.increments('id').primary()
       table.string('filename').notNullable()
       table.json('metadata').nullable()
+      table.string('hash').nullable()
     })
     await db.schema.createTable('assetData', table => {
       table.integer('id').primary().references('id').inTable('assets').onDelete('CASCADE')
       table.binary('data').notNullable()
+    })
+    await db.schema.createTable('pageProtectedAssets', table => {
+      table.integer('pageId')
+      table.string('assetPath')
+      table.integer('assetId')
+    })
+    await db.schema.createTable('pages', table => {
+      table.integer('id').primary()
+      table.json('extra')
+    })
+    await db.schema.createTable('pageAccessPasswords', table => {
+      table.integer('pageId')
+    })
+    await db.schema.createTable('brandingTestAuthority', table => {
+      table.integer('userId').primary()
+      table.boolean('allowed')
     })
 
     assetDataReads.mockReset()
@@ -82,9 +99,9 @@ describe('asset branding analysis and cache cutover', () => {
     }) as unknown as Knex
     trackedKnex.transaction = db.transaction.bind(db)
 
-    const assetsQuery = {
+    const assetsQuery = (transaction?: Knex.Transaction) => ({
       findById: vi.fn(async (assetId: number) => {
-        const asset = await db('assets').where({ id: assetId }).first()
+        const asset = await (transaction ?? db)('assets').where({ id: assetId }).first()
         return asset
           ? {
               ...asset,
@@ -92,14 +109,14 @@ describe('asset branding analysis and cache cutover', () => {
             }
           : undefined
       })
-    }
+    })
     checkAccess.mockReset().mockImplementation(permissionAllowed)
     checkPageAccess.mockReset().mockImplementation((user, permissions, _context, authority) => authority?.requester === user && permissionAllowed(user, permissions))
     loadPageRuleAuthority.mockReset().mockImplementation(async suppliedRequester => authorityFor(suppliedRequester))
     wikiGlobal.WIKI = {
       auth: { checkAccess, checkPageAccess, loadPageRuleAuthority },
       models: {
-        assets: { query: vi.fn().mockReturnValue(assetsQuery) },
+        assets: { query: vi.fn(assetsQuery) },
         knex: trackedKnex
       }
     }
@@ -324,5 +341,79 @@ describe('asset branding analysis and cache cutover', () => {
       name: 'ASSET_NOT_FOUND'
     })
     expect(assetDataReads).not.toHaveBeenCalled()
+  })
+
+  it('admits legacy branding from caller-only bytes on a single connection without persisting derived metadata', async () => {
+    const source = await encodeRgbaPng(8, 8, Buffer.alloc(8 * 8 * 4, 255))
+    const legacy = { branding: { version: 1, state: 'ready' }, revision: 9 }
+    const assetId = await insertAsset({ bytes: Buffer.from('invalid'), metadata: legacy })
+    const rollback = new Error('caller rollback')
+    await expect(Promise.resolve(db.transaction(async transaction => {
+      await transaction('assetData').where({ id: assetId }).update({ data: source })
+      await branding.authorizePageBrandingAssignment({ assetId, requester, sessionId: 'caller', transaction })
+      const asset = await transaction('assets').where({ id: assetId }).first()
+      expect(JSON.parse(asset.metadata)).toEqual(legacy)
+      throw rollback
+    }))).rejects.toBe(rollback)
+    expect(await readBranding(assetId)).toEqual(legacy.branding)
+    const data = await db('assetData').where({ id: assetId }).first()
+    expect(Buffer.from(data.data)).toEqual(Buffer.from('invalid'))
+    await db.transaction(async transaction => {
+      await expect(branding.authorizePageBrandingAssignment({ assetId, requester, sessionId: 'caller', transaction }))
+        .rejects.toMatchObject({ name: 'BRANDING_UNAVAILABLE', status: 422 })
+    })
+  })
+
+  it('uses current caller-transaction authority rather than stale requester permissions', async () => {
+    const reader = { id: 8, permissions: ['read:assets'] }
+    const assetId = await insertAsset({
+      metadata: { branding: { version: 2, state: 'ready', sourceSha256: 'a'.repeat(64), width: 8, height: 8, accent: null } }
+    })
+    await db('brandingTestAuthority').insert({ userId: reader.id, allowed: true })
+    loadPageRuleAuthority.mockImplementation(async (user, transaction) => {
+      const row = await (transaction ?? db)('brandingTestAuthority').where({ userId: user.id }).first()
+      return { ...authorityFor(user), permissions: row?.allowed ? ['read:assets'] : [] }
+    })
+    checkPageAccess.mockImplementation((_user, permissions, _context, authority) => permissions.some(permission => authority.permissions.includes(permission)))
+    await db.transaction(async transaction => {
+      await branding.authorizePageBrandingAssignment({ assetId, requester: reader, sessionId: 'caller', transaction })
+      await transaction('brandingTestAuthority').where({ userId: reader.id }).update({ allowed: false })
+      await expect(branding.authorizePageBrandingAssignment({ assetId, requester: reader, sessionId: 'caller', transaction }))
+        .rejects.toMatchObject({ name: 'ASSET_NOT_FOUND', status: 404 })
+    })
+  })
+
+  it('observes caller-only protected asset links without cleanup writes or a second connection', async () => {
+    const reader = { id: 8, permissions: ['read:assets'] }
+    const assetId = await insertAsset({
+      metadata: { branding: { version: 2, state: 'ready', sourceSha256: 'a'.repeat(64), width: 8, height: 8, accent: null } }
+    })
+    const rollback = new Error('caller rollback')
+    await expect(Promise.resolve(db.transaction(async transaction => {
+      await transaction('pageProtectedAssets').insert({ pageId: 42, assetId, assetPath: 'branding.png' })
+      await expect(branding.authorizePageBrandingAssignment({ assetId, requester: reader, sessionId: '', transaction }))
+        .rejects.toMatchObject({ name: 'ASSET_LOCKED', status: 403 })
+      throw rollback
+    }))).rejects.toBe(rollback)
+    await db.transaction(async transaction => {
+      await expect(branding.authorizePageBrandingAssignment({ assetId, requester: reader, sessionId: '', transaction })).resolves.toBeUndefined()
+    })
+  })
+
+  it('does not join independently reserved legacy analysis while holding the caller connection', async () => {
+    const source = await encodeRgbaPng(8, 8, Buffer.alloc(8 * 8 * 4, 255))
+    const assetId = await insertAsset({ bytes: source, metadata: { branding: { version: 1 } } })
+    const reservation = branding.reserveAssetBrandingAnalysis(assetId)
+    try {
+      await db.transaction(async transaction => {
+        await expect(branding.authorizePageBrandingAssignment({ assetId, requester, sessionId: 'caller', transaction }))
+          .rejects.toMatchObject({ name: 'BRANDING_BUSY', status: 503 })
+      })
+    } finally {
+      branding.releaseAssetBrandingAnalysis(reservation)
+    }
+    await db.transaction(async transaction => {
+      await expect(branding.authorizePageBrandingAssignment({ assetId, requester, sessionId: 'caller', transaction })).resolves.toBeUndefined()
+    })
   })
 })

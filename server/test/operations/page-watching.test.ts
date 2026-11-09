@@ -1,6 +1,7 @@
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { up as upNotificationPreferences } from '../../db/migrations/tsepistle-000058-discussion-notifications.ts'
+import { defaultNotificationCeilings } from '../../../shared/site-notifications.ts'
 
 let knex: Knex
 let page: { id: number; title: string; visibility: 'public'; ownerId: null; path: string; localeCode: string; tags: never[] }
@@ -177,11 +178,56 @@ afterEach(async () => {
 })
 
 describe('page watching operations', () => {
+  it('preserves hidden consent on ordinary saves and explicitly stops all stored email including unknown categories and watches', async () => {
+    const operations = await vi.importFresh('../../operations/page-watching.ts', import.meta.url)
+    await operations.updateNotificationPreferences(user, { preferences: { mention: { inApp: true, email: true }, pageDeleted: { inApp: true, email: true } } })
+    await knex('userNotificationPreferences').insert({ userId: 7, category: 'futureCategory', inAppEnabled: true, emailEnabled: true, updatedAt: new Date() })
+    await operations.watchPage({ requester: user, id: page.id })
+    await knex('settings').insert({ key: 'notificationCeilings', value: JSON.stringify({ ceilings: { ...defaultNotificationCeilings(), mention: 'in-app-only', pageDeleted: 'off' }, suppressedBefore: {} }) })
+    const saved = await operations.updateNotificationPreferences(user, { preferences: { mention: { inApp: false, email: false }, pageDeleted: { inApp: false, email: false }, pageCreated: { inApp: true } } })
+    expect(saved.preferences.mention).toEqual({ inApp: false, email: true })
+    expect(saved.preferences.pageDeleted).toEqual({ inApp: true, email: true })
+    expect(saved.ceilings.mention).toBe('in-app-only')
+    await operations.updateNotificationPreferences(user, { preferences: {}, stopAllEmail: true })
+    expect(await knex('userNotificationPreferences').where('userId', 7).where('emailEnabled', true)).toEqual([])
+    expect((await knex('pageWatchers').where('userId', 7).first()).emailEnabled).toBe(0)
+    await knex('settings').where('key', 'notificationCeilings').update({ value: JSON.stringify({ ceilings: defaultNotificationCeilings(), suppressedBefore: {} }) })
+    const reenabled = await operations.getNotificationPreferences(user)
+    expect(reenabled.preferences.pageDeleted).toEqual({ inApp: true, email: false })
+    expect(reenabled.preferences.mention).toEqual({ inApp: false, email: false })
+    expect((await knex('userNotificationPreferences').where({ userId: 7, category: 'futureCategory' }).first()).inAppEnabled).toBe(1)
+    expect(await knex('userNotificationPreferences').where('userId', 8)).toEqual([])
+  })
+  it('preserves legacy administrator limits while new governed categories remain independently default-off', async () => {
+    await knex('settings').insert({ key: 'notificationCeilings', value: JSON.stringify({
+      ceilings: { pageCreated: 'in-app-only', pageDeleted: 'off', watchedPageComment: 'existing-consented-channels', commentReply: 'off', mention: 'in-app-only', pageWatch: 'off' },
+      suppressedBefore: {}
+    }) })
+    const operations = await vi.importFresh('../../operations/page-watching.ts', import.meta.url)
+    const response = await operations.getNotificationPreferences(user)
+    expect(response.ceilings.pageCreated).toBe('in-app-only')
+    expect(response.ceilings.pageDeleted).toBe('off')
+    expect(response.ceilings.pageWatch).toBe('off')
+    expect(response.ceilings.feedbackStatus).toBe('existing-consented-channels')
+    expect(response.ceilings.reviewReminder).toBe('existing-consented-channels')
+    expect(response.ceilings.pageLifecycle).toBe('existing-consented-channels')
+    expect(response.preferences.feedbackStatus).toEqual({ email: false, inApp: false })
+    expect(response.preferences.reviewReminder).toEqual({ email: false, inApp: false })
+    expect(response.preferences.pageLifecycle).toEqual({ email: false, inApp: false })
+  })
   it('reads default-off owner preferences and patches only requested channels on the current account', async () => {
     const operations = await vi.importFresh('../../operations/page-watching.ts', import.meta.url)
     const initial = await operations.getNotificationPreferences(user)
     expect(initial.ownerId).toBe(7)
     expect(Object.values(initial.preferences).every(channels => !channels.inApp && !channels.email)).toBe(true)
+    expect(initial.preferences.feedbackStatus).toEqual({ inApp: false, email: false })
+    expect(initial.preferences.reviewReminder).toEqual({ inApp: false, email: false })
+    expect(initial.preferences.pageLifecycle).toEqual({ inApp: false, email: false })
+    await operations.updateNotificationPreferences(user, { preferences: { feedbackStatus: { email: true }, reviewReminder: { inApp: true } } })
+    const governed = await operations.getNotificationPreferences(user)
+    expect(governed.preferences.feedbackStatus).toEqual({ inApp: false, email: true })
+    expect(governed.preferences.reviewReminder).toEqual({ inApp: true, email: false })
+    expect(governed.preferences.pageLifecycle).toEqual({ inApp: false, email: false })
     await operations.updateNotificationPreferences(user, { preferences: { mention: { inApp: true, email: true } } })
     const changed = await operations.updateNotificationPreferences(user, { preferences: { mention: { email: false }, commentReply: { inApp: true } } })
     expect(changed.preferences.mention).toEqual({ inApp: true, email: false })

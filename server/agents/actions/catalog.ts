@@ -242,6 +242,8 @@ const GlossarySummary = strict({
 })
 const GlossaryTermResult = GlossarySummary.extend({
   definition: z.string().max(GLOSSARY_LIMITS.definition),
+  autoLink: z.boolean(),
+  caseSensitive: z.boolean(),
   aliases: z.array(z.string().max(GLOSSARY_LIMITS.name)).max(GLOSSARY_LIMITS.aliases),
   relatedTerms: z.array(GlossarySummary).max(GLOSSARY_LIMITS.relatedIds),
   references: z.array(strict({ label: z.string().max(GLOSSARY_LIMITS.name), url: z.string().max(2_048) })).max(GLOSSARY_LIMITS.references),

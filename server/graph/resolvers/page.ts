@@ -103,7 +103,15 @@ export default {
     },
     async convert(_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       try {
-        await pageOperations.convert({ ...operationContext(context), input: args })
+        await pageOperations.convert({
+          ...operationContext(context),
+          input: {
+            id: args.id,
+            editor: args.editor,
+            expectedSourceRevision: args.expectedSourceRevision,
+            ...(args.reviewToken === undefined || args.reviewToken === null ? {} : { reviewToken: args.reviewToken })
+          }
+        })
         return { responseResult: graphHelper.generateSuccess('Page has been converted.') }
       } catch (err: unknown) {
         return graphHelper.generateError(err)

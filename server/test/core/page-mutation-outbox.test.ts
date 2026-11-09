@@ -14,6 +14,11 @@ import {
   PageProjectionLifecycle,
   type PageProjectionSink
 } from '../../core/page-mutation-outbox.ts'
+import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { up as addDurableJobLeaseTokens } from '../../db/migrations/2.5.158.ts'
+import { up as createPageReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createPageLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
 
 let knex: Knex
 const location = { locale: 'en', path: 'docs/start', visibility: 'public' as const, ownerId: null }
@@ -51,6 +56,7 @@ beforeEach(async () => {
     table.bigInteger('sourceRevision').notNullable()
     table.bigInteger('renderedSourceRevision').nullable()
     table.text('content').notNullable()
+    table.string('contentType').notNullable().defaultTo('markdown')
     table.text('render').notNullable()
     table.text('toc').notNullable().defaultTo('[]')
     table.boolean('isPublished').notNullable().defaultTo(true)
@@ -81,6 +87,13 @@ beforeEach(async () => {
   await knex.schema.createTable('pageAccessPasswords', table => {
     table.integer('pageId').primary()
   })
+  await knex.schema.createTable('users', table => table.integer('id').primary())
+  await knex.schema.createTable('groups', table => table.integer('id').primary())
+  await createDurableJobs(knex)
+  await addDurableJobLeaseTokens(knex)
+  await createPageReviewRouting(knex)
+  await createPageLifecycle(knex)
+  await createStoragePageImportOwners(knex)
 })
 
 afterEach(async () => {
@@ -88,8 +101,8 @@ afterEach(async () => {
   await knex.destroy()
 })
 
-const enqueue = (overrides: Partial<Parameters<typeof enqueuePageMutationEffects>[1]> = {}) =>
-  enqueuePageMutationEffects(knex, {
+const enqueue = async (overrides: Partial<Parameters<typeof enqueuePageMutationEffects>[1]> = {}) => {
+  const input: Parameters<typeof enqueuePageMutationEffects>[1] = {
     pageId: 42,
     sourceRevision: '8',
     desiredState: 'present',
@@ -97,7 +110,21 @@ const enqueue = (overrides: Partial<Parameters<typeof enqueuePageMutationEffects
     source: '# Start\n',
     location,
     ...overrides
-  })
+  }
+  if (input.desiredState === 'present' && typeof input.source === 'string' && input.location) {
+    await knex('pages').insert(projectionPage({
+      id: input.pageId,
+      sourceRevision: String(input.sourceRevision),
+      content: input.source,
+      contentType: input.contentType ?? 'markdown',
+      localeCode: input.location.locale,
+      path: input.location.path,
+      visibility: input.location.visibility,
+      ownerId: input.location.ownerId
+    })).onConflict('id').ignore()
+  }
+  return enqueuePageMutationEffects(knex, input)
+}
 
 const deferred = () => {
   let release!: () => void
@@ -120,6 +147,7 @@ const projectionPage = (overrides: Record<string, unknown> = {}) => ({
   sourceRevision: 8,
   renderedSourceRevision: 8,
   content: '# Start\n',
+  contentType: 'markdown',
   render: '<p>currentbody</p>',
   isPublished: true,
   isSearchable: true,
@@ -134,9 +162,21 @@ const projectionPage = (overrides: Record<string, unknown> = {}) => ({
 
 describe('page mutation projection outbox', () => {
   it('commits immutable render, link, search, and knowledge intent atomically with the source transaction', async () => {
+    await knex('pages').insert(projectionPage({ sourceRevision: 7, content: '# Before\n' }))
+    await enqueue({ sourceRevision: '7', source: '# Before\n', effects: [] })
+    const initialClock = await knex('pageLifecycleClocks').where({ pageId: 42 }).first()
+    const before = '2026-08-16T00:00:00.000Z'
+    await knex('pageReviewRouting').insert({
+      pageId: 42,
+      observedSourceRevision: '7',
+      unverifiedAt: before,
+      createdAt: before,
+      updatedAt: before
+    })
     await expect(
       Promise.resolve(
         knex.transaction(async transaction => {
+          await transaction('pages').where({ id: 42 }).update({ sourceRevision: 8, content: '# Start\n' })
           await enqueuePageMutationEffects(transaction, {
             pageId: 42,
             sourceRevision: '8',
@@ -150,7 +190,15 @@ describe('page mutation projection outbox', () => {
       )
     ).rejects.toThrow('source write failed')
     expect(await knex('pageMutationOutbox')).toEqual([])
+    expect(await knex('pages').where({ id: 42 }).first('sourceRevision', 'content')).toEqual({ sourceRevision: 7, content: '# Before\n' })
+    expect(await knex('pageLifecycleClocks').where({ pageId: 42 }).first()).toEqual(initialClock)
+    expect(await knex('pageReviewRouting').where({ pageId: 42 }).first('observedSourceRevision', 'unverifiedAt')).toEqual({
+      observedSourceRevision: 7,
+      unverifiedAt: before
+    })
+    expect(await knex('durableJobs')).toEqual([])
 
+    await knex('pages').where({ id: 42 }).update({ sourceRevision: 8, content: '# Start\n' })
     const ids = await enqueue()
     expect(ids).toHaveLength(4)
     expect(await knex('pageMutationOutbox').select('effectKind', 'desiredState', 'status').orderBy('effectKind')).toEqual([
@@ -159,6 +207,14 @@ describe('page mutation projection outbox', () => {
       { effectKind: 'render', desiredState: 'present', status: 'pending' },
       { effectKind: 'search', desiredState: 'present', status: 'pending' }
     ])
+    expect(await knex('pageLifecycleClocks').where({ pageId: 42 }).first()).toMatchObject({
+      bodyObservedSourceRevision: 8,
+      bodyAnchorKind: 'known-change'
+    })
+    expect(await knex('pageReviewRouting').where({ pageId: 42 }).first()).toMatchObject({ observedSourceRevision: 8 })
+    const jobs = await knex('durableJobs').where({ type: 'page-review-reminder' })
+    expect(jobs).toHaveLength(1)
+    expect(JSON.parse(jobs[0].payload)).toEqual({ mode: 'reconcile', pageId: 42 })
   })
 
   it('is idempotent only for byte-identical desired state', async () => {
@@ -166,7 +222,10 @@ describe('page mutation projection outbox', () => {
     const second = await enqueue()
     expect(second).toEqual(first)
     expect(await knex('pageMutationOutbox')).toHaveLength(4)
+    const clockBeforeConflict = await knex('pageLifecycleClocks').where({ pageId: 42 }).first()
+    await knex('pages').where({ id: 42 }).update({ content: '# Changed\n' })
     await expect(Promise.resolve(enqueue({ source: '# Changed\n' }))).rejects.toMatchObject({ code: 'OUTBOX_IDEMPOTENCY_CONFLICT' })
+    expect(await knex('pageLifecycleClocks').where({ pageId: 42 }).first()).toEqual(clockBeforeConflict)
   })
   it('coalesces same-revision render admission and rearms terminal work without changing immutable payload', async () => {
     await knex('pages').insert({
@@ -205,16 +264,11 @@ describe('page mutation projection outbox', () => {
   it('reports an older render intent as superseded after the page source revision changes', async () => {
     const [effectId] = await enqueue({ effects: ['render'] })
     if (!effectId) throw new Error('effect missing')
-    await knex('pages').insert({
-      id: 42,
+    await knex('pages').where({ id: 42 }).update({
       sourceRevision: 9,
       renderedSourceRevision: 8,
       content: '# Changed\n',
-      render: '<p>old render</p>',
-      localeCode: 'en',
-      path: 'docs/start',
-      visibility: 'public',
-      ownerId: null
+      render: '<p>old render</p>'
     })
     await knex.transaction(transaction => supersedeStalePageRenderEffects(transaction, { pageId: 42, sourceRevision: '9' }))
     const persisted = await knex('pageMutationOutbox').where({ id: effectId }).first('status', 'result')
@@ -652,7 +706,7 @@ describe('page mutation projection outbox', () => {
   it('retries thrown sink errors and rejects stale completion tokens', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-17T00:00:00.000Z'))
-    await enqueue({ effects: ['links'] })
+    await enqueue({ desiredState: 'absent', action: 'delete', source: undefined, location: undefined, previousLocation: location, effects: ['links'] })
     const [claim] = await claimPageMutationEffects(knex, { leaseOwner: 'worker', now: new Date() })
     if (!claim) throw new Error('claim missing')
     const sink = {

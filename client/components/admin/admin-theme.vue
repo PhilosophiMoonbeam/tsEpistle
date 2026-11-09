@@ -651,6 +651,7 @@
   </v-container>
 </template>
 <script setup lang="ts">
+import { helpers } from '../../helpers/index.ts'
 import { confirmDiscard, requestConfirmation } from "../common/confirm-dialog.ts";
 import {
   nextTick,
@@ -1185,10 +1186,7 @@ async function initialize() {
   }
 }
 const date = (value: string) =>
-  new Date(value).toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+  Number.isNaN(new Date(value).valueOf()) ? 'Invalid Date' : String(helpers.formatMoment(value, 'L LT'));
 const displayValue = (value: unknown) =>
   typeof value === "string"
     ? value || "(empty)"

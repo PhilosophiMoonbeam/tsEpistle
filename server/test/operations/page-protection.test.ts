@@ -4,6 +4,11 @@ import type { Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { up as upProtection } from '../../db/migrations/2.5.134.ts'
 import { enqueuePageMutationEffects, PageProjectionLifecycle } from '../../core/page-mutation-outbox.ts'
+import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { up as addDurableJobLeaseTokens } from '../../db/migrations/2.5.158.ts'
+import { up as createPageReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createPageLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
 
 let knex: Knex
 let page: Record<string, unknown>
@@ -48,6 +53,7 @@ beforeEach(async () => {
     table.dateTime('publishStartDate').nullable()
     table.dateTime('publishEndDate').nullable()
     table.text('content').notNullable()
+    table.string('contentType').notNullable()
     table.text('render').notNullable()
     table.text('extra').notNullable().defaultTo('{}')
   })
@@ -96,6 +102,12 @@ beforeEach(async () => {
     table.string('word').notNullable()
     table.primary(['pageId', 'word'])
   })
+  await knex.schema.createTable('groups', table => table.integer('id').primary())
+  await createDurableJobs(knex)
+  await addDurableJobLeaseTokens(knex)
+  await createPageReviewRouting(knex)
+  await createPageLifecycle(knex)
+  await createStoragePageImportOwners(knex)
   await knex('users').insert([{ id: 7 }, { id: 8 }, { id: 9 }])
   await knex('pages').insert({
     id: 42,
@@ -109,6 +121,7 @@ beforeEach(async () => {
     isPublished: true,
     isSearchable: true,
     content: '![Plan](/uploads/private-plan.png)',
+    contentType: 'markdown',
     render: '<img src="/uploads/private-plan.png">',
     extra: '{}'
   })
@@ -374,6 +387,7 @@ describe('password-protected pages', () => {
       isPublished: true,
       isSearchable: true,
       content: '![Plan](/uploads/private-plan.png)',
+      contentType: 'markdown',
       render: '<img src="/uploads/private-plan.png">',
       extra: '{}'
     })

@@ -1,6 +1,31 @@
-import { LINKS_GRID_ICONS, parseContentExtensionEnvelope, type ContentExtensionEnvelope } from '../../shared/content-extensions.ts'
+import { LINKS_GRID_ICONS, parseContentExtensionEnvelope, parseContentExtensionFence, serializeContentExtensionFence, type ContentExtensionEnvelope } from '../../shared/content-extensions.ts'
 import { escapeHtml } from './html.ts'
 import { sanitizeContentExtensionFragment } from './sanitize.ts'
+
+/** Source identities are valid only for the exact canonical body accepted by the renderer. */
+export const linksGridSourceTargets = (body: string): readonly { cardIndex: number; url: string; start: number; end: number }[] | null => {
+  try {
+    const envelope = parseContentExtensionFence(body)
+    if (envelope.key !== 'links-grid') return []
+    const canonical = serializeContentExtensionFence(envelope).split('\n')[1]
+    if (canonical === undefined || body !== `${canonical}\n`) return null
+    let offset = '{"key":"links-grid","version":1,"props":{"cards":['.length
+    return envelope.props.cards.map((card, cardIndex) => {
+      // The native serializer owns field ordering and escaping, including optional card fields.
+      const single = serializeContentExtensionFence({ ...envelope, props: { cards: [card] } }).split('\n')[1]
+      if (single === undefined) throw new Error('Canonical card source is unavailable.')
+      const prefix = '{"key":"links-grid","version":1,"props":{"cards":['
+      const cardSource = single.slice(prefix.length, -3)
+      const start = offset + `{"title":${JSON.stringify(card.title)},"url":`.length
+      const end = start + JSON.stringify(card.url).length
+      if (body.slice(start, end) !== JSON.stringify(card.url)) throw new Error('Canonical card source identity changed.')
+      offset += cardSource.length + 1
+      return { cardIndex, url: card.url, start, end }
+    })
+  } catch {
+    return null
+  }
+}
 
 export const renderLinksGridContentExtension = async (input: ContentExtensionEnvelope): Promise<string> => {
   const envelope = parseContentExtensionEnvelope(input)

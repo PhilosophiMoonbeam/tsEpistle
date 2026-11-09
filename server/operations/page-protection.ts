@@ -276,21 +276,29 @@ export const assertPageUnlocked = async (input: {
   }
   if (await pageRequiresUnlock(input)) throw new ApplicationError('Access denied', { status: 403, code: 'PAGE_LOCKED' })
 }
-export const protectedAssetRequiresUnlock = async (input: { requester: PagePrincipal; assetPath: string; sessionId: string; now?: Date }): Promise<boolean> => {
+export const protectedAssetRequiresUnlock = async (input: {
+  requester: PagePrincipal
+  assetPath: string
+  sessionId: string
+  now?: Date
+  transaction?: Knex.Transaction
+  readOnly?: boolean
+}): Promise<boolean> => {
   if (managesSystem(input.requester)) return false
-  const hasAssetIdentity =
-    typeof wiki.models.knex.schema?.hasColumn === 'function' && (await wiki.models.knex.schema.hasColumn('pageProtectedAssets', 'assetId'))
-  const linksQuery = wiki.models.knex('pageProtectedAssets').where({ assetPath: input.assetPath })
+  const knex = input.transaction ?? wiki.models.knex
+  const hasAssetIdentity = input.transaction !== undefined ||
+    (typeof knex.schema?.hasColumn === 'function' && (await knex.schema.hasColumn('pageProtectedAssets', 'assetId')))
+  const linksQuery = knex('pageProtectedAssets').where({ assetPath: input.assetPath })
   const links = (await (hasAssetIdentity ? linksQuery.select('pageId', 'assetId') : linksQuery.select('pageId'))) as Array<{
     pageId: number
     assetId?: number | null
   }>
   const pageIds = new Set<number>(links.map(link => Number(link.pageId)).filter(pageId => Number.isSafeInteger(pageId) && pageId > 0))
-  const asset = await wiki.models.knex<{ id: number }>('assets').where('hash', assetHelper.generateHash(input.assetPath)).first('id')
+  const asset = await knex<{ id: number }>('assets').where('hash', assetHelper.generateHash(input.assetPath)).first('id')
   const assetId = asset && Number.isSafeInteger(asset.id) && asset.id > 0 ? asset.id : null
   if (hasAssetIdentity && assetId !== null) {
-    await wiki.models.knex('pageProtectedAssets').where({ assetPath: input.assetPath }).whereNull('assetId').update({ assetId })
-    const identityLinks = await wiki.models.knex<{ pageId: number }>('pageProtectedAssets').where('assetId', assetId).select('pageId')
+    if (!input.readOnly) await knex('pageProtectedAssets').where({ assetPath: input.assetPath }).whereNull('assetId').update({ assetId })
+    const identityLinks = await knex<{ pageId: number }>('pageProtectedAssets').where('assetId', assetId).select('pageId')
     for (const link of identityLinks) {
       const pageId = Number(link.pageId)
       if (Number.isSafeInteger(pageId) && pageId > 0) pageIds.add(pageId)
@@ -298,8 +306,7 @@ export const protectedAssetRequiresUnlock = async (input: { requester: PagePrinc
   }
 
   if (assetId !== null) {
-    const protectedPages = await wiki.models
-      .knex<{ pageId: number; extra: unknown }>('pages')
+    const protectedPages = await knex<{ pageId: number; extra: unknown }>('pages')
       .join('pageAccessPasswords', 'pageAccessPasswords.pageId', 'pages.id')
       .select('pages.id as pageId', 'pages.extra')
     for (const page of protectedPages) {
@@ -326,10 +333,9 @@ export const protectedAssetRequiresUnlock = async (input: { requester: PagePrinc
 
   if (pageIds.size === 0) return false
   const now = input.now ?? new Date()
-  await wiki.models.knex('pageUnlockGrants').where('expiresAt', '<=', now).delete()
+  if (!input.readOnly) await knex('pageUnlockGrants').where('expiresAt', '<=', now).delete()
   if (!input.sessionId) return true
-  const grants = await wiki.models
-    .knex<{ pageId: number }>('pageUnlockGrants')
+  const grants = await knex<{ pageId: number }>('pageUnlockGrants')
     .join('pageAccessPasswords', 'pageAccessPasswords.pageId', 'pageUnlockGrants.pageId')
     .whereIn('pageUnlockGrants.pageId', [...pageIds])
     .where({
@@ -339,7 +345,7 @@ export const protectedAssetRequiresUnlock = async (input: { requester: PagePrinc
     .whereRaw('?? = ??', ['pageUnlockGrants.passwordVersion', 'pageAccessPasswords.version'])
     .where('pageUnlockGrants.expiresAt', '>', now)
     .select('pageUnlockGrants.pageId')
-  const pages = await Promise.all(grants.map(grant => wiki.models.pages.getPageFromDb(grant.pageId)))
-  const authority = await wiki.auth.loadPageRuleAuthority(input.requester)
+  const pages = await Promise.all(grants.map(grant => wiki.models.pages.getPageFromDb(grant.pageId, input.transaction)))
+  const authority = await wiki.auth.loadPageRuleAuthority(input.requester, input.transaction)
   return !pages.some(page => page && canReadPage(input.requester, page, authority))
 }

@@ -304,6 +304,7 @@
 </template>
 
 <script setup lang="ts">
+import { helpers } from '../../helpers/index.ts'
 import { confirmDiscard } from '../common/confirm-dialog.ts'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
@@ -424,7 +425,7 @@ function actor(value: DeveloperFlagEvent) {
 
 function date(value: string) {
   const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? dt('unknownTime') : parsed.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+  return Number.isNaN(parsed.getTime()) ? dt('unknownTime') : String(helpers.formatMoment(parsed, 'L LT'))
 }
 
 function resetDraft() {

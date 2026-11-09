@@ -55,6 +55,16 @@ block body
         .wiki-page-rendered-contents!= page.render
       template(v-slot:comments data-wiki-page-comments)
         div!= comments.main
+  noscript
+    main(lang=passiveLocale dir=passiveDirection)
+      nav(aria-label='Site')
+        a(href=passiveHome)= config.title
+      article
+        header
+          h1= page.title
+          if page.description
+            p= page.description
+        .contents!= passiveContent
   if injectCode.body
     != injectCode.body
   if commentsEnabled

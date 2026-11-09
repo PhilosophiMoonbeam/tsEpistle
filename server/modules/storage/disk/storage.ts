@@ -17,6 +17,7 @@ import { openStorageRoot, type StorageFileHandle, type StorageRootHandle, type S
 import { IMPORT_MAX_BYTES, IMPORT_MAX_ENTRIES, ImportBudget } from '../import-budget.ts'
 import { isStorageInternalPath, isStorageReservedPath } from '../internal-path.ts'
 import type { StorageLocalLocation } from '../../types.ts'
+import { storageImportLocationKey, storageImportSourceKey } from '../import-identity.ts'
 
 interface DiskStorageContext extends StorageContext<StorageConfig> {
   root: StorageRootHandle | null
@@ -381,11 +382,20 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> & {
     const fileName = pageFileName(page, true)
     await root.writeAtomic(fileName, serializePage(page))
   },
-  async updated(page) {
+  async updated(page, onWritten) {
     const root = requireRoot(this)
     wiki.logger.info(`(STORAGE/DISK) Updating file [${page.localeCode}] ${page.path}...`)
     const fileName = pageFileName(page, true)
-    await root.writeAtomic(fileName, serializePage(page))
+    const content = serializePage(page)
+    await root.writeAtomic(fileName, content)
+    if (onWritten) {
+      await onWritten({
+        sourceKey: storageImportSourceKey(root.sourceIdentity, 'DISK', this.config),
+        locationKey: storageImportLocationKey('DISK', this.config),
+        sourcePath: fileName,
+        sourceSha256: createHash('sha256').update(content, 'utf8').digest('hex')
+      })
+    }
   },
   async deleted(page) {
     const root = requireRoot(this)

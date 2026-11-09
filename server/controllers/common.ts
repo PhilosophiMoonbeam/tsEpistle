@@ -25,6 +25,7 @@ import pageOperations from '../operations/pages.ts'
 import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../modules/storage/page-document.ts'
 import { createAuthRateLimiter, setAuthRateLimitHeaders, type AuthRateLimiter } from '../helpers/auth-rate-limiter.ts'
 import { resolveAssetBrandingView } from '../helpers/asset-branding.ts'
+import { projectPassivePage } from '../helpers/passive-page.ts'
 
 import { normalizePageFeatures } from '../../shared/page-features.ts'
 
@@ -456,9 +457,24 @@ export default function createCommonController(wiki: CommonWiki): express.Router
     const readerExtra = page.extra ? { ...page.extra } : null
     if (readerExtra) delete readerExtra.branding
     const readerPage = { ...page, extra: readerExtra }
+    // The stored render has already passed the reader's page/password/publication boundary.
+    // Index expansion is request-owned and must never enter a shared reader cache.
+    protectedResponseHeaders(res)
+    const storedRender: unknown = Reflect.get(page, 'render')
+    const passiveContent = await projectPassivePage({
+      render: typeof storedRender === 'string' ? storedRender : '',
+      sourceRevision: page.sourceRevision,
+      locale: typeof req.user?.localeCode === 'string' ? req.user.localeCode : pageArgs.locale,
+      presentation: req.user,
+      listIndex: args => pageOperations.listIndex({ ...args, ...(req.user === undefined ? {} : { requester: req.user }) })
+    })
     res.set('X-Wiki-Page', '1')
     return res.render('page', {
       page: readerPage,
+      passiveContent,
+      passiveLocale: pageArgs.locale,
+      passiveDirection: i18n.dir(),
+      passiveHome: wiki.config.lang.namespacing ? `/${pageArgs.locale}/home` : '/home',
       sidebar,
       injectCode,
       comments: commentTmpl,

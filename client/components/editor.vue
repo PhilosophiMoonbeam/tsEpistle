@@ -155,6 +155,15 @@
           ) {{ $t('common:actions.done') }}
     v-main
       .editor-main-surface
+        section.editor-feedback-intent.pa-4(v-if='feedbackRequested && mode === `create`', aria-label='Explicit feedback board submission')
+          p(v-if='feedbackBoardName') Creating a full canonical proposal for {{ feedbackBoardName }}. Source, history, private access, publication and approval remain native.
+          p(v-else) Feedback submission is not yet admitted. No page will be created as an orphaned board submission.
+          p(v-if='feedbackIntentError', role='alert') {{ feedbackIntentError }}
+          label.d-flex.ga-2(v-if='feedbackIntent && feedbackIntentOwner === feedbackOwnerKey')
+            input(v-model='feedbackAcknowledged', type='checkbox', :disabled='isSaving')
+            span Explicitly attach this current document to the named board when I choose Create. Do not vote or subscribe me.
+          v-btn(variant='text', :disabled='isSaving || feedbackIntentLoading', :loading='feedbackIntentLoading', @click='loadFeedbackIntent') Recheck board and current document
+          v-btn(variant='text', :disabled='isSaving', @click='cancelFeedbackIntent') Deliberately create without board membership instead
         .editor-notices(v-if='bootstrapNotice || serverSaveDisabled || hasOfflineDraftNotice')
           v-alert.editor-bootstrap-notice.editor-notice(
             v-if='bootstrapNotice'
@@ -409,6 +418,8 @@ import { getErrorMessage } from '../helpers/root-ui-store'
 import { decodeBase64Json } from '../helpers/base64'
 import { getEditorComponentName } from '../helpers/editor-key.ts'
 import { normalizeAvailableEditors, type PageEditorKey } from '../../shared/page-editors.ts'
+import { FeedbackCreateAdmissionSchema, type FeedbackCreateAdmissionInput } from '../../shared/page-feedback.ts'
+import { governanceApi, captureGovernanceFetch } from '../helpers/page-governance-api.ts'
 import {
   OfflineEditorDraftCoordinator,
   createOfflineDraftIdentity,
@@ -591,6 +602,7 @@ const freezePageInput = (input: PageWriteInput): PageWriteInput => {
   if (input.okfMetadata !== undefined) Object.freeze(input.okfMetadata)
   if (input.pageFeatures !== undefined) Object.freeze(input.pageFeatures)
   if (input.branding !== undefined && input.branding !== null) Object.freeze(input.branding)
+  if (input.feedbackSubmission !== undefined) Object.freeze(input.feedbackSubmission)
   return Object.freeze(input) as PageWriteInput
 }
 
@@ -749,6 +761,14 @@ export default defineComponent({
   data() {
     return {
       imagePropertiesRequest: null as EditorImagePropertiesRequest | null,
+      feedbackRequested: false,
+      feedbackIntent: null as FeedbackCreateAdmissionInput | null,
+      feedbackIntentOwner: '',
+      feedbackIntentGeneration: 0,
+      feedbackBoardName: '',
+      feedbackAcknowledged: false,
+      feedbackIntentLoading: false,
+      feedbackIntentError: '',
       imagePropertiesGeneration: 0,
       imagePropertiesUnsubscribe: null as (() => void) | null,
       imagePropertiesAbortCleanup: null as (() => void) | null,
@@ -831,6 +851,11 @@ export default defineComponent({
     }
   },
   computed: {
+    feedbackOwnerKey(): string {
+      return JSON.stringify([wikiStore.user.id, wikiStore.user.authVersion, wikiStore.user.authenticated, wikiStore.offlineIdentityEpoch,
+        wikiStore.authRefreshPending, wikiStore.authRefreshSettled, wikiStore.authRefreshOutcome,
+        this.mode, wikiStore.page.id, wikiStore.page.locale, wikiStore.page.path, wikiStore.page.visibility, this.editorInstanceKey])
+    },
     currentEditor: {
       get(): string { return wikiStore.editor.editor },
       set(value: string) { wikiStore.editor.editor = value }
@@ -1069,6 +1094,18 @@ export default defineComponent({
     },
   },
   watch: {
+    feedbackOwnerKey: {
+      flush: 'sync',
+      handler() {
+        this.feedbackAcknowledged = false
+        this.feedbackIntentGeneration++
+        this.feedbackIntentLoading = false
+        this.feedbackIntent = null
+        this.feedbackIntentOwner = ''
+        this.feedbackBoardName = ''
+        this.feedbackIntentError = this.feedbackRequested ? 'Account or document changed. Recheck current board admission before creating anything.' : ''
+      }
+    },
     renderWaitOwnerKey: {
       flush: 'sync',
       handler() { this.cancelRenderWait() }
@@ -1177,6 +1214,8 @@ export default defineComponent({
     wikiStore.editor.mode = this.initMode || 'create'
 
     wikiStore.editor.content = this.initContent ? Base64.decode(this.initContent) : ''
+    this.feedbackRequested = this.mode === 'create' && (new URLSearchParams(window.location.search).has('feedbackBoard') || new URLSearchParams(window.location.search).has('feedbackBoardRevision'))
+    if (this.feedbackRequested) void this.loadFeedbackIntent()
     this.setCurrentSavedState()
     if (this.mode === 'create' && !this.initEditor) {
       const availableEditors = normalizeAvailableEditors(siteConfig.availableEditors)
@@ -1216,6 +1255,7 @@ export default defineComponent({
   },
 
   beforeUnmount() {
+    this.feedbackIntentGeneration++
     this.closeImageProperties()
     this.imagePropertiesReturnFocus = null
     this.imagePropertiesUnsubscribe?.()
@@ -1246,6 +1286,48 @@ export default defineComponent({
     removeEditorPageCss()
   },
   methods: {
+    async loadFeedbackIntent() {
+      if (!this.feedbackRequested || this.mode !== 'create' || this.isSaving) return
+      const request = ++this.feedbackIntentGeneration
+      const owner = this.feedbackOwnerKey
+      this.feedbackIntentLoading = true
+      this.feedbackAcknowledged = false
+      this.feedbackIntent = null
+      this.feedbackIntentError = ''
+      try {
+        if (!wikiStore.user.authenticated || !wikiStore.authRefreshSettled || wikiStore.authRefreshPending || wikiStore.authRefreshOutcome !== 'authenticated') {
+          throw new Error('A currently verified human account is required. Recheck after signing in; your source remains in this full editor.')
+        }
+        const params = new URLSearchParams(window.location.search)
+        if (params.getAll('feedbackBoard').length !== 1 || params.getAll('feedbackBoardRevision').length !== 1) throw new Error('Invalid bounded board submission intent.')
+        const intent = FeedbackCreateAdmissionSchema.parse({ boardId: params.get('feedbackBoard'), expectedBoardRevision: params.get('feedbackBoardRevision'), acknowledged: true })
+        const board = await governanceApi.boardConfig(intent.boardId)
+        if (request !== this.feedbackIntentGeneration || owner !== this.feedbackOwnerKey || !this.feedbackRequested) return
+        if (board.id !== intent.boardId || !board.enabled || !board.canSubmit || board.boardRevision !== intent.expectedBoardRevision) throw new Error('The board changed or submission authority is unavailable. Return to its current board to review a new submission; source is not created or discarded.')
+        this.feedbackBoardName = board.name
+        this.feedbackIntent = intent
+        this.feedbackIntentOwner = owner
+      } catch (cause) {
+        if (request === this.feedbackIntentGeneration && owner === this.feedbackOwnerKey) this.feedbackIntentError = getErrorMessage(cause) || 'Board submission could not be admitted.'
+      } finally {
+        if (request === this.feedbackIntentGeneration) this.feedbackIntentLoading = false
+      }
+    },
+    cancelFeedbackIntent() {
+      if (this.isSaving) return
+      this.feedbackRequested = false
+      this.feedbackIntentGeneration++
+      this.feedbackIntent = null
+      this.feedbackAcknowledged = false
+      this.feedbackIntentLoading = false
+      this.feedbackIntentOwner = ''
+      this.feedbackBoardName = ''
+      this.feedbackIntentError = ''
+      const url = new URL(window.location.href)
+      url.searchParams.delete('feedbackBoard')
+      url.searchParams.delete('feedbackBoardRevision')
+      window.history.replaceState(null, '', url)
+    },
     closeImageProperties() {
       this.imagePropertiesAbortCleanup?.()
       this.imagePropertiesAbortCleanup = null
@@ -2394,7 +2476,13 @@ export default defineComponent({
         }
         if (saveMode === 'create') {
           this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
-          const page = await createPage(window.fetch.bind(window), capture.pageInput)
+          if (capture.pageInput.feedbackSubmission && (!this.feedbackRequested || !this.feedbackAcknowledged || this.feedbackIntentOwner !== this.feedbackOwnerKey ||
+            capture.pageInput.feedbackSubmission.boardId !== this.feedbackIntent?.boardId ||
+            capture.pageInput.feedbackSubmission.expectedBoardRevision !== this.feedbackIntent?.expectedBoardRevision)) {
+            throw new Error('The board submission account or current document changed. Recheck its intent before creating anything.')
+          }
+          const createFetch = capture.pageInput.feedbackSubmission ? captureGovernanceFetch(window.fetch.bind(window)) : window.fetch.bind(window)
+          const page = await createPage(createFetch, capture.pageInput)
           this.assertCurrentActorSession(capturedAuthenticated, capturedAccountId, capturedOfflineIdentityEpoch, capturedLifecycleGeneration)
           authoritativePageId = page.id
           authoritativeUpdatedAt = page.updatedAt
@@ -2895,6 +2983,9 @@ export default defineComponent({
         this.mode === 'create'
           ? (brandingAssignment === null ? {} : { branding: brandingAssignment })
           : (brandingChanged ? { branding: brandingAssignment } : {})
+      if (this.mode === 'create' && this.feedbackRequested && (!this.feedbackIntent || this.feedbackIntentOwner !== this.feedbackOwnerKey || !this.feedbackAcknowledged)) {
+        throw new Error('Board submission needs a current board/document review and explicit attachment consent. Recheck it, or deliberately choose creation without board membership.')
+      }
       const pageInput: PageWriteInput = {
         content,
         description: wikiStore.page.description,
@@ -2913,6 +3004,7 @@ export default defineComponent({
         ...(this.changeReason ? { changeReason: this.changeReason } : {}),
         pageFeatures: normalizePageFeatures(wikiStore.page.pageFeatures),
         ...brandingInput,
+        ...(this.mode === 'create' && this.feedbackRequested && this.feedbackIntent ? { feedbackSubmission: { ...this.feedbackIntent } } : {}),
         ...(okfMetadata === undefined ? {} : { okfMetadata: _.cloneDeep(okfMetadata) })
       }
       return freezePageInput(pageInput)

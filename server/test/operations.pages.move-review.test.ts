@@ -1,11 +1,17 @@
 /// <reference types="bun" />
 
 import { EventEmitter } from 'node:events'
+import { serializeContentExtensionFence } from '../../shared/content-extensions.ts'
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from './bun-test.mts'
 import { evaluateGroupAccess, type PageRuleAuthority } from '../helpers/group-access.ts'
 import { verifyPageMoveReviewToken } from '../helpers/page-move-review-token.ts'
 import { getPostgresTestConnection } from './postgres-test-connection.mts'
+import { up as createDurableJobs } from '../db/migrations/2.5.130.ts'
+import { up as addLeaseToken } from '../db/migrations/2.5.158.ts'
+import { up as createReviewRouting } from '../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createLifecycle } from '../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createStoragePageImportOwners } from '../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
 
 const connection = getPostgresTestConnection('_move_review_test', import.meta.path)
 const suite = connection ? describe : describe.skip
@@ -100,9 +106,14 @@ suite('PostgreSQL reviewed page move authorization', () => {
 
   beforeAll(async () => {
     db = knexModule({ client: 'pg', connection, pool: { min: 0, max: 8 } })
-    await db.raw('DROP TABLE IF EXISTS "testPageHistory", "outboxEvents", locales, "pageCollaborationRooms", "pageUnlockGrants", "pageAccessPasswords", "pageApprovalRequests", "pageMutationOutbox", "pageLinks", "pageTags", tags, pages, assets, "assetFolders", storage, users CASCADE')
+    await db.raw('DROP TABLE IF EXISTS "contentExtensions", "testPageHistory", "outboxEvents", locales, "pageCollaborationRooms", "pageUnlockGrants", "pageAccessPasswords", "pageApprovalRequests", "pageMutationOutbox", "pageLinks", "pageTags", tags, pages, assets, "assetFolders", storage, users CASCADE')
     await db.raw(`
       CREATE TABLE users (id integer PRIMARY KEY, name text NOT NULL, email text NOT NULL);
+      CREATE TABLE "contentExtensions" (
+        key varchar(64) PRIMARY KEY, "isEnabled" boolean NOT NULL DEFAULT false,
+        version integer NOT NULL, "updatedAt" timestamp NOT NULL,
+        "updatedBy" integer REFERENCES users(id) ON DELETE SET NULL
+      );
       CREATE TABLE storage (
         key varchar(255) PRIMARY KEY, "isEnabled" boolean NOT NULL DEFAULT false,
         mode text NOT NULL DEFAULT 'push' CHECK (mode IN ('sync', 'push', 'pull')),
@@ -162,6 +173,12 @@ suite('PostgreSQL reviewed page move authorization', () => {
       CREATE TRIGGER test_pages_source_revision BEFORE UPDATE ON pages
         FOR EACH ROW EXECUTE FUNCTION test_increment_page_source_revision();
     `)
+    await db.schema.createTable('groups', table => table.integer('id').primary())
+    await createDurableJobs(db)
+    await addLeaseToken(db)
+    await createReviewRouting(db)
+    await createLifecycle(db)
+    await createStoragePageImportOwners(db)
     await db('users').insert({ id: 7, name: 'Reviewer', email: 'reviewer@example.test' })
     await db('locales').insert({ code: 'en' })
     const wiki = {
@@ -200,19 +217,21 @@ suite('PostgreSQL reviewed page move authorization', () => {
     operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default as MoveOperations
   })
   beforeEach(async () => {
-    for (const table of ['testPageHistory', 'outboxEvents', 'pageCollaborationRooms', 'pageUnlockGrants', 'pageAccessPasswords', 'pageApprovalRequests', 'pageMutationOutbox', 'pageLinks', 'pageTags', 'pages']) {
+    for (const table of ['storagePageImportOwners', 'durableJobs', 'testPageHistory', 'outboxEvents', 'pageCollaborationRooms', 'pageUnlockGrants', 'pageAccessPasswords', 'pageApprovalRequests', 'pageMutationOutbox', 'pageLinks', 'pageTags', 'pages']) {
       await db(table).delete()
     }
     readable.clear()
     writable.clear()
     for (const path of ['docs/old', 'docs/new', 'docs/editable', 'docs/read-only', 'docs/draft']) readable.add(path)
     for (const path of ['docs/old', 'docs/new', 'docs/editable']) writable.add(path)
+    await db('contentExtensions').delete()
+    await db('contentExtensions').insert({ key: 'links-grid', isEnabled: true, version: 1, updatedAt: new Date(), updatedBy: null })
     await seedPage(1, 'docs/old', { content: '# Moved page' })
   })
   afterAll(async () => {
     globalThis.WIKI = originalWiki as never
     if (db) {
-      await db.raw('DROP TABLE IF EXISTS "testPageHistory", "outboxEvents", locales, "pageCollaborationRooms", "pageUnlockGrants", "pageAccessPasswords", "pageApprovalRequests", "pageMutationOutbox", "pageLinks", "pageTags", tags, pages, assets, "assetFolders", storage, users CASCADE')
+      await db.raw('DROP TABLE IF EXISTS "contentExtensions", "testPageHistory", "outboxEvents", locales, "pageCollaborationRooms", "pageUnlockGrants", "pageAccessPasswords", "pageApprovalRequests", "pageMutationOutbox", "pageLinks", "pageTags", tags, pages, assets, "assetFolders", storage, users CASCADE')
       await db.raw('DROP FUNCTION IF EXISTS test_increment_page_source_revision()')
       await db.destroy()
     }
@@ -307,6 +326,82 @@ suite('PostgreSQL reviewed page move authorization', () => {
         { type: 'page.updated', aggregateId: '2' }
       ])
   })
+
+  const gridSource = `Before\n\n${serializeContentExtensionFence({
+    key: 'links-grid',
+    version: 1,
+    props: {
+      cards: [
+        { title: 'Target', url: '/docs/old', description: 'Leave /docs/old alone' },
+        { title: 'Unselected card', url: '/fr/docs/old' }
+      ]
+    }
+  })}`
+
+  it('durably repairs selected grid source only and retains publication revision receipts', async () => {
+    readable.add('docs/other')
+    writable.add('docs/other')
+    const selectedSource = `${gridSource}\n[Suffix](/docs/old?tab=1#part)\n`
+    await seedPage(2, 'docs/editable', { content: selectedSource })
+    await seedPage(3, 'docs/other', { content: gridSource })
+    const selected = await review([2])
+    expect(selected.items.find(item => item.id === 2)).toMatchObject({
+      eligible: true,
+      changes: [
+        { before: '"/docs/old"', after: '"/docs/new"' },
+        { before: '/docs/old?tab=1#part', after: '/docs/new?tab=1#part' }
+      ]
+    })
+    const receipt = await PageModel.movePage({
+      id: 1, user: reviewer as Parameters<typeof PageModel.movePage>[0]['user'],
+      destinationLocale: 'en', destinationPath: 'docs/new', expectedSourceRevision: '1',
+      updateLinks: true, reviewToken: selected.reviewToken, sessionId: 'reviewer-session', skipStorage: true
+    })
+    expect(receipt).toMatchObject({ updated: [{ id: 2, sourceRevision: '2' }], projections: 'pending' })
+    expect(await db('pages').where({ id: 2 }).first('content', 'sourceRevision')).toEqual({
+      content: selectedSource.replace('"/docs/old"', '"/docs/new"').replace('[Suffix](/docs/old?tab=1#part)', '[Suffix](/docs/new?tab=1#part)'), sourceRevision: 2
+    })
+    expect(await db('pages').where({ id: 3 }).first('content', 'sourceRevision')).toEqual({ content: gridSource, sourceRevision: 1 })
+    expect(await db('pageMutationOutbox').where({ pageId: 2, effectKind: 'links', sourceRevision: 2 }).first('status')).toEqual({ status: 'pending' })
+    expect(await db('testPageHistory').where({ pageId: 2 }).first('content')).toEqual({ content: selectedSource })
+  })
+
+  for (const changed of ['source', 'authority', 'enabled'] as const) {
+    it(`refuses reviewed grid repair after ${changed} changes without partial durable writes`, async () => {
+      await seedPage(2, 'docs/editable', { content: gridSource })
+      const selected = await review([2])
+      expect(typeof selected.reviewToken).toBe('string')
+      if (changed === 'source') await db('pages').where({ id: 2 }).update({ content: `${gridSource}\nChanged` })
+      if (changed === 'authority') writable.delete('docs/editable')
+      if (changed === 'enabled') await db('contentExtensions').where({ key: 'links-grid' }).update({ isEnabled: false })
+      await expect(PageModel.movePage({
+        id: 1, user: reviewer as Parameters<typeof PageModel.movePage>[0]['user'],
+        destinationLocale: 'en', destinationPath: 'docs/new', expectedSourceRevision: '1',
+        updateLinks: true, reviewToken: selected.reviewToken, sessionId: 'reviewer-session', skipStorage: true
+      })).rejects.toMatchObject({ status: 409, name: 'MOVE_REVIEW_STALE' })
+      expect(await db('pages').where({ id: 1 }).first('path', 'sourceRevision')).toEqual({ path: 'docs/old', sourceRevision: 1 })
+      expect(await db('testPageHistory').select('pageId')).toEqual([])
+      expect(await db('outboxEvents').select('id')).toEqual([])
+    })
+  }
+
+  for (const unavailable of ['malformed', 'disabled', 'query', 'fragment'] as const) {
+    it(`does not offer automatic repair for ${unavailable} grid source`, async () => {
+      const content = unavailable === 'malformed'
+        ? gridSource.replace('"version":1', '"version":2')
+        : unavailable === 'query'
+          ? gridSource.replace('"/docs/old"', '"/docs/old?tab=1"')
+          : unavailable === 'fragment'
+            ? gridSource.replace('"/docs/old"', '"/docs/old#part"')
+            : gridSource
+      await seedPage(2, 'docs/editable', { content })
+      if (unavailable === 'disabled') await db('contentExtensions').where({ key: 'links-grid' }).update({ isEnabled: false })
+      const result = await review()
+      expect(result.items.find(item => item.id === 2)).toMatchObject({ eligible: false, changes: [] })
+      await expect(review([2])).rejects.toMatchObject({ status: 409, name: 'MOVE_REVIEW_INELIGIBLE' })
+      expect(await db('pages').where({ id: 2 }).first('sourceRevision')).toEqual({ sourceRevision: 1 })
+    })
+  }
 
   it('rolls back the target move if a selected referrer loses its current index receipt', async () => {
     await db('pages').where({ id: 1 }).update({ content: '[Self](/docs/old)' })

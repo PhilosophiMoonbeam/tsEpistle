@@ -18,6 +18,7 @@
   </v-dialog>
 </template>
 <script lang="ts">
+import { helpers } from '../../helpers/index.ts'
 import { defineComponent, type PropType } from 'vue'
 import { applyPublication, inspectPublication, publicationState, PUBLICATION_STATE_KEYS, type PublicationReview } from '../../helpers/admin-pages'
 import type { PageListRow } from '../../helpers/pages-api'
@@ -32,7 +33,7 @@ export default defineComponent({
   },
   methods: {
     state(page: Parameters<typeof publicationState>[0]): string { return this.$t(`admin:pages.publicationStates.${PUBLICATION_STATE_KEYS[publicationState(page)]}`) },
-    date(value: string | null | undefined): string { return value === undefined || value === null || value === '' ? this.$t('admin:pagesPublication.noBoundary') : new Date(value).toLocaleString() },
+    date(value: string | null | undefined): string { return value === undefined || value === null || value === '' ? this.$t('admin:pagesPublication.noBoundary') : Number.isNaN(new Date(value).valueOf()) ? 'Invalid Date' : String(helpers.formatMoment(value, 'L LT')) },
     protect(event: BeforeUnloadEvent) { if (this.busy) { event.preventDefault(); event.returnValue = '' } },
     async inspect(rows: PublicationReview[]) {
       this.busy = true; this.inspecting = true

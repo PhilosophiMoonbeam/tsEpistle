@@ -26,7 +26,7 @@ const source = serializeContentExtensionFence({
         icon: 'page',
         tags: ['<tag>', 'A & B']
       },
-      { title: 'Local guide', url: '/en/guide' }
+      { title: 'Local guide', url: '/en/guide?mode=full&lang=en#section' }
     ]
   }
 })
@@ -69,7 +69,7 @@ describe('links-grid installation and native Markdown host', () => {
     expect(links[0]?.querySelector('.content-extension-links-grid__title')?.textContent).toBe('A < B & C')
     expect(links[0]?.querySelector('.content-extension-links-grid__description')?.textContent).toBe('<script>alert(1)</script>')
     expect([...document.querySelectorAll('.content-extension-links-grid__tag')].map(tag => tag.textContent)).toEqual(['<tag>', 'A & B'])
-    expect(links[1]?.getAttribute('href')).toBe('/en/guide')
+    expect(links[1]?.getAttribute('href')).toBe('/en/guide?mode=full&lang=en#section')
     expect(document.querySelector('img.content-extension-links-grid__image')?.getAttribute('src')).toBe('/images/card.webp')
     expect(document.querySelector('img.content-extension-links-grid__icon')?.getAttribute('src')).toBe('/_assets/svg/icon-browse-page.svg')
     expect(document.querySelector('script, svg, iframe, style, [onclick], [onerror], [style]')).toBeNull()

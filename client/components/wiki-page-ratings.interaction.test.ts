@@ -116,7 +116,12 @@ const settle = async () => {
 const mount = async (transport: (url: string, init?: RequestInit) => Promise<Response>) => {
   Object.defineProperty(browserWindow, 'siteConfig', { configurable: true, writable: true, value: siteConfig })
   // Localize presentation only; voting, draft state, Markdown and transports remain real.
-  const translation = vi.spyOn(i18next, 't').mockImplementation(translateEnglish as typeof i18next.t)
+  const translation = vi.spyOn(i18next, 't').mockImplementation(((key: string, options?: Record<string, unknown>) => {
+    try { return translateEnglish(key, options) } catch (cause) {
+      if (typeof options?.defaultValue === 'string') return options.defaultValue
+      throw cause
+    }
+  }) as typeof i18next.t)
   cleanups.push(() => translation.mockRestore())
   Object.assign(wikiStore.user, { id: 7, authenticated: true, authVersion: 3, email: 'reader@example.test' })
   Object.assign(wikiStore, { authRefreshSettled: true, authRefreshOutcome: 'authenticated', authRefreshPending: false })
@@ -152,6 +157,54 @@ const voteDown = (host: HTMLElement): HTMLButtonElement => {
   if (!button) throw new Error('Negative rating action is unavailable')
   return button
 }
+
+describe('settled guest ratings admission and return', () => {
+  it('offers a named keyboard-focusable sign-in action only for settled anonymous identity and retires detached actions', async () => {
+    const view = await mount(async () => json(thumbs()))
+    Object.assign(wikiStore.user, { authenticated: false, id: 2 })
+    Object.assign(wikiStore, { authRefreshSettled: true, authRefreshPending: false, authRefreshOutcome: 'anonymous' })
+    await settle()
+    const button = view.host.querySelector<HTMLButtonElement>('button')!
+    expect(button.textContent).toContain('Sign in to rate')
+    button.focus()
+    expect(document.activeElement).toBe(button)
+    Object.assign(wikiStore, { authRefreshPending: true, authRefreshSettled: false })
+    await settle()
+    expect(view.host.querySelector('button')).toBeNull()
+    button.click()
+    expect(writes(view.fetch)).toHaveLength(0)
+    Object.assign(wikiStore, { authRefreshPending: false, authRefreshSettled: true, authRefreshOutcome: 'unavailable' })
+    await settle()
+    expect(view.host.querySelector('button')).toBeNull()
+    Object.assign(wikiStore, { authRefreshOutcome: 'anonymous' })
+    view.props.pageId = 10
+    await settle()
+    expect(view.host.querySelector('button')).toBeNull()
+  })
+
+  it('reauthenticates the returned view with a fresh read, restores heading focus and never replays a vote', async () => {
+    const target = browserWindow.location.pathname + browserWindow.location.search + browserWindow.location.hash
+    browserWindow.sessionStorage.setItem('ratingLoginReturn', target)
+    cleanups.push(() => browserWindow.sessionStorage.removeItem('ratingLoginReturn'))
+    const view = await mount(async () => json(thumbs()))
+    expect(view.fetch).toHaveBeenCalled()
+    expect(writes(view.fetch)).toHaveLength(0)
+    expect(document.activeElement).toBe(view.host.querySelector('h2'))
+    expect(browserWindow.sessionStorage.getItem('ratingLoginReturn')).toBeNull()
+    expect(view.host.querySelector('button[aria-pressed="true"]')).toBeNull()
+  })
+
+  for (const status of [401, 403, 404, 409]) {
+    it(`does not restore a cached vote or write when return authorization responds ${status}`, async () => {
+      const view = await mount(async () => new Response(JSON.stringify({ message: 'Destination unavailable' }), {
+        status, headers: { 'Content-Type': 'application/json' }
+      }))
+      expect(view.host.querySelector('.wiki-page-ratings__choice')).toBeNull()
+      expect(view.host.querySelector('[role="alert"]')).not.toBeNull()
+      expect(writes(view.fetch)).toHaveLength(0)
+    })
+  }
+})
 
 describe('rating-only and optional contextual discussion interactions', () => {
   it('saves a negative vote only; preparing, editing and previewing do not post or subscribe', async () => {

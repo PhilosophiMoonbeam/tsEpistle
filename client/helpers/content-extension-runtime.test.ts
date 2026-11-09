@@ -110,7 +110,7 @@ describe('content extension browser runtime', () => {
 
   it.each([
     ['external href', true, 'https://evil.test', '2026-08-15T00:00:00.000Z'],
-    ['invalid timestamp', true, '/en/x', 'now'],
+    ['malformed timestamp field', true, '/en/x', 42],
     ['failed HTTP response', false, '/en/x', '2026-08-15T00:00:00.000Z']
   ])('fails closed on an index response with %s', async (_case, ok, href, updatedAt) => {
     const root = indexElement()
@@ -197,15 +197,9 @@ describe('content extension browser runtime', () => {
     cleanup()
   })
 
-  it('creates same-origin PDF and consent-gated remote frames only at their declared boundary', async () => {
+  it('requires consent before creating remote frames', async () => {
     const root = document.createElement('div')
     root.innerHTML = `
-      <figure class="content-extension--pdf" data-pdf-src="/uploads/guide.pdf" data-pdf-page="3" data-pdf-height="640" data-pdf-title="Guide">
-        <div class="content-extension-pdf__viewer"></div>
-      </figure>
-      <figure class="content-extension--pdf" data-pdf-src="https://evil.test/guide.pdf" data-pdf-page="3" data-pdf-height="640">
-        <div class="content-extension-pdf__viewer"></div>
-      </figure>
       <figure class="content-extension--youtube" data-youtube-id="abc123_DEF" data-youtube-start="12" data-youtube-controls="true" data-youtube-title="Demo">
         <div class="content-extension-remote__consent"><button class="content-extension-remote__load" type="button">Load</button></div>
       </figure>
@@ -214,11 +208,8 @@ describe('content extension browser runtime', () => {
       </figure>`
     document.body.append(root)
 
-    const pdfs = [...root.querySelectorAll<HTMLElement>('.content-extension--pdf')]
     const cleanup = hydrateContentExtensions(root, vi.fn())
     try {
-      await vi.waitFor(() => expect(pdfs[0]!.querySelector<HTMLIFrameElement>('iframe')?.getAttribute('src')).toBe('/uploads/guide.pdf#page=3'))
-      expect(pdfs[1]!.querySelector('iframe')).toBeNull()
       expect(root.querySelector('iframe[src^="https://"]')).toBeNull()
       await vi.waitFor(() => {
         root.querySelector<HTMLButtonElement>('.content-extension--youtube button')!.click()

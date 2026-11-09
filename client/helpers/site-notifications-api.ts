@@ -2,13 +2,14 @@ import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards.ts'
 import type {
   NotificationPreferencesPatch,
+  GovernedNotificationReceiptList,
   NotificationPreferencesResponse,
   PageApprovalInbox,
   PageApprovalInboxItem,
   PageWatchNotification,
   PageWatchNotificationList
 } from '../../shared/site-notifications.ts'
-import { NOTIFICATION_CATEGORIES } from '../../shared/site-notifications.ts'
+import { NOTIFICATION_CATEGORIES, NOTIFICATION_CEILING_CATEGORIES, NOTIFICATION_CEILING_MODES } from '../../shared/site-notifications.ts'
 import type { MyDiscussionsPage } from '../../shared/discussion-annotations.ts'
 import { pageHref } from './admin-pages.ts'
 
@@ -42,13 +43,14 @@ const requestJson = async <T>(
   valid: (value: unknown) => value is T,
   fallback: string,
   signal?: AbortSignal,
-  body?: NotificationPreferencesPatch
+  body?: NotificationPreferencesPatch,
+  stopAllEmail = false
 ): Promise<T> => {
   const response = await sameOriginJsonFetch(window.fetch.bind(window), path, {
     credentials: 'same-origin',
     cache: 'no-store',
     headers: { ...notificationHeaders(ownerId), ...(body ? { 'Content-Type': 'application/json' } : {}) },
-    ...(body ? { method: 'PATCH', body: JSON.stringify({ preferences: body }) } : {}),
+    ...(body ? { method: 'PATCH', body: JSON.stringify({ preferences: body, ...(stopAllEmail ? { stopAllEmail: true } : {}) }) } : {}),
     ...(signal ? { signal } : {})
   })
   let payload: unknown
@@ -74,6 +76,9 @@ const isPageWatchNotification = (value: unknown): value is PageWatchNotification
   Number.isSafeInteger(value.pageId) &&
   typeof value.eventType === 'string' &&
   (value.category === 'pageWatch' || NOTIFICATION_CATEGORIES.some(category => category === value.category)) &&
+  (value.outcomes === undefined || (value.category === 'pageLifecycle' && Array.isArray(value.outcomes) && value.outcomes.every(outcome =>
+    isRecord(outcome) && ['add-tags', 'set-notice', 'propose-move'].includes(String(outcome.kind)) &&
+    ['applied', 'skipped', 'proposed', 'fulfilled', 'blocked', 'failed', 'suspended', 'cancelled'].includes(String(outcome.state))))) &&
   (value.commentId === null || (Number.isSafeInteger(value.commentId) && Number(value.commentId) > 0)) &&
   typeof value.actorName === 'string' &&
   typeof value.title === 'string' &&
@@ -165,6 +170,8 @@ export const notificationIdentityInvalidated = (error: unknown): boolean =>
 const isPreferencesResponse = (value: unknown): value is NotificationPreferencesResponse => {
   if (!isRecord(value) || !isOwnerId(value.ownerId) || !isRecord(value.preferences)) return false
   const preferences = value.preferences
+  if (!isRecord(value.ceilings) || !NOTIFICATION_CEILING_CATEGORIES.every(category =>
+    NOTIFICATION_CEILING_MODES.some(mode => mode === (value.ceilings as Record<string, unknown>)[category]))) return false
   return NOTIFICATION_CATEGORIES.every(category => {
     const channels = preferences[category]
     return isRecord(channels) && typeof channels.inApp === 'boolean' && typeof channels.email === 'boolean'
@@ -177,9 +184,10 @@ export const fetchNotificationPreferences = (ownerId: number, signal?: AbortSign
 export const updateNotificationPreferences = (
   ownerId: number,
   preferences: NotificationPreferencesPatch,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  stopAllEmail = false
 ): Promise<NotificationPreferencesResponse> =>
-  requestJson('/_api/pages/notifications/preferences', ownerId, isPreferencesResponse, 'Notification preferences could not be saved.', signal, preferences)
+  requestJson('/_api/pages/notifications/preferences', ownerId, isPreferencesResponse, 'Notification preferences could not be saved.', signal, preferences, stopAllEmail)
 
 const isMyDiscussionsPage = (value: unknown): value is MyDiscussionsPage & { ownerId: number } => {
   if (!isRecord(value) || !isOwnerId(value.ownerId) || !Array.isArray(value.items)) return false
@@ -215,4 +223,27 @@ export const fetchMyDiscussions = (ownerId: number, cursor?: string | null, sign
 export const notificationPageHref = (item: Pick<PageWatchNotification, 'visibility' | 'localeCode' | 'path'> & { commentId?: number | null }): string => {
   const path = pageHref({ visibility: item.visibility, locale: item.localeCode, path: item.path })
   return item.commentId ? `${path}#comment-post-id-${item.commentId}` : path
+}
+
+const isGovernedReceiptList = (value: unknown): value is GovernedNotificationReceiptList =>
+  isRecord(value) && isOwnerId(value.ownerId) && Array.isArray(value.items) && value.items.length <= 50 && value.items.every(item =>
+    isRecord(item) && typeof item.id === 'string' && Number.isSafeInteger(item.pageId) &&
+    (item.category === 'feedbackStatus' || item.category === 'pageLifecycle') && (item.channel === 'email' || item.channel === 'in-app') &&
+    ['pending', 'sending', 'delivered', 'sent', 'suppressed', 'unknown', 'failed'].includes(String(item.status)) &&
+    Number.isSafeInteger(item.attempt) && Number(item.attempt) >= 0 && isTimestamp(item.updatedAt) && typeof item.canResend === 'boolean' &&
+    typeof item.title === 'string' && typeof item.path === 'string' && typeof item.localeCode === 'string' && isVisibility(item.visibility))
+
+export const fetchGovernedNotificationReceipts = (ownerId: number, signal?: AbortSignal): Promise<GovernedNotificationReceiptList> =>
+  requestJson('/_api/governed-notifications', ownerId, isGovernedReceiptList, 'Notification delivery outcomes could not be loaded.', signal)
+
+export const resendGovernedNotification = async (ownerId: number, id: string, signal?: AbortSignal): Promise<void> => {
+  const response = await sameOriginJsonFetch(window.fetch.bind(window), `/_api/governed-notifications/${encodeURIComponent(id)}/resend`, {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    headers: { ...notificationHeaders(ownerId), 'Content-Type': 'application/json', 'X-Wiki-Csrf': siteConfig.agentCsrfToken },
+    body: JSON.stringify({ acknowledged: true }), ...(signal ? { signal } : {})
+  })
+  const payload: unknown = await response.json()
+  if (!response.ok) throw Object.assign(apiError(payload, 'Notification resend failed.'), { status: response.status })
+  if (!isRecord(payload) || payload.ownerId !== ownerId) throw ownerMismatch(ownerId, isRecord(payload) ? payload.ownerId : undefined)
+  if (payload.id !== id || payload.status !== 'pending') throw new Error('Invalid notification resend receipt.')
 }

@@ -10,6 +10,9 @@ import type PageModel from '../../models/pages.ts'
 import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
 import { up as addLeaseToken } from '../../db/migrations/2.5.158.ts'
 import { up as createAssetRelocation } from '../../db/migrations/tsepistle-000037-asset-relocation.ts'
+import { up as createReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
 
 const localeRelationMovePatch = vi.fn(async (_transaction: Knex.Transaction, _page: { id: number }, _locale: string) => ({}))
 const writeOutboxEvent = vi.fn(async (_knex: unknown, _event: { type: string; payload: Record<string, unknown> }) => undefined)
@@ -228,6 +231,11 @@ const installSchema = async () => {
     table.integer('pageId').notNullable()
     table.integer('tagId').notNullable()
   })
+  await db.schema.createTable('users', table => { table.integer('id').primary() })
+  await db.schema.createTable('groups', table => { table.integer('id').primary() })
+  await createReviewRouting(db)
+  await createLifecycle(db)
+  await createStoragePageImportOwners(db)
 }
 
 beforeEach(async () => {

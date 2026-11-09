@@ -1497,6 +1497,279 @@ describe('asset operations', () => {
     })).rejects.toMatchObject({ name: 'ASSET_IMAGE_INVALID' })
   })
 
+  it('applies ordered geometry in post-prior-op pixels and overwrites opaque RGBA without source metadata', async () => {
+    const { transformAssetImage } = await vi.importFresh('../helpers/asset-image-transform.ts', import.meta.url)
+    const pixels = Buffer.from([
+      255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255,
+      255, 255, 255, 255, 255, 0, 255, 0, 255, 255, 0, 255
+    ])
+    const source = await sharp(pixels, { raw: { width: 3, height: 2, channels: 4 } }).png().withMetadata().toBuffer()
+    const program = [
+      { type: 'crop', left: 1, top: 0, width: 2, height: 2 },
+      { type: 'rotate', turns: 1 },
+      { type: 'mirror', axis: 'horizontal' },
+      { type: 'fill', left: 0, top: 1, width: 1, height: 1, color: '#102030' },
+      { type: 'fill', left: 1, top: 0, width: 1, height: 1, color: '#405060' }
+    ]
+    for (const format of ['png', 'webp']) {
+      const result = await transformAssetImage(source, {
+        width: 2, height: 2, aspectPolicy: 'stretch', format, quality: 80, animationPolicy: 'preserve', operations: program
+      })
+      expect(result).toMatchObject({ width: 2, height: 2, editWidth: 2, editHeight: 2, frames: 1 })
+      const decoded = await sharp(result.data).ensureAlpha().raw().toBuffer()
+      expect([...decoded.subarray(0, 4)]).toEqual([0, 255, 0, 255])
+      expect([...decoded.subarray(4, 8)]).toEqual([64, 80, 96, 255])
+      expect([...decoded.subarray(8, 12)]).toEqual([16, 32, 48, 255])
+      expect([...decoded.subarray(12, 16)]).toEqual([255, 255, 0, 255])
+      const metadata = await sharp(result.data).metadata()
+      for (const field of ['exif', 'xmp', 'iptc', 'icc', 'orientation']) expect(metadata[field]).toBeUndefined()
+    }
+  })
+
+  it('uses EXIF-oriented crop coordinates and validates every operation boundary before editing', async () => {
+    const { transformAssetImage } = await vi.importFresh('../helpers/asset-image-transform.ts', import.meta.url)
+    const source = await sharp({ create: { width: 4, height: 2, channels: 4, background: 'red' } }).png().withMetadata({ orientation: 6 }).toBuffer()
+    const options = { width: 2, height: 2, aspectPolicy: 'stretch', format: 'png', quality: 80, animationPolicy: 'preserve' }
+    const valid = await transformAssetImage(source, { ...options, operations: [{ type: 'crop', left: 0, top: 2, width: 2, height: 2 }] })
+    expect(valid).toMatchObject({ editWidth: 2, editHeight: 2, width: 2, height: 2 })
+    for (const operations of [
+      null, {}, Array.from({ length: 17 }, () => ({ type: 'rotate', turns: 1 })),
+      [{ type: 'crop', left: 0, top: 0, width: 0, height: 1 }],
+      [{ type: 'crop', left: -1, top: 0, width: 1, height: 1 }],
+      [{ type: 'crop', left: 0, top: 0, width: 3, height: 1 }],
+      [{ type: 'crop', left: NaN, top: 0, width: 1, height: 1 }],
+      [{ type: 'crop', left: 0, top: Infinity, width: 1, height: 1 }],
+      [{ type: 'rotate', turns: 4 }], [{ type: 'mirror', axis: 'diagonal' }],
+      [{ type: 'fill', left: 0, top: 0, width: 1, height: 1, color: '#00000000' }],
+      [{ type: 'fill', left: 0, top: 0, width: 1, height: 1, color: '#000000', opacity: 0.5 }],
+      [{ type: 'crop', left: 0, top: 0, width: 1, height: 1 }, { type: 'fill', left: 1, top: 0, width: 1, height: 1, color: '#000000' }]
+    ]) {
+      await expect(transformAssetImage(source, { ...options, operations })).rejects.toMatchObject({ name: 'ASSET_IMAGE_INVALID' })
+    }
+    for (const format of ['jpeg', 'gif']) {
+      await expect(transformAssetImage(source, { ...options, format, operations: [{ type: 'fill', left: 0, top: 0, width: 1, height: 1, color: '#000000' }] })).rejects.toMatchObject({ name: 'ASSET_IMAGE_UNSUPPORTED' })
+    }
+    for (const bytes of [Buffer.alloc(0), source.subarray(0, 24), Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>')]) {
+      await expect(transformAssetImage(bytes, options)).rejects.toMatchObject({ name: expect.stringMatching(/^ASSET_IMAGE_(INVALID|UNSUPPORTED)$/) })
+    }
+    const tooWide = await sharp({ create: { width: 10001, height: 1, channels: 3, background: 'red' } }).png().toBuffer()
+    await expect(transformAssetImage(tooWide, options)).rejects.toMatchObject({ name: 'ASSET_IMAGE_TOO_LARGE' })
+  })
+
+  it('preserves every animated resize frame but demands explicit first-frame conversion for geometry', async () => {
+    const { transformAssetImage } = await vi.importFresh('../helpers/asset-image-transform.ts', import.meta.url)
+    const source = await sharp(Buffer.from([
+      255, 0, 0, 255, 0, 0,
+      0, 0, 255, 0, 0, 255
+    ]), { raw: { width: 2, height: 2, channels: 3, pageHeight: 1 } }).gif({ delay: [100, 100], loop: 0 }).toBuffer()
+    expect((await sharp(source, { animated: true }).metadata()).pages).toBe(2)
+    const options = { width: 2, height: 1, aspectPolicy: 'preserve', format: 'gif', quality: 80, animationPolicy: 'preserve' }
+    const preserved = await transformAssetImage(source, options)
+    expect(preserved.frames).toBe(2)
+    await expect(transformAssetImage(source, { ...options, operations: [{ type: 'mirror', axis: 'horizontal' }] })).rejects.toMatchObject({ name: 'ASSET_IMAGE_UNSUPPORTED' })
+    const converted = await transformAssetImage(source, { ...options, animationPolicy: 'first-frame', operations: [{ type: 'mirror', axis: 'horizontal' }] })
+    expect(converted.frames).toBe(1)
+    expect((await sharp(converted.data, { animated: true }).metadata()).pages ?? 1).toBe(1)
+  })
+
+  it('rejects byte and animation-frame bombs and unavailable output codecs without accepting a result', async () => {
+    const { transformAssetImage, ASSET_IMAGE_TRANSFORM_LIMITS } = await vi.importFresh('../helpers/asset-image-transform.ts', import.meta.url)
+    const options = { width: 1, height: 1, aspectPolicy: 'preserve', format: 'gif', quality: 80, animationPolicy: 'preserve' }
+    await expect(transformAssetImage(Buffer.alloc(ASSET_IMAGE_TRANSFORM_LIMITS.inputBytes + 1), options)).rejects.toMatchObject({ name: 'ASSET_IMAGE_TOO_LARGE' })
+    // Alternate exact black/white pixels so palette quantization cannot merge adjacent frames.
+    const pixels = Buffer.from(Array.from({ length: 101 }, (_, index) => Array(3).fill(index % 2 ? 255 : 0)).flat())
+    const frames = await sharp(pixels, { raw: { width: 1, height: 101, channels: 3, pageHeight: 1 } }).gif({
+      delay: Array(101).fill(100), loop: 0, keepDuplicateFrames: true, interPaletteMaxError: 0
+    }).toBuffer()
+    expect((await sharp(frames, { animated: true }).metadata()).pages).toBe(101)
+    await expect(transformAssetImage(frames, options)).rejects.toMatchObject({ name: 'ASSET_IMAGE_TOO_LARGE' })
+    const previous = sharp.format.webp.output.buffer
+    try {
+      sharp.format.webp.output.buffer = false
+      await expect(transformAssetImage(Buffer.from('not decoded when codec is absent'), { ...options, format: 'webp' })).rejects.toMatchObject({ name: 'ASSET_IMAGE_UNSUPPORTED' })
+    } finally { sharp.format.webp.output.buffer = previous }
+  })
+
+  it('stops admitted opaque-fill work at its deadline without publishing a partial save-as asset', async () => {
+    const db = await createImageResizeDatabase()
+    try {
+      const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['read:assets', 'write:assets'] }
+      const width = 64
+      const height = 512
+      const bytes = await sharp({ create: { width, height, channels: 4, background: { r: 200, g: 100, b: 50, alpha: 0.5 } } }).png().toBuffer()
+      const source = await insertResizeSource(db, bytes)
+      installImageResizeWiki({ db })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+      const { ASSET_IMAGE_TRANSFORM_LIMITS } = await vi.importFresh('../helpers/asset-image-transform.ts', import.meta.url)
+      const input = {
+        requester, id: source.id, destination: { filename: 'redacted.png', folderId: 0 },
+        width, height, aspectPolicy: 'stretch', format: 'png', quality: 80, animationPolicy: 'first-frame',
+        operations: [{ type: 'fill', left: 1, top: 1, width: width - 2, height: height - 2, color: '#102030' }]
+      }
+      const preview = await operations.previewImage(input)
+      const rgba = Buffer.from([16, 32, 48, 255])
+      const nativeFill = Buffer.prototype.fill
+      let now = 0
+      let workingPixels
+      let pixelsAtDeadline
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+      const fill = vi.spyOn(Buffer.prototype, 'fill').mockImplementation(function (value, ...args) {
+        const result = nativeFill.call(this, value, ...args)
+        if (workingPixels === undefined && this.length === width * height * 4 && Buffer.isBuffer(value) && value.equals(rgba)) {
+          // Expire during actual native pixel work, independently of machine
+          // speed, while leaving the decoder and save-as operation real.
+          workingPixels = this
+          pixelsAtDeadline = Buffer.from(this)
+          now = ASSET_IMAGE_TRANSFORM_LIMITS.processingSeconds * 1000
+        }
+        return result
+      })
+      try {
+        await expect(operations.resizeImage({
+          ...input, expectedSourceSha256: preview.sourceSha256, expectedSourceRevision: preview.sourceRevision
+        })).rejects.toMatchObject({ status: 422, name: 'ASSET_IMAGE_PROCESSING_LIMIT' })
+      } finally {
+        fill.mockRestore()
+        clock.mockRestore()
+      }
+      expect(workingPixels).toBeDefined()
+      expect(workingPixels).toEqual(pixelsAtDeadline)
+      const lastRegionPixel = ((height - 2) * width + width - 2) * 4
+      expect(workingPixels.subarray(lastRegionPixel, lastRegionPixel + 4)).not.toEqual(rgba)
+      expect(await db('assets')).toEqual([source])
+      expect(await db('assetData')).toHaveLength(1)
+      expect(Buffer.from((await db('assetData').where({ id: source.id }).first()).data)).toEqual(bytes)
+      expect(await db('durableJobs')).toEqual([])
+    } finally { await db.destroy() }
+  })
+
+  it('retires source-derived previews when authority or source bytes change during rendering', async () => {
+    for (const change of ['authority', 'bytes']) {
+      const db = await createImageResizeDatabase()
+      try {
+        const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['read:assets', 'write:assets'] }
+        const bytes = await sharp({ create: { width: 4, height: 2, channels: 4, background: 'red' } }).png().toBuffer()
+        const source = await insertResizeSource(db, bytes)
+        let loads = 0
+        installImageResizeWiki({ db, loadPageRuleAuthority: async (user, transaction) => {
+          if (++loads === 2) {
+            if (change === 'authority') user.permissions = []
+            else await transaction('assetData').where({ id: source.id }).update({ data: Buffer.from('changed during preview') })
+          }
+          return authorityFor(user)
+        } })
+        const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+        await expect(operations.previewImage({
+          requester, id: source.id, destination: { filename: 'preview.png', folderId: 0 },
+          width: 4, height: 2, aspectPolicy: 'stretch', format: 'png', quality: 80, animationPolicy: 'first-frame',
+          operations: [{ type: 'mirror', axis: 'horizontal' }]
+        })).rejects.toMatchObject({ name: change === 'authority' ? 'ASSET_IMAGE_SOURCE_UNAVAILABLE' : 'ASSET_IMAGE_SOURCE_STALE' })
+        expect(await db('assets')).toEqual([source])
+        expect(Buffer.from((await db('assetData').where({ id: source.id }).first()).data)).toEqual(bytes)
+        expect(await db('durableJobs')).toEqual([])
+      } finally { await db.destroy() }
+    }
+  })
+
+  it('previews without writes and saves identical re-decoded edited pixels through the existing atomic outbox', async () => {
+    const db = await createImageResizeDatabase()
+    try {
+      const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['read:assets', 'write:assets'] }
+      const bytes = await sharp({ create: { width: 4, height: 2, channels: 4, background: 'red' } }).png().toBuffer()
+      const source = await insertResizeSource(db, bytes)
+      installImageResizeWiki({ db })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+      const input = { requester, id: source.id, destination: { filename: 'edited.png', folderId: 0 }, width: 2, height: 4, aspectPolicy: 'stretch', format: 'png', quality: 80, animationPolicy: 'first-frame',
+        operations: [{ type: 'rotate', turns: 1 }, { type: 'fill', left: 0, top: 0, width: 1, height: 4, color: '#000000' }] }
+      const preview = await operations.previewImage(input)
+      expect(preview).toMatchObject({ status: 'previewed', width: 2, height: 4, editWidth: 2, editHeight: 4 })
+      expect(preview.sourceSha256).toBe(createHash('sha256').update(bytes).digest('hex'))
+      expect(preview.sourceRevision).toMatch(/^[0-9a-f]{64}$/)
+      expect(await db('assets')).toEqual([source])
+      expect(await db('assetData')).toHaveLength(1)
+      expect(await db('durableJobs')).toEqual([])
+      await expect(operations.resizeImage(input)).rejects.toMatchObject({ status: 400, name: 'ASSET_IMAGE_INPUT_INVALID' })
+      const reviewed = { ...input, expectedSourceSha256: preview.sourceSha256, expectedSourceRevision: preview.sourceRevision }
+      const saves = await Promise.allSettled([operations.resizeImage(reviewed), operations.resizeImage(reviewed)])
+      expect(saves.map(result => result.status).sort()).toEqual(['fulfilled', 'rejected'])
+      const winner = saves.find(result => result.status === 'fulfilled')
+      const refused = saves.find(result => result.status === 'rejected')
+      expect(refused.reason).toMatchObject({ status: 409, name: 'ASSET_IMAGE_DESTINATION_CONFLICT' })
+      const saved = winner.value
+      const output = Buffer.from((await db('assetData').where({ id: saved.assetId }).first()).data)
+      const previewBytes = Buffer.from(preview.dataUrl.split(',')[1], 'base64')
+      expect(await sharp(output).raw().toBuffer()).toEqual(await sharp(previewBytes).raw().toBuffer())
+      expect(Buffer.from((await db('assetData').where({ id: source.id }).first()).data)).toEqual(bytes)
+      expect((await db('assets').where({ id: source.id }).first())).toEqual(source)
+      expect(await db('durableJobs')).toHaveLength(1)
+      await expect(operations.resizeImage(reviewed)).rejects.toMatchObject({ status: 409, name: 'ASSET_IMAGE_DESTINATION_CONFLICT' })
+      expect(await db('assets')).toHaveLength(2)
+    } finally { await db.destroy() }
+  })
+
+  it('rejects changed preview identity and revoked authority and rolls back edited outputs on outbox failure', async () => {
+    const db = await createImageResizeDatabase()
+    try {
+      const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['read:assets', 'write:assets'] }
+      const bytes = await sharp({ create: { width: 4, height: 2, channels: 4, background: 'red' } }).png().toBuffer()
+      const source = await insertResizeSource(db, bytes)
+      let writable = true
+      installImageResizeWiki({ db, checkPageAccess: (user, permissions, context, authority) => (!permissions.includes('write:assets') || writable) && checkPageAccessFor(user, permissions, context, authority) })
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+      const input = { requester, id: source.id, destination: { filename: 'edited.png', folderId: 0 }, width: 4, height: 2, aspectPolicy: 'stretch', format: 'png', quality: 80, animationPolicy: 'first-frame', operations: [{ type: 'mirror', axis: 'horizontal' }] }
+      const preview = await operations.previewImage(input)
+      const reviewed = { ...input, expectedSourceSha256: preview.sourceSha256, expectedSourceRevision: preview.sourceRevision }
+      await db('assets').where({ id: source.id }).update({ updatedAt: '2026-11-08T00:00:00.000Z' })
+      await expect(operations.resizeImage(reviewed)).rejects.toMatchObject({ status: 409, name: 'ASSET_IMAGE_SOURCE_STALE' })
+      await db('assets').where({ id: source.id }).update({ updatedAt: source.updatedAt })
+      await db('assets').where({ id: source.id }).update({ filename: 'renamed.png', hash: assetHash('renamed.png') })
+      await expect(operations.resizeImage(reviewed)).rejects.toMatchObject({ status: 409, name: 'ASSET_IMAGE_SOURCE_STALE' })
+      await db('assets').where({ id: source.id }).update({ filename: source.filename, hash: source.hash })
+      await db('assetData').where({ id: source.id }).update({ data: Buffer.from('replaced source bytes') })
+      await expect(operations.resizeImage(reviewed)).rejects.toMatchObject({ status: 409, name: 'ASSET_IMAGE_SOURCE_STALE' })
+      await db('assetData').where({ id: source.id }).update({ data: bytes })
+      await db('assets').where({ id: source.id }).delete()
+      await expect(operations.resizeImage(reviewed)).rejects.toMatchObject({ status: 404, name: 'ASSET_IMAGE_SOURCE_UNAVAILABLE' })
+      await db('assets').insert(source)
+      writable = false
+      await expect(operations.resizeImage(reviewed)).rejects.toMatchObject({ status: 403, name: 'ASSET_IMAGE_DESTINATION_FORBIDDEN' })
+      writable = true
+      await db.raw("CREATE TRIGGER reject_edited_storage BEFORE INSERT ON durableJobs BEGIN SELECT RAISE(FAIL, 'edited storage rejected'); END")
+      await expect(operations.resizeImage(reviewed)).rejects.toThrow('edited storage rejected')
+      expect(await db('assets')).toEqual([source])
+      expect(await db('assetData')).toHaveLength(1)
+      expect(Buffer.from((await db('assetData').where({ id: source.id }).first()).data)).toEqual(bytes)
+      expect(await db('durableJobs')).toEqual([])
+    } finally { await db.destroy() }
+  })
+
+  it('preflights a visible folder with native path authority and no relocation or publication writes', async () => {
+    const db = await createImageResizeDatabase()
+    try {
+      const requester = { id: 7, name: 'Writer', email: 'writer@example.com', permissions: ['manage:assets', 'write:assets'] }
+      const bytes = await sharp({ create: { width: 2, height: 2, channels: 3, background: 'red' } }).png().toBuffer()
+      const source = await insertResizeSource(db, bytes)
+      const folder = { id: 42, slug: 'allowed', parentId: null }
+      await db('assetFolders').insert(folder)
+      let writable = true
+      const { pageAccess } = installImageResizeWiki({ db, checkPageAccess: (user, permissions, context, authority) => (!permissions.includes('write:assets') || writable) && checkPageAccessFor(user, permissions, context, authority) })
+      global.WIKI.models.assetFolders.getHierarchy.mockImplementation(async id => id === folder.id ? [folder] : [])
+      const { default: operations } = await vi.importFresh('../operations/assets.ts', import.meta.url)
+      expect(await operations.previewMove({ requester, id: source.id, folderId: folder.id })).toEqual({ sourcePath: 'source.png', destinationPath: 'allowed/source.png' })
+      expect(pageAccess).toHaveBeenCalledWith(requester, ['manage:system', 'write:assets'], { path: 'allowed/source.png' }, expect.any(Object))
+      writable = false
+      await expect(operations.previewMove({ requester, id: source.id, folderId: folder.id })).rejects.toMatchObject({ name: 'AssetRenameTargetForbidden' })
+      await expect(operations.previewMove({ requester, id: source.id, folderId: 0 })).rejects.toMatchObject({ name: 'AssetInvalid' })
+      await expect(operations.previewMove({ requester, id: source.id, folderId: 99 })).rejects.toMatchObject({ name: 'AssetRenameTargetForbidden' })
+      writable = true
+      requester.permissions = ['write:assets']
+      await expect(operations.previewMove({ requester, id: source.id, folderId: folder.id })).rejects.toMatchObject({ name: 'AssetInvalid' })
+      expect(await db('assets')).toEqual([source])
+      expect(Buffer.from((await db('assetData').where({ id: source.id }).first()).data)).toEqual(bytes)
+      expect(await db('durableJobs')).toEqual([])
+    } finally { await db.destroy() }
+  })
+
   it('creates a new resized asset and leaves source identity and bytes unchanged', async () => {
     const db = await createImageResizeDatabase()
     try {

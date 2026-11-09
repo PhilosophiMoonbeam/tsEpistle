@@ -1,3 +1,4 @@
+import type { Knex } from 'knex'
 import _ from 'lodash'
 import { canReadPage, pageAuthorizationContext, principalId, type PagePrincipal } from '../helpers/page-access.ts'
 import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
@@ -61,6 +62,7 @@ interface CommentModels {
   pages: { query(): Query }
   comments: {
     query(): Query
+    postNewComment(input: Record<string, unknown> & { transaction: Knex.Transaction }): Promise<number>
     postNewComment(input: Record<string, unknown>): unknown
     updateComment(input: Record<string, unknown>): unknown
     deleteComment(input: Record<string, unknown>): unknown
@@ -360,6 +362,40 @@ const searchMentions = async ({
     [pageId, `${prefix}%`]
   )
   return result.rows.map(row => ({ id: Number(row.id), handle: row.handle, name: row.name }))
+}
+
+export const postFeedbackDiscussionInTransaction = async (
+  transaction: Knex.Transaction,
+  {
+    requester,
+    sessionId,
+    ip = '',
+    pageId,
+    draft,
+    rootTransitionEventId
+  }: {
+    requester: Requester
+    sessionId: string
+    ip?: string
+    pageId: number
+    draft: { content: string; replyTo: number; annotations?: unknown }
+    rootTransitionEventId: string
+  }
+): Promise<number> => {
+  // Admission attempts retain the native abuse window even if the caller rolls back.
+  const retryAfterMilliseconds = await consumeCommentCreate(requester, ip)
+  if (retryAfterMilliseconds !== null) {
+    throw Object.assign(new (getWiki().Error.BruteTooManyAttempts)(), { status: 429, retryAfterMilliseconds })
+  }
+  return getWiki().models.comments.postNewComment({
+    pageId,
+    ...draft,
+    user: requester,
+    ip,
+    sessionId,
+    transaction,
+    rootTransitionEventId
+  })
 }
 
 const create = async ({

@@ -10,6 +10,16 @@ import pageHelper from '../helpers/page.ts'
 import { parseOkfFilePath } from '../okf/format.ts'
 import { isRecord } from '../models/moduleTypes.ts'
 import type { StoragePageEncodingInput } from '../modules/storage/page-document.ts'
+import {
+  assertNativeStoragePageIdentity,
+  storageImportIdentityKey,
+  storageImportLocationKey,
+  storageImportSourceKey
+} from '../modules/storage/import-identity.ts'
+import { IMPORT_MAX_BYTES, IMPORT_MAX_ENTRIES } from '../modules/storage/import-budget.ts'
+import { acknowledgeStoragePageExport, loadStoragePageImportOwners, type StoragePageExportHook, type StoragePageExportProof } from '../helpers/storage-page-import-owner.ts'
+import { currentGitMutationTurn } from '../modules/storage/git/mutation-lock.ts'
+import type { StorageRootHandle } from '../modules/storage/local-filesystem.ts'
 import { z } from 'zod'
 import { PageChangeReasonSchema } from '../../shared/page-change-reason.ts'
 
@@ -43,6 +53,7 @@ const StorageMutationPayloadSchema = z
       .string()
       .regex(/^[1-9][0-9]*$/u)
       .optional(),
+    sourceOutboxId: z.string().uuid().optional(),
     changeReason: PageChangeReasonSchema,
     paths: z
       .array(
@@ -70,10 +81,14 @@ const StorageMutationPayloadSchema = z
     input => input.changeReason === undefined || (input.entityType === 'page' && input.sourceRevision !== undefined),
     'A change reason requires a page source revision'
   )
+  .refine(
+    input => input.sourceOutboxId === undefined || (input.entityType === 'page' && input.sourceRevision !== undefined),
+    'A canonical root requires a page source revision'
+  )
 export type StorageMutationPayload = z.infer<typeof StorageMutationPayloadSchema>
 
 export interface StorageMutationDispatch {
-  writePage(page: StoragePageEncodingInput & { authorName: string; authorEmail: string; changeReason?: string }): Promise<unknown>
+  writePage(page: StoragePageEncodingInput & { authorName: string; authorEmail: string; changeReason?: string }, onWritten?: StoragePageExportHook): Promise<unknown>
   writeAsset(asset: { path: string; data: Buffer; authorId: number; authorName: string; authorEmail: string }): Promise<unknown>
   removePath(asset: { path: string; authorId: number; authorName: string; authorEmail: string }): Promise<unknown>
 }
@@ -83,6 +98,7 @@ interface StorageMutationRuntime {
   models: {
     storage: {
       performMutation(input: StorageMutationPayload, work: (dispatch: StorageMutationDispatch) => Promise<void>, signal: AbortSignal): Promise<void>
+      activeTargets?: Array<{ key: string; fn: { root?: StorageRootHandle | null } }>
     }
   }
 }
@@ -117,7 +133,7 @@ const enabledTargets = async (transaction: Knex.Transaction): Promise<StorageTar
 
 const admit = async (
   transaction: Knex.Transaction,
-  input: { entityType: 'page' | 'asset'; entityId: number; author: MutationAuthor; sourceRevision?: string; changeReason?: string },
+  input: { entityType: 'page' | 'asset'; entityId: number; author: MutationAuthor; sourceRevision?: string; sourceOutboxId?: string; changeReason?: string },
   locations: (target: StorageTargetRow) => string[]
 ): Promise<void> => {
   const store = new DurableJobStore(transaction)
@@ -131,6 +147,7 @@ const admit = async (
         entityType: input.entityType,
         entityId: input.entityId,
         ...(input.sourceRevision === undefined ? {} : { sourceRevision: input.sourceRevision }),
+        ...(input.sourceOutboxId === undefined ? {} : { sourceOutboxId: input.sourceOutboxId }),
         ...(input.changeReason === undefined ? {} : { changeReason: input.changeReason }),
         paths,
         targetKey: target.key,
@@ -152,6 +169,7 @@ export const enqueuePageStorageMutation = async (
     author: MutationAuthor
     skipStorage?: boolean | undefined
     sourceRevision?: string | number | bigint
+    sourceOutboxId?: string
     changeReason?: string
   }
 ): Promise<void> => {
@@ -166,7 +184,11 @@ export const enqueuePageStorageMutation = async (
   if (!/^[1-9][0-9]*$/u.test(sourceRevision)) throw new TypeError('Storage page mutation requires its canonical source revision')
   await admit(
     transaction,
-    { entityType: 'page', entityId: input.pageId, author: input.author, sourceRevision, ...(changeReason === undefined ? {} : { changeReason }) },
+    {
+      entityType: 'page', entityId: input.pageId, author: input.author, sourceRevision,
+      ...(input.sourceOutboxId === undefined ? {} : { sourceOutboxId: input.sourceOutboxId }),
+      ...(changeReason === undefined ? {} : { changeReason })
+    },
     target => locations.map(page => pagePath(page, target))
   )
 }
@@ -183,6 +205,8 @@ interface CanonicalPage extends StoragePageEncodingInput {
   id: number
   authorName: string
   authorEmail: string
+  visibility: string
+  ownerId: number | null
 }
 type CanonicalPageIdentity = Pick<CanonicalPage, 'id' | 'path' | 'localeCode' | 'contentType'>
 interface CanonicalAsset {
@@ -227,6 +251,8 @@ const currentPage = async (transaction: Knex.Transaction, relativePath: string, 
     .where('visibility', 'public')
     .first(
       'id',
+      'visibility',
+      'ownerId',
       'path',
       'localeCode',
       'title',
@@ -254,20 +280,82 @@ const hasImportedPageOwner = async (
   transaction: Knex.Transaction,
   relativePath: string,
   target: StorageTargetRow,
-  input: StorageMutationPayload
+  mutation: StorageMutationPayload,
+  job: Parameters<DurableJobHandler>[0]
 ): Promise<boolean> => {
   if ((target.key !== 'git' && target.key !== 'disk') || parseOkfFilePath(relativePath) !== null) return false
   const contentType = pageHelper.getContentType(relativePath)
   if (!contentType) return false
-  const identity = pageHelper.getPagePath(relativePath)
-  const paths = [identity.path]
-  if (readConfig(target.config).mapReadmeToHome === true && (contentType === 'markdown' || contentType === 'asciidoc') && /^readme$/iu.test(identity.path)) {
-    paths.push('home')
+  const config = readConfig(target.config)
+  const locationKey = storageImportLocationKey(target.key === 'git' ? 'GIT' : 'DISK', config)
+  const owners = await loadStoragePageImportOwners(transaction, { limit: IMPORT_MAX_ENTRIES })
+  // Unrelated mutations protect the upstream source. Only the actual immutable
+  // canonical withdrawal can remove its own accepted source, without adopting it.
+  const associated = owners.filter(owner => owner.locationKey === locationKey && owner.sourcePath === relativePath)
+  if (associated.length > 1) throw new Error(`Storage source has multiple canonical owners: ${relativePath}`)
+  const association = associated[0]
+  if (association) {
+    if (mutation.entityType !== 'page' || association.pageId !== mutation.entityId || mutation.sourceOutboxId === undefined) return true
+    const conflict = () => new Error(`Storage source withdrawal provenance is unreviewed: ${relativePath}. Preserve the source and review its canonical association before retrying.`)
+    const durable = await transaction('durableJobs').where({
+      id: job.id, type: 'storage-mutation', version: 2, state: 'running', leaseOwner: job.leaseOwner, leaseToken: job.leaseToken
+    }).where('leaseExpiresAt', '>', new Date()).forShare().first('payload')
+    if (!durable || JSON.stringify(StorageMutationPayloadSchema.parse(JSON.parse(durable.payload))) !== JSON.stringify(mutation)) throw conflict()
+    const native = await transaction('pages').where({ id: mutation.entityId }).forShare()
+      .first('id', 'path', 'localeCode', 'contentType', 'visibility', 'sourceRevision')
+    if (association.moveBinding?.phase === 'moved' ||
+        pagePath({ path: association.nativePath, localeCode: association.nativeLocaleCode, contentType }, target) !== relativePath) throw conflict()
+    if (native) {
+      if (association.status !== 'active' || native.visibility !== 'private' ||
+          String(native.sourceRevision) !== mutation.sourceRevision ||
+          native.path !== association.nativePath || native.localeCode !== association.nativeLocaleCode ||
+          BigInt(association.nativeRevision) > BigInt(String(native.sourceRevision))) throw conflict()
+    } else if (association.status !== 'deleted' || association.nativeRevision !== mutation.sourceRevision ||
+        association.operationId !== mutation.sourceOutboxId) throw conflict()
+    // Root pruning is permitted: the surviving immutable v2 intent remains the
+    // authority. A surviving root must still identify the exact withdrawal.
+    const event = await transaction('outboxEvents').where({ id: mutation.sourceOutboxId }).first('type', 'aggregateType', 'aggregateId', 'payload')
+    if (event) {
+      const payload: unknown = JSON.parse(event.payload)
+      if (event.aggregateType !== 'page' || event.aggregateId !== String(mutation.entityId) ||
+          event.type !== (native ? 'page.visibility-changed' : 'page.deleted') ||
+          !isRecord(payload) || payload.pageId !== mutation.entityId ||
+          payload.path !== association.nativePath || payload.localeCode !== association.nativeLocaleCode) throw conflict()
+    }
+    const root = getWiki().models.storage.activeTargets?.find(candidate => candidate.key === target.key)?.fn.root
+    if (!root || root.closed || storageImportSourceKey(root.sourceIdentity, target.key === 'git' ? 'GIT' : 'DISK', config) !== association.sourceKey) throw conflict()
+    try {
+      const source = await root.openFile(relativePath)
+      try {
+        if (await source.sha256Bounded(IMPORT_MAX_BYTES) !== association.sourceSha256) throw conflict()
+      } finally {
+        await source.close()
+      }
+    } catch (error) {
+      if (!isRecord(error) || error.code !== 'ENOENT') throw error
+    }
+    return false
   }
-  const query = transaction('pages').where({ localeCode: identity.locale, visibility: 'public' }).whereIn('path', paths)
-  if (input.entityType === 'page') query.whereNot('id', input.entityId)
-  const owner = await query.forShare().first('id')
-  return Boolean(owner)
+  const pages = await transaction<CanonicalPageIdentity>('pages')
+    .where('visibility', 'public').forShare().limit(IMPORT_MAX_ENTRIES + 1).select('id', 'localeCode', 'path', 'contentType')
+  if (pages.length > IMPORT_MAX_ENTRIES) throw new Error('Imported storage ownership inventory exceeds its bound')
+  const identity = pageHelper.getPagePath(relativePath)
+  assertNativeStoragePageIdentity(identity, relativePath)
+  const candidates = [identity]
+  if (config.mapReadmeToHome === true && (contentType === 'markdown' || contentType === 'asciidoc') && /^readme$/iu.test(identity.path)) {
+    candidates.push({ locale: identity.locale, path: 'home' })
+  }
+  if (pages.some(page => {
+    // The durable page producer recorded this exact former native filename.
+    // A format conversion does not turn its own old encoding into an unknown import.
+    if (mutation.entityType === 'page' && page.id === mutation.entityId &&
+        pagePath({ ...page, contentType }, target) === relativePath) return false
+    return candidates.some(candidate =>
+      storageImportIdentityKey({ locale: page.localeCode, path: page.path }) === storageImportIdentityKey(candidate))
+  })) {
+    throw new Error(`Imported storage ownership is unreviewed: ${relativePath}`)
+  }
+  return false
 }
 
 const currentAsset = async (transaction: Knex.Transaction, relativePath: string): Promise<CanonicalAsset | undefined> => {
@@ -296,7 +384,7 @@ export const createStorageMutationHandler =
   async (job, { knex, signal }) => {
     if (job.type !== 'storage-mutation' || (job.version !== 1 && job.version !== 2)) throw new TypeError('Invalid storage mutation job identity')
     const input = StorageMutationPayloadSchema.parse(job.payload)
-    if (job.version === 1 && (input.sourceRevision !== undefined || input.changeReason !== undefined))
+    if (job.version === 1 && (input.sourceRevision !== undefined || input.sourceOutboxId !== undefined || input.changeReason !== undefined))
       throw new TypeError('Revision-bound storage work requires protocol 2')
     if (job.version === 2 && (input.entityType !== 'page' || input.sourceRevision === undefined))
       throw new TypeError('Protocol 2 requires a canonical page revision')
@@ -333,7 +421,7 @@ export const createStorageMutationHandler =
               await assertLease(transaction, job, signal, input.targetKey)
               // Imported legacy filenames can remain upstream while Markdown egress uses OKF.
               // A newer importer-owned path is not an orphan of this older asset/page mutation.
-              if (!page && !asset && (await hasImportedPageOwner(transaction, relativePath, target, input))) continue
+              if (!page && !asset && (await hasImportedPageOwner(transaction, relativePath, target, input, job))) continue
               if (page) {
                 // Old reasonless jobs keep canonical convergence. New work must not
                 // consume a newer revision before its own durable reason can run.
@@ -348,7 +436,61 @@ export const createStorageMutationHandler =
                   input.targetKey === 'git' && input.entityType === 'page' && page.id === input.entityId && String(page.sourceRevision) === input.sourceRevision
                     ? input.changeReason
                     : undefined
-                await dispatch.writePage(changeReason === undefined ? page : { ...page, changeReason })
+                const exportedPage = changeReason === undefined ? page : { ...page, changeReason }
+                const nativeTargetKey = target.key === 'disk' || target.key === 'git' ? target.key : undefined
+                const [association] = nativeTargetKey !== undefined && job.version === 2 &&
+                  input.entityType === 'page' && page.id === input.entityId && input.sourceOutboxId !== undefined &&
+                  String(page.sourceRevision) === input.sourceRevision && page.ownerId === null
+                  ? await loadStoragePageImportOwners(transaction, { pageIds: [page.id], limit: 1 })
+                  : []
+                const canAcknowledge = association !== undefined && association.status === 'active' &&
+                  association.nativePath === page.path && association.nativeLocaleCode === page.localeCode &&
+                  association.sourcePath === relativePath && association.locationKey === storageImportLocationKey(nativeTargetKey === 'git' ? 'GIT' : 'DISK', readConfig(target.config)) &&
+                  BigInt(association.nativeRevision) <= BigInt(String(page.sourceRevision)) && association.moveBinding?.phase !== 'moved'
+                if (canAcknowledge && nativeTargetKey !== undefined && input.sourceOutboxId !== undefined) {
+                  let completionCount = 0
+                  let proof: StoragePageExportProof | undefined
+                  let invalidProof = false
+                  let writing = true
+                  const onWritten: StoragePageExportHook = async written => {
+                    completionCount += 1
+                    if (!writing || completionCount !== 1 || written.sourceKey !== association.sourceKey ||
+                        written.locationKey !== association.locationKey || written.sourcePath !== relativePath ||
+                        typeof written.sourceSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(written.sourceSha256)) {
+                      invalidProof = true
+                      throw new Error('Storage page export did not provide one exact same-source publication proof')
+                    }
+                    proof = {
+                      sourceKey: written.sourceKey, locationKey: written.locationKey,
+                      sourcePath: written.sourcePath, sourceSha256: written.sourceSha256
+                    }
+                  }
+                  try {
+                    await dispatch.writePage(exportedPage, onWritten)
+                  } finally {
+                    writing = false
+                  }
+                  if (invalidProof || completionCount !== 1 || proof === undefined) throw new Error('Storage page export did not complete its positive publication proof')
+                  signal.throwIfAborted()
+                  const currentTarget = await transaction<StorageTargetRow>('storage').where({ key: input.targetKey })
+                    .first('key', 'isEnabled', 'mode', 'syncInterval', 'config')
+                  if (!currentTarget || !currentTarget.isEnabled ||
+                      nativeStorageMutationConfigurationKey({ ...currentTarget, config: readConfig(currentTarget.config) }) !== input.targetConfigurationRevision) {
+                    throw new Error('Storage mutation target configuration is no longer current')
+                  }
+                  const turn = nativeTargetKey === 'git' ? currentGitMutationTurn() : undefined
+                  if (turn !== undefined) {
+                    if (turn.targetKey !== nativeTargetKey) throw new Error('Storage mutation Git turn does not match its target')
+                    await turn.assertHeld(transaction)
+                  }
+                  await acknowledgeStoragePageExport(transaction, {
+                    job, pageId: page.id, sourceRevision: String(page.sourceRevision), sourceOutboxId: input.sourceOutboxId,
+                    targetKey: nativeTargetKey, targetConfigurationRevision: input.targetConfigurationRevision, proof
+                  })
+                  if (turn !== undefined) await turn.assertHeld(transaction)
+                } else {
+                  await dispatch.writePage(exportedPage)
+                }
               } else if (asset) {
                 const row = await transaction<{ data: Buffer | Uint8Array | string }>('assetData').where('id', asset.id).first('data')
                 if (!row) throw new Error('Canonical storage asset bytes are unavailable')

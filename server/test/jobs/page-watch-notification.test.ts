@@ -5,6 +5,7 @@ import { createPageWatchNotificationHandler, type PageWatchWikiContext } from '.
 import { up as upNotificationPreferences } from '../../db/migrations/tsepistle-000058-discussion-notifications.ts'
 import { up as upDurableJobs } from '../../db/migrations/2.5.130.ts'
 import { up as addDurableJobLeaseToken } from '../../db/migrations/2.5.158.ts'
+import { defaultNotificationCeilings, NOTIFICATION_CEILING_CATEGORIES, type PageNotificationCategory } from '../../../shared/site-notifications.ts'
 
 let knex: Knex
 const send = vi.fn()
@@ -233,8 +234,7 @@ const wiki = (pageResult: Record<string, unknown> | undefined): PageWatchWikiCon
             modifyGraph: async () => user
           })
         })
-      }),
-      getRootUser: vi.fn()
+      })
     }
   }
 })
@@ -271,6 +271,90 @@ const seedDeletion = async (protection: unknown = null): Promise<void> => {
 const deletionJob = (): DurableJob => ({ ...job, payload: { ...job.payload, category: 'pageDeleted', commentId: null, emailEnabled: false } })
 
 describe('page watch notification handler', () => {
+  const seedCategory = async (category: PageNotificationCategory): Promise<DurableJob> => {
+    if (category === 'mention' || category === 'commentReply' || category === 'watchedPageComment') {
+      await seedDiscussion()
+      if (category !== 'mention') {
+        await knex('userNotificationPreferences').where({ userId: 7, category: 'mention' }).delete()
+        await knex('userNotificationPreferences').insert({ userId: 7, category, inAppEnabled: true, emailEnabled: true, updatedAt: new Date() })
+      }
+    } else if (category !== 'pageWatch') {
+      await knex('userNotificationPreferences').insert({ userId: 7, category, inAppEnabled: true, emailEnabled: true, updatedAt: new Date() })
+      await knex('outboxEvents').where('id', 'event-1').update({ type: category === 'pageCreated' ? 'page.created' : 'page.deleted' })
+    }
+    return { ...job, payload: { ...job.payload, category, commentId: category === 'mention' || category === 'commentReply' || category === 'watchedPageComment' ? 202 : null } }
+  }
+  it.each(NOTIFICATION_CEILING_CATEGORIES.flatMap(category => ['off', 'in-app-only', 'existing-consented-channels'].map(mode => [category, mode] as const)))(
+    'enforces %s %s before queued delivery without deleting existing inbox entries',
+    async (category, mode) => {
+      const queued = await seedCategory(category)
+      await knex('settings').insert({ key: 'notificationCeilings', value: JSON.stringify({ ceilings: { ...defaultNotificationCeilings(), [category]: mode }, suppressedBefore: {} }) })
+      await knex('pageWatchNotifications').insert({
+        id: 'existing-inbox', eventId: 'older-event', userId: 7, pageId: 42, eventType: 'page.updated',
+        actorName: 'Earlier editor', title: page.title, path: page.path, localeCode: page.localeCode,
+        visibility: page.visibility, createdAt: new Date('2025-01-01T00:00:00Z'), readAt: null
+      })
+      const handler = createPageWatchNotificationHandler(wiki(page))
+      await handler(queued, { knex, signal: new AbortController().signal })
+      expect(send).toHaveBeenCalledTimes(mode === 'existing-consented-channels' ? 1 : 0)
+      expect(await knex('pageWatchNotifications')).toHaveLength(mode === 'off' ? 1 : 2)
+      expect((await knex('pageWatchDeliveries').where('id', 'delivery-1').first()).deliveredAt).not.toBeNull()
+      await knex('settings').where('key', 'notificationCeilings').update({ value: JSON.stringify({ ceilings: defaultNotificationCeilings(), suppressedBefore: {} }) })
+      await handler(queued, { knex, signal: new AbortController().signal })
+      expect(send).toHaveBeenCalledTimes(mode === 'existing-consented-channels' ? 1 : 0)
+      expect(await knex('pageWatchNotifications')).toHaveLength(mode === 'off' ? 1 : 2)
+    }
+  )
+  it('does not resurrect a queued channel when an administrator re-enables it before the worker runs', async () => {
+    await knex('outboxEvents').where('id', 'event-1').update({ createdAt: new Date('2026-01-01T00:00:00Z') })
+    await knex('settings').insert({
+      key: 'notificationCeilings',
+      value: JSON.stringify({ ceilings: defaultNotificationCeilings(), suppressedBefore: { pageWatch: { email: '2026-01-02T00:00:00Z', inApp: '2026-01-02T00:00:00Z' } } })
+    })
+    await createPageWatchNotificationHandler(wiki(page))(job, { knex, signal: new AbortController().signal })
+    expect(send).not.toHaveBeenCalled()
+    expect(await knex('pageWatchNotifications')).toEqual([])
+    expect((await knex('pageWatchDeliveries').where('id', 'delivery-1').first()).lastError).toContain('suppressed')
+  })
+  it('does not expand a queued discussion email channel after a later opt-in', async () => {
+    await seedDiscussion()
+    const queued = discussionJob()
+    queued.payload.emailEnabled = false
+    await createPageWatchNotificationHandler(wiki(page))(queued, { knex, signal: new AbortController().signal })
+    expect(send).not.toHaveBeenCalled()
+    expect(await knex('pageWatchNotifications')).toHaveLength(1)
+  })
+  it('keeps an already queued legacy watch email opted out even if the watch is later explicitly changed', async () => {
+    await knex('outboxEvents').where('id', 'event-1').update({ createdAt: new Date('2026-01-01T00:00:00Z') })
+    await knex('userNotificationPreferences').insert({ userId: 7, category: 'allEmailStopped', inAppEnabled: false, emailEnabled: false, updatedAt: new Date('2026-01-02T00:00:00Z') })
+    await createPageWatchNotificationHandler(wiki(page))(job, { knex, signal: new AbortController().signal })
+    expect(send).not.toHaveBeenCalled()
+    expect(await knex('pageWatchNotifications')).toHaveLength(1)
+    expect((await knex('pageWatchDeliveries').where('id', 'delivery-1').first()).lastError).toContain('email opt-out')
+  })
+  // Governed feedback/lifecycle audiences and review cycles use their own producers,
+  // not notify-page-watcher audience jobs.
+  it.each((['pageCreated', 'pageDeleted', 'watchedPageComment', 'commentReply', 'mention', 'pageWatch'] as const).flatMap(category => ['off', 'in-app-only', 'existing-consented-channels'].map(mode => [category, mode] as const)))(
+    'applies %s %s while selecting an audience without changing stored consent',
+    async (category, mode) => {
+      await seedCategory(category)
+      if (category === 'pageCreated') await knex('pageWatchers').where('userId', 7).delete()
+      await upDurableJobs(knex)
+      await addDurableJobLeaseToken(knex)
+      await knex('settings').insert({ key: 'notificationCeilings', value: JSON.stringify({ ceilings: { ...defaultNotificationCeilings(), [category]: mode }, suppressedBefore: {} }) })
+      await knex('pageWatchDeliveries').delete()
+      const audience = { ...job, payload: { mode: 'audience', eventId: 'event-1', afterUserId: 0, audienceAt: new Date().toISOString() } }
+      await createPageWatchNotificationHandler(wiki(page))(audience, { knex, signal: new AbortController().signal })
+      const queued = await knex('durableJobs').where('type', 'notify-page-watcher')
+      expect(queued).toHaveLength(mode === 'off' ? 0 : 1)
+      if (queued[0]) expect(JSON.parse(queued[0].payload)).toMatchObject({ category, inAppEnabled: true, emailEnabled: mode === 'existing-consented-channels' })
+      if (category !== 'pageWatch') {
+        const stored = await knex('userNotificationPreferences').where({ userId: 7, category }).first()
+        expect(stored.emailEnabled).toBe(1)
+        expect(stored.inAppEnabled).toBe(1)
+      }
+    }
+  )
   it.each([
     ['mention', 'mention'],
     ['commentReply', 'comment-reply'],

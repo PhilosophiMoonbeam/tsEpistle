@@ -28,6 +28,11 @@
       <button type="submit" :disabled="creating || creationUncertain">{{ creating ? t('creating', 'Creating…') : t('create', 'Create private note') }}</button>
     </form>
     <p v-if="!canCreate && ready">{{ t('createDenied', 'Your current wiki permissions do not allow creating notes.') }}</p>
+    <details v-if="canCreate" class="profile-notes__create">
+      <summary>{{ t('hedgedocImport', 'Import or resume HedgeDoc notes') }}</summary>
+      <p>{{ t('hedgedocImportHelp', 'Review your export-only snapshot before importing private live notes into your own account. Publishing remains a separate native action.') }}</p>
+      <AdminUtilitiesHedgedoc :key="identity()" @draft-state="importDirty = $event" />
+    </details>
     <div v-if="error" class="profile-notes__error" role="alert">{{ error }}</div>
     <div v-if="creationUncertain" role="status">
       <p>{{ t('noteCreationUnknown', 'Creation is not confirmed. The captured address is kept in this tab; it will not be created again automatically. A missing or inaccessible note does not prove creation failed.') }}</p>
@@ -62,6 +67,7 @@ import { requestConfirmation } from '../common/confirm-dialog.ts'
 import { notifyReloadSafetyChanged, setReloadSafetyProvider } from '../../helpers/pwa.ts'
 import AdminHero from '../common/admin-hero.vue'
 import AsyncState from '../common/async-state.vue'
+import AdminUtilitiesHedgedoc from '../admin/admin-utilities-hedgedoc.vue'
 
 const t = (key: string, defaultValue: string) => translate(`common:liveNotes.${key}`, { defaultValue })
 const identity = () => `${wikiStore.user.id}:${wikiStore.user.authVersion}:${wikiStore.offlineIdentityEpoch}:${siteConfig.agentCsrfToken}`
@@ -70,6 +76,7 @@ const canCreate = computed(() => ready.value && (wikiStore.user.permissions.incl
 const api = createLiveNotesApi((...args) => window.fetch(...args), () => siteConfig.agentCsrfToken)
 const items = ref<LiveNoteSummary[]>([]), cursor = ref<string | null>(null), loading = ref(false), loaded = ref(false), creating = ref(false), error = ref(''), customKey = ref(''), creationUncertain = ref(false)
 const attempt = ref<{ key: string; actor: string; ownerId: number } | null>(null), checking = ref(false), accessibleNote = ref<LiveNoteView | null>(null)
+const importDirty = ref(false)
 let generation = 0, disposed = false, controller = new AbortController()
 const accessLabel = (access: LiveNoteAccess) => access === 'private' ? t('privateShort', 'Private') : access === 'read' ? t('sharedRead', 'Shared for reading') : t('sharedEdit', 'Shared for editing')
 async function load(more: boolean) {
@@ -118,10 +125,10 @@ async function checkCreation() {
     error.value = t('noteCheckUnknown', 'No accessible note was confirmed by this check. Creation remains unknown; the original request will not be replayed. You may check again.')
   } finally { if (!disposed && epoch === generation && capture.actor === identity()) checking.value = false }
 }
-function beforeLeave(event: BeforeUnloadEvent) { if (creating.value || customKey.value || creationUncertain.value) { event.preventDefault(); event.returnValue = '' } }
+function beforeLeave(event: BeforeUnloadEvent) { if (creating.value || customKey.value || creationUncertain.value || importDirty.value) { event.preventDefault(); event.returnValue = '' } }
 onBeforeRouteLeave(async () => {
-  if (!creating.value && !customKey.value && !creationUncertain.value) return true
-  return requestConfirmation({ title: t('leaveCreation', 'Leave note creation?'), message: t('leaveCreationRecoveryHelp', 'The captured address and creation choices are only kept in this tab. An uncertain creation may already exist; check the requested address before leaving. Your saved notes are not removed.'), confirmLabel: t('leave', 'Leave') })
+  if (!creating.value && !customKey.value && !creationUncertain.value && !importDirty.value) return true
+  return requestConfirmation({ title: t('leaveCreation', 'Leave note creation or import?'), message: t('leaveCreationRecoveryHelp', 'Unsent note addresses and import choices are kept only in this tab. An uncertain action may already have committed. Check the captured note address or save the original import review bundle before leaving; no action is replayed automatically. Saved notes are not removed.'), confirmLabel: t('leave', 'Leave') })
 })
 watch(identity, () => {
   generation++; controller.abort(); controller = new AbortController(); items.value = []; cursor.value = null; loaded.value = false; loading.value = false; checking.value = false; accessibleNote.value = null
@@ -140,10 +147,10 @@ watch([ready, () => wikiStore.user.permissions.join(',')], ([value]) => {
   if (value) void load(false)
 }, { flush: 'sync' })
 let safetyRevision = 0
-watch([creating, customKey, creationUncertain], () => { safetyRevision++; notifyReloadSafetyChanged() }, { flush: 'sync' })
+watch([creating, customKey, creationUncertain, importDirty], () => { safetyRevision++; notifyReloadSafetyChanged() }, { flush: 'sync' })
 onMounted(async () => {
   window.addEventListener('beforeunload', beforeLeave)
-  setReloadSafetyProvider(() => ({ safe: !creating.value && !customKey.value && !creationUncertain.value, revision: `note-inventory:${safetyRevision}`, actorEpoch: wikiStore.offlineIdentityEpoch }))
+  setReloadSafetyProvider(() => ({ safe: !creating.value && !customKey.value && !creationUncertain.value && !importDirty.value, revision: `note-inventory:${safetyRevision}`, actorEpoch: wikiStore.offlineIdentityEpoch }))
   await wikiStore.waitForAuthRefresh()
   if (!disposed) void load(false)
 })

@@ -10,6 +10,7 @@ import { installAdmonitionRule } from './admonitions.ts'
 import { renderMarkdownCodeFence } from '../../../../shared/markdown-code-fence.ts'
 import markdownItQuoteAttribution from '../../../../shared/markdown-it-quote-attribution.ts'
 import { installAgentCodeQuotationRule } from '../../../../shared/agents/quotation-markdown.ts'
+import { preserveNativeTableSpans } from '../../../../shared/markdown-it-native-table-spans.ts'
 
 interface MarkdownRendererConfig extends UnknownRecord {
   allowHTML: boolean
@@ -147,6 +148,9 @@ const plugin = {
         throw new TypeError(`Renderer ${child.key} does not export an initializer`)
       }
       await rendererModule.default.init(mkdown, child.config)
+    }
+    if (this.children.some(child => _.kebabCase(child.key) === 'markdown-multi-table')) {
+      preserveNativeTableSpans(mkdown)
     }
 
     installAdmonitionRule(mkdown)

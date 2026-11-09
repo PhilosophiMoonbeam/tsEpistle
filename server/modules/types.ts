@@ -2,6 +2,7 @@ import type { StorageFileHandle, StorageFileIdentityExpectation } from './storag
 import type { Readable, Writable } from 'node:stream'
 import type { Knex as DatabaseKnex } from 'knex'
 import type { SearchIndexInspection } from '../../shared/search-admin.ts'
+import type { StoragePageExportHook } from '../helpers/storage-page-import-owner.ts'
 
 export type UnknownRecord = Record<string, unknown>
 
@@ -99,33 +100,8 @@ export interface QueryBuilder<T> extends PromiseLike<T[]> {
   whereNot(criteria: UnknownRecord): QueryBuilder<T>
 }
 
-export interface KnexSchema {
-  createTable(name: string, callback: (table: KnexTableBuilder) => void): Promise<void>
-  dropTable(name: string): Promise<void>
-  hasTable(name: string): Promise<boolean>
-}
-
-export interface KnexTableBuilder {
-  index(columns: string[], name?: string): void
-  integer(name: string): KnexColumnBuilder
-  primary(columns: string[]): void
-  text(name: string): KnexColumnBuilder
-}
-
-export interface KnexColumnBuilder {
-  index(): KnexColumnBuilder
-  notNullable(): KnexColumnBuilder
-  primary(): KnexColumnBuilder
-}
-
-export interface Knex extends QueryBuilder<UnknownRecord> {
-  (...args: unknown[]): QueryBuilder<UnknownRecord>
-  raw<T = unknown>(sql: string, bindings?: readonly unknown[]): Promise<T>
-  schema: KnexSchema
-}
-
 export interface WikiModels {
-  knex: Knex
+  knex: DatabaseKnex
   assetFolders: {
     getAllPaths(): Promise<Record<number, string>>
     query(): QueryBuilder<UnknownRecord>
@@ -460,7 +436,7 @@ export interface StoragePlugin<C extends StorageConfig = StorageConfig, Context 
   deactivated(this: Context): Promise<void>
   init(this: Context): Promise<void>
   created?(this: Context, page: WikiPage): Promise<void>
-  updated?(this: Context, page: WikiPage): Promise<void>
+  updated?(this: Context, page: WikiPage, onWritten?: StoragePageExportHook): Promise<void>
   deleted?(this: Context, page: WikiPage): Promise<void>
   renamed?(this: Context, page: WikiPage): Promise<void>
   assetUploaded?(this: Context, asset: WikiAsset): Promise<void>

@@ -1,9 +1,12 @@
 <template lang="pug">
 section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined" aria-labelledby="wiki-page-ratings-title")
   header.wiki-page-ratings__heading
-    h2#wiki-page-ratings-title {{ $t('common:pageRatings.title') }}
+    h2#wiki-page-ratings-title(ref="ratingHeading" tabindex="-1") {{ $t('common:pageRatings.title') }}
     p.wiki-page-ratings__aggregate(v-if="view && !stale") {{ summary }}
-    p.wiki-page-ratings__prompt(v-else-if="!isHuman") {{ $t('common:pageRatings.signInToRate') }}
+    p.wiki-page-ratings__prompt(v-else-if="isGuest") {{ $t('common:pageRatings.signInToRate') }}
+    template(v-if="isGuest")
+      v-btn(type="button" variant="outlined" size="small" @click="signInToRate") {{ t('signInAction', { defaultValue: 'Sign in to rate' }) }}
+      p(v-if="guestError" role="alert") {{ guestError }}
 
   template(v-if="isHuman")
     async-state.wiki-page-ratings__loading(v-if="loading && !view" state="loading" :title="$t('common:pageRatings.loading')")
@@ -128,12 +131,14 @@ section.wiki-page-ratings(:aria-busy="loading || submitting ? 'true' : undefined
 
 <script setup lang="ts">
 import i18next from 'i18next'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import AsyncState from './common/async-state.vue'
 import { fetchPageRating, PageRatingApiError, putPageRating, removePageRating } from '../helpers/page-ratings-api.ts'
 import type { PageRatingView, PageRatingVote } from '../../shared/page-ratings.ts'
 import { wikiStore } from '../store/index.ts'
 import { renderSafeMarkdown } from '../helpers/safe-markdown.ts'
+import Cookies from 'js-cookie'
+import { safeLoginReturn } from '../helpers/login-return.ts'
 
 const props = defineProps<{ pageId: number; discussionEnabled?: boolean }>()
 const emit = defineEmits<{ 'prepare-feedback': [content: string] }>()
@@ -156,6 +161,40 @@ let contextSequence = 0
 let activeController: AbortController | null = null
 let disposed = false
 
+const ratingHeading = ref<HTMLElement | null>(null)
+const guestError = ref('')
+const isGuest = computed(() => wikiStore.user.authenticated === false &&
+  wikiStore.authRefreshSettled === true && wikiStore.authRefreshPending === false &&
+  wikiStore.authRefreshOutcome === 'anonymous' && wikiStore.page.id === props.pageId)
+const signInToRate = (): void => {
+  if (!isGuest.value || disposed) return
+  const target = safeLoginReturn(window.location.pathname + window.location.search + window.location.hash)
+  if (!target) {
+    guestError.value = t('returnError', { defaultValue: 'Unable to save this return address. Reload the page and try again.' })
+    return
+  }
+  try {
+    Cookies.set('loginRedirect', target, { path: '/', sameSite: 'lax', secure: window.location.protocol === 'https:', expires: 1 / 24 })
+    if (Cookies.get('loginRedirect') !== target) throw new Error('Return cookie unavailable')
+    window.sessionStorage.setItem('ratingLoginReturn', target)
+    window.location.assign('/login')
+  } catch {
+    guestError.value = t('signInFailed', { defaultValue: 'Sign-in could not start. You can try again; no rating was saved.' })
+  }
+}
+watch(isGuest, async guest => {
+  if (!guest) return
+  const target = window.location.pathname + window.location.search + window.location.hash
+  try {
+    if (window.sessionStorage.getItem('ratingLoginReturn') !== target) return
+    window.sessionStorage.removeItem('ratingLoginReturn')
+    await nextTick()
+    if (isGuest.value && !disposed) {
+      guestError.value = t('signInCancelled', { defaultValue: 'You are still signed out. No rating was saved. You can try signing in again.' })
+      ratingHeading.value?.focus()
+    }
+  } catch { /* Browser storage may be unavailable. Sign-in remains usable. */ }
+}, { immediate: true })
 const isHuman = computed(() =>
   wikiStore.user.authenticated === true &&
   Number.isSafeInteger(wikiStore.user.id) &&
@@ -215,6 +254,14 @@ const fetchCurrentRating = async (keepStaleOnFailure = false): Promise<void> => 
     if (disposed || sequence !== requestSequence || controller.signal.aborted || props.pageId !== pageId) return
     view.value = result
     stale.value = false
+    const returnTarget = window.location.pathname + window.location.search + window.location.hash
+    try {
+      if (window.sessionStorage.getItem('ratingLoginReturn') === returnTarget) {
+        window.sessionStorage.removeItem('ratingLoginReturn')
+        await nextTick()
+        if (!disposed && sequence === requestSequence) ratingHeading.value?.focus()
+      }
+    } catch { /* Focus restoration is optional when tab storage is unavailable. */ }
     if (keepStaleOnFailure) {
       staleMessage.value = ''
       feedback.value = t('totalsRefreshed')
@@ -328,6 +375,7 @@ watch(
   [() => props.pageId, isHuman, () => wikiStore.user.id, () => wikiStore.user.authVersion, () => wikiStore.offlineIdentityEpoch],
   ([pageId, human]) => {
     contextSequence++
+    guestError.value = ''
     requestSequence++
     activeController?.abort()
     activeController = null

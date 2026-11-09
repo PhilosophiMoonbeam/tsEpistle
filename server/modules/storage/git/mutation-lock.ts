@@ -21,7 +21,7 @@ export interface GitMutationTurn {
   readonly targetKey: string
   readonly deadlineAt: number
   readonly signal: AbortSignal
-  readonly assertHeld: () => Promise<void>
+  readonly assertHeld: (transaction?: Knex.Transaction) => Promise<void>
   active: boolean
 }
 
@@ -82,21 +82,36 @@ export async function withGitMutationLock<T>(db: Knex, targetKey: string, work: 
   connection.on('end', lost)
   let locked = false
   let reusable = false
+  let backendPid: number | undefined
   const query = (sql: string, bindings: number[]) => db.raw(sql, bindings).connection(connection).timeout(CONNECTION_DEADLINE_MS)
+  const assertActive = (): void => {
+    const current = turns.getStore()
+    if (!turn.active || current !== undefined && current !== turn || controller.signal.aborted) {
+      throw new BoundedProcessError('aborted', 'Git storage serialization fence was cancelled or lost')
+    }
+    if (Date.now() >= turn.deadlineAt) throw new BoundedProcessError('deadline', 'Git storage mutation exceeded its deadline')
+  }
   const turn: GitMutationTurn = {
     targetKey,
     deadlineAt: Date.now() + GIT_NATIVE_DEADLINE_MS,
     signal: controller.signal,
     active: true,
-    assertHeld: async () => {
-      if (controller.signal.aborted) throw new BoundedProcessError('aborted', 'Git storage serialization fence was cancelled or lost')
-      if (Date.now() >= turn.deadlineAt) throw new BoundedProcessError('deadline', 'Git storage mutation exceeded its deadline')
+    assertHeld: async transaction => {
+      assertActive()
       try {
-        const result = await query(
-          "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND classid = ?::oid AND objid = ?::oid AND objsubid = 2 AND granted) AS held",
-          [LOCK_NAMESPACE, lockKey >>> 0]
-        )
+        // A canonical transaction must use its own pinned connection, not borrow
+        // another pooled session while holding native page/asset authority locks.
+        const result = transaction === undefined
+          ? await query(
+            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND classid = ?::oid AND objid = ?::oid AND objsubid = 2 AND granted) AS held",
+            [LOCK_NAMESPACE, lockKey >>> 0]
+          )
+          : await transaction.raw(
+            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND pid = ? AND classid = ?::oid AND objid = ?::oid AND objsubid = 2 AND granted) AS held",
+            [backendPid ?? null, LOCK_NAMESPACE, lockKey >>> 0]
+          ).timeout(CONNECTION_DEADLINE_MS)
         if (result.rows?.[0]?.held !== true) throw new Error('Git storage PostgreSQL serialization fence is no longer held')
+        assertActive()
       } catch (error) {
         reusable = false
         controller.abort(error)
@@ -106,10 +121,11 @@ export async function withGitMutationLock<T>(db: Knex, targetKey: string, work: 
   }
   const deadlineTimer = setTimeout(() => controller.abort(new Error('Git storage mutation exceeded its deadline')), GIT_NATIVE_DEADLINE_MS)
   try {
-    const result = await query('SELECT pg_try_advisory_lock(?, ?) AS locked', [LOCK_NAMESPACE, lockKey])
+    const result = await query('SELECT pg_try_advisory_lock(?, ?) AS locked, pg_backend_pid() AS pid', [LOCK_NAMESPACE, lockKey])
     reusable = true
     locked = result.rows?.[0]?.locked === true
     if (!locked) throw new GitStorageBusyError()
+    backendPid = result.rows?.[0]?.pid
     await turn.assertHeld()
     const value = await turns.run(turn, () => work(turn))
     await turn.assertHeld()

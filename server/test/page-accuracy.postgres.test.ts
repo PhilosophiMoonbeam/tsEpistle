@@ -5,6 +5,9 @@ import { up as createApprovalSchema } from '../db/migrations/2.5.133.ts'
 import { up as createProtectionSchema } from '../db/migrations/2.5.134.ts'
 import { up as installRevisionTrigger } from '../db/migrations/tsepistle-000035-page-search-inclusion.ts'
 import { up as createAccuracySchema } from '../db/migrations/tsepistle-000070-page-accuracy-attestations.ts'
+import { up as createReviewRoutingSchema } from '../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createDurableJobsSchema } from '../db/migrations/2.5.130.ts'
+import { up as addDurableLeaseToken } from '../db/migrations/2.5.158.ts'
 import type authService from '../core/auth.ts'
 import type * as accuracyHelpers from '../helpers/page-accuracy.ts'
 import type pageOperations from '../operations/pages.ts'
@@ -105,6 +108,9 @@ suite('PostgreSQL revision-bound human page accuracy', () => {
     await createProtectionSchema(db)
     await installRevisionTrigger(db)
     await createAccuracySchema(db)
+    await createDurableJobsSchema(db)
+    await addDurableLeaseToken(db)
+    await createReviewRoutingSchema(db)
     // Bound a regression's deadlock/lock wait without relying on a timed sleep.
     // The single-connection verifier pool keeps both settings and backend identity.
     await verifier.raw("SET statement_timeout = '4s'")
@@ -121,6 +127,7 @@ suite('PostgreSQL revision-bound human page accuracy', () => {
 
   beforeEach(async () => {
     vi.setSystemTime(serverTime)
+    await db('durableJobs').delete()
     await db.raw('TRUNCATE pages, users, groups, tags, "pageHistory" RESTART IDENTITY CASCADE')
     await db('users').insert([
       { id: 2, name: 'Guest', email: 'guest@example.test', isSystem: true },
@@ -168,6 +175,35 @@ suite('PostgreSQL revision-bound human page accuracy', () => {
       if (originalWiki) Object.defineProperty(globalThis, 'WIKI', originalWiki)
       else Reflect.deleteProperty(globalThis, 'WIKI')
     }
+  })
+
+  it('does not enroll review routing or schedule reminders from human accuracy alone', async () => {
+    const before = await retainedState()
+    await verify(currentRevision)
+    expect(await db('pageReviewRouting')).toEqual([])
+    expect(await db('durableJobs')).toEqual([])
+    expect(await retainedState()).toEqual(before)
+  })
+
+  it('rolls back the appended human fact when its transactional review reconciliation cannot persist', async () => {
+    await db('pageReviewRouting').insert({
+      pageId: 42, enabled: true, observedSourceRevision: '8', unverifiedAt: serverTime,
+      createdAt: serverTime, updatedAt: serverTime
+    })
+    const before = await retainedState()
+    await db.raw(`ALTER TABLE "durableJobs" ADD CONSTRAINT accuracy_reconcile_failure CHECK ("type" <> 'page-review-reminder')`)
+    try {
+      await expect(verify(currentRevision)).rejects.toThrow()
+      expect(await attestations()).toHaveLength(0)
+      expect(await db('durableJobs')).toHaveLength(0)
+      expect(await retainedState()).toEqual(before)
+    } finally {
+      await db.raw('ALTER TABLE "durableJobs" DROP CONSTRAINT accuracy_reconcile_failure')
+    }
+    const result = await verify(currentRevision)
+    expect(result.latestAttestation).toMatchObject({ sourceRevision: '8', verifiedBy: 7, verifiedAt: serverTime.toISOString() })
+    expect(await attestations()).toHaveLength(1)
+    expect(await db('durableJobs')).toHaveLength(1)
   })
 
   it('appends explicit server-derived human facts without editing content, revision, modification or approval', async () => {

@@ -5,6 +5,8 @@ import { z } from 'zod'
 import { canonicalJson as encodeCanonicalJson, CanonicalJsonError } from '../helpers/canonical-json.ts'
 import { load } from 'cheerio'
 import { lockSearchIndex, lockSearchPage, publicationTimestampSql } from '../helpers/search-contract.ts'
+import { recordPageLifecycleBody, pageLifecycleClockNow } from '../helpers/page-lifecycle-clocks.ts'
+import { recordPageReviewSourceRevision } from '../helpers/page-review-events.ts'
 
 export const PAGE_PROJECTION_EFFECT_KINDS = ['render', 'links', 'search', 'knowledge'] as const
 export type PageProjectionEffectKind = (typeof PAGE_PROJECTION_EFFECT_KINDS)[number]
@@ -157,9 +159,12 @@ export const enqueuePageMutationEffects = async (
     readonly desiredState: PageProjectionDesiredState
     readonly action: PageProjectionPayload['action']
     readonly source?: string | Uint8Array
+    readonly contentType?: string
     readonly location?: z.infer<typeof PageLocationSchema>
     readonly previousLocation?: z.infer<typeof PageLocationSchema>
     readonly effects?: readonly PageProjectionEffectKind[]
+    /** True only for the canonical insert, never projection repair or restore. */
+    readonly created?: boolean
   }
 ): Promise<readonly string[]> => {
   if (!Number.isSafeInteger(input.pageId) || input.pageId < 1) throw new PageMutationOutboxError('INVALID_PAGE_ID', 'Page mutation page ID is invalid')
@@ -174,6 +179,21 @@ export const enqueuePageMutationEffects = async (
   if (new Set(effects).size !== effects.length || effects.some(effect => !PAGE_PROJECTION_EFFECT_KINDS.includes(effect))) {
     throw new PageMutationOutboxError('INVALID_EFFECT_SET', 'Page projection effects must be unique and supported')
   }
+  const sourceSha256 = input.source === undefined ? null : sha256(input.source)
+  const produce = async (transaction: Knex.Transaction): Promise<readonly string[]> => {
+    const observedAt = await pageLifecycleClockNow(transaction)
+    if (input.desiredState === 'present') {
+      const suppliedBody = typeof input.source === 'string' && input.contentType !== undefined
+      const page = suppliedBody
+        ? { id: input.pageId, content: input.source as string, contentType: input.contentType!, sourceRevision }
+        : await transaction<{ id: number; content: string; contentType: string; sourceRevision: string | number }>('pages')
+          .select('id', 'content', 'contentType', 'sourceRevision').where({ id: input.pageId }).forShare().first()
+      if (!page || String(page.sourceRevision) !== sourceRevision || !suppliedBody && sha256(page.content) !== sourceSha256) {
+        throw new PageMutationOutboxError('STALE_CANONICAL_SOURCE', 'Projection admission requires the exact current canonical source')
+      }
+      await recordPageLifecycleBody(transaction, page, { created: input.created === true })
+    }
+    await recordPageReviewSourceRevision(transaction, { pageId: input.pageId, sourceRevision, observedAt })
   const ids: string[] = []
   for (const effectKind of effects) {
     const payload = PageProjectionPayloadSchema.parse({
@@ -183,7 +203,7 @@ export const enqueuePageMutationEffects = async (
       action: input.action,
       pageId: input.pageId,
       sourceRevision,
-      sourceSha256: input.source === undefined ? null : sha256(input.source),
+      sourceSha256,
       location: input.location ?? null,
       previousLocation: input.previousLocation ?? null
     })
@@ -191,7 +211,7 @@ export const enqueuePageMutationEffects = async (
     const payloadSha256 = sha256(encoded)
     const id = randomUUID()
     const now = new Date().toISOString()
-    await knex<PageMutationOutboxRow>('pageMutationOutbox')
+    await transaction<PageMutationOutboxRow>('pageMutationOutbox')
       .insert({
         id,
         pageId: input.pageId,
@@ -209,13 +229,15 @@ export const enqueuePageMutationEffects = async (
       })
       .onConflict(['pageId', 'sourceRevision', 'effectKind'])
       .ignore()
-    const existing = await knex<PageMutationOutboxRow>('pageMutationOutbox').where({ pageId: input.pageId, sourceRevision, effectKind }).first()
+    const existing = await transaction<PageMutationOutboxRow>('pageMutationOutbox').where({ pageId: input.pageId, sourceRevision, effectKind }).first()
     if (!existing || existing.payloadSha256 !== payloadSha256 || existing.payload !== encoded || existing.desiredState !== input.desiredState) {
       throw new PageMutationOutboxError('OUTBOX_IDEMPOTENCY_CONFLICT', 'Existing page projection effect has different immutable content')
     }
     ids.push(existing.id)
   }
   return ids
+  }
+  return knex.isTransaction ? produce(knex as Knex.Transaction) : knex.transaction(produce)
 }
 
 export const rearmFailedKnowledgeEffect = async (

@@ -1,14 +1,16 @@
-import { acceptCompletion, autocompletion, CompletionContext, completionStatus, currentCompletions, snippet, startCompletion } from '@codemirror/autocomplete'
+import { acceptCompletion, autocompletion, completionKeymap, CompletionContext, completionStatus, currentCompletions, snippet, startCompletion } from '@codemirror/autocomplete'
 import { markdown } from '@codemirror/lang-markdown'
-import { EditorSelection, EditorState } from '@codemirror/state'
-import { EditorView, runScopeHandlers } from '@codemirror/view'
+import { EditorSelection, EditorState, StateEffect } from '@codemirror/state'
+import { history, undo } from '@codemirror/commands'
+import { EditorView, keymap, runScopeHandlers } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import { browserWindow, document, resetBody } from '../test/browser-dom.mts'
-import { BUILTIN_CONTENT_EXTENSIONS } from '../../shared/content-extensions'
+import { BUILTIN_CONTENT_EXTENSIONS, parseContentExtensionFence, serializeContentExtensionFence } from '../../shared/content-extensions'
 import { onEditorImageProperties, type EditorImagePropertiesRequest } from './editor-image-properties'
 import { createSourceImageAuthoring } from './editor-source-images'
-import { completeSourceAuthoring, createSourceAuthoring } from './editor-source-authoring'
+import { completeSourceAuthoring, completeSourcePageLink, createSourceAuthoring, createSourcePageLinkCompletion } from './editor-source-authoring'
 import { sourceTableNavigation } from './editor-source-tables'
+import { fetchPageLinkSuggestions } from './pages-api'
 
 const views: EditorView[] = []
 const unsubscribers: Array<() => void> = []
@@ -123,6 +125,52 @@ describe('native source completion boundaries', () => {
       await vi.waitFor(() => expect(completionStatus(view.state)).toBeNull())
       expect(currentCompletions(view.state)).toEqual([])
       expect(view.state.doc.toString()).toBe(source)
+    }
+  })
+
+  it.each([
+    ['{"key":"index","version":1,"props":{"path":"guide","locale":"en","showUpdatedAt":truCURSOR}}', 'true', { key: 'index', props: { showUpdatedAt: true } }],
+    ['{"key":"youtube","version":2,"props":{"source":{"kind":"plaCURSOR","playlistId":"PL_native_123"},"title":"Kept title"}}', 'playlist', { key: 'youtube', version: 2, props: { source: { kind: 'playlist', playlistId: 'PL_native_123' }, title: 'Kept title' } }]
+  ])('accepts native date/playlist metadata by keyboard without quoting booleans or losing source (%s)', async (body, label, expected) => {
+    const marked = `\`\`\`wiki-extension\n${body}\n\`\`\``
+    const position = marked.indexOf('CURSOR')
+    const request = async () => Response.json({
+      hostVersion: 1,
+      extensions: BUILTIN_CONTENT_EXTENSIONS.map(extension => ({ ...extension, isEnabled: true, compatible: true, diagnostic: null }))
+    })
+    const view = new EditorView({
+      parent: document.body.appendChild(document.createElement('div')),
+      doc: marked.replace('CURSOR', ''),
+      extensions: [
+        markdown(),
+        autocompletion({ interactionDelay: 0, override: [context => completeSourceAuthoring(context, 'markdown', request)] }),
+        keymap.of(completionKeymap)
+      ]
+    })
+    views.push(view)
+    view.dispatch({ selection: { anchor: position } })
+    view.focus()
+    expect(startCompletion(view)).toBe(true)
+    await vi.waitFor(() => expect(currentCompletions(view.state).map(option => option.label)).toEqual([label]))
+    expect(runScopeHandlers(view, new browserWindow.KeyboardEvent('keydown', { key: 'Enter' }), 'editor')).toBe(true)
+    const envelope = parseContentExtensionFence(view.state.doc.line(2).text)
+    expect(envelope).toMatchObject(expected)
+    const canonical = serializeContentExtensionFence(envelope)
+    expect(parseContentExtensionFence(canonical.split('\n')[1]!)).toEqual(envelope)
+  })
+
+  it('offers explicit YouTube source version and nested identifier metadata', async () => {
+    const request = async () => Response.json({
+      hostVersion: 1,
+      extensions: BUILTIN_CONTENT_EXTENSIONS.map(extension => ({ ...extension, isEnabled: true, compatible: true, diagnostic: null }))
+    })
+    for (const [body, labels] of [
+      ['{"key":"youtube","version":CURSOR,"props":{}}', ['1', '2']],
+      ['{"key":"youtube","version":2,"props":{"souCURSOR":{}}}', ['source']],
+      ['{"key":"youtube","version":2,"props":{"source":{"playCURSOR":"PL_native_123"}}}', ['playlistId']]
+    ] as const) {
+      const result = await completeSourceAuthoring(completionContext(`\`\`\`wiki-extension\n${body}\n\`\`\``), 'markdown', request)
+      expect(result?.options.map(option => option.label)).toEqual([...labels])
     }
   })
 })
@@ -317,5 +365,235 @@ describe('real source insertion and table cell commands', () => {
     htmlState = htmlState.update(sourceTableNavigation(htmlState, 'html', false)!).state
     expect(htmlState.doc.toString()).toBe('<table data-private="keep"><tbody><tr><td>first</td><td>last</td></tr><tr><td></td><td></td></tr>\n</tbody></table>')
     expect(htmlState.selection.main.head).toBe(htmlState.doc.toString().indexOf('<td></td>') + 4)
+  })
+})
+
+describe('root path page link completion ownership', () => {
+  it('offers a real CodeMirror menu and closes it on authority retirement', async () => {
+    let authorized = true
+    const owner = createSourcePageLinkCompletion(() => 'fr', true, () => authorized, async () =>
+      Response.json({ items: [{ id: 8, title: 'Guide', locale: 'fr', path: 'guide', visibility: 'public', href: '/fr/guide' }] }))
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: '[guide](/',
+        selection: { anchor: 9 },
+        extensions: [markdown(), owner.extension, autocompletion({ override: [owner.complete], interactionDelay: 0 })]
+      }),
+      parent: document.body
+    })
+    views.push(view)
+    view.focus()
+    expect(startCompletion(view)).toBe(true)
+    await vi.waitFor(() => expect(currentCompletions(view.state).map(option => option.label)).toEqual(['/fr/guide - Guide']))
+    authorized = false
+    owner.invalidate()
+    expect(currentCompletions(view.state)).toEqual([])
+    expect(acceptCompletion(view)).toBe(false)
+    expect(view.state.doc.toString()).toBe('[guide](/')
+  })
+  it('retires an open root menu when composition is cancelled without changing the source', async () => {
+    const source = '[guide](/'
+    const owner = createSourcePageLinkCompletion(() => 'fr', true, () => true, async () =>
+      Response.json({ items: [{ id: 8, title: 'Guide', locale: 'fr', path: 'guide', visibility: 'public', href: '/fr/guide' }] }))
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: source,
+        selection: { anchor: source.length },
+        extensions: [markdown(), owner.extension, autocompletion({ override: [owner.complete], interactionDelay: 0 })]
+      }),
+      parent: document.body
+    })
+    views.push(view)
+    view.focus()
+    expect(startCompletion(view)).toBe(true)
+    await vi.waitFor(() => expect(currentCompletions(view.state).map(option => option.label)).toEqual(['/fr/guide - Guide']))
+    const stale = currentCompletions(view.state)[0]
+    const initialDoc = view.state.doc
+    const initialSelection = view.state.selection
+    expect(view.dom.querySelector('.cm-tooltip-autocomplete')).not.toBeNull()
+
+    view.contentDOM.dispatchEvent(new browserWindow.CompositionEvent('compositionstart', { bubbles: true }))
+    expect(currentCompletions(view.state)).toEqual([])
+    expect(view.dom.querySelector('.cm-tooltip-autocomplete')).toBeNull()
+    view.contentDOM.dispatchEvent(new browserWindow.CompositionEvent('compositionend', { bubbles: true, data: '' }))
+    expect(view.compositionStarted).toBe(false)
+    expect(view.state.doc).toBe(initialDoc)
+    expect(view.state.selection.eq(initialSelection)).toBe(true)
+    expect(currentCompletions(view.state)).toEqual([])
+    expect(acceptCompletion(view)).toBe(false)
+    ;(stale.apply as Function)(view, stale, source.length - 1, source.length)
+    expect(view.state.doc.toString()).toBe(source)
+
+    expect(startCompletion(view)).toBe(true)
+    await vi.waitFor(() => expect(currentCompletions(view.state).map(option => option.label)).toEqual(['/fr/guide - Guide']))
+    expect(acceptCompletion(view)).toBe(true)
+    expect(view.state.doc.toString()).toBe('[guide](/fr/guide)')
+  })
+  const item = { id: 7, title: 'Résumé', locale: 'fr', path: 'équipe/été', visibility: 'private', href: '/_private/fr/%C3%A9quipe/%C3%A9t%C3%A9' }
+  const response = async () => Response.json({ items: [item] })
+  function editor(source: string, positions = [source.length]) {
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: source,
+        selection: EditorSelection.create(positions.map(position => EditorSelection.cursor(position))),
+        extensions: [markdown(), history(), EditorState.allowMultipleSelections.of(true)]
+      }),
+      parent: document.body
+    })
+    views.push(view)
+    return view
+  }
+  async function complete(view: EditorView, fetchImpl: Parameters<typeof completeSourcePageLink>[4] = response, active = () => true) {
+    return completeSourcePageLink(new CompletionContext(view.state, view.state.selection.main.head, true, view), 'en', false, active, fetchImpl)
+  }
+  it('preserves raw root, locale, private namespace and encoded UTF8 prefixes on the wire', async () => {
+    for (const prefix of ['/', '/fr/', '/_private/fr/équipe', '/_private/fr/%C3%A9quipe']) {
+      const view = editor(`[label](${prefix}`)
+      const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, 'https://wiki.test')
+        expect(url.pathname).toBe('/_api/pages/link-suggestions')
+        expect(url.searchParams.get('pathPrefix')).toBe(prefix)
+        expect(url.searchParams.get('locale')).toBe('en')
+        expect(url.searchParams.get('limit')).toBe('20')
+        return response()
+      })
+      const result = await complete(view, fetchImpl)
+      expect(result?.options[0].label).toContain(item.href)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    }
+  })
+  it('replaces the full suffix and mixed closers at multiple cursors in one undo step', async () => {
+    const source = '[label](/old-suffix)\n[label](/old-suffix'
+    const positions = [source.indexOf('/old') + 4, source.lastIndexOf('/old') + 4]
+    const view = editor(source, positions)
+    const result = await complete(view)
+    expect(result).not.toBeNull()
+    const option = result!.options[0]
+    ;(option.apply as Function)(view, option, result!.from, result!.to)
+    expect(view.state.doc.toString()).toBe(`[label](${item.href})\n[label](${item.href})`)
+    expect(view.state.selection.ranges).toHaveLength(2)
+    expect(undo(view)).toBe(true)
+    expect(view.state.doc.toString()).toBe(source)
+  })
+  it('retains title-first searchable discovery and canonical localized public routes', async () => {
+    const view = editor('[Résumé](')
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      expect(url).toContain('/_api/pages/search?')
+      return Response.json({ results: [{ id: '7', title: 'Résumé', description: '', locale: 'fr', path: 'équipe/été', visibility: 'public', tags: [], score: 1, matchedFields: ['title'], excerpt: null, copySource: null }], suggestions: [], totalHits: 1 })
+    })
+    const result = await completeSourcePageLink(new CompletionContext(view.state, view.state.doc.length, true, view), 'fr', true, () => true, fetchImpl)
+    expect(result?.options[0].label).toContain('/fr/%C3%A9quipe/%C3%A9t%C3%A9')
+  })
+  for (const source of ['![label](/', '\\[label](/', '`[label](/', '`[label](/`', '```\n[label](/', '    [label](/', '<!-- [label](/', '[label](https://', '[label](../', '[label](relative', '[label](//host']) {
+    it(`does not query images, escapes, code, fences, HTML or non-root destinations: ${JSON.stringify(source)}`, async () => {
+      const view = editor(source)
+      const fetchImpl = vi.fn(response)
+      expect(await complete(view, fetchImpl)).toBeNull()
+      expect(fetchImpl).not.toHaveBeenCalled()
+    })
+  }
+  for (const source of [
+    '`unfinished\n[label](/',
+    '``unfinished `\n[label](/',
+    'text <!-- [label](/',
+    'text <!-- unfinished\n[label](/',
+    'text <?instruction [label](/',
+    '> <!-- [label](/',
+    '- <!-- [label](/',
+    '~~~\n[label](/',
+    '\t[label](/'
+  ]) {
+    it(`does not query an unfinished or nested literal context: ${JSON.stringify(source)}`, async () => {
+      const fetchImpl = vi.fn(response)
+      expect(await complete(editor(source), fetchImpl)).toBeNull()
+      expect(fetchImpl).not.toHaveBeenCalled()
+    })
+  }
+  for (const marked of [
+    'text <!-- [label](/| -->',
+    'text <?instruction [label](/| ?>',
+    'text <span title="[label](/|">',
+    '`code\n[label](/|`',
+    '![label](/|)',
+    '\\[label](/|)'
+  ]) {
+    it(`does not query inside a complete native literal or escaped opener: ${JSON.stringify(marked)}`, async () => {
+      const position = marked.indexOf('|')
+      const fetchImpl = vi.fn(response)
+      expect(await complete(editor(marked.replace('|', ''), [position]), fetchImpl)).toBeNull()
+      expect(fetchImpl).not.toHaveBeenCalled()
+    })
+  }
+  for (const source of [
+    String.raw`\\[label](/`,
+    String.raw`\![label](/`,
+    '\\` [label](/',
+    '`closed` [label](/',
+    '[earlier `literal](/old) [label](/',
+    '[literal `title](/',
+    'text <!-- closed --> [label](/',
+    '<!-- closed -->\n\n[label](/',
+    '`unfinished in another paragraph\n\n[label](/',
+    '```\nclosed\n```\n[label](/',
+    '> [label](/',
+    '- [label](/'
+  ]) {
+    it(`admits genuine links without reinterpreting parsed or previous-block delimiters: ${JSON.stringify(source)}`, async () => {
+      const fetchImpl = vi.fn(response)
+      const result = await complete(editor(source), fetchImpl)
+      expect(result?.options[0].label).toContain(item.href)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    })
+  }
+  it('discards delayed edits, selections and authority changes and never applies a stale option', async () => {
+    for (const mutation of ['edit', 'selection', 'authority', 'readonly', 'ime']) {
+      const view = editor('[label](/')
+      const { promise, resolve } = Promise.withResolvers<Response>()
+      let active = true
+      const pending = complete(view, () => promise, () => active)
+      if (mutation === 'edit') view.dispatch({ changes: { from: 0, insert: 'x' } })
+      if (mutation === 'selection') view.dispatch({ selection: { anchor: 0 } })
+      if (mutation === 'authority') active = false
+      if (mutation === 'readonly') view.dispatch({ effects: StateEffect.appendConfig.of(EditorState.readOnly.of(true)) })
+      if (mutation === 'ime') Object.defineProperty(view, 'compositionStarted', { configurable: true, value: true })
+      resolve(await response())
+      expect(await pending).toBeNull()
+    }
+    const view = editor('[label](/')
+    const result = await complete(view)
+    view.dispatch({ changes: { from: 0, insert: 'manual ' } })
+    const before = view.state.doc.toString()
+    ;(result!.options[0].apply as Function)(view, result!.options[0], result!.from, result!.to)
+    expect(view.state.doc.toString()).toBe(before)
+  })
+  it('aborts in-flight owned queries on transactions, composition and destruction', async () => {
+    for (const action of ['edit', 'selection', 'ime', 'destroy']) {
+      let requestSignal: AbortSignal | undefined
+      const { promise, resolve } = Promise.withResolvers<Response>()
+      const owner = createSourcePageLinkCompletion(() => 'en', false, () => true, async (_input, init) => {
+        requestSignal = init?.signal as AbortSignal
+        return promise
+      })
+      const view = new EditorView({ state: EditorState.create({ doc: '[label](/', selection: { anchor: 9 }, extensions: [markdown(), owner.extension] }), parent: document.body })
+      const pending = owner.complete(new CompletionContext(view.state, 9, true, view))
+      if (action === 'edit') view.dispatch({ changes: { from: 0, insert: 'x' } })
+      if (action === 'selection') view.dispatch({ selection: { anchor: 0 } })
+      if (action === 'ime') view.contentDOM.dispatchEvent(new browserWindow.CompositionEvent('compositionstart', { bubbles: true }))
+      if (action === 'destroy') view.destroy()
+      expect(requestSignal?.aborted).toBe(true)
+      resolve(await response())
+      expect(await pending).toBeNull()
+      if (action !== 'destroy') view.destroy()
+    }
+  })
+  it('rejects malformed or cross-origin suggestions and preserves manual editing after errors', async () => {
+    for (const invalid of [{ ...item, id: '7' }, { ...item, href: '//evil.test/page' }, { ...item, href: '/fr/other' }, { ...item, visibility: 'hidden' }, { ...item, extra: true }]) {
+      await expect(fetchPageLinkSuggestions(async () => Response.json({ items: [invalid] }), { locale: 'fr', pathPrefix: '/' })).rejects.toThrow()
+    }
+    const view = editor('[label](/')
+    expect(await complete(view, async () => { throw new Error('offline') })).toBeNull()
+    view.dispatch({ changes: { from: view.state.doc.length, insert: 'manual)' } })
+    expect(view.state.doc.toString()).toBe('[label](/manual)')
   })
 })

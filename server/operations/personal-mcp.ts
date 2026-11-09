@@ -1,7 +1,7 @@
 import type { Knex } from 'knex'
 import jwt from 'jsonwebtoken'
 import { IssuePersonalMcpKeyInputSchema, type PersonalMcpKey } from '../../shared/personal-mcp.ts'
-import { loadPersonalMcpOwner, personalMcpEligible, personalMcpEnabled, personalMcpEndpoint, personalMcpRuntime, type McpKeyRecord } from '../helpers/personal-mcp.ts'
+import { loadPersonalMcpOwner, personalMcpEligible, personalMcpEnabled, personalMcpEndpoint, personalMcpRuntime, reloadPersonalMcpKeys, type McpKeyRecord } from '../helpers/personal-mcp.ts'
 import { isApiPrincipal } from '../helpers/api-principal.ts'
 import { accountSessionIsCurrent } from '../helpers/account-session.ts'
 import errors from './errors.ts'
@@ -11,12 +11,13 @@ interface SigningRuntime {
   config: { auth: { audience: string }; certs: { private: string | Buffer }; sessionSecret: string }
   auth: { reloadApiKeys(): Promise<void> }
   events: { outbound: { emit(event: string): void } }
+  logger: { warn(message: string): void }
 }
 const keyDto = (row: Pick<McpKeyRecord, 'id' | 'name' | 'personalAccess' | 'createdAt' | 'expiration' | 'isRevoked'>): PersonalMcpKey => ({
   id: row.id, name: row.name, access: row.personalAccess!, createdAt: row.createdAt,
   expiresAt: row.expiration, isRevoked: row.isRevoked === true || row.isRevoked === 1
 })
-const requireOwner = async (requester: Express.User | undefined, expectedAccountId: unknown, database: Knex | Knex.Transaction) => {
+const requireOwner = async (requester: Express.User | undefined, expectedAccountId: unknown, database: Knex | Knex.Transaction, lock = false) => {
   const id = requester?.id
   if (isApiPrincipal(requester) || typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1 || id === 2 ||
     (Object.hasOwn(requester!, 'ownershipUserId') && requester?.ownershipUserId !== id))
@@ -24,6 +25,12 @@ const requireOwner = async (requester: Express.User | undefined, expectedAccount
   if (typeof expectedAccountId !== 'string' || !/^[1-9]\d*$/.test(expectedAccountId) || !Number.isSafeInteger(Number(expectedAccountId)))
     throw new ApplicationError('The profile account identity is required.', { code: 'INVALID_PROFILE_ACCOUNT', status: 400 })
   if (Number(expectedAccountId) !== id) throw new ApplicationError('Your signed-in account changed. Reload your profile.', { code: 'STALE_PROFILE', status: 409 })
+  if (lock) {
+    // Match account/provider policy edits: stable groups by id, then the owner.
+    // Re-read membership, eligibility and generation only after both fences.
+    await database('groups').select('id').orderBy('id').forShare()
+    await database('users').where({ id }).forUpdate().first('id')
+  }
   const current = await loadPersonalMcpOwner(id, database)
   if (!accountSessionIsCurrent(
     { id, authVersion: Reflect.get(requester!, 'authVersion') },
@@ -47,7 +54,7 @@ export const issuePersonalMcpKey = async (requester: Express.User | undefined, e
   const input = parsed.data
   const runtime = WIKI as unknown as SigningRuntime
   const result = await personalMcpRuntime().models.knex.transaction(async transaction => {
-    const { owner, permissions } = await requireOwner(requester, expectedAccountId, transaction)
+    const { owner, permissions } = await requireOwner(requester, expectedAccountId, transaction, true)
     if (!personalMcpEligible(permissions)) throw new ApplicationError('Wiki Agent and MCP access are required to issue a personal key.', { code: 'MCP_PERMISSION_REQUIRED', status: 403 })
     const now = new Date()
     const expiration = new Date(now.valueOf() + input.expirationDays * 86_400_000).toISOString()
@@ -69,21 +76,19 @@ export const issuePersonalMcpKey = async (requester: Express.User | undefined, e
     await transaction('apiKeys').where({ id: row.id }).update({ key, isRevoked: false })
     return { key, item: keyDto({ ...row, isRevoked: false }) }
   })
-  await runtime.auth.reloadApiKeys()
-  runtime.events.outbound.emit('reloadApiKeys')
+  if (!(await reloadPersonalMcpKeys(runtime)))
+    throw new ApplicationError('The key was created but activation needs attention. Revoke it before issuing a replacement.', { code: 'API_KEY_ACTIVATION_FAILED', status: 503 })
   return result
 }
 
 export const revokePersonalMcpKey = async (requester: Express.User | undefined, expectedAccountId: unknown, id: number) => {
   if (!Number.isSafeInteger(id) || id < 1) throw new ApplicationError('Key id must be a positive integer.', { code: 'INVALID_PERSONAL_MCP_KEY', status: 400 })
   await personalMcpRuntime().models.knex.transaction(async transaction => {
-    const { owner } = await requireOwner(requester, expectedAccountId, transaction)
+    const { owner } = await requireOwner(requester, expectedAccountId, transaction, true)
     const updated = await transaction('apiKeys').where({ id, personalOwnerId: owner.id }).whereNotNull('personalAccess')
       .update({ isRevoked: true, updatedAt: new Date().toISOString() })
     if (updated !== 1) throw new ApplicationError('Personal MCP key does not exist.', { code: 'API_KEY_NOT_FOUND', status: 404 })
   })
-  const runtime = WIKI as unknown as SigningRuntime
-  await runtime.auth.reloadApiKeys()
-  runtime.events.outbound.emit('reloadApiKeys')
+  await reloadPersonalMcpKeys()
   return { id, isRevoked: true as const }
 }

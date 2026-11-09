@@ -14,7 +14,7 @@ const startup = `
   import configService from './server/core/config.ts'
   globalThis.WIKI = { ROOTPATH: ${JSON.stringify(root)}, SERVERPATH: ${JSON.stringify(path.join(root, 'server'))} }
   configService.init()
-  console.log(JSON.stringify({ db: WIKI.config.db, ssl: WIKI.config.ssl }))
+  console.log(JSON.stringify({ db: WIKI.config.db, ssl: WIKI.config.ssl, port: WIKI.config.port }))
 `
 
 afterAll(() => rmSync(directory, { recursive: true, force: true }))
@@ -106,4 +106,48 @@ it('requires unresolved certificate options only when that TLS configuration is 
   expect(inactive.status).toBe(0)
   expect(inactive.config.db.ssl).toBe(false)
   expect(inactive.config.db.sslOptions.auto).toBe(false)
+})
+
+it.each([
+  [1, {}, 1],
+  ['1', {}, 1],
+  [65535, {}, 65535],
+  ['65535', {}, 65535],
+  [3000, { PORT: '4000', WIKI_PORT: '5000' }, 3000],
+  [0, {}, 80],
+  [-1, {}, 80],
+  ['0', { PORT: '4000' }, 4000],
+  [-10, { PORT: '65535' }, 65535],
+  [3000, { HEROKU: 'true', PORT: '4000' }, 4000],
+  [3000, { HEROKU: 'false' }, 80],
+  ['$(HTTP_PORT)', { HTTP_PORT: '1234', PORT: '4000' }, 1234]
+] as const)('publishes the canonical HTTP port for %j and %j', (port, environment, expected) => {
+  const result = start(environment, yaml.dump({ port }))
+  expect(result.status).toBe(0)
+  expect(result.config.port).toBe(expected)
+})
+
+it.each(['not-a-port-secret', '.nan', NaN, Infinity, 1.5, '1.5', 65536, '65536', {}, true])(
+  'rejects invalid selected HTTP port %j without echoing configuration secrets',
+  port => {
+    const result = start({}, yaml.dump({ port, db: { pass: 'unrelated-private-database-password' } }))
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('HTTP listener port from selected configuration')
+    expect(result.stderr).toContain('1 to 65535')
+    expect(result.stderr).not.toContain('not-a-port-secret')
+    expect(result.stderr).not.toContain('unrelated-private-database-password')
+  }
+)
+
+it.each(['invalid-port-secret', 'NaN', 'Infinity', '0', '-1', '1.5', '65536'])('rejects invalid PORT fallback %j with a responsible-source diagnostic', port => {
+  const result = start({ PORT: port }, yaml.dump({ port: 0 }))
+  expect(result.status).toBe(1)
+  expect(result.stderr).toContain('HTTP listener port from PORT environment variable')
+  expect(result.stderr).not.toContain('invalid-port-secret')
+})
+
+it('uses application defaults before considering PORT when the file omits the HTTP port', () => {
+  const result = start({ PORT: '4000' }, yaml.dump({ db: { pass: 'fixture' } }))
+  expect(result.status).toBe(0)
+  expect(result.config.port).toBe(80)
 })

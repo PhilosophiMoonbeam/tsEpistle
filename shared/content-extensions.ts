@@ -119,6 +119,7 @@ export interface IndexContentExtensionEnvelope {
     showIcons?: boolean
     showTags?: boolean
     showPageAccent?: boolean
+    showUpdatedAt?: boolean
     order?: 'path' | 'title' | 'updated'
     limit?: number
     emptyLabel?: string
@@ -190,14 +191,88 @@ export interface MediaContentExtensionEnvelope {
   }
 }
 
-export interface YoutubeContentExtensionEnvelope {
-  key: 'youtube'
-  version: 1
-  props: {
-    videoId: string
-    title?: string
-    start?: number
-    controls?: boolean
+export type YoutubeContentExtensionEnvelope =
+  | {
+      key: 'youtube'
+      version: 1
+      props: {
+        videoId: string
+        title?: string
+        start?: number
+        controls?: boolean
+      }
+    }
+  | {
+      key: 'youtube'
+      version: 2
+      props: {
+        source: Exclude<YoutubeContentExtensionSource, { kind: 'video' }>
+        title?: string
+        start?: number
+        controls?: boolean
+      }
+    }
+
+export type YoutubeContentExtensionSource =
+  | { kind: 'video'; videoId: string }
+  | { kind: 'playlist'; playlistId: string }
+  | { kind: 'video-playlist'; videoId: string; playlistId: string }
+
+/**
+ * Authoring accepts only known YouTube routes. URL-only metadata is never
+ * forwarded to the iframe; raw identifiers remain video IDs, including old
+ * identifiers that happen to resemble playlist IDs or "videoseries".
+ */
+export function parseYoutubeContentExtensionSource(input: string): { source: YoutubeContentExtensionSource; start: number } | null {
+  const value = input.trim()
+  if (/^[A-Za-z0-9_-]{6,64}$/.test(value)) return { source: { kind: 'video', videoId: value }, start: 0 }
+  if (value.length > 2048 || value.startsWith('//') || /[\s\\]/.test(value) || hasControlCharacter(value)) return null
+  try {
+    const url = new URL(/^[a-z][a-z\d+.-]*:/i.test(value) ? value : `https://${value}`)
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.port || url.hash) return null
+    if (!['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'www.youtube-nocookie.com', 'youtube-nocookie.com'].includes(url.hostname)) return null
+    const seen = new Set<string>()
+    for (const [key, entry] of url.searchParams) {
+      if (!['v', 'list', 'start', 't', 'si', 'feature'].includes(key) || seen.has(key) || entry.length > 128) return null
+      seen.add(key)
+    }
+    let videoId: string | null = null
+    const playlistId = url.searchParams.get('list')
+    if (playlistId !== null && !/^[A-Za-z0-9_-]{6,128}$/.test(playlistId)) return null
+    const playlistRoute = /^\/(?:playlist|embed\/videoseries)\/?$/.test(url.pathname)
+    if (url.hostname === 'youtu.be') {
+      videoId = /^\/([A-Za-z0-9_-]+)\/?$/.exec(url.pathname)?.[1] ?? null
+      if (seen.has('v')) return null
+    } else if (playlistRoute) {
+      if (!playlistId || seen.has('v')) return null
+    } else if (url.pathname === '/watch') {
+      videoId = url.searchParams.get('v')
+      if (!videoId) return null
+    } else {
+      videoId = /^\/(?:embed|shorts|live|v)\/([A-Za-z0-9_-]+)\/?$/.exec(url.pathname)?.[1] ?? null
+      if (seen.has('v')) return null
+    }
+    if (videoId !== null && !/^[A-Za-z0-9_-]{6,64}$/.test(videoId)) return null
+    if (!videoId && !playlistId) return null
+    if (!videoId && !playlistRoute) return null
+    if (seen.has('start') && seen.has('t')) return null
+    let start = 0
+    const rawStart = url.searchParams.get('start') ?? url.searchParams.get('t')
+    if (rawStart !== null) {
+      if (/^(?:0|[1-9]\d{0,4})$/.test(rawStart)) start = Number(rawStart)
+      else if (seen.has('t')) {
+        const parts = /^(?:(\d{1,2})h)?(?:(\d{1,4})m)?(?:(\d{1,5})s)?$/.exec(rawStart)
+        if (!parts || !parts.slice(1).some(Boolean)) return null
+        start = Number(parts[1] ?? 0) * 3600 + Number(parts[2] ?? 0) * 60 + Number(parts[3] ?? 0)
+      } else return null
+      if (start > 86400) return null
+    }
+    const source: YoutubeContentExtensionSource = videoId
+      ? playlistId ? { kind: 'video-playlist', videoId, playlistId } : { kind: 'video', videoId }
+      : { kind: 'playlist', playlistId: playlistId as string }
+    return { source, start }
+  } catch {
+    return null
   }
 }
 
@@ -372,6 +447,16 @@ export const BUILTIN_CONTENT_EXTENSIONS: ContentExtensionDefinition[] = [
   }
 ]
 
+// Registry versions describe the installed renderer ABI, not saved-source
+// versions. Additional source schemas are admitted explicitly and finitely.
+const ADDITIONAL_CONTENT_EXTENSION_SOURCE_VERSIONS: Partial<Record<ContentExtensionKey, readonly number[]>> = { youtube: [2] }
+
+export function contentExtensionSourceVersionSupported(definition: Pick<ContentExtensionDefinition, 'key' | 'version'>, sourceVersion: unknown): boolean {
+  const bundled = BUILTIN_CONTENT_EXTENSIONS.find(candidate => candidate.key === definition.key)
+  if (!bundled || bundled.version !== definition.version || typeof sourceVersion !== 'number') return false
+  return sourceVersion === bundled.version || (ADDITIONAL_CONTENT_EXTENSION_SOURCE_VERSIONS[definition.key]?.includes(sourceVersion) ?? false)
+}
+
 const CONTENT_EXTENSION_KEYS = new Set(BUILTIN_CONTENT_EXTENSIONS.map(definition => definition.key))
 
 type JsonObject = Record<string, unknown>
@@ -453,6 +538,14 @@ export function isSafeContentExtensionAssetPath(value: string): boolean {
   }
 }
 
+export function isSafeContentExtensionPdfPath(value: string): boolean {
+  // PDF hydration must not reinterpret encoded or normalized legacy attributes.
+  return isSafeContentExtensionAssetPath(value) &&
+    !value.includes('%') &&
+    value.slice(1).split('/').every(segment => segment.length > 0) &&
+    value.toLowerCase().endsWith('.pdf')
+}
+
 function requireAssetPath(value: unknown, path: string): string {
   if (typeof value !== 'string' || !isSafeContentExtensionAssetPath(value)) {
     throw new Error(`${path} must be a safe same-origin asset path.`)
@@ -497,14 +590,24 @@ function parseGalleryEnvelope(propsInput: unknown): GalleryContentExtensionEnvel
   return { key: 'gallery', version: 1, props: { images, columns, fit, aspectRatio } }
 }
 
+export function isSafeContentExtensionLinkPath(value: string): boolean {
+  if (!value.startsWith('/') || value.length > 2048 || value !== value.trim() || hasControlCharacter(value) || value.includes('\\')) return false
+  const suffix = value.search(/[?#]/)
+  const pathname = suffix < 0 ? value : value.slice(0, suffix)
+  if (!isSafeContentExtensionAssetPath(pathname)) return false
+  try {
+    const decoded = decodeURIComponent(value)
+    return !hasControlCharacter(decoded) && !decoded.startsWith('//')
+  } catch {
+    return false
+  }
+}
+
 function requireLinksGridUrl(value: unknown, path: string): string {
   const url = boundedString(value, path, 1, 2048)
+  if (isSafeContentExtensionLinkPath(url)) return url
   if (url !== url.trim() || hasControlCharacter(url) || url.includes('\\')) {
     throw new Error(`${path} must be a safe link URL.`)
-  }
-  if (isSafeContentExtensionAssetPath(url)) {
-    const decoded = decodeURIComponent(url)
-    if (!hasControlCharacter(decoded) && !decoded.startsWith('//')) return url
   }
   try {
     const parsed = new URL(url)
@@ -579,7 +682,7 @@ function parseIndexEnvelope(propsInput: unknown): IndexContentExtensionEnvelope 
   const props = requireJsonObject(propsInput, 'Content extension props')
   rejectUnknownProperties(
     props,
-    ['path', 'locale', 'depth', 'columns', 'showIcons', 'showTags', 'showPageAccent', 'order', 'limit', 'emptyLabel'],
+    ['path', 'locale', 'depth', 'columns', 'showIcons', 'showTags', 'showPageAccent', 'showUpdatedAt', 'order', 'limit', 'emptyLabel'],
     'Content extension props'
   )
   if (typeof props.path !== 'string' || !validIndexPath(props.path)) {
@@ -593,6 +696,8 @@ function parseIndexEnvelope(propsInput: unknown): IndexContentExtensionEnvelope 
   const showIcons = strictBoolean(props.showIcons, 'Content extension props.showIcons', false)
   const showTags = strictBoolean(props.showTags, 'Content extension props.showTags', false)
   const showPageAccent = strictBoolean(props.showPageAccent, 'Content extension props.showPageAccent', false)
+  const showUpdatedAt = props.showUpdatedAt
+  if (showUpdatedAt !== undefined && typeof showUpdatedAt !== 'boolean') throw new Error('Content extension props.showUpdatedAt must be a boolean.')
   const order = props.order ?? 'path'
   if (order !== 'path' && order !== 'title' && order !== 'updated') {
     throw new Error('Content extension props.order must be "path", "title", or "updated".')
@@ -610,6 +715,7 @@ function parseIndexEnvelope(propsInput: unknown): IndexContentExtensionEnvelope 
       showIcons,
       showTags,
       showPageAccent,
+      ...(showUpdatedAt === undefined ? {} : { showUpdatedAt }),
       order,
       limit,
       ...(emptyLabel === undefined ? {} : { emptyLabel })
@@ -684,8 +790,10 @@ function parseInfoboxEnvelope(propsInput: unknown): InfoboxContentExtensionEnvel
 function parsePdfEnvelope(propsInput: unknown): PdfContentExtensionEnvelope {
   const props = requireJsonObject(propsInput, 'Content extension props')
   rejectUnknownProperties(props, ['src', 'title', 'page', 'height'], 'Content extension props')
-  const src = requireAssetPath(props.src, 'Content extension props.src')
-  if (!src.toLowerCase().endsWith('.pdf')) throw new Error('Content extension props.src must identify a PDF asset.')
+  if (typeof props.src !== 'string' || !isSafeContentExtensionPdfPath(props.src)) {
+    throw new Error('Content extension props.src must identify a safe same-origin PDF asset.')
+  }
+  const src = props.src
   const title = optionalBoundedString(props.title, 'Content extension props.title', 200) ?? 'PDF document'
   const page = boundedInteger(props.page, 'Content extension props.page', 1, 100000, 1)
   const height = boundedInteger(props.height, 'Content extension props.height', 320, 1600, 720)
@@ -717,6 +825,28 @@ function parseYoutubeEnvelope(propsInput: unknown): YoutubeContentExtensionEnvel
   const start = boundedInteger(props.start, 'Content extension props.start', 0, 86400, 0)
   const controls = strictBoolean(props.controls, 'Content extension props.controls', true)
   return { key: 'youtube', version: 1, props: { videoId, title, start, controls } }
+}
+
+function parseYoutubePlaylistEnvelope(propsInput: unknown): Extract<YoutubeContentExtensionEnvelope, { version: 2 }> {
+  const props = requireJsonObject(propsInput, 'Content extension props')
+  rejectUnknownProperties(props, ['source', 'title', 'start', 'controls'], 'Content extension props')
+  const input = requireJsonObject(props.source, 'Content extension props.source')
+  if (input.kind !== 'playlist' && input.kind !== 'video-playlist') {
+    throw new Error('Content extension props.source.kind must be "playlist" or "video-playlist"; video-only sources retain version 1.')
+  }
+  rejectUnknownProperties(input, input.kind === 'playlist' ? ['kind', 'playlistId'] : ['kind', 'videoId', 'playlistId'], 'Content extension props.source')
+  const playlistId = boundedString(input.playlistId, 'Content extension props.source.playlistId', 6, 128)
+  if (!/^[A-Za-z0-9_-]+$/.test(playlistId)) throw new Error('Content extension props.source.playlistId must contain only YouTube identifier characters.')
+  let source: Extract<YoutubeContentExtensionEnvelope, { version: 2 }>['props']['source']
+  if (input.kind === 'video-playlist') {
+    const videoId = boundedString(input.videoId, 'Content extension props.source.videoId', 6, 64)
+    if (!/^[A-Za-z0-9_-]+$/.test(videoId)) throw new Error('Content extension props.source.videoId must contain only YouTube identifier characters.')
+    source = { kind: 'video-playlist', videoId, playlistId }
+  } else source = { kind: 'playlist', playlistId }
+  const title = optionalBoundedString(props.title, 'Content extension props.title', 200) ?? (source.kind === 'playlist' ? 'YouTube playlist' : 'YouTube video')
+  const start = boundedInteger(props.start, 'Content extension props.start', 0, 86400, 0)
+  const controls = strictBoolean(props.controls, 'Content extension props.controls', true)
+  return { key: 'youtube', version: 2, props: { source, title, start, controls } }
 }
 
 function parseDiagramEnvelope(propsInput: unknown): DiagramContentExtensionEnvelope {
@@ -774,7 +904,10 @@ function parseMapEnvelope(propsInput: unknown): MapContentExtensionEnvelope {
 export function parseContentExtensionEnvelope(input: unknown): ContentExtensionEnvelope {
   const envelope = requireJsonObject(input, 'Content extension')
   rejectUnknownProperties(envelope, ['key', 'version', 'props'], 'Content extension')
-  if (envelope.version !== 1) throw new Error('Content extensions require version 1.')
+  const definition = BUILTIN_CONTENT_EXTENSIONS.find(candidate => candidate.key === envelope.key)
+  if (definition ? !contentExtensionSourceVersionSupported(definition, envelope.version) : envelope.version !== 1) {
+    throw new Error('Content extensions require version 1, or supported YouTube playlist source version 2.')
+  }
   if (envelope.key === 'qr') return parseQrEnvelope(envelope.props)
   if (envelope.key === 'gallery') return parseGalleryEnvelope(envelope.props)
   if (envelope.key === 'links-grid') return parseLinksGridEnvelope(envelope.props)
@@ -784,7 +917,7 @@ export function parseContentExtensionEnvelope(input: unknown): ContentExtensionE
   if (envelope.key === 'infobox') return parseInfoboxEnvelope(envelope.props)
   if (envelope.key === 'pdf') return parsePdfEnvelope(envelope.props)
   if (envelope.key === 'media') return parseMediaEnvelope(envelope.props)
-  if (envelope.key === 'youtube') return parseYoutubeEnvelope(envelope.props)
+  if (envelope.key === 'youtube') return envelope.version === 2 ? parseYoutubePlaylistEnvelope(envelope.props) : parseYoutubeEnvelope(envelope.props)
   if (envelope.key === 'diagram') return parseDiagramEnvelope(envelope.props)
   if (envelope.key === 'kroki') return parseKrokiEnvelope(envelope.props)
   if (envelope.key === 'plantuml') return parsePlantUmlEnvelope(envelope.props)
@@ -839,6 +972,7 @@ function canonicalProps(envelope: ContentExtensionEnvelope): Record<string, unkn
         showIcons: envelope.props.showIcons,
         showTags: envelope.props.showTags,
         showPageAccent: envelope.props.showPageAccent,
+        ...(envelope.props.showUpdatedAt === undefined ? {} : { showUpdatedAt: envelope.props.showUpdatedAt }),
         order: envelope.props.order,
         limit: envelope.props.limit,
         ...(envelope.props.emptyLabel === undefined ? {} : { emptyLabel: envelope.props.emptyLabel })
@@ -872,7 +1006,9 @@ function canonicalProps(envelope: ContentExtensionEnvelope): Record<string, unkn
         ...(envelope.props.caption === undefined ? {} : { caption: envelope.props.caption })
       }
     case 'youtube':
-      return { videoId: envelope.props.videoId, title: envelope.props.title, start: envelope.props.start, controls: envelope.props.controls }
+      return envelope.version === 1
+        ? { videoId: envelope.props.videoId, title: envelope.props.title, start: envelope.props.start, controls: envelope.props.controls }
+        : { source: envelope.props.source, title: envelope.props.title, start: envelope.props.start, controls: envelope.props.controls }
     case 'diagram':
       return {
         source: envelope.props.source,

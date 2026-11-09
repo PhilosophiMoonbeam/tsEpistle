@@ -1,4 +1,4 @@
-import { isSafeContentExtensionAssetPath } from '../../shared/content-extensions.ts'
+import { isSafeContentExtensionAssetPath, isSafeContentExtensionLinkPath } from '../../shared/content-extensions.ts'
 
 import createDOMPurify from 'dompurify'
 import jsdomModule from 'jsdom'
@@ -61,6 +61,7 @@ const ALLOWED_ATTRIBUTES = new Set([
   'data-index-show-icons',
   'data-index-show-tags',
   'data-index-show-page-accent',
+  'data-index-show-updated-at',
   'data-kroki-format',
   'data-kroki-type',
   'data-map-height',
@@ -79,8 +80,11 @@ const ALLOWED_ATTRIBUTES = new Set([
   'data-tabs-active',
   'data-youtube-controls',
   'data-youtube-id',
+  'data-youtube-playlist-id',
+  'data-youtube-source-kind',
   'data-youtube-start',
   'data-youtube-title',
+  'data-youtube-version',
   'decoding',
   'fill',
   'height',
@@ -113,7 +117,7 @@ export const isSafeContentExtensionLink = (value: string): boolean => {
 }
 
 sanitizer.addHook('uponSanitizeAttribute', (_node, data) => {
-  if (data.attrName === 'href' && !isSafeContentExtensionLink(data.attrValue) && !isSafeContentExtensionAssetPath(data.attrValue)) {
+  if (data.attrName === 'href' && !isSafeContentExtensionLink(data.attrValue) && !isSafeContentExtensionLinkPath(data.attrValue)) {
     data.keepAttr = false
   }
   if (data.attrName === 'src' && !isSafeContentExtensionAssetPath(data.attrValue)) data.keepAttr = false

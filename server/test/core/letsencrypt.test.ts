@@ -4,7 +4,7 @@ import type { AcmeCertificate } from 'acme'
 import type { RootKeypair } from '@root/keypairs'
 import { createLetsEncryptService } from '../../core/letsencrypt.ts'
 import { AcmeStateError, type AcmeSavedState, AcmeStateSnapshot, AcmeStateStore } from '../../repositories/acme-state.ts'
-import { tlsFixture } from '../helpers/tls-fixture.ts'
+import { tlsFixture } from '../helpers/tls-fixture.mts'
 let fixture: ReturnType<typeof tlsFixture>, accountKeypair: RootKeypair
 beforeAll(async () => {
   fixture = tlsFixture(90)

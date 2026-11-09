@@ -36,6 +36,28 @@ interface PersonalMcpRuntime {
   }
   models: { knex: Knex }
 }
+
+interface PersonalMcpReloadRuntime {
+  auth: { reloadApiKeys(): Promise<void> }
+  events: { outbound: { emit(event: string): void } }
+  logger: { warn(message: string): void }
+}
+
+/** Caller holds every affected owner UPDATE lock until its authority transaction commits. */
+export const revokeOwnerPersonalMcpKeys = async (transaction: Knex.Transaction, ownerIds: readonly number[]): Promise<number> => {
+  if (!ownerIds.length) return 0
+  return transaction('apiKeys').whereIn('personalOwnerId', ownerIds).whereNotNull('personalAccess').where('isRevoked', false)
+    .update({ isRevoked: true, updatedAt: new Date().toISOString() })
+}
+
+/** Both deliveries are attempted after commit; diagnostics never include bearer or provider errors. */
+export const reloadPersonalMcpKeys = async (runtime: PersonalMcpReloadRuntime = WIKI as unknown as PersonalMcpReloadRuntime): Promise<boolean> => {
+  let applied = true
+  try { await runtime.auth.reloadApiKeys() } catch { applied = false }
+  try { runtime.events.outbound.emit('reloadApiKeys') } catch { applied = false }
+  if (!applied) runtime.logger.warn('Personal MCP key change committed; key reload notification needs attention.')
+  return applied
+}
 export const personalMcpRuntime = (): PersonalMcpRuntime => WIKI as unknown as PersonalMcpRuntime
 export const personalMcpEnabled = (): boolean => {
   const { config } = personalMcpRuntime()

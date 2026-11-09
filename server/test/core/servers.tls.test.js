@@ -1,6 +1,6 @@
 import tls from 'node:tls'
 import { readFileSync } from 'node:fs'
-import { tlsFixture } from '../helpers/tls-fixture.ts'
+import { tlsFixture } from '../helpers/tls-fixture.mts'
 import { inspectTlsEndpoint } from '../../repositories/tls-probe.ts'
 let fixture, previousWiki
 beforeAll(() => { fixture = tlsFixture() })

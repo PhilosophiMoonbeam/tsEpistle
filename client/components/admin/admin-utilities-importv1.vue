@@ -39,7 +39,60 @@ v-card
           v-text-field(v-model='git.defaultEmail' :label='$t(`admin:utilitiesImportv1.fallbackAuthorEmail`)' variant='outlined' :disabled='busy || !importTargets.git.available')
         v-col(cols='12')
           v-text-field(v-model='git.localRepoPath' :label='$t(`admin:utilitiesImportv1.localWorkingCopyPath`)' variant='outlined' :disabled='busy || !importTargets.git.available' :error-messages='workingCopyError' @blur='touched.workingCopy = true')
-    v-btn.mt-3(color='warning' variant='flat' :disabled='busy || !canImportContent' @click='openContentReview') {{ $t(`admin:utilitiesImportv1.reviewContentImport`) }}
+      v-checkbox(:model-value='clearDotContentReview' label='Discard saved exact Git choices before this review (canonical records are never deleted by clearing choices)' :disabled='busy || previewLoading' hide-details @update:model-value='clearDotContentReview = $event === true')
+    v-alert.mt-3(v-if='previewError' color='error' variant='tonal' role='alert') {{ previewError }}
+    v-btn.mt-3(color='primary' variant='flat' :loading='previewLoading' :disabled='busy || previewLoading || !canImportContent' @click='inspectContent') Preview local source
+    v-card.mt-4(v-if='preview' variant='outlined')
+      v-card-title Review source identities
+      v-card-text
+        p.text-body-medium Preview only: no settings, pages or assets have been changed. Git preview reads the existing local working copy; it does not clone or fetch. A changed source or destination invalidates confirmation.
+        p.text-body-small.mt-2 Target: {{ preview.scope.targetKey }} · Configuration binding: #[code {{ preview.scope.configurationRevision }}]
+        p.text-body-small Snapshot: #[code {{ preview.snapshot }}]
+        h3.text-title-small.mt-4 Complete bounded inventory ({{ preview.entries.length }} entries)
+        v-table(density='compact')
+          thead
+            tr
+              th(scope='col') Source
+              th(scope='col') Kind
+              th(scope='col') SHA-256
+          tbody
+            tr(v-for='entry in visibleEntries' :key='entry.sourcePath')
+              td.text-break {{ entry.sourcePath }}
+              td {{ entry.kind }}
+              td.text-break {{ entry.sourceSha256 ?? '—' }}
+        v-pagination(v-if='preview.entries.length > 25' v-model='inventoryPage' :length='Math.ceil(preview.entries.length / 25)' aria-label='Source inventory pages')
+        template(v-if='preview.gitContent?.length')
+          h3.text-title-small.mt-4 Git source ownership and dot-content review ({{ preview.gitContent.length }})
+          p.text-body-small New dot-prefixed content is excluded, not deleted. Legacy native assets remain independent even when bytes match: retain never grants Git ownership. Only an explicitly reviewed native import/replacement of actual source bytes may establish ownership; a foreign source must first be reconciled through native asset administration. Choices are at most 2 MiB per batch. Unsafe/internal paths never become eligible.
+          v-card.mt-3(v-for='entry in visibleGitContent' :key='entry.sourcePath' variant='tonal')
+            v-card-text
+              .text-body-medium.text-break {{ entry.sourcePath }} · {{ entry.kind }} · {{ entry.hidden ? 'excluded by default' : entry.previous ? 'previous Git source' : 'visible Git asset' }}
+              .text-body-small.text-break SHA-256: {{ entry.sourceSha256 }} · Git revision: {{ entry.sourceRevision ?? 'current worktree' }} · {{ entry.sourceAvailable ? 'actual source bytes available' : 'actual old bytes unavailable; retain only' }}
+              .text-body-small(v-if='entry.owner') Native {{ entry.owner.kind }} {{ entry.owner.id }} · {{ entry.owner.locale ? `${entry.owner.locale}/` : '' }}{{ entry.owner.path }} · revision {{ entry.owner.revision }} · native SHA-256 {{ entry.owner.sha256 }} · associated raw SHA-256 {{ entry.owner.sourceSha256 ?? entry.owner.sha256 }} · {{ entry.owner.sourceOwned ? 'native source association verified' : 'association/current raw revision requires review' }}
+              .text-body-small(v-else) No native source owner. Exclusion cannot authorize deletion.
+              v-alert.mt-2(v-for='diagnostic in entry.diagnostics' :key='diagnostic' color='warning' variant='tonal' density='compact') {{ diagnostic }}
+              v-select.mt-3(v-model='dotActions[entry.sourcePath]' :items='dotChoiceOptions(entry)' item-title='title' item-value='value' label='Explicit decision for this exact Git source' variant='outlined' :disabled='busy || previewLoading' @update:model-value='mappingChanged')
+              v-text-field(v-if='dotActions[entry.sourcePath] === `remap`' v-model='dotDestinations[entry.sourcePath]' :label='entry.kind === `page` ? `Visible native page path (same locale)` : `Visible native asset path including filename`' variant='outlined' :disabled='busy || previewLoading' @update:model-value='mappingChanged')
+          v-pagination(v-if='preview.gitContent.length > 10' v-model='dotPage' :length='Math.ceil(preview.gitContent.length / 10)' aria-label='Git content conflict pages')
+        h3.text-title-small.mt-4 Page destinations ({{ preview.pages.length }} pages)
+        p.text-body-small Enter a valid native locale/path for unsupported source names. Previously unreviewed existing pages require an explicit association at the displayed revision. A retained source association is shown separately. No automatic rename or overwrite is performed.
+        v-card.mt-3(v-for='page in visiblePages' :key='page.sourcePath' variant='tonal')
+          v-card-text
+            .text-body-medium.text-break {{ page.sourcePath }}
+            .text-body-small.text-break SHA-256: {{ page.sourceSha256 }} · {{ page.format }}
+            .text-body-small(v-if='page.existingPageId !== null') Current destination: {{ page.locale }}/{{ page.path }} · page {{ page.existingPageId }} · revision {{ page.expectedSourceRevision }} · {{ page.owned ? 'reviewed source ownership' : 'association required' }}
+            v-alert.mt-2(v-for='diagnostic in page.diagnostics' :key='diagnostic' color='warning' variant='tonal' density='compact') {{ diagnostic }}
+            v-row.mt-2
+              v-col(cols='12' md='4')
+                v-select(v-model='mappingFor(page.sourcePath).locale' :items='preview.locales' label='Native locale' variant='outlined' :disabled='busy || previewLoading || page.format === `okf_valid`' @update:model-value='mappingChanged')
+              v-col(cols='12' md='8')
+                v-text-field(v-model='mappingFor(page.sourcePath).path' label='Native destination path' variant='outlined' :disabled='busy || previewLoading || page.format === `okf_valid`' @update:model-value='mappingChanged')
+              v-col(cols='12')
+                v-select(:model-value='mappingFor(page.sourcePath).existingPageId' :items='destinationChoices' item-title='title' item-value='value' label='Explicitly IMPORT / REPLACE current native page state at this reviewed ID and revision' variant='outlined' :disabled='busy || previewLoading' @update:model-value='associateDestination(page.sourcePath, $event)')
+            .text-body-small(v-if='mappingFor(page.sourcePath).existingPageId !== null') Confirmed page {{ mappingFor(page.sourcePath).existingPageId }} · revision {{ mappingFor(page.sourcePath).expectedSourceRevision }}
+        v-pagination(v-if='preview.pages.length > 10' v-model='mappingPage' :length='Math.ceil(preview.pages.length / 10)' aria-label='Page mapping pages')
+        v-btn.mt-4(color='warning' :disabled='busy || previewLoading' @click='openContentReview') {{ $t(`admin:utilitiesImportv1.reviewContentImport`) }}
+        v-btn.mt-4.ml-2(variant='text' :disabled='busy || previewLoading' @click='cancelPreview') Cancel preview
   utility-review(
     v-model:open='review.open'
     :title='review.title'
@@ -64,6 +117,8 @@ import {
 } from '../../../shared/utilities-workspace.ts'
 import UtilityReview from './admin-utilities-review.vue'
 import type { Translate } from '../../helpers/use-translate.ts'
+import { StorageImportPreviewSchema, StorageImportReviewSchema, type StorageImportPreview, type StorageImportMapping, type StorageImportReview, type StorageGitContentEntry, type StorageGitContentChoice } from '../../../shared/utility-content-import.ts'
+import { sameOriginJsonFetch } from '../../helpers/json-transport.ts'
 
 type ImportKind = Extract<UtilityOperationKind, 'import-v1-content'>
 type GitDraft = {
@@ -109,6 +164,7 @@ export default defineComponent({
     touched: { disk: false, repo: false, branch: false, workingCopy: false, key: false, password: false },
     contentMode: (vm.workspace.importTargets.git.available || !vm.workspace.importTargets.disk.available ? 'git' : 'disk') as 'git' | 'disk',
     initialContentMode: (vm.workspace.importTargets.git.available || !vm.workspace.importTargets.disk.available ? 'git' : 'disk') as 'git' | 'disk',
+    clearDotContentReview: false,
     diskPath: '',
     git: {
       repoUrl: '',
@@ -136,9 +192,36 @@ export default defineComponent({
       payload: {} as ImportPayload
     },
     reviewError: '',
+    preview: null as StorageImportPreview | null,
+    previewPayload: null as ImportPayload | null,
+    mappings: [] as StorageImportMapping[],
+    dotActions: {} as Record<string, StorageGitContentChoice['action'] | ''>,
+    dotDestinations: {} as Record<string, string>,
+    dotPage: 1,
+    inventoryPage: 1,
+    mappingPage: 1,
+    previewLoading: false,
+    previewSequence: 0,
+    previewError: '',
     reviewDirty: false
   }),
   computed: {
+    mappingBySource(): Map<string, StorageImportMapping> {
+      return new Map(this.mappings.map(mapping => [mapping.sourcePath, mapping]))
+    },
+    visibleEntries() {
+      return this.preview?.entries.slice((this.inventoryPage - 1) * 25, this.inventoryPage * 25) ?? []
+    },
+    visiblePages() {
+      return this.preview?.pages.slice((this.mappingPage - 1) * 10, this.mappingPage * 10) ?? []
+    },
+    visibleGitContent(): StorageGitContentEntry[] {
+      return this.preview?.gitContent?.slice((this.dotPage - 1) * 10, this.dotPage * 10) ?? []
+    },
+    destinationChoices(): Array<{ title: string; value: number | null }> {
+      return [{ title: 'Create a new destination (no existing-page association)', value: null },
+        ...(this.preview?.destinations.map(page => ({ title: `${page.locale}/${page.path} · page ${page.id} · revision ${page.sourceRevision}`, value: page.id })) ?? [])]
+    },
     importTargets() {
       return this.workspace.importTargets
     },
@@ -192,6 +275,7 @@ export default defineComponent({
     formDirty(): boolean {
       const git = this.git
       return Boolean(
+        this.clearDotContentReview ||
         this.contentMode !== this.initialContentMode ||
         this.diskPath ||
         git.repoUrl ||
@@ -208,20 +292,124 @@ export default defineComponent({
     }
   },
   watch: {
+    clearDotContentReview() {
+      this.cancelPreview()
+      this.publishDraftState()
+    },
     contentMode() {
+      this.cancelPreview()
       this.publishDraftState()
     },
     diskPath() {
+      this.cancelPreview()
       this.publishDraftState()
     },
     git: {
       deep: true,
       handler() {
+        this.cancelPreview()
         this.publishDraftState()
       }
     }
   },
+  beforeUnmount() {
+    this.previewSequence += 1
+  },
   methods: {
+    async fetchPreview(payload: ImportPayload): Promise<StorageImportPreview> {
+      const response = await sameOriginJsonFetch(window.fetch.bind(window), '/_api/utilities/content-import/preview', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      const value: unknown = await response.json().catch(() => null)
+      if (!response.ok) {
+        if (response.status === 413 && payload.mode === 'git') throw new Error('The transport rejected this review size. Review fewer exact Git choices per batch. No settings or content have changed.')
+        throw new Error(value && typeof value === 'object' && typeof Reflect.get(value, 'error') === 'string'
+          ? String(Reflect.get(value, 'error')) : 'The local import source could not be previewed. No settings or content have been changed.')
+      }
+      return StorageImportPreviewSchema.parse(value)
+    },
+    async inspectContent() {
+      if (!this.canImportContent || this.busy || this.previewLoading) return
+      const sequence = ++this.previewSequence
+      const payload = Object.freeze(this.contentPayload()) as ImportPayload
+      this.previewLoading = true
+      this.previewError = ''
+      this.preview = null
+      this.review.open = false
+      try {
+        const preview = await this.fetchPreview(payload)
+        if (sequence !== this.previewSequence) return
+        this.preview = preview
+        this.previewPayload = payload
+        this.mappings = preview.pages.map(page => ({
+          sourcePath: page.sourcePath, sourceSha256: page.sourceSha256,
+          locale: page.locale, path: page.path,
+          existingPageId: page.owned ? page.existingPageId : null,
+          expectedSourceRevision: page.owned ? page.expectedSourceRevision : null
+        }))
+        this.dotActions = Object.fromEntries((preview.gitContent ?? []).map(entry => [entry.sourcePath, '']))
+        this.dotDestinations = {}
+        this.dotPage = 1
+        this.inventoryPage = 1
+        this.mappingPage = 1
+      } catch (error) {
+        if (sequence === this.previewSequence) this.previewError = error instanceof Error ? error.message : 'The import preview is unavailable.'
+      } finally {
+        if (sequence === this.previewSequence) this.previewLoading = false
+      }
+    },
+    mappingFor(sourcePath: string): StorageImportMapping {
+      const mapping = this.mappingBySource.get(sourcePath)
+      if (!mapping) throw new Error('This source is no longer in the reviewed inventory. Preview again.')
+      return mapping
+    },
+    dotChoiceOptions(entry: StorageGitContentEntry) {
+      return [
+        { title: entry.automatic && (entry.owner === null && !entry.previous || entry.owner?.sourceOwned && entry.owner.path === entry.sourcePath)
+          ? 'Use ordinary Git admission with exact native source ownership'
+          : entry.owner ? 'Leave unresolved — preserve canonical record and report conflict' : 'Exclude this new source — no content change', value: '' },
+        ...(entry.owner || entry.previous ? [{ title: entry.owner
+          ? entry.owner.sourceOwned ? 'Retain the verified source association and current canonical bytes' : 'Retain current canonical bytes without creating or refreshing Git ownership'
+          : 'Acknowledge absent owner; retain the pinned source receipt without deleting anything', value: 'retain' }] : []),
+        ...(!entry.previous && entry.sourceAvailable && (entry.hidden || entry.kind === 'asset' && entry.owner !== null) &&
+          (entry.owner === null || entry.kind === 'page' || entry.owner.path === entry.sourcePath)
+          ? [{ title: entry.hidden ? 'INCLUDE this exact supported dot source through a native import/replacement'
+            : 'IMPORT / REPLACE this exact native asset with the reviewed Git bytes (foreign ownership must first be reconciled)', value: 'include' }] : []),
+        ...(entry.owner?.sourceOwned && (entry.owner.sourceSha256 ?? entry.owner.sha256) === entry.sourceSha256 ? [
+          { title: 'Remap this exact source-owned canonical record to a visible destination', value: 'remap' },
+          { title: 'Deliberately remove this exact source-owned canonical record', value: 'remove' }
+        ] : [])
+      ]
+    },
+    mappingChanged() {
+      this.review.open = false
+      this.publishDraftState()
+    },
+    associateDestination(sourcePath: string, id: number | null) {
+      const mapping = this.mappingFor(sourcePath)
+      const destination = this.preview?.destinations.find(page => page.id === id)
+      mapping.existingPageId = destination?.id ?? null
+      mapping.expectedSourceRevision = destination?.sourceRevision ?? null
+      if (destination) {
+        mapping.locale = destination.locale
+        mapping.path = destination.path
+      }
+      this.mappingChanged()
+    },
+    cancelPreview() {
+      this.previewSequence += 1
+      this.previewLoading = false
+      this.preview = null
+      this.previewPayload = null
+      this.mappings = []
+      this.dotActions = {}
+      this.dotDestinations = {}
+      this.previewError = ''
+      this.review.open = false
+    },
     targetAvailability(target: { available: boolean; reason: string | null }): string {
       return target.available ? this.$t('admin:utilitiesImportv1.readyReviewedImport') : (target.reason ?? this.$t('admin:utilitiesImportv1.unavailableCurrentDeployment'))
     },
@@ -233,18 +421,58 @@ export default defineComponent({
             repoUrl: this.git.repoUrl.trim(),
             branch: this.git.branch.trim(),
             authType: this.git.authType,
-            privateKey: this.git.privateKey,
-            username: this.git.username,
-            password: this.git.password,
-            defaultName: this.git.defaultName,
-            defaultEmail: this.git.defaultEmail,
+            ...(this.git.authType === 'ssh'
+              ? { privateKey: this.git.privateKey }
+              : { username: this.git.username.trim(), password: this.git.password }),
+            ...(this.git.defaultName.trim() ? { defaultName: this.git.defaultName.trim() } : {}),
+            ...(this.git.defaultEmail.trim() ? { defaultEmail: this.git.defaultEmail.trim() } : {}),
             localRepoPath: this.git.localRepoPath.trim(),
-            verifySSL: this.git.verifySSL
+            verifySSL: this.git.verifySSL,
+            ...(this.clearDotContentReview ? { clearDotContentReview: true } : {})
           }
     },
-    openContentReview() {
-      if (!this.canImportContent || this.busy) return
-      const payload = Object.freeze(this.contentPayload()) as ImportPayload
+    async openContentReview() {
+      if (!this.canImportContent || this.busy || this.previewLoading || !this.preview || !this.previewPayload) return
+      const gitBySource = new Map(this.preview.gitContent?.map(entry => [entry.sourcePath, entry]))
+      const pageBySource = new Map(this.preview.pages.map(page => [page.sourcePath, page]))
+      const identityReview: StorageImportReview = {
+        scope: { ...this.preview.scope }, snapshot: this.preview.snapshot,
+        mappings: this.mappings.filter(mapping => {
+          const entry = gitBySource.get(mapping.sourcePath)
+          if (entry?.hidden && this.dotActions[entry.sourcePath] !== 'include') return false
+          if (this.contentMode === 'disk') return true
+          const page = pageBySource.get(mapping.sourcePath)
+          return page !== undefined && (mapping.locale !== page.locale || mapping.path !== page.path ||
+            mapping.existingPageId !== (page.owned ? page.existingPageId : null) ||
+            mapping.expectedSourceRevision !== (page.owned ? page.expectedSourceRevision : null))
+        }).map(mapping => ({ ...mapping })),
+        ...(this.contentMode === 'git' ? { gitContent: (this.preview.gitContent ?? []).flatMap(entry => {
+          const action = this.dotActions[entry.sourcePath]
+          return action ? [{
+            sourcePath: entry.sourcePath, sourceSha256: entry.sourceSha256, sourceRevision: entry.sourceRevision ?? null, sourceAvailable: entry.sourceAvailable,
+            owner: entry.owner === null ? null : { ...entry.owner }, action,
+            ...(action === 'remap' ? { destinationPath: this.dotDestinations[entry.sourcePath] ?? '' } : {})
+          }] : []
+        }) } : {})
+      }
+      const parsedReview = StorageImportReviewSchema.safeParse(identityReview)
+      if (!parsedReview.success) {
+        this.previewError = parsedReview.error.issues[0]?.message ?? 'Review fewer exact source choices in this batch.'
+        return
+      }
+      const payload = Object.freeze({ ...this.previewPayload, review: identityReview }) as ImportPayload
+      const sequence = ++this.previewSequence
+      this.previewLoading = true
+      this.previewError = ''
+      try {
+        await this.fetchPreview(payload)
+        if (sequence !== this.previewSequence) return
+      } catch (error) {
+        if (sequence === this.previewSequence) this.previewError = error instanceof Error ? error.message : 'The identity review is stale or invalid. Preview again.'
+        return
+      } finally {
+        if (sequence === this.previewSequence) this.previewLoading = false
+      }
       const parameters =
         this.contentMode === 'disk'
           ? [
@@ -276,7 +504,18 @@ export default defineComponent({
         effect:
           this.$t('admin:utilitiesImportv1.savesSelectedStorageTarget'),
         confirmation: utilityOperationConfirmation('import-v1-content'),
-        parameters,
+        parameters: [...parameters,
+          { label: 'Reviewed snapshot', value: identityReview.snapshot },
+          ...(this.contentMode === 'git' ? [{ label: 'Saved Git choices', value: `${identityReview.gitContent?.length ?? 0} exact selections${this.clearDotContentReview ? '; discard previous saved choices' : ''}. Native source associations and unselected canonical records are retained.` }] : []),
+          ...(identityReview.gitContent ?? []).map(choice => ({
+            label: `Git decision: ${choice.sourcePath}`,
+            value: `${choice.action}${choice.destinationPath ? ` → ${choice.destinationPath}` : ''} · ${choice.owner ? `native ${choice.owner.kind} ${choice.owner.id} at revision ${choice.owner.revision}` : 'no existing native owner'} · SHA-256 ${choice.sourceSha256}`
+          })),
+          ...identityReview.mappings.map(mapping => ({
+            label: mapping.sourcePath,
+            value: `${mapping.locale}/${mapping.path} · ${mapping.existingPageId === null ? 'new destination' : `associate page ${mapping.existingPageId} at revision ${mapping.expectedSourceRevision}`} · SHA-256 ${mapping.sourceSha256}`
+          }))
+        ],
         payload
       }
       this.reviewError = ''

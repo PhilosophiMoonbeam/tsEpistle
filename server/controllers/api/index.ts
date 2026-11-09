@@ -32,6 +32,11 @@ import usersRouter from './users.ts'
 import utilitiesRouter from './utilities.ts'
 import taxonomyRouter from './taxonomy.ts'
 import webhooksRouter from './webhooks.ts'
+import pageFeedbackRouter from './page-feedback.ts'
+import pageReviewRoutingRouter from './page-review-routing.ts'
+import pageLifecycleRouter from './page-lifecycle.ts'
+import hedgedocImportRouter from './hedgedoc-import.ts'
+import governedNotificationsRouter from './governed-notifications.ts'
 
 export interface ApiRuntime {
   logger: { error(value: unknown): void }
@@ -63,6 +68,11 @@ router.use('/groups', groupsRouter)
 router.use('/glossary', glossaryRouter)
 router.use('/editors', editorsRouter)
 router.use('/users', usersRouter)
+router.use('/page-feedback', pageFeedbackRouter)
+router.use('/page-lifecycle', pageLifecycleRouter)
+router.use('/hedgedoc-import', hedgedocImportRouter)
+router.use('/governed-notifications', governedNotificationsRouter)
+router.use('/pages', pageReviewRoutingRouter)
 router.use('/pages', pageLinksRouter)
 router.use('/page-ratings', pageRatingsRouter)
 router.use('/pages', pagesRouter)

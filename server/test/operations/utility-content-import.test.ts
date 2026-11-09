@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import type { StorageField, StorageModuleDefinition } from '../../../shared/storage-workspace.ts'
-import { storageConfigurationKey } from '../../helpers/storage-configuration-key.ts'
-import { type StorageConfigurationRow } from '../../repositories/storage-configuration.ts'
-import { createUtilityContentImport } from '../../operations/utility-content-import.ts'
+import { storageConfigurationKey, nativeStorageMutationConfigurationKey } from '../../helpers/storage-configuration-key.ts'
+import { storageModuleDefinition, storageTargetView, type StorageConfigurationRow } from '../../repositories/storage-configuration.ts'
+import { createUtilityContentImport, createUtilityContentImportPreview } from '../../operations/utility-content-import.ts'
+import type { StorageImportPreview, StorageImportReview, StorageImportScope, StorageGitContentEntry } from '../../../shared/utility-content-import.ts'
+import { currentStorageImportReview } from '../../modules/storage/import-identity.ts'
+import { createStorageConfigurationStore } from '../../operations/storage-configuration.ts'
 
 const requester = { user: { id: 1, authVersion: 0 } } as never
 const formats = { okf: 0, legacyV1: 0, legacyWiki: 0, plain: 0, invalid: 0 }
@@ -102,7 +105,23 @@ const fixture = () => {
     fingerprint: 'f'.repeat(64)
   }
   const changes = { afterSave: () => undefined }
-  const saved = vi.fn(async (_user: unknown, input: { targets: SavedTarget[] }) => {
+  const sourceState = {
+    snapshot: 'a'.repeat(64),
+    pages: [{
+      sourcePath: 'guide.md', sourceSha256: 'b'.repeat(64), contentType: 'markdown', locale: 'en', path: 'guide',
+      format: 'plain_markdown', owned: false, existingPageId: null, expectedSourceRevision: null, diagnostics: []
+    }] as StorageImportPreview['pages'],
+    destinations: [] as StorageImportPreview['destinations'],
+    gitContent: [] as StorageGitContentEntry[]
+  }
+  const preview = vi.fn(async (_source: unknown, scope: StorageImportScope): Promise<StorageImportPreview> => ({
+    scope, snapshot: sourceState.snapshot, locales: ['en'],
+    entries: sourceState.pages.map(page => ({ sourcePath: page.sourcePath, sourceSha256: page.sourceSha256, kind: 'file' as const })),
+    pages: structuredClone(sourceState.pages), destinations: structuredClone(sourceState.destinations),
+    ...(scope.targetKey === 'git' ? { gitContent: structuredClone(sourceState.gitContent) } : {})
+  }))
+  const executedReviews: Array<StorageImportReview | undefined> = []
+  const saved = vi.fn(async (_user: unknown, input: { targets: SavedTarget[] }, managedGitContent?: string) => {
     for (const target of input.targets) {
       const row = state.rows.find(row => row.key === target.key)!,
         definition = state.definitions.find(definition => definition.key === target.key)!
@@ -115,11 +134,14 @@ const fixture = () => {
         if (action.action === 'clear') row.config[key] = ''
       }
     }
+    if (managedGitContent !== undefined) state.rows.find(row => row.key === 'git')!.config.dotContentReview = managedGitContent
     state.metadata.revision = 'revision-2'
     changes.afterSave()
     return { revision: 'revision-2', changedTargets: ['disk'] }
   })
-  const executeAction = vi.fn(async () => ({
+  const executeAction = vi.fn(async () => {
+    executedReviews.push(currentStorageImportReview())
+    return {
     targetKey: 'disk',
     handler: 'importAll',
     outcome: 'succeeded',
@@ -128,7 +150,8 @@ const fixture = () => {
     failed: 0,
     formats: { ...formats, okf: 1 },
     items: [{ kind: 'page', outcome: 'succeeded', format: 'okf', path: 'guide.md', message: null, diagnostics: [] }]
-  }))
+    }
+  })
   const activated = { active: true, paused: false }
   const runtime = {
     performAdministrativeOperation: async (before: () => Promise<unknown>, after: (targets: unknown[]) => Promise<unknown>) => {
@@ -144,12 +167,18 @@ const fixture = () => {
     },
     executeAction
   }
-  const run = createUtilityContentImport({
-    store: () => ({ configuration: { save: saved } }) as never,
+  const dependencies = {
+    store: () => ({ configuration: { save: saved,
+      saveImportReview: (user: unknown, input: { targets: SavedTarget[] }, value: string) => saved(user, input, value)
+    } }) as never,
     executor: () => runtime as never,
+    signingKey: () => 'fixture-review-signing-secret',
+    preview,
     readState: async () => structuredClone(state) as never
-  })
-  return { state, saved, executeAction, activated, run, runtime, changes }
+  }
+  const run = createUtilityContentImport(dependencies)
+  const inspect = createUtilityContentImportPreview(dependencies)
+  return { state, saved, executeAction, activated, run, inspect, runtime, changes, sourceState, preview, executedReviews }
 }
 
 describe('reviewed legacy content import', () => {
@@ -261,5 +290,148 @@ describe('reviewed legacy content import', () => {
       const result = await subject.run(requester, { mode: 'disk', path: '/migration-source' }, 'Import the approved migration folder', async () => undefined)
       expect(result).toMatchObject({ outcome, counts: { total, succeeded, failed } })
     }
+  })
+
+  const payload = { mode: 'disk', path: '/migration-source' }
+  const reviewed = (preview: StorageImportPreview): StorageImportReview => ({
+    scope: preview.scope, snapshot: preview.snapshot,
+    mappings: preview.pages.map(page => ({
+      sourcePath: page.sourcePath, sourceSha256: page.sourceSha256, locale: page.locale, path: page.path,
+      existingPageId: page.existingPageId, expectedSourceRevision: page.expectedSourceRevision
+    }))
+  })
+
+  it('previews the complete source without publishing configuration or starting import', async () => {
+    const before = structuredClone(subject.state)
+    const preview = await subject.inspect(requester, payload)
+    expect(preview).toMatchObject({
+      scope: { actorId: 1, apiKeyId: null, targetKey: 'disk' },
+      entries: [{ sourcePath: 'guide.md', kind: 'file', sourceSha256: 'b'.repeat(64) }]
+    })
+    expect(subject.state).toEqual(before)
+    expect(subject.saved).not.toHaveBeenCalled()
+    expect(subject.executeAction).not.toHaveBeenCalled()
+    expect(JSON.stringify(preview)).not.toContain('unselected-key')
+  })
+
+  it('rejects unsupported unreviewed names before settings or content writes, then imports an explicit native mapping', async () => {
+    subject.sourceState.pages[0]!.sourcePath = 'a.b.md'
+    subject.sourceState.pages[0]!.path = 'a.b'
+    const before = structuredClone(subject.state)
+    await expect(subject.run(requester, payload, 'Review dotted source', async () => undefined)).rejects.toMatchObject({ status: 409 })
+    expect(subject.state).toEqual(before)
+    expect(subject.saved).not.toHaveBeenCalled()
+    expect(subject.executeAction).not.toHaveBeenCalled()
+    const review = reviewed(await subject.inspect(requester, payload))
+    review.mappings[0]!.path = 'a-b'
+    await subject.run(requester, { ...payload, review }, 'Review dotted source', async () => undefined)
+    expect(subject.executedReviews).toEqual([review])
+  })
+
+  it('requires explicit legacy destination association with the current page revision', async () => {
+    Object.assign(subject.sourceState.pages[0]!, { existingPageId: 41, expectedSourceRevision: '7' })
+    subject.sourceState.destinations.push({ id: 41, locale: 'en', path: 'guide', sourceRevision: '7' })
+    await expect(subject.run(requester, payload, 'Review legacy association', async () => undefined)).rejects.toMatchObject({ status: 409 })
+    expect(subject.saved).not.toHaveBeenCalled()
+    const review = reviewed(await subject.inspect(requester, payload))
+    await subject.run(requester, { ...payload, review }, 'Review legacy association', async () => undefined)
+    expect(subject.executedReviews[0]?.mappings[0]).toMatchObject({ existingPageId: 41, expectedSourceRevision: '7' })
+  })
+
+  it('binds review to the current actor, source snapshot, configuration and chosen mapping without partial settings writes', async () => {
+    for (const change of ['actor', 'snapshot', 'configuration', 'destination', 'mapping'] as const) {
+      subject = fixture()
+      const review = reviewed(await subject.inspect(requester, payload))
+      let actor = requester
+      if (change === 'actor') actor = { user: { id: 3, authVersion: 0 } } as never
+      if (change === 'snapshot') subject.sourceState.snapshot = 'c'.repeat(64)
+      if (change === 'configuration') subject.state.metadata.revision = 'concurrent-revision'
+      if (change === 'destination') subject.sourceState.destinations.push({ id: 9, locale: 'en', path: 'guide', sourceRevision: '2' })
+      if (change === 'mapping') review.mappings[0]!.sourceSha256 = 'c'.repeat(64)
+      const before = structuredClone(subject.state)
+      await expect(subject.run(actor, { ...payload, review }, 'Review current inventory', async () => undefined)).rejects.toMatchObject({ status: 409 })
+      expect(subject.state).toEqual(before)
+      expect(subject.saved).not.toHaveBeenCalled()
+      expect(subject.executeAction).not.toHaveBeenCalled()
+    }
+  })
+
+  it('refuses duplicate reviewed destinations before publishing settings or mutating an asset', async () => {
+    subject.sourceState.pages.push({ ...subject.sourceState.pages[0]!, sourcePath: 'second.md', path: 'second' })
+    const review = reviewed(await subject.inspect(requester, payload))
+    review.mappings[1]!.path = 'GUIDE'
+    await expect(subject.run(requester, { ...payload, review }, 'Review identity collision', async () => undefined)).rejects.toMatchObject({ status: 409 })
+    expect(subject.saved).not.toHaveBeenCalled()
+    expect(subject.executeAction).not.toHaveBeenCalled()
+  })
+
+  it('publishes only exact source-bound Git dot choices through the existing configuration and execution review fence', async () => {
+    const gitPayload = {
+      mode: 'git', repoUrl: 'git@reviewed.example.test:wiki.git', branch: 'main', authType: 'ssh',
+      privateKey: 'reviewed-private-key', localRepoPath: '/reviewed/git', verifySSL: true
+    }
+    subject.sourceState.pages = []
+    subject.sourceState.gitContent = [{
+      sourcePath: '.legacy.bin', sourceSha256: 'c'.repeat(64), sourceKey: 'd'.repeat(64),
+      hidden: true, previous: false, sourceAvailable: true, automatic: false, kind: 'asset', diagnostics: [],
+      owner: { kind: 'asset', id: 42, path: '.legacy.bin', locale: '', revision: 'e'.repeat(64), sha256: 'c'.repeat(64), sourceOwned: false }
+    }]
+    const preview = await subject.inspect(requester, gitPayload)
+    const entry = preview.gitContent![0]!
+    const review: StorageImportReview = {
+      scope: preview.scope, snapshot: preview.snapshot, mappings: [],
+      gitContent: [{ sourcePath: entry.sourcePath, sourceSha256: entry.sourceSha256, owner: entry.owner, action: 'retain' }]
+    }
+    await subject.run(requester, { ...gitPayload, review }, 'Retain the exact legacy Git asset association', async () => {})
+    expect(subject.saved).toHaveBeenCalledTimes(1)
+    const persisted = JSON.parse(String(subject.state.rows.find(row => row.key === 'git')!.config.dotContentReview))
+    expect(persisted).toEqual({ sourceKey: 'd'.repeat(64), choices: review.gitContent })
+    expect(subject.executedReviews).toEqual([review])
+    expect(subject.state.rows.find(row => row.key === 'disk')!.config.path).toBe('/old')
+  })
+  it('keeps managed review bytes out of ordinary configuration views while binding full fingerprints, not export destinations', () => {
+    const definition = storageModuleDefinition({ key: 'git', isAvailable: true, supportedModes: ['pull'],
+      props: { branch: { type: 'String', default: 'main' }, dotContentReview: { type: 'String', default: '' } } })
+    const row = subject.state.rows.find(row => row.key === 'git')!
+    row.config.dotContentReview = 'managed-private-inventory'.repeat(4096)
+    const before = storageConfigurationKey(row)
+    const destinationBefore = nativeStorageMutationConfigurationKey(row)
+    const view = storageTargetView(row, definition)
+    expect(definition.fields.some(field => field.key === 'dotContentReview')).toBe(false)
+    expect(view.config).not.toHaveProperty('dotContentReview')
+    expect(JSON.stringify(view)).not.toContain('managed-private-inventory')
+    row.config.dotContentReview = 'replacement-reviewed-policy'
+    expect(storageConfigurationKey(row)).not.toBe(before)
+    expect(nativeStorageMutationConfigurationKey(row)).toBe(destinationBefore)
+  })
+
+  it('rejects managed-field injection and oversized trusted choices before acquiring a database connection', async () => {
+    const transaction = vi.fn(() => { throw new Error('Unexpected database connection before managed-field validation') })
+    const store = createStorageConfigurationStore({ db: { transaction }, definitions: () => [], reviewKey: 'review-secret', offline: () => false } as never)
+    const target = { key: 'git', isEnabled: true, mode: 'pull', syncInterval: 'P0D', config: {}, secrets: {} }
+    const input = { targets: [target], fingerprint: 'a'.repeat(64), reason: 'Review exact managed policy' }
+    await expect(store.save(requester, { ...input, targets: [{ ...target, config: { dotContentReview: '{}' } }] }))
+      .rejects.toThrow('server-managed')
+    await expect(store.save(requester, { ...input, targets: [{ ...target, secrets: { dotContentReview: { action: 'replace', value: '{}' } } }] }))
+      .rejects.toThrow('server-managed')
+    await expect(store.saveImportReview(requester, input, 'x'.repeat(2 * 1024 * 1024 + 1))).rejects.toThrow('exceed 2 MiB')
+    expect(transaction).not.toHaveBeenCalled()
+  })
+
+  it('refuses an oversized per-revision Git review before publishing settings or running content effects', async () => {
+    const gitPayload = { mode: 'git', repoUrl: 'git@reviewed.example.test:wiki.git', branch: 'main', authType: 'ssh',
+      privateKey: 'reviewed-private-key', localRepoPath: '/reviewed/git', verifySSL: true }
+    const preview = await subject.inspect(requester, gitPayload)
+    const longPath = Array.from({ length: 9 }, () => 'a'.repeat(200)).join('/')
+    const review: StorageImportReview = { scope: preview.scope, snapshot: preview.snapshot, mappings: [],
+      gitContent: Array.from({ length: 1200 }, (_, index) => ({
+        sourcePath: `.batch-${index}/${longPath}.bin`, sourceSha256: 'c'.repeat(64), owner: null, action: 'retain' as const
+      })) }
+    const before = structuredClone(subject.state)
+    await expect(subject.run(requester, { ...gitPayload, review }, 'Review bounded exact choices', async () => {}))
+      .rejects.toThrow('exceed 2 MiB')
+    expect(subject.state).toEqual(before)
+    expect(subject.saved).not.toHaveBeenCalled()
+    expect(subject.executeAction).not.toHaveBeenCalled()
   })
 })

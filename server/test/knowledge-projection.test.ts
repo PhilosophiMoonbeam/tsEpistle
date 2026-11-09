@@ -3,6 +3,11 @@ import { afterEach, beforeEach, describe, expect, it } from './bun-test.mts'
 import { enqueuePageMutationEffects } from '../core/page-mutation-outbox.ts'
 import { up as createProjectionStore } from '../db/migrations/2.5.152.ts'
 import { up as createKnowledgeSearchStore } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
+import { up as createDurableJobs } from '../db/migrations/2.5.130.ts'
+import { up as addDurableJobLeaseTokens } from '../db/migrations/2.5.158.ts'
+import { up as createPageReviewRouting } from '../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createPageLifecycle } from '../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createStoragePageImportOwners } from '../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
 import { PageKnowledgeLifecycle } from '../knowledge/lifecycle.ts'
 import {
   KnowledgeProjectionSchema,
@@ -443,6 +448,13 @@ describe('terminal knowledge effect recovery', () => {
     })
     await createProjectionStore(db)
     await createKnowledgeSearchStore(db)
+    await db.schema.createTable('users', table => table.integer('id').primary())
+    await db.schema.createTable('groups', table => table.integer('id').primary())
+    await createDurableJobs(db)
+    await addDurableJobLeaseTokens(db)
+    await createPageReviewRouting(db)
+    await createPageLifecycle(db)
+    await createStoragePageImportOwners(db)
   })
 
   afterEach(async () => db.destroy())
@@ -498,19 +510,18 @@ describe('terminal knowledge effect recovery', () => {
       sha256: rows[0]?.sourceSha256
     })
 
-    await expect(
-      Promise.resolve(
-        enqueuePageMutationEffects(db, {
-          pageId: 42,
-          sourceRevision: '7',
-          desiredState: 'present',
-          action: 'update',
-          source: '# Conflicting source\n',
-          location,
-          effects: ['knowledge']
-        })
-      )
-    ).rejects.toMatchObject({ code: 'OUTBOX_IDEMPOTENCY_CONFLICT' })
+    await expect(Promise.resolve(db.transaction(async transaction => {
+      await transaction('pages').where({ id: 42 }).update({ content: '# Conflicting source\n' })
+      return enqueuePageMutationEffects(transaction, {
+        pageId: 42,
+        sourceRevision: '7',
+        desiredState: 'present',
+        action: 'update',
+        source: '# Conflicting source\n',
+        location,
+        effects: ['knowledge']
+      })
+    }))).rejects.toMatchObject({ code: 'OUTBOX_IDEMPOTENCY_CONFLICT' })
 
     expect(await new PageKnowledgeLifecycle(db, 'recovery-idempotency').runOnce()).toMatchObject({ requeued: 0, processed: 0 })
     expect(await db('pageMutationOutbox')).toHaveLength(1)

@@ -45,11 +45,16 @@ interface Entry {
   closed: boolean
 }
 type MailTemplate = (data?: object) => string
+const lifecycleOutcomeKinds = { 'add-tags': 'Tags', 'set-notice': 'Lifecycle notice', 'propose-move': 'Human-reviewed move' } as const
+const lifecycleOutcomeStates = {
+  applied: 'Applied', skipped: 'Skipped; no change made', proposed: 'Proposed; no move made',
+  fulfilled: 'Completed by an authorized human', blocked: 'Blocked', failed: 'Failed', suspended: 'Suspended', cancelled: 'Cancelled'
+} as const
 export interface MailRuntime {
   readonly transport: Transporter | null
   init(): MailRuntime
   close(): void
-  send(options: MailOptions, expectedConfiguration?: string): Promise<SentMessageInfo>
+  send(options: MailOptions, expectedConfiguration?: string, beforeHandoff?: () => Promise<void>): Promise<SentMessageInfo>
   verify(expectedConfiguration?: string): Promise<true>
   render(options: MailOptions): Promise<SendMailOptions>
   loadTemplate(key: MailTemplateKey): Promise<MailTemplate>
@@ -124,6 +129,17 @@ export const createMailRuntime = (wiki: WikiContext, deps: Dependencies = {}): M
       parameters.url = webUrl(sourceData.url)
       parameters.link = parameters.url
       parameters.event = mailLocalization.translateMail(mailLocale, action.key, action.english, { ...parameters, actor: parameters.actorName })
+      if (sourceData.notificationOutcomes !== undefined) {
+        if (!Array.isArray(sourceData.notificationOutcomes) || sourceData.notificationOutcomes.length > 4) throw new wiki.Error.MailTemplateFailed()
+        const outcomes: string[] = []
+        for (const outcome of sourceData.notificationOutcomes) {
+          if (!outcome || !Object.hasOwn(lifecycleOutcomeKinds, outcome.kind) || !Object.hasOwn(lifecycleOutcomeStates, outcome.state)) throw new wiki.Error.MailTemplateFailed()
+          const kind = mailLocalization.translateMail(mailLocale, `pageWatch.outcomeKind.${outcome.kind}`, lifecycleOutcomeKinds[outcome.kind], parameters)
+          const state = mailLocalization.translateMail(mailLocale, `pageWatch.outcomeState.${outcome.state}`, lifecycleOutcomeStates[outcome.state], parameters)
+          outcomes.push(`${kind}: ${state}`)
+        }
+        if (outcomes.length) parameters.event += ` — ${outcomes.join('; ')}`
+      }
     }
     const messages = definition.messages as Record<string, string>,
       messageKeys = ('messageKeys' in definition ? definition.messageKeys : {}) as Record<string, string>,
@@ -216,11 +232,12 @@ export const createMailRuntime = (wiki: WikiContext, deps: Dependencies = {}): M
     runtime() {
       return { active: Boolean(current), configurationKey: observedKey, generation: current?.generation ?? null, paused: wiki.config.offline === true, state }
     },
-    async send(options, expectedConfiguration) {
+    async send(options, expectedConfiguration, beforeHandoff) {
       const entry = acquire(expectedConfiguration)
       try {
         const message = await render(options, entry.configuration)
         if (wiki.config.offline) throw new Error('Mail delivery is paused while offline mode is enabled.')
+        if (beforeHandoff) await beforeHandoff()
         return await entry.transport.sendMail(message)
       } finally {
         release(entry)

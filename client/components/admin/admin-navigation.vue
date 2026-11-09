@@ -691,6 +691,7 @@
   </v-container>
 </template>
 <script setup lang="ts">
+import { helpers } from '../../helpers/index.ts'
 import { confirmDiscard, requestConfirmation } from "../common/confirm-dialog.ts";
 import {
   computed,
@@ -1323,10 +1324,7 @@ const date = (value: string) => {
   const timestamp = new Date(value);
   return Number.isNaN(timestamp.getTime())
     ? t('admin:locale.dateUnavailable')
-    : timestamp.toLocaleString(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      });
+    : String(helpers.formatMoment(timestamp, 'L LT'));
 };
 const canLeave = async () =>
   !busy.value &&

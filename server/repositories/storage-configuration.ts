@@ -25,6 +25,7 @@ export const storageModuleDefinition = (value: unknown): StorageModuleDefinition
     props = storageRecord(row.props),
     fields: StorageField[] = []
   for (const [key, value] of Object.entries(props)) {
+    if (row.key === 'git' && key === 'dotContentReview') continue
     const field = storageRecord(value),
       type = text(field.type).toLowerCase()
     if (!safeKey(key) || !['string', 'number', 'boolean'].includes(type)) continue
@@ -68,7 +69,8 @@ export const storageModuleDefinition = (value: unknown): StorageModuleDefinition
   }
 }
 export const storageTargetView = (row: StorageConfigurationRow, definition: StorageModuleDefinition | undefined): StorageTargetView => {
-  const module = definition ?? storageModuleDefinition({ key: row.key, title: row.key }),
+  const declared = definition ?? storageModuleDefinition({ key: row.key, title: row.key }),
+    module = declared.key === 'git' ? { ...declared, fields: declared.fields.filter(field => field.key !== 'dotContentReview') } : declared,
     config: Record<string, StorageValue> = {},
     secrets: Record<string, boolean> = {},
     raw = storageRecord(row.config)

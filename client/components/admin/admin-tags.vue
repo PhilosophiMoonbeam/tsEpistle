@@ -149,6 +149,7 @@
   </v-container>
 </template>
 <script lang="ts">
+import { helpers } from '../../helpers/index.ts'
 import { confirmDiscard } from '../common/confirm-dialog.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import { taxonomyState, type TaxonomyChange, type TaxonomyInspection, type TaxonomyPreview, type TaxonomyTag } from '../../../shared/taxonomy.ts'
@@ -275,7 +276,7 @@ export default {
       return Boolean(value.tag.trim()) && value.tag.trim().length <= 255 && value.title.trim().length <= 255 && !/[\u0000-\u001f\u007f]/.test(value.tag + value.title)
     },
     date(value: string): string {
-      return new Date(value).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+      return Number.isNaN(new Date(value).valueOf()) ? 'Invalid Date' : String(helpers.formatMoment(value, 'L LT'))
     },
     async confirmUnsaved(message: string): Promise<boolean> {
       return !this.hasUnsavedChanges || (await confirmDiscard(message))

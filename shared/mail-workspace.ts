@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { LifecycleNotificationOutcome } from './site-notifications.ts'
 
 const line = z
   .string()
@@ -95,6 +96,11 @@ export type MailPageWatchAction =
   | 'watched-comment'
   | 'comment-reply'
   | 'mention'
+  | 'feedback-status'
+  | 'review-reminder'
+  | 'lifecycle-result'
+  | 'lifecycle-proposed'
+  | 'lifecycle-moved'
 
 /** Non-translated values interpolated into a fixed template by the mail runtime. */
 export interface MailTemplateData {
@@ -103,6 +109,7 @@ export interface MailTemplateData {
   action?: MailPageWatchAction
   pageTitle?: string
   url?: string
+  notificationOutcomes?: LifecycleNotificationOutcome[]
 }
 
 export const MAIL_TEMPLATES = [
@@ -192,6 +199,11 @@ export const MAIL_TEMPLATES = [
       'watched-comment': { key: 'pageWatch.actions.watchedComment', english: '{{actor}} commented on this page' },
       'comment-reply': { key: 'pageWatch.actions.commentReply', english: '{{actor}} replied to your discussion' },
       mention: { key: 'pageWatch.actions.mention', english: '{{actor}} mentioned you in a discussion' },
+      'feedback-status': { key: 'pageWatch.actions.feedbackStatus', english: 'Feedback status changed' },
+      'review-reminder': { key: 'pageWatch.actions.reviewReminder', english: 'This page is due for deliberate human review; this reminder does not attest accuracy' },
+      'lifecycle-result': { key: 'pageWatch.actions.lifecycleResult', english: 'Automated lifecycle result available' },
+      'lifecycle-proposed': { key: 'pageWatch.actions.lifecycleProposed', english: 'A page move is proposed and awaits human review; no move has occurred' },
+      'lifecycle-moved': { key: 'pageWatch.actions.lifecycleMoved', english: 'A human-reviewed page move completed' },
       changed: { key: 'common.watchEventChanged', english: '{{actor}} changed this page' }
     },
     htmlText: {

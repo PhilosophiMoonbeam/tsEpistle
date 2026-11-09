@@ -644,6 +644,7 @@
   </v-container>
 </template>
 <script lang="ts">
+import { helpers } from '../../helpers/index.ts'
 import { confirmDiscard } from '../common/confirm-dialog.ts'
 import { defineAsyncComponent } from 'vue'
 import { wikiStore } from '@/store/index.ts'
@@ -841,10 +842,7 @@ export default {
         })
     },
     date(value: string) {
-      return new Date(value).toLocaleString(undefined, {
-        dateStyle: 'medium',
-        timeStyle: 'short'
-      })
+      return Number.isNaN(new Date(value).valueOf()) ? 'Invalid Date' : String(helpers.formatMoment(value, 'L LT'))
     },
     formatBytes(value: number) {
       return Number.isFinite(value)

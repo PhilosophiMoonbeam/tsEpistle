@@ -306,7 +306,7 @@ export class FederatedLoginStore {
     return { attemptId, state, issuedAt, expiresAt }
   }
 
-  async consume<P extends FederatedLoginPayload = FederatedLoginPayload>(input: FederatedLoginConsumeInput): Promise<FederatedLoginConsumed<P> | null> {
+  async consume(input: FederatedLoginConsumeInput): Promise<FederatedLoginConsumed | null> {
     const providerKey = text(input.providerKey, 'Federated login provider key', 255)
     const providerRevision = text(input.providerRevision, 'Federated login provider revision', 255)
     if (!isProtocol(input.protocol)) throw invalid('Federated login protocol is unsupported.')
@@ -365,7 +365,7 @@ export class FederatedLoginStore {
         issuedAt,
         expiresAt,
         payload
-      } as unknown as FederatedLoginConsumed<P>
+      }
     })
   }
 

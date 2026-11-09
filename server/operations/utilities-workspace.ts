@@ -278,9 +278,10 @@ export const createUtilitiesWorkspaceStore = (db: Knex): UtilitiesWorkspaceStore
     input: StartInput,
     phase: UtilityOperation['phase'] = 'working',
     expectedFingerprint = input.fingerprint,
-    omitStorageAdministration = false
-  ): Promise<string> =>
-    await db.transaction(async tx => {
+    omitStorageAdministration = false,
+    transaction?: Knex.Transaction
+  ): Promise<string> => {
+    const check = async (tx: Knex.Transaction): Promise<string> => {
       const authority = await requireSystemAuthority(tx, requester, true)
       const settings = await readSettings(tx, true)
       const locales = await readLocales(tx, true)
@@ -292,7 +293,9 @@ export const createUtilitiesWorkspaceStore = (db: Knex): UtilitiesWorkspaceStore
       if (!row || row.state !== 'running') fail('This utilities operation is no longer active.', 409)
       await tx('utilitiesOperations').where('id', input.id).update({ phase, heartbeatAt: now().toISOString() })
       return reviewFingerprint(authority, settings, locales, true)
-    })
+    }
+    return transaction === undefined ? db.transaction(check) : check(transaction)
+  }
   const finish = async (id: string, value: { summary: string; result?: UtilityOperation['result']; progress?: number }) => {
     const completedAt = now().toISOString()
     await db('utilitiesOperations')
@@ -399,8 +402,8 @@ export const createUtilitiesWorkspaceStore = (db: Knex): UtilitiesWorkspaceStore
     }, 15_000)
     heartbeat.unref()
     let importEffectFingerprint: string | undefined
-    const fenceEffect = async () => {
-      const fingerprint = await fence(requester, input, 'working', importEffectFingerprint ?? input.fingerprint, importEffectFingerprint !== undefined)
+    const fenceEffect = async (transaction?: Knex.Transaction) => {
+      const fingerprint = await fence(requester, input, 'working', importEffectFingerprint ?? input.fingerprint, importEffectFingerprint !== undefined, transaction)
       if (input.kind === 'import-v1-content' && importEffectFingerprint === undefined) importEffectFingerprint = fingerprint
       effectStarted = true
     }

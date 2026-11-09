@@ -79,11 +79,18 @@ verify_postconditions runtimePostconditions fixture fixture fixture
     if (directory) await rm(directory, { recursive: true, force: true })
   })
 
-  const probe = () =>
-    spawnSync('bash', ['-c', shell], {
+  const probe = () => {
+    // The full production function exceeds Linux's per-argument exec limit.
+    const result = spawnSync('bash', ['-s'], {
+      input: shell,
       encoding: 'utf8',
       env: { ...process.env, PROBE_NODE: process.execPath, PROBE_BRIDGE: path.join(directory, 'psql.cjs'), PROBE_CONNECTION: JSON.stringify(connection) }
     })
+    if (result.error) throw result.error
+    expect(result.signal).toBeNull()
+    expect(result.status).not.toBeNull()
+    return result
+  }
 
   it('probes read-only, retains proof after source/destination deletion, and refuses destructive rollback', async () => {
     expect(probe().status).toBe(0)

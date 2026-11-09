@@ -3,7 +3,7 @@ import { once } from 'node:events'
 import http from 'node:http'
 import { generateKeyPairSync } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { WebSocket } from 'ws'
 import * as Y from 'yjs'
 
@@ -14,9 +14,12 @@ import { up as upDiscardFencing } from '../../db/migrations/tsfranki-000012-coll
 import {
   COLLABORATION_TEXT_KEY,
   COLLABORATION_WEBSOCKET_PROTOCOL,
+  createCollaborationRange,
+  encodeCollaborationUpdate,
   decodeCollaborationUpdate,
   parseCollaborationServerMessage,
-  type CollaborationServerMessage
+  type CollaborationServerMessage,
+  type CollaborationSession
 } from '../../../shared/collaboration.ts'
 
 const globalWithWiki = globalThis as typeof globalThis & { WIKI?: unknown }
@@ -142,6 +145,220 @@ afterEach(async () => {
   await knex.destroy()
   if (originalWiki === undefined) delete globalWithWiki.WIKI
   else globalWithWiki.WIKI = originalWiki
+})
+
+describe('opt-in ephemeral collaboration presence', () => {
+  const connect = async (pageId = 42): Promise<{ client: WebSocket; session: CollaborationSession }> => {
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('Missing address')
+    const session = await collaboration.issueSession({ pageId, expectedUpdatedAt: '2026-08-15T12:00:00.000Z', requester: { id: 1 } as Express.User })
+    const client = new WebSocket(`ws://127.0.0.1:${address.port}/collaboration`, [COLLABORATION_WEBSOCKET_PROTOCOL, session.token], {
+      headers: { Origin: `http://127.0.0.1:${address.port}` }
+    })
+    const sync = waitForMessage(client, 'sync')
+    await once(client, 'open')
+    await sync
+    return { client, session }
+  }
+  const share = async (client: WebSocket, generation: number, extra: Record<string, unknown> = {}) => {
+    const received = waitForMessage(client, 'awareness')
+    client.send(JSON.stringify({ type: 'awareness', protocolVersion: 1, generation, enabled: true, selection: null, recent: [], ...extra }))
+    const message = await received
+    if (message.type !== 'awareness') throw new Error('Expected awareness')
+    return message
+  }
+
+  it('requires mutual opt-in, supplies fresh unspoofable labels, and never persists awareness', async () => {
+    collaboration.init(); collaboration.install(server)
+    const listening = once(server, 'listening')
+    server.listen(0, '127.0.0.1')
+    await listening
+    const first = await connect()
+    socket = first.client
+    const second = await connect()
+    const observed: CollaborationServerMessage[] = []
+    second.client.on('message', raw => observed.push(parseCollaborationServerMessage(JSON.parse(raw.toString()))))
+    try {
+      const before = await knex('pageCollaborationRooms').where({ pageId: 42 }).first()
+      const one = await share(first.client, first.session.generation)
+      expect(one.self).toMatch(/^[0-9a-f-]{36}$/u)
+      expect(one.peers).toEqual([])
+      // A durable round trip settles the server queue without an arbitrary sleep.
+      const barrier = waitForMessage(second.client, 'update')
+      second.client.send(JSON.stringify({ type: 'update', protocolVersion: 1, updateVersion: 1, generation: first.session.generation, update: 'AAA=' }))
+      await barrier
+      expect(observed.filter(message => message.type === 'awareness')).toEqual([])
+      const afterDurableBarrier = await knex('pageCollaborationRooms').where({ pageId: 42 }).first()
+      const two = await share(second.client, second.session.generation)
+      expect(two.self).not.toBe(one.self)
+      expect(two.peers).toMatchObject([{ token: one.self, label: `Participant ${one.self!.slice(0, 8)}`, selection: null, recent: [] }])
+      expect(await knex('pageCollaborationRooms').where({ pageId: 42 }).first()).toEqual(afterDurableBarrier)
+      expect(afterDurableBarrier.state).toBe(before.state)
+      const refused = await share(first.client, first.session.generation, { token: two.self })
+      expect(refused).toMatchObject({ self: null, peers: [] })
+      expect(first.client.readyState).toBe(WebSocket.OPEN)
+      const next = await share(first.client, first.session.generation)
+      expect(next.self).not.toBe(one.self)
+      const optOut = await share(first.client, first.session.generation, { enabled: false })
+      expect(optOut).toMatchObject({ self: null, peers: [] })
+      first.client.close()
+      await once(first.client, 'close')
+      const afterDeparture = await share(second.client, second.session.generation)
+      expect(afterDeparture.peers).toEqual([])
+      const reconnected = await connect()
+      try {
+        const fresh = await share(reconnected.client, reconnected.session.generation)
+        expect(fresh.self).not.toBe(next.self)
+        const persisted = JSON.stringify(await knex('pageCollaborationRooms').where({ pageId: 42 }).first())
+        expect(persisted).not.toContain(fresh.self!)
+        expect(persisted).not.toContain('Participant')
+      } finally { reconnected.client.terminate() }
+    } finally { second.client.terminate() }
+  })
+
+  it('accepts only fresh same-connection edit ranges and drops stale/malformed presence without blocking source updates', async () => {
+    collaboration.init(); collaboration.install(server)
+    const listening = once(server, 'listening')
+    server.listen(0, '127.0.0.1')
+    await listening
+    const first = await connect()
+    socket = first.client
+    const second = await connect()
+    const doc = new Y.Doc()
+    try {
+      Y.applyUpdate(doc, decodeCollaborationUpdate(first.session.state))
+      const text = doc.getText(COLLABORATION_TEXT_KEY)
+      const original = createCollaborationRange(text, 0, 4)
+      await share(first.client, first.session.generation)
+      await share(second.client, second.session.generation)
+      const initial = await share(first.client, first.session.generation, { selection: original, recent: [original] })
+      expect(initial.self).not.toBeNull()
+      const oldFromPeer = await share(second.client, second.session.generation)
+      expect(oldFromPeer.peers[0].recent).toEqual([])
+      let update: Uint8Array | null = null
+      doc.on('update', value => { update = value })
+      const from = text.length
+      text.insert(from, 'new')
+      const recent = createCollaborationRange(text, from, text.length)
+      const applied = waitForMessage(first.client, 'update')
+      first.client.send(JSON.stringify({ type: 'update', protocolVersion: 1, updateVersion: 1, generation: first.session.generation, update: encodeCollaborationUpdate(update!) }))
+      await applied
+      await share(first.client, first.session.generation, { selection: recent, recent: [recent] })
+      const fromPeer = await share(second.client, second.session.generation)
+      expect(fromPeer.peers[0].recent).toEqual([recent])
+      await share(second.client, second.session.generation, { recent: [recent] })
+      const noSpoof = await share(first.client, first.session.generation)
+      expect(noSpoof.peers[0].recent).toEqual([])
+      const stale = await share(first.client, first.session.generation + 1)
+      expect(stale.self).toBeNull()
+      expect(first.client.readyState).toBe(WebSocket.OPEN)
+      const malformed = await share(first.client, first.session.generation, { selection: { start: {}, end: {} } })
+      expect(malformed.self).toBeNull()
+      expect(collaborationStateContent((await new CollaborationRoomStore(knex).get(42))!.state)).toBe('# Shared\nnew')
+    } finally { doc.destroy(); second.client.terminate() }
+  })
+
+  it('expires idle tokens, refreshes identity, and refuses revoked actors', async () => {
+    collaboration.init(); collaboration.install(server)
+    const listening = once(server, 'listening')
+    server.listen(0, '127.0.0.1')
+    await listening
+    const first = await connect()
+    socket = first.client
+    const old = await share(first.client, first.session.generation)
+    const expired = waitForMessage(first.client, 'awareness')
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 31_000)
+    try { expect(await expired).toMatchObject({ self: null, peers: [] }) } finally { clock.mockRestore() }
+    const fresh = await share(first.client, first.session.generation)
+    expect(fresh.self).not.toBe(old.self)
+    authorityAllowed = false
+    const conflict = waitForMessage(first.client, 'conflict')
+    first.client.send(JSON.stringify({ type: 'awareness', protocolVersion: 1, generation: first.session.generation, enabled: true, selection: null, recent: [] }))
+    expect(await conflict).toMatchObject({ reason: 'permission-revoked' })
+  })
+
+  it('omits attribution for merged multi-author and replayed state', async () => {
+    collaboration.init(); collaboration.install(server)
+    const listening = once(server, 'listening')
+    server.listen(0, '127.0.0.1')
+    await listening
+    const first = await connect()
+    socket = first.client
+    const second = await connect()
+    const author = new Y.Doc(), peer = new Y.Doc()
+    try {
+      await share(first.client, first.session.generation)
+      await share(second.client, second.session.generation)
+      Y.applyUpdate(author, decodeCollaborationUpdate(first.session.state))
+      Y.applyUpdate(peer, decodeCollaborationUpdate(first.session.state))
+      const firstText = author.getText(COLLABORATION_TEXT_KEY), secondText = peer.getText(COLLABORATION_TEXT_KEY)
+      const at = firstText.length
+      firstText.insert(at, 'A'); secondText.insert(at, 'B')
+      const ranges = [createCollaborationRange(firstText, at, at + 1), createCollaborationRange(secondText, at, at + 1)]
+      const aggregate = encodeCollaborationUpdate(Y.mergeUpdates([Y.encodeStateAsUpdate(author), Y.encodeStateAsUpdate(peer)]))
+      for (let repetition = 0; repetition < 2; repetition += 1) {
+        const applied = waitForMessage(first.client, 'update')
+        first.client.send(JSON.stringify({ type: 'update', protocolVersion: 1, updateVersion: 1, generation: first.session.generation, update: aggregate }))
+        await applied
+        await share(first.client, first.session.generation, { recent: ranges })
+        const viewed = await share(second.client, second.session.generation)
+        expect(viewed.peers[0].recent).toEqual([])
+      }
+    } finally { author.destroy(); peer.destroy(); second.client.terminate() }
+  })
+
+  it('rate-limits presence independently while continuing to acknowledge durable updates', async () => {
+    collaboration.init(); collaboration.install(server)
+    const listening = once(server, 'listening')
+    server.listen(0, '127.0.0.1')
+    await listening
+    const first = await connect()
+    socket = first.client
+    const now = Date.now(), clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    const received: CollaborationServerMessage[] = []
+    first.client.on('message', raw => received.push(parseCollaborationServerMessage(JSON.parse(raw.toString()))))
+    try {
+      for (let count = 0; count < 8; count += 1) await share(first.client, first.session.generation)
+      first.client.send(JSON.stringify({ type: 'awareness', protocolVersion: 1, generation: first.session.generation, enabled: true, selection: null, recent: [] }))
+      const barrier = waitForMessage(first.client, 'update')
+      first.client.send(JSON.stringify({ type: 'update', protocolVersion: 1, updateVersion: 1, generation: first.session.generation, update: 'AAA=' }))
+      await barrier
+      expect(received.filter(message => message.type === 'awareness')).toHaveLength(8)
+      expect(first.client.readyState).toBe(WebSocket.OPEN)
+    } finally { clock.mockRestore() }
+  })
+
+  it('withholds presence from anonymous actors and other authorized rooms', async () => {
+    await knex('pages').insert({ id: 43, content: 'Other room', editorKey: 'markdown', updatedAt: '2026-08-15T12:00:00.000Z', sourceRevision: '1' })
+    const wiki = globalWithWiki.WIKI as { models: { pages: { query(): unknown } } }
+    wiki.models.pages.query = () => ({
+      findById: (id: number) => ({
+        withGraphFetched: () => ({
+          modifyGraph: async () => ({
+            ...await knex('pages').where({ id }).first(),
+            path: `room-${id}`, localeCode: 'en', visibility: 'public', ownerId: null, authorId: 1, tags: []
+          })
+        })
+      })
+    })
+    collaboration.init(); collaboration.install(server)
+    await expect(collaboration.issueSession({ pageId: 42, expectedUpdatedAt: '2026-08-15T12:00:00.000Z', requester: undefined })).rejects.toMatchObject({ status: 401 })
+    const listening = once(server, 'listening')
+    server.listen(0, '127.0.0.1')
+    await listening
+    const first = await connect(42)
+    socket = first.client
+    const other = await connect(43)
+    try {
+      const one = await share(first.client, first.session.generation)
+      const elsewhere = await share(other.client, other.session.generation)
+      expect(elsewhere.peers).toEqual([])
+      expect(elsewhere.self).not.toBe(one.self)
+      const sameRoom = await share(first.client, first.session.generation)
+      expect(sameRoom.peers).toEqual([])
+    } finally { other.client.terminate() }
+  })
 })
 
 describe('collaboration service multi-instance transport', () => {

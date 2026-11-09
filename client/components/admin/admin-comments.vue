@@ -42,6 +42,7 @@
   </v-container>
 </template>
 <script lang="ts">
+import { helpers } from '../../helpers/index.ts'
 import { confirmDiscard } from '../common/confirm-dialog.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import { DISCUSSION_SECRET_MASK, discussionEnumOptions, discussionIssues, discussionProviderTitle, discussionSettings, type DiscussionProvider, type DiscussionWorkspace, type ModerationInventory, type ModerationInspection, type PageDiscussionPolicy } from '../../../shared/discussion-policy.ts'
@@ -76,7 +77,7 @@ export default {
   methods: {
     title: discussionProviderTitle,
     enumOptions: discussionEnumOptions,
-    date(value: string) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? this.$t('admin:comments.dateUnavailable') : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) },
+    date(value: string) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? this.$t('admin:comments.dateUnavailable') : String(helpers.formatMoment(date, 'L LT')) },
     initials(value: string) { return value.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase() || '?' },
     range(value: { total: number; offset: number; items: unknown[] }) { return value.total ? this.$t('admin:comments.of', { value: value.offset + (value.items.length ? 1 : 0), value2: value.offset + value.items.length, total: value.total, interpolation: { escapeValue: false } }) : this.$t('admin:comments.n0Records') },
     savedSecret(provider: string, field: string) { return this.saved?.providers.find(row => row.key === provider)?.config[field] === DISCUSSION_SECRET_MASK },

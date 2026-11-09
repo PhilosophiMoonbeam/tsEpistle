@@ -215,6 +215,8 @@ const plugin: AuthenticationPlugin = {
       digestAlgorithm: conf.digestAlgorithm,
       identifierFormat: conf.identifierFormat,
       wantAssertionsSigned: conf.wantAssertionsSigned,
+      // Only an explicit Boolean opt-out permits assertion-only IdPs; legacy providers remain strict.
+      wantAuthnResponseSigned: conf.wantAuthnResponseSigned !== false,
       acceptedClockSkewMs: _.toSafeInteger(conf.acceptedClockSkewMs),
       disableRequestedAuthnContext: conf.disableRequestedAuthnContext,
       authnContext: (conf.authnContext || '').split('|'),

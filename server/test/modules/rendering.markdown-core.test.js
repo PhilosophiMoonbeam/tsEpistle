@@ -310,6 +310,60 @@ describe('markdown core renderer plugin behavior', () => {
     expect($('[onclick]')).toHaveLength(0)
   })
 
+  it('keeps native table spans and subsequent cells without granting authored span attributes', async () => {
+    const children = [{ key: 'markdownMultiTable', config: { multilineEnabled: true, rowspanEnabled: true, headerlessEnabled: true } }]
+    for (const [input, expectedRows, span] of [
+      ['| H1 | H2 | H3 |\n| --- | --- | --- |\n| A || B |', [['A', 'B']], ['colspan', '2']],
+      ['| H1 | H2 | H3 |\n| --- | --- | --- |\n| A |||', [['A']], ['colspan', '3']],
+      ['| H1 | H2 |\n| --- | --- |\n| A | B |\n| ^^ | C |', [['A', 'B'], ['C']], ['rowspan', '2']],
+      ['| H1 | H2 | H3 |\n| --- | --- | --- |\n| A | B | C |', [['A', 'B', 'C']], null],
+      ['| H1 | H2 | H3 |\n| --- | --- | --- |\n| A {colspan=2 rowspan=2} | B | C |', [['A', 'B', 'C']], null],
+      ['| H1 | H2 |\n| --- | --- |\n| A \\| literal | `B|C` |', [['A | literal', 'B|C']], null]
+    ]) {
+      const $ = cheerio.load(await renderMarkdown(input, { children }))
+      expect($('tbody tr').toArray().map(row => $(row).find('td').toArray().map(cell => $(cell).text()))).toEqual(expectedRows)
+      if (span) expect($('tbody td').first().attr(span[0])).toBe(span[1])
+      else expect($('[colspan], [rowspan]')).toHaveLength(0)
+    }
+
+    const $ = cheerio.load(await renderMarkdown('| H1 | H2 | H3 |\n| --- | --- | --- |\n| A {.cell #a} || [B](/en/target){target=_blank} |', { children }))
+    expect($('tbody td').toArray().map(cell => $(cell).text())).toEqual(['A', 'B'])
+    expect($('td#a.cell').attr('colspan')).toBe('2')
+    expect($('td a[href="/en/target"]').attr('target')).toBe('_blank')
+    const forbidden = cheerio.load(await renderMarkdown('| H1 | H2 | H3 |\n| --- | --- | --- |\n| A {colspan=99 rowspan=99 onclick=evil} || B |', { children }))
+    expect(forbidden('tbody td').toArray().map(cell => forbidden(cell).text())).toEqual(['A', 'B'])
+    expect(forbidden('tbody td').first().attr('colspan')).toBe('2')
+    expect(forbidden('[rowspan], [onclick]')).toHaveLength(0)
+  })
+
+  it('keeps table child configuration and prose boundaries independent of span compatibility', async () => {
+    for (const children of [
+      [],
+      [{ key: 'markdownMultiTable', config: { multilineEnabled: true, rowspanEnabled: false, headerlessEnabled: true } }]
+    ]) {
+      const ordinary = cheerio.load(await renderMarkdown('| H1 | H2 | H3 |\n| --- | --- | --- |\n| A | B | C |', { children }))
+      expect(ordinary('tbody td').toArray().map(cell => ordinary(cell).text())).toEqual(['A', 'B', 'C'])
+      const rows = cheerio.load(await renderMarkdown('| H1 | H2 |\n| --- | --- |\n| A | B |\n| ^^ | C |', { children }))
+      expect(rows('tbody td').toArray().map(cell => rows(cell).text())).toEqual(['A', 'B', '^^', 'C'])
+      expect(rows('[rowspan]')).toHaveLength(0)
+      const span = cheerio.load(await renderMarkdown('| H1 | H2 | H3 |\n| --- | --- | --- |\n| A || B |', { children }))
+      expect(span('tbody td').toArray().map(cell => span(cell).text())).toEqual(children.length ? ['A', 'B'] : ['A', '', 'B'])
+      expect(span('tbody td').first().attr('colspan')).toBe(children.length ? '2' : undefined)
+    }
+    const children = [{ key: 'markdownMultiTable', config: { multilineEnabled: true, rowspanEnabled: true, headerlessEnabled: true } }]
+    const malformed = cheerio.load(await renderMarkdown('| H1 | H2 |\n| - | not-a-separator |\n| A || B |', { children }))
+    expect(malformed('table')).toHaveLength(0)
+    const prose = cheerio.load(await renderMarkdown('A {.cell #a}\n\n[B](/en/target){target=_blank}\n\n`| A || B |`', { children }))
+    expect(prose('table')).toHaveLength(0)
+    expect(prose('#a.cell').text()).toBe('A')
+    expect(prose('a').attr('target')).toBe('_blank')
+    expect(prose('code').text()).toBe('| A || B |')
+    // The exact audit fixture has an excess body field, not an escaped pipe.
+    const excess = cheerio.load(await renderMarkdown('| H1 | H2 |\n| --- | --- |\n| A | literal | `B|C` |', { children }))
+    expect(excess('tbody td').toArray().map(cell => excess(cell).text())).toEqual(['A', 'literal', 'B|C'])
+    expect(excess('code').text()).toBe('B|C')
+  })
+
   it('pins attrs behavior around rejected javascript links and footnotes', async () => {
     const $ = cheerio.load(await renderMarkdown('[x](javascript:alert(1)){target=_blank onclick=alert(1)}\n\n[x](https://example.test){target=_blank rel=noopener onclick=evil}\n\nRef[^1]{.ref onclick=evil}\n\n[^1]: foot **body** {.fnbody onclick=evil}', {
       children: [

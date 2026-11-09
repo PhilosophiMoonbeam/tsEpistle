@@ -125,6 +125,8 @@ type PageMutation {
     id: Int!
     editor: String!
     expectedSourceRevision: String!
+    """Proof issued by native source review for this user, browser session, revision and editor."""
+    reviewToken: String
   ): DefaultResponse @auth(requires: ["write:pages", "manage:pages", "manage:system"])
 
   move(

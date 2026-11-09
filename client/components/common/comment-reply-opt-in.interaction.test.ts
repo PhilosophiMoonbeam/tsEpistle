@@ -8,7 +8,7 @@ import { up as upNotificationPreferences } from '../../../server/db/migrations/t
 import type * as NotificationPreferenceOperations from '../../../server/operations/page-watching.ts'
 import { browserWindow, document } from '../../test/browser-dom.mts'
 import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session.ts'
-import type { NotificationPreferences } from '../../../shared/site-notifications.ts'
+import { defaultNotificationCeilings, type NotificationPreferences } from '../../../shared/site-notifications.ts'
 import type { SiteConfig } from '../../env.d.ts'
 import { DEFAULT_THEME_COLORS } from '../../../shared/theme-colors.ts'
 import packageMetadata from '../../../package.json'
@@ -101,10 +101,13 @@ const preferences = (): NotificationPreferences => ({
   pageDeleted: { inApp: false, email: true },
   watchedPageComment: { inApp: true, email: true },
   commentReply: { inApp: false, email: true },
-  mention: { inApp: false, email: true }
+  mention: { inApp: false, email: true },
+  feedbackStatus: { inApp: true, email: false },
+  reviewReminder: { inApp: false, email: false },
+  pageLifecycle: { inApp: false, email: true }
 })
 const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } })
-const reply = (value = preferences(), ownerId = 7) => json({ ownerId, preferences: value })
+const reply = (value = preferences(), ownerId = 7) => json({ ownerId, preferences: value, ceilings: defaultNotificationCeilings() })
 const settle = async () => {
   // Response.json and the Vue render both complete asynchronously.
   for (let index = 0; index < 12; index++) {
@@ -197,6 +200,10 @@ describe('post-contribution reply notification consent', () => {
     await knex.schema.createTable('pageWatchNotifications', table => {
       table.string('id').primary()
     })
+    await knex.schema.createTable('settings', table => {
+      table.string('key').primary()
+      table.text('value').notNullable()
+    })
     await upNotificationPreferences(knex)
     const owner = { id: 7, email: 'reader@example.test' }
     await knex('users').insert({ id: owner.id, email: owner.email })
@@ -244,7 +251,10 @@ describe('post-contribution reply notification consent', () => {
       pageDeleted: { inApp: true, email: false },
       watchedPageComment: { inApp: true, email: false },
       commentReply: { inApp: true, email: true },
-      mention: { inApp: false, email: false }
+      mention: { inApp: false, email: false },
+      feedbackStatus: { inApp: true, email: false },
+      reviewReminder: { inApp: false, email: false },
+      pageLifecycle: { inApp: false, email: true }
     })
     await vi.waitFor(() => expect(view.host.querySelector('input[type="checkbox"]') === null).toBe(true))
     expect(reads).toBe(2)

@@ -163,18 +163,19 @@ const startSetupHarness = async (configSaved: boolean, searchFailure = false) =>
     server,
     settingsTruncate,
     settingsDb: selectionDb,
+    userRelate,
     userInsert
   }
 }
 
-const finalize = async (server: Server, adminPassword = 'correct horse battery staple'): Promise<Record<string, unknown>> => {
+const finalize = async (server: Server, adminPassword = 'correct horse battery staple', adminEmail: unknown = 'admin@example.com'): Promise<Record<string, unknown>> => {
   const address = server.address() as AddressInfo
   const response = await fetch(`http://127.0.0.1:${address.port}/finalize`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       siteUrl: 'https://wiki.example.com',
-      adminEmail: 'admin@example.com',
+      adminEmail,
       adminPassword,
       telemetry: false
     })
@@ -206,6 +207,43 @@ describe('setup finalization', () => {
     for (const mutation of harness.domainMutations) expect(mutation).not.toHaveBeenCalled()
     harness.controller.abort(new DOMException('test shutdown', 'AbortError'))
     await expect(harness.completion).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('rejects invalid canonical administrator identities before hashing or writing and permits a corrected retry', async () => {
+    const harness = await startSetupHarness(true)
+    const retainedRoot = 'retained-identity-validation-root'
+    globalThis.WIKI.config.offlineDraftSecret = retainedRoot
+    await harness.settingsDb('settings').insert({ key: 'offlineDraftSecret', value: JSON.stringify(retainedRoot) })
+    const before = structuredClone(globalThis.WIKI.config)
+    const hash = vi.spyOn(bcrypt, 'hash')
+    for (const email of [null, 42, '', '  ', 'invalid', 'admin@', `${'a'.repeat(244)}@example.com`, ' GUEST@EXAMPLE.COM ']) {
+      const result = await finalize(harness.server, 'correct horse battery staple', email)
+      expect(result).toMatchObject({ ok: false })
+      expect(JSON.stringify(result)).not.toContain('correct horse battery staple')
+    }
+    // JSON omits undefined, exercising a genuinely missing field at the request boundary.
+    const address = harness.server.address() as AddressInfo
+    const missing = await fetch(`http://127.0.0.1:${address.port}/finalize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ siteUrl: 'https://wiki.example.com', adminPassword: 'correct horse battery staple' })
+    })
+    expect(await missing.json()).toMatchObject({ ok: false })
+    expect(hash).not.toHaveBeenCalled()
+    expect(globalThis.WIKI.config).toEqual(before)
+    expect(harness.saveToDb).not.toHaveBeenCalled()
+    expect(harness.settingsTruncate).not.toHaveBeenCalled()
+    expect(harness.extensionInsert).not.toHaveBeenCalled()
+    for (const mutation of harness.domainMutations) expect(mutation).not.toHaveBeenCalled()
+    expect(await harness.settingsDb('settings')).toEqual([{ key: 'offlineDraftSecret', value: JSON.stringify(retainedRoot) }])
+
+    expect(await finalize(harness.server, 'correct horse battery staple', '  AdMin@ExAmPlE.CoM  ')).toMatchObject({ ok: true })
+    await harness.completion
+    const admin = harness.userInsert.mock.calls[0]?.[0]
+    expect(admin).toMatchObject({ email: 'admin@example.com', provider: 'local', isActive: true, isVerified: true })
+    expect(await bcrypt.compare('correct horse battery staple', admin.password)).toBe(true)
+    expect(harness.userRelate.mock.calls[0]).toEqual([1])
+    expect(globalThis.WIKI.config.offlineDraftSecret).toBe(retainedRoot)
   })
 
   it('hashes a bcrypt-shaped administrator password as the literal credential', async () => {

@@ -61,6 +61,7 @@
 </template>
 
 <script lang='ts'>
+import { helpers } from '../../helpers/index.ts'
 import { markRaw } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 
@@ -162,7 +163,7 @@ export default {
       const labels = { active: 'active2', expired: 'expired2', revoked: 'revoked2', unknown: 'unknownExpiry' }
       return this.$t(`admin:api.${labels[this.keyState(key)]}`)
     },
-    formatDate (date: string): string { return Number.isFinite(Date.parse(date)) ? new Date(date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : this.$t('admin:api.unknown') },
+    formatDate (date: string): string { return Number.isFinite(Date.parse(date)) ? String(helpers.formatMoment(date, 'L')) : this.$t('admin:api.unknown') },
     canRecreateGrant (key: AdminApiKey): boolean {
       return key.grant.groupId === 1 ? this.createFullAccess : Boolean(key.grant.groupId && this.assignableGroups.some(group => group.id === key.grant.groupId))
     },

@@ -489,6 +489,7 @@
   </div>
 </template>
 <script setup lang="ts">
+import { helpers } from '../../helpers/index.ts'
 import { confirmDiscard } from '../common/confirm-dialog.ts'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
@@ -589,7 +590,7 @@ const reviewReady = computed(
 )
 const date = (value: string) => {
   const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? t('admin:ssl.unknown') : parsed.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+  return Number.isNaN(parsed.getTime()) ? t('admin:ssl.unknown') : String(helpers.formatMoment(parsed, 'L LT'))
 }
 const actor = (value: { actorId: number | null; apiKeyId: number | null }) =>
   value.apiKeyId ? t('admin:ssl.apiKey', { apiKeyId: value.apiKeyId, interpolation: { escapeValue: false } }) : value.actorId ? t('admin:ssl.user', { actorId: value.actorId, interpolation: { escapeValue: false } }) : t('admin:ssl.system')

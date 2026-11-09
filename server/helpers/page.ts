@@ -185,7 +185,7 @@ const pageHelper = {
     }
     let meta = {
       locale: getWiki().config.lang.code,
-      path: _.initial(fpath.split('.')).join('')
+      path: fpath.slice(0, fpath.length - path.posix.extname(fpath).length)
     }
     const [first, ...rest] = meta.path.split('/')
     const locale = first && rest.length ? localeSegment(first) : undefined

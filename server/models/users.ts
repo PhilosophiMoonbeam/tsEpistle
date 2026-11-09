@@ -1,5 +1,6 @@
 import { boundedProviderProfile, type ProviderProfileFields } from '../modules/authentication/provider-profile.ts'
 import { assertSavedPassword } from '../helpers/password-policy.ts'
+import { reloadPersonalMcpKeys, revokeOwnerPersonalMcpKeys } from '../helpers/personal-mcp.ts'
 import { newPasswordIssue } from '../../shared/security-policy.ts'
 import { loadEnrollmentPolicy } from '../helpers/authentication-provisioning.ts'
 import { resolveUserPresentation } from '../helpers/user-presentation.ts'
@@ -975,8 +976,10 @@ export default class User extends Model {
           mustChangePwd: false
         })
         .findById(tokenUser.id)
+      await revokeOwnerPersonalMcpKeys(trx, [tokenUser.id])
       return tokenUser
     })
+    await reloadPersonalMcpKeys()
 
     return new Promise<{ jwt: string; userId: number }>((resolve, reject) => {
       context.req.logIn(usr, { session: false }, async err => {
@@ -1043,7 +1046,7 @@ export default class User extends Model {
   static async resetPassword({ token, newPassword }: ResetPasswordOptions): Promise<number> {
     const passwordIssue = newPasswordIssue(newPassword)
     if (passwordIssue) throw new wiki.Error.InputInvalid(passwordIssue)
-    return wiki.models.knex.transaction(async trx => {
+    const userId = await wiki.models.knex.transaction(async trx => {
       const usr = await wiki.models.userKeys.validateToken({ kind: 'resetPwd', token }, trx)
       if (!usr.isActive) {
         throw new wiki.Error.AuthAccountBanned()
@@ -1059,8 +1062,11 @@ export default class User extends Model {
           isVerified: true
         })
         .findById(usr.id)
+      await revokeOwnerPersonalMcpKeys(trx, [usr.id])
       return usr.id
     })
+    await reloadPersonalMcpKeys()
+    return userId
   }
 
   /**
@@ -1247,7 +1253,9 @@ export default class User extends Model {
     if (underlineLinks !== undefined && typeof underlineLinks !== 'boolean') throw new wiki.Error.InputInvalid()
     if (contentTextSize !== undefined && !UserContentTextSizeSchema.safeParse(contentTextSize).success) throw new wiki.Error.InputInvalid()
     if (communicationLocale !== undefined && !UserCommunicationLocaleSchema.safeParse(communicationLocale).success) throw new wiki.Error.InputInvalid()
-    return wiki.models.knex.transaction(async trx => {
+    const replacingPassword = typeof newPassword === 'string' && !_.isEmpty(newPassword)
+    const authorizationChanged = await wiki.models.knex.transaction(async trx => {
+      if (_.isArray(groups)) await trx('groups').select('id').orderBy('id').forShare()
       const usr = await wiki.models.users.query(trx).findById(id).forUpdate()
       if (!usr) {
         throw new wiki.Error.UserNotFound()
@@ -1351,8 +1359,11 @@ export default class User extends Model {
         usrData.sessionsRevokedAt = new Date().toISOString()
       }
       await wiki.models.users.query(trx).patch(usrData).findById(id)
+      if (replacingPassword) await revokeOwnerPersonalMcpKeys(trx, [id])
       return authorizationChanged
     })
+    if (replacingPassword) await reloadPersonalMcpKeys()
+    return authorizationChanged
   }
 
   /**

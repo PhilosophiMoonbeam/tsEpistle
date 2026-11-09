@@ -556,6 +556,7 @@
           </div>
         </aside>
       </div>
+      <AdminNotificationSettings />
     </template>
     <v-dialog
       v-model="reviewing"
@@ -631,6 +632,8 @@ import { wikiStore } from "@/store/index.ts";
 import AsyncState from "@/components/common/async-state.vue";
 import SiteBanner from "../common/site-banner.vue";
 import GeneralLogoManager from "./general-logo-manager.vue";
+import AdminNotificationSettings from "./admin-notification-settings.vue";
+import { helpers } from "../../helpers/index.ts";
 import {
   fetchGeneralWorkspace,
   saveGeneralWorkspace,
@@ -660,7 +663,7 @@ const sections = [
   { key: "activity", title: "admin:general.activity" },
 ];
 export default {
-  components: { AsyncState, SiteBanner, GeneralLogoManager },
+  components: { AsyncState, SiteBanner, GeneralLogoManager, AdminNotificationSettings },
   setup() {
     return { gt: useTranslate('admin:general') };
   },
@@ -896,10 +899,7 @@ export default {
         });
     },
     date(value: string) {
-      return new Date(value).toLocaleString(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      });
+      return Number.isNaN(new Date(value).valueOf()) ? "Invalid Date" : String(helpers.formatMoment(value, "L LT"));
     },
     dateInput(value?: string | null): string {
       return value ? value.slice(0, 16) : "";

@@ -230,10 +230,24 @@ interface AggregateState {
   users: Row[]
   memberships: Array<{ userId: number; groupId: number }>
   tokens: Array<{ id: number; userId: number; kind: string; token: string }>
+  apiKeys: Row[]
+  settings: Row[]
 }
 
 interface AggregateTransaction {
+  (table: string): AggregateTableQuery
   state: AggregateState
+}
+
+interface AggregateTableQuery extends PromiseLike<Row[]> {
+  select(column: string): AggregateTableQuery
+  orderBy(column: string): AggregateTableQuery
+  forShare(): AggregateTableQuery
+  first(column: string): Promise<Row | undefined>
+  whereIn(column: string, values: readonly unknown[]): AggregateTableQuery
+  whereNotNull(column: string): AggregateTableQuery
+  where(column: string, value: unknown): AggregateTableQuery
+  update(patch: Row): Promise<number>
 }
 
 interface AggregateRelationQuery extends PromiseLike<Row[]> {
@@ -248,14 +262,22 @@ interface AggregateDatabase {
   failRelation: boolean
   failUserPatch: boolean
   userPatches: Row[]
+  failKeyUpdate: boolean
+  reloadedApiKeys: number[]
+  reloadCommits: number[]
+  reloadNotifications: number
   nextUserId: number
 }
 
 const createAggregateDatabase = (users: Row[] = []): AggregateDatabase => ({
-  state: { users: structuredClone(users), memberships: [], tokens: [] },
+  state: { users: structuredClone(users), memberships: [], tokens: [], apiKeys: [], settings: [] },
   commits: 0,
   failRelation: false,
   failUserPatch: false,
+  failKeyUpdate: false,
+  reloadedApiKeys: [],
+  reloadCommits: [],
+  reloadNotifications: 0,
   nextUserId: 100,
   userPatches: []
 })
@@ -306,7 +328,7 @@ const installAggregateDatabase = (database: AggregateDatabase): void => {
     }
   }
   const usersQuery = (transaction?: AggregateTransaction) => {
-    const trx = transaction ?? { state: database.state }
+    const trx = transaction ?? transactionState(database.state)
     let criteria: Row = {}
     const query = {
       findOne: async (input: Row): Promise<Row | undefined> => {
@@ -364,8 +386,47 @@ const installAggregateDatabase = (database: AggregateDatabase): void => {
     return query
   }
 
+  const transactionState = (state: AggregateState): AggregateTransaction => {
+    const tableQuery = (table: string): AggregateTableQuery => {
+      const predicates: Array<(row: Row) => boolean> = []
+      const matchingRows = (): Row[] => {
+        const rows = table === 'settings' ? state.settings : table === 'groups' ? [] : undefined
+        if (!rows) throw new Error('unexpected aggregate read table')
+        return rows.filter(row => predicates.every(predicate => predicate(row)))
+      }
+      const query: AggregateTableQuery = {
+        select: () => query,
+        orderBy: () => query,
+        forShare: () => {
+          if (table !== 'groups' && table !== 'settings') throw new Error('unexpected aggregate lock table')
+          return query
+        },
+        first: async () => matchingRows()[0],
+        then: <TResult1 = Row[], TResult2 = never>(
+          onfulfilled?: ((value: Row[]) => TResult1 | PromiseLike<TResult1>) | null,
+          onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+        ): Promise<TResult1 | TResult2> => Promise.resolve(matchingRows()).then(onfulfilled, onrejected),
+        whereIn: (column, values) => { predicates.push(row => values.includes(row[column])); return query },
+        whereNotNull: column => { predicates.push(row => row[column] !== null && row[column] !== undefined); return query },
+        where: (column, value) => { predicates.push(row => row[column] === value); return query },
+        update: async patch => {
+          if (table !== 'apiKeys') throw new Error('unexpected aggregate update table')
+          if (database.failKeyUpdate) throw new Error('forced personal key update failure')
+          const rows = state.apiKeys.filter(row => predicates.every(predicate => predicate(row)))
+          for (const row of rows) Object.assign(row, patch)
+          return rows.length
+        }
+      }
+      return query
+    }
+    return Object.assign(tableQuery, { state })
+  }
   Object.assign(wiki, {
     auth: {
+      reloadApiKeys: async () => {
+        database.reloadedApiKeys = database.state.apiKeys.filter(key => key.isRevoked === false).map(key => Number(key.id))
+        database.reloadCommits.push(database.commits)
+      },
       strategies: {
         oidc: {
           stategyKey: 'oidc',
@@ -382,6 +443,7 @@ const installAggregateDatabase = (database: AggregateDatabase): void => {
     },
     data: { authentication: [] },
     logger: { debug: () => {}, error: () => {}, warn: () => {} },
+    events: { outbound: { emit: (event: string) => { if (event === 'reloadApiKeys') database.reloadNotifications += 1 } } },
     mail: { send: async () => {} }
   })
   wiki.models = {
@@ -395,7 +457,7 @@ const installAggregateDatabase = (database: AggregateDatabase): void => {
     knex: {
       raw: () => ({ accountVersionIncrement: true }),
       transaction: async <T>(operation: (trx: AggregateTransaction) => Promise<T>): Promise<T> => {
-        const trx = { state: structuredClone(database.state) }
+        const trx = transactionState(structuredClone(database.state))
         const result = await operation(trx)
         database.state = trx.state
         database.commits += 1
@@ -680,6 +742,11 @@ describe('User aggregate transactions', () => {
         isVerified: false
       }
     ])
+    database.state.apiKeys = [
+      { id: 1, personalOwnerId: 10, personalAccess: 'read-only', isRevoked: false },
+      { id: 2, personalOwnerId: 20, personalAccess: 'read-write', isRevoked: false },
+      { id: 3, personalOwnerId: null, personalAccess: null, isRevoked: false }
+    ]
     database.state.tokens = [{ id: 1, userId: 10, kind: 'resetPwd', token: 'reset-token' }]
     installAggregateDatabase(database)
 
@@ -692,6 +759,31 @@ describe('User aggregate transactions', () => {
     expect(new Date(revokedAt).toISOString()).toBe(revokedAt)
     expect(database.state.tokens).toEqual([])
     expect(database.commits).toBe(1)
+    expect(database.state.apiKeys).toMatchObject([{ id: 1, isRevoked: true }, { id: 2, isRevoked: false }, { id: 3, isRevoked: false }])
+    expect(database.reloadedApiKeys).toEqual([2, 3])
+    expect(database.reloadCommits).toEqual([1])
+    expect(database.reloadNotifications).toBe(1)
+  })
+
+  test.each(['self', 'resetPwd', 'changePwd'] as const)('rolls back account, recovery token and personal credentials when %s key revocation fails', async event => {
+    const database = createAggregateDatabase([{ id: 10, providerKey: 'local', isActive: true, password: 'old-password', authVersion: 7 }])
+    database.state.apiKeys = [{ id: 1, personalOwnerId: 10, personalAccess: 'read-only', isRevoked: false }]
+    database.state.tokens = [{ id: 1, userId: 10, kind: event, token: 'account-token' }]
+    const before = structuredClone(database.state)
+    database.failKeyUpdate = true
+    installAggregateDatabase(database)
+    const operation = event === 'self'
+      ? User.updateUser({ id: 10, newPassword: 'new-password' })
+      : event === 'resetPwd'
+        ? User.resetPassword({ token: 'account-token', newPassword: 'new-password' })
+        : User.loginChangePassword({ continuationToken: 'account-token', newPassword: 'new-password' }, {
+          req: { logIn: () => { throw new Error('login must not run after failed key revocation') } }
+        } as never)
+    await expect(operation).rejects.toThrow('forced personal key update failure')
+    expect(database.state).toEqual(before)
+    expect(database.commits).toBe(0)
+    expect(database.reloadCommits).toEqual([])
+    expect(database.reloadNotifications).toBe(0)
   })
 })
 

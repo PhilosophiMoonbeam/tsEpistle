@@ -427,6 +427,7 @@
 </template>
 
 <script setup lang="ts">
+import { helpers } from '../../helpers/index.ts'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AsyncState from '../common/async-state.vue'
@@ -466,7 +467,7 @@ const metricsUrl = computed(() => new URL('/metrics', window.location.origin).hr
 const metricsStatusLabel = computed(() =>
   metricsEnabled.value === null ? tr('statusUnavailable') : metricsEnabled.value ? tr('enabled') : tr('disabled')
 )
-const dateTime = (value: string) => new Date(value).toLocaleString()
+const dateTime = (value: string) => Number.isNaN(new Date(value).valueOf()) ? 'Invalid Date' : String(helpers.formatMoment(value, 'L LT'))
 const number = (value: number) => value.toLocaleString()
 const bytes = (value: number) => {
   if (value < 1024) return `${value} B`

@@ -4,6 +4,7 @@ import {
   CONTENT_EXTENSION_HOST_VERSION,
   KROKI_DIAGRAM_TYPES,
   contentExtensionCompatibility,
+  contentExtensionSourceVersionSupported,
   isContentExtensionKey,
   isSafeContentExtensionAssetPath,
   parseContentExtensionEnvelope,
@@ -398,5 +399,80 @@ describe('content extension compatibility', () => {
   it('rejects an unsupported extension key', () => {
     const future = { ...qrDefinition, key: 'future' } as unknown as ContentExtensionDefinition
     expect(contentExtensionCompatibility(future).compatible).toBe(false)
+  })
+})
+
+describe('finite content extension source compatibility', () => {
+  it('admits YouTube playlist source only under the bundled registered ABI', () => {
+    expect(contentExtensionSourceVersionSupported({ key: 'youtube', version: 1 }, 1)).toBe(true)
+    expect(contentExtensionSourceVersionSupported({ key: 'youtube', version: 1 }, 2)).toBe(true)
+    expect(contentExtensionSourceVersionSupported({ key: 'youtube', version: 1 }, 3)).toBe(false)
+    expect(contentExtensionSourceVersionSupported({ key: 'youtube', version: 2 }, 2)).toBe(false)
+    expect(contentExtensionSourceVersionSupported({ key: 'youtube', version: 1 }, '2')).toBe(false)
+    expect(contentExtensionSourceVersionSupported({ key: 'index', version: 1 }, 2)).toBe(false)
+  })
+})
+
+describe('optional index update date contract', () => {
+  it('leaves old v1 canonical source unchanged and retains explicit booleans', () => {
+    const oldBody = '{"key":"index","version":1,"props":{"path":"guide","locale":"en","depth":0,"columns":2,"showIcons":false,"showTags":false,"showPageAccent":false,"order":"updated","limit":50}}'
+    const old = parseContentExtensionFence(oldBody)
+    expect(serializeContentExtensionFence(old)).toBe(`\`\`\`wiki-extension\n${oldBody}\n\`\`\`\n`)
+    expect(old.props).not.toHaveProperty('showUpdatedAt')
+    for (const showUpdatedAt of [true, false]) {
+      const envelope = index({ key: 'index', version: 1, props: { path: 'guide', locale: 'en', showUpdatedAt } })
+      expect(envelope.props.showUpdatedAt).toBe(showUpdatedAt)
+      const body = serializeContentExtensionFence(envelope).split('\n')[1]!
+      expect(parseContentExtensionFence(body)).toEqual(envelope)
+      expect(body).toContain(`"showUpdatedAt":${showUpdatedAt}`)
+    }
+  })
+
+  it.each(['true', null])('rejects non-boolean update option %j', showUpdatedAt => {
+    expect(() => index({ key: 'index', version: 1, props: { path: '', locale: 'en', showUpdatedAt } })).toThrow()
+  })
+})
+
+describe('explicit YouTube playlist schema transition', () => {
+  it('retains old canonical video documents including an identifier named videoseries', () => {
+    for (const videoId of ['abc123_DEF', 'videoseries', 'PL_native_123']) {
+      const body = `{"key":"youtube","version":1,"props":{"videoId":"${videoId}","title":"Saved video","start":12,"controls":false}}`
+      expect(serializeContentExtensionFence(parseContentExtensionFence(body))).toBe(`\`\`\`wiki-extension\n${body}\n\`\`\`\n`)
+    }
+  })
+
+  it.each([
+    { kind: 'playlist', playlistId: 'PL_native_123' },
+    { kind: 'video-playlist', videoId: 'abc123_DEF', playlistId: 'PL_native_123' }
+  ])('round trips the explicit v2 %s source without v1 reinterpretation', source => {
+    const envelope = parseContentExtensionEnvelope({ key: 'youtube', version: 2, props: { source, title: 'Named player', start: 86400, controls: false } })
+    const body = serializeContentExtensionFence(envelope).split('\n')[1]!
+    expect(JSON.parse(body)).toEqual({ key: 'youtube', version: 2, props: { source, title: 'Named player', start: 86400, controls: false } })
+    expect(parseContentExtensionFence(body)).toEqual(envelope)
+    expect(() => parseContentExtensionEnvelope({ key: 'youtube', version: 1, props: { source } })).toThrow()
+  })
+
+  it.each([
+    { kind: 'video', videoId: 'abc123_DEF' },
+    { kind: 'playlist', playlistId: '' },
+    { kind: 'playlist', playlistId: 'x'.repeat(129) },
+    { kind: 'playlist', playlistId: 'PL_native_123&autoplay=1' },
+    { kind: 'playlist', playlistId: 'PL_native_123', videoId: 'videoseries' },
+    { kind: 'video-playlist', playlistId: 'PL_native_123' },
+    { kind: 'video-playlist', videoId: 'https://evil.test', playlistId: 'PL_native_123' },
+    { kind: 'playlist', playlistId: 'PL_native_123', autoplay: true }
+  ])('rejects ambiguous or malformed playlist source %j', source => {
+    expect(() => parseContentExtensionEnvelope({ key: 'youtube', version: 2, props: { source } })).toThrow()
+  })
+
+  it.each([
+    { key: 'youtube', version: 3, props: { videoId: 'abc123_DEF' } },
+    { key: 'youtube', version: 2, props: { videoId: 'abc123_DEF' } },
+    { key: 'youtube', version: 1, props: { videoId: 'abc123_DEF', playlistId: 'PL_native_123' } },
+    { key: 'index', version: 2, props: { path: '', locale: 'en' } },
+    { key: 'youtube', version: 2, props: { source: { kind: 'playlist', playlistId: 'PL_native_123' }, start: -1 } },
+    { key: 'youtube', version: 2, props: { source: { kind: 'playlist', playlistId: 'PL_native_123' }, start: 86401 } }
+  ])('fails closed on unknown versions, mixed shapes or invalid start %j', input => {
+    expect(() => parseContentExtensionEnvelope(input)).toThrow()
   })
 })

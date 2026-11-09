@@ -1,4 +1,5 @@
 import {
+  closeCompletion,
   completionStatus,
   hasNextSnippetField,
   hasPrevSnippetField,
@@ -19,21 +20,22 @@ import { fetchContentExtensions } from './content-extensions-api'
 import type { SourceImageMode } from './editor-image-source'
 import { isAsciiDocLiteralPosition } from './editor-source-context'
 import { sourceTableNavigation } from './editor-source-tables'
-import { searchPages } from './pages-api'
+import { fetchPageLinkSuggestions, searchPages } from './pages-api'
 import type { BrowserFetch } from './json-transport'
 
 // Completion hints are checked against the native discriminated schema; validation remains authoritative.
-const parameters: { [Key in ContentExtensionKey]: readonly (keyof Extract<ContentExtensionEnvelope, { key: Key }>['props'])[] } = {
+type PropKey<Envelope> = Envelope extends { props: infer Props } ? keyof Props : never
+const parameters: { [Key in ContentExtensionKey]: readonly PropKey<Extract<ContentExtensionEnvelope, { key: Key }>>[] } = {
   qr: ['value', 'label', 'size', 'errorCorrection'],
   gallery: ['images', 'columns', 'fit', 'aspectRatio'],
   'links-grid': ['cards'],
-  index: ['path', 'locale', 'depth', 'columns', 'showIcons', 'order', 'limit', 'emptyLabel'],
+  index: ['path', 'locale', 'depth', 'columns', 'showIcons', 'showTags', 'showPageAccent', 'showUpdatedAt', 'order', 'limit', 'emptyLabel'],
   tabs: ['tabs', 'active'],
   spoiler: ['label', 'hint', 'content'],
   infobox: ['title', 'image', 'imageAlt', 'caption', 'facts'],
   pdf: ['src', 'title', 'page', 'height'],
   media: ['kind', 'src', 'title', 'poster', 'caption'],
-  youtube: ['videoId', 'title', 'start', 'controls'],
+  youtube: ['videoId', 'source', 'title', 'start', 'controls'],
   diagram: ['source', 'caption', 'theme', 'align'],
   kroki: ['type', 'source', 'format', 'caption', 'align'],
   plantuml: ['source', 'format', 'caption', 'align'],
@@ -43,6 +45,7 @@ const nestedParameters: Record<string, readonly string[]> = {
   images: ['src', 'alt', 'caption'],
   cards: ['title', 'url', 'description', 'image', 'icon', 'tags'],
   tabs: ['label', 'content', 'headingLevel'],
+  source: ['kind', 'videoId', 'playlistId'],
   facts: ['label', 'value']
 }
 const enumValues: Record<string, readonly string[]> = {
@@ -151,39 +154,125 @@ function jsonCursor(source: string): JsonCursor | null {
   return null
 }
 
-/** Native authorized page routes and mixed-closer multi-cursor insertion stay one completion source. */
+type PageLinkRange = { from: number; to: number; title: string; prefix: string }
+
+function pageLinkRange(state: EditorState, position: number): PageLinkRange | null {
+  const line = state.doc.lineAt(position)
+  const before = line.text.slice(0, position - line.from)
+  const match = /(\[([^\][\n]+)\]\()(\/[^\s()<>"\\]*|)$/.exec(before)
+  if (!match || match[3].startsWith('//')) return null
+  const from = position - match[3].length
+  const opening = from - match[1].length
+  const tree = syntaxTree(state)
+  let link = tree.resolveInner(opening, 1)
+  while (link.name !== 'Link' && link.parent) link = link.parent
+  // The native parser owns the opener, including image and escape boundaries.
+  if (link.name !== 'Link' || link.from !== opening) return null
+  let block = link
+  for (let node = link; node; node = node.parent!) {
+    if (/^(?:CodeBlock|FencedCode|CodeText|InlineCode|HTMLBlock|HTMLTag|CommentBlock|Comment|ProcessingInstructionBlock|ProcessingInstruction|Image|Autolink|LinkReference)$/.test(node.name)) return null
+    if (node.type.is('LeafBlock')) block = node
+  }
+  // Unfinished literal delimiters have no native node yet. Scan only this
+  // native Markdown block, ignoring delimiters already owned by parsed syntax.
+  for (const token of state.sliceDoc(block.from, opening).matchAll(/`|<!--|<\?/g)) {
+    let owned = false
+    for (let node = tree.resolveInner(block.from + token.index!, 1); node; node = node.parent!) {
+      if (/^(?:Escape|InlineCode|HTMLTag|Comment|ProcessingInstruction|Autolink|Link|Image)$/.test(node.name)) {
+        owned = true
+        break
+      }
+      if (node.from === block.from && node.to === block.to) break
+    }
+    if (!owned) return null
+  }
+  const suffix = /^[^\s()<>"\\]*/.exec(state.sliceDoc(position, line.to))![0]
+  return { from, to: position + suffix.length, title: match[2], prefix: match[3] }
+}
+
+/** Both discovery modes share exact source ownership and a single undoable insertion. */
 export async function completeSourcePageLink(
   context: CompletionContext,
   locale: string,
   localizedPaths: boolean,
-  active: () => boolean = () => true
+  active: () => boolean = () => true,
+  fetchImpl: BrowserFetch = fetch,
+  signal?: AbortSignal
 ): Promise<CompletionResult | null> {
-  const prefix = context.matchBefore(/\[[^\]]+\]\($/)
-  if (!prefix || context.state.readOnly || !active()) return null
+  const state = context.state
+  const range = pageLinkRange(state, context.pos)
+  const live = () => !context.aborted && !signal?.aborted && active() &&
+    !state.readOnly && (!context.view || (context.view.state.doc === state.doc &&
+      context.view.state.selection.eq(state.selection) && !context.view.state.readOnly &&
+      !context.view.compositionStarted && context.view.state.facet(EditorView.editable)))
+  if (!range || !state.selection.ranges.every(selection => selection.empty) || !live()) return null
+  const abort = new AbortController()
+  context.addEventListener('abort', () => abort.abort(), { onDocChange: true })
+  const cancel = () => abort.abort()
+  signal?.addEventListener('abort', cancel, { once: true })
   try {
-    const response = await searchPages(window.fetch.bind(window), prefix.text.slice(1, -2), { locale })
-    if (context.aborted || !active()) return null
+    const request: BrowserFetch = (input, init) => fetchImpl(input, { ...init, signal: abort.signal })
+    const items = range.prefix
+      ? await fetchPageLinkSuggestions(request, { locale, pathPrefix: range.prefix, limit: 20, signal: abort.signal })
+      : (await searchPages(request, range.title, { locale })).results.map(result => ({
+        ...result,
+        href: `${result.visibility === 'private' ? '/_private' : ''}/${result.visibility === 'private' || localizedPaths ? `${encodeURIComponent(result.locale)}/` : ''}${result.path.split('/').map(encodeURIComponent).join('/')}`
+      }))
+    if (!live()) return null
     return {
-      from: context.pos,
-      options: response.results.map(result => {
-        const href = `${result.visibility === 'private' ? '/_private' : ''}/${result.visibility === 'private' || localizedPaths ? `${encodeURIComponent(result.locale)}/` : ''}${result.path.split('/').map(encodeURIComponent).join('/')}`
-        return {
-          label: `${href} - ${result.title}`,
-          apply: (view: EditorView, completion: Completion, from: number, to: number) => {
-            if (!active() || view.state.readOnly || view.compositionStarted || !view.state.facet(EditorView.editable)) return
-            const insertion = insertCompletionText(view.state, `${href})`, from, to)
-            const insertions = view.state.changes(insertion.changes)
-            const closers: Array<{ from: number; to: number }> = []
-            insertions.iterChanges((_fromA, toA, _fromB, toB) => {
-              if (view.state.sliceDoc(toA, toA + 1) === ')') closers.push({ from: toB, to: toB + 1 })
-            }, true)
-            view.dispatch({ ...insertion, changes: insertions, annotations: pickedCompletion.of(completion) }, { changes: closers, sequential: true })
-          }
+      from: range.from,
+      to: range.to,
+      filter: false,
+      options: items.map(result => ({
+        label: `${result.href} - ${result.title}`,
+        apply(view: EditorView, completion: Completion) {
+          if (!live() || view.state.doc !== state.doc || !view.state.selection.eq(state.selection) ||
+            view.state.readOnly || view.compositionStarted || !view.state.facet(EditorView.editable)) return
+          const ranges = view.state.selection.ranges.map(selection => pageLinkRange(view.state, selection.head))
+          if (ranges.some(candidate => !candidate || candidate.prefix !== range.prefix || (!range.prefix && candidate.title !== range.title))) return
+          const href = result.href.replace(/[()]/g, character => `\\${character}`)
+          const transaction = view.state.changeByRange(selection => {
+            const candidate = pageLinkRange(view.state, selection.head)!
+            const to = candidate.to + (view.state.sliceDoc(candidate.to, candidate.to + 1) === ')' ? 1 : 0)
+            return {
+              changes: { from: candidate.from, to, insert: `${href})` },
+              range: EditorSelection.cursor(candidate.from + href.length + 1)
+            }
+          })
+          view.dispatch({ ...transaction, userEvent: 'input.complete', annotations: pickedCompletion.of(completion) })
         }
-      })
+      }))
     }
   } catch {
     return null
+  } finally {
+    signal?.removeEventListener('abort', cancel)
+  }
+}
+
+export function createSourcePageLinkCompletion(
+  locale: () => string,
+  localizedPaths: boolean,
+  active: () => boolean,
+  fetchImpl: BrowserFetch = fetch
+) {
+  let abort = new AbortController()
+  let destroyed = false
+  let view: EditorView | null = null
+  const invalidate = () => { abort.abort(); abort = new AbortController() }
+  return {
+    invalidate() { invalidate(); if (view) closeCompletion(view) },
+    complete: (context: CompletionContext) =>
+      completeSourcePageLink(context, locale(), localizedPaths, () => !destroyed && active(), fetchImpl, abort.signal),
+    extension: ViewPlugin.define(editor => {
+      view = editor
+      return {
+        update(update) {
+          if (update.docChanged || update.selectionSet || update.state.readOnly || !active()) invalidate()
+        },
+        destroy() { destroyed = true; view = null; abort.abort() }
+      }
+    }, { eventHandlers: { compositionstart(_event, editor) { invalidate(); closeCompletion(editor) } } })
   }
 }
 
@@ -256,13 +345,15 @@ export async function completeSourceAuthoring(
               ? nested
               : []
       else if (!json.path.length && json.field === 'key') values = available.map(extension => extension.key)
-      else if (!json.path.length && json.field === 'version') values = ['1']
+      else if (!json.path.length && json.field === 'version') values = key === 'youtube' ? ['1', '2'] : ['1']
       else if (
         key &&
         json.path[0] === 'props' &&
         (json.path.length === 1 ? (parameters[key] as readonly string[]).includes(json.field) : nested.includes(json.field))
       )
-        values = enumValues[json.field] ?? (json.field === 'showIcons' || json.field === 'controls' ? ['true', 'false'] : [])
+        values = key === 'youtube' && json.path[json.path.length - 1] === 'source' && json.field === 'kind'
+          ? ['playlist', 'video-playlist']
+          : enumValues[json.field] ?? (['showIcons', 'showTags', 'showPageAccent', 'showUpdatedAt', 'controls'].includes(json.field) ? ['true', 'false'] : [])
       let to = context.pos
       if (json.quoted && context.state.sliceDoc(to, to + 1) === '"') to++
       if (json.key) {
@@ -272,7 +363,7 @@ export async function completeSourceAuthoring(
       const options = values
         .filter(value => (!json.key || !json.used.includes(value)) && value.toLowerCase().startsWith(json.prefix.toLowerCase()))
         .map(value => {
-          const literal = !json.key && (json.field === 'showIcons' || json.field === 'controls' || json.field === 'version')
+          const literal = !json.key && ['showIcons', 'showTags', 'showPageAccent', 'showUpdatedAt', 'controls', 'version'].includes(json.field)
           return { label: value, type: json.key ? 'property' : 'enum', apply: `${literal ? value : JSON.stringify(value)}${json.key ? ': ' : ''}` }
         })
       return options.length ? { from: fence.from + json.from - (json.quoted ? 1 : 0), to, options, filter: false } : null

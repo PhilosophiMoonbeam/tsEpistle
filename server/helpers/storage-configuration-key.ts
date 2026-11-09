@@ -16,7 +16,8 @@ const nativeGitOperationalFields: Record<string, true> = {
   sshPrivateKeyContent: true,
   sshKnownHosts: true,
   defaultName: true,
-  defaultEmail: true
+  defaultEmail: true,
+  dotContentReview: true
 }
 
 const nativeProviderOperationalFields: Record<string, Record<string, true>> = {

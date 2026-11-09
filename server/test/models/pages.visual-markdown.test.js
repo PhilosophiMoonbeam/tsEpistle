@@ -22,6 +22,7 @@ const basePage = {
   publishStartDate: '',
   render: '<h1>Supported</h1>',
   renderedSourceRevision: null,
+  sourceRevision: '2',
   title: 'Page',
   updatedAt: '2026-08-14T00:00:00.000Z',
   visibility: 'private',
@@ -35,15 +36,33 @@ describe('Visual Markdown page contracts', () => {
   beforeEach(async () => {
     vi.resetModules()
     let insertedProjection
+    let lifecycleClock
     const knex = vi.fn(table => {
       if (table === 'pages') {
         return {
           select: vi.fn().mockReturnThis(),
           where: vi.fn().mockReturnThis(),
           forUpdate: vi.fn().mockReturnThis(),
+          forShare: vi.fn().mockReturnThis(),
           first: vi.fn().mockResolvedValue({ ...basePage, sourceRevision: '2' }),
           update: vi.fn().mockResolvedValue(1)
         }
+      }
+      if (table === 'pageLifecycleClocks') {
+        const query = {
+          insert: vi.fn(row => {
+            lifecycleClock ??= { ...row }
+            return { onConflict: () => ({ ignore: async () => [] }) }
+          }),
+          where: vi.fn().mockReturnThis(),
+          forUpdate: vi.fn().mockReturnThis(),
+          first: vi.fn(async () => lifecycleClock),
+          update: vi.fn(async patch => { Object.assign(lifecycleClock, patch); return 1 })
+        }
+        return query
+      }
+      if (table === 'pageReviewRouting') return {
+        where: vi.fn().mockReturnThis(), whereNot: vi.fn().mockReturnThis(), update: vi.fn(async () => 0)
       }
       if (table === 'pageMutationOutbox') {
         return {
@@ -54,10 +73,13 @@ describe('Visual Markdown page contracts', () => {
           where: vi.fn().mockReturnValue({ first: vi.fn(async () => insertedProjection) })
         }
       }
+      if (table === 'pageAccessPasswords') return {
+        where: vi.fn().mockReturnThis(), first: vi.fn(async () => undefined)
+      }
       return { insert: vi.fn().mockResolvedValue(1) }
     })
     knex.client = { config: { client: 'pg' } }
-    knex.raw = vi.fn()
+    knex.raw = vi.fn(async () => ({ rows: [{ now: new Date() }] }))
     knex.transaction = vi.fn(callback => callback(knex))
     const checkAccess = vi.fn().mockReturnValue(true)
     const loadPageRuleAuthority = vi.fn(async requester => ({ requester, permissions: [], groups: [], tagAliases: {} }))
@@ -167,7 +189,7 @@ describe('Visual Markdown page contracts', () => {
     expect(patch.mock.calls[0][0]).not.toHaveProperty('content')
   })
 
-  it('converts Visual HTML content to Markdown before selecting Visual Markdown', async () => {
+  it.each(['Reviewed candidate with **authoritative bytes**.', ''])('commits the reviewed HTML candidate before selecting Visual Markdown (%j)', async candidate => {
     const page = {
       ...basePage,
       content: '<h1>Visual page</h1><p>Text with <strong>bold</strong>.</p>',
@@ -176,13 +198,19 @@ describe('Visual Markdown page contracts', () => {
     }
     const { patch } = arrangeConversion(page)
 
-    await Page.convertPage({ id: page.id, editor: 'visual-markdown', user: requester })
+    // Share retained custody with the model's post-reset module instance.
+    const { retainPageConversionReview } = await import('../../helpers/page-conversion-review.ts')
+    const review = retainPageConversionReview({ pageId: page.id, sourceRevision: page.sourceRevision, editor: 'visual-markdown', userId: requester.id, source: page.content }, {
+      candidate,
+      report: { warnings: [], differences: { text: false, code: false, links: false, tables: false }, roundtripSource: '', previewHtml: '', renderer: 'native test review' }
+    })
+    await Page.convertPage({ id: page.id, editor: 'visual-markdown', user: requester, reviewToken: review.reviewToken })
 
     expect(patch).toHaveBeenCalledOnce()
     expect(patch.mock.calls[0][0]).toMatchObject({
       contentType: 'markdown',
       editorKey: 'visual-markdown',
-      content: '# Visual page\n\nText with **bold**.',
+      content: candidate,
       renderedSourceRevision: null
     })
     expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledOnce()

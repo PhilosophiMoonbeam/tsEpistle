@@ -14,6 +14,7 @@ import type { PageRuleAuthority } from './group-access.ts'
 import { authorizePageCreationAccount } from '../operations/live-notes.ts'
 import { pageRequiresUnlock } from '../operations/page-protection.ts'
 import errors from '../operations/errors.ts'
+import { recordPageReviewAttestation } from './page-review-events.ts'
 
 interface AccuracyPage extends PageVisibilityRecord, Record<string, unknown> {
   id: number
@@ -148,13 +149,20 @@ export const attestPageAccuracy = (input: AccuracyInput & { pageId: number; muta
       throw new ApplicationError('The page changed. Reload it before verifying accuracy.', { status: 409, code: 'PAGE_ACCURACY_STALE' })
     }
     const now = new Date()
+    const attestationId = randomUUID()
     // Every deliberate action appends a fact. Repeating an action never changes
     // an earlier record, and no content/approval/revision metadata is touched.
     await transaction('pageAccuracyAttestations').insert({
-      id: randomUUID(),
+      id: attestationId,
       pageId: context.page.id,
       sourceRevision: input.mutation.expectedSourceRevision,
       verifiedBy: context.humanId,
+      verifiedAt: now
+    })
+    await recordPageReviewAttestation(transaction, {
+      pageId: context.page.id,
+      sourceRevision: input.mutation.expectedSourceRevision,
+      attestationId,
       verifiedAt: now
     })
     return projectAccuracy(transaction, context, context.page, now)

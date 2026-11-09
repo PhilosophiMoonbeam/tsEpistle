@@ -218,7 +218,7 @@ import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 import { createSourceImageAuthoring } from '../../helpers/editor-source-images'
-import { completeSourcePageLink, createSourceAuthoring, type SourceAuthoring } from '../../helpers/editor-source-authoring'
+import { createSourcePageLinkCompletion, createSourceAuthoring, type SourceAuthoring } from '../../helpers/editor-source-authoring'
 import markdownHelp from './markdown/help.vue'
 import EditorContentsPane from './editor-contents-pane.vue'
 import { SourcePreviewSync } from './common/source-preview-sync'
@@ -227,7 +227,7 @@ import { decodeBase64Text } from '../../helpers/base64'
 
 /* global siteConfig, siteLangs */
 
-import { autocompletion, type CompletionContext } from '@codemirror/autocomplete'
+import { autocompletion } from '@codemirror/autocomplete'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { EditorView, keymap } from '@codemirror/view'
 import {
@@ -1129,10 +1129,16 @@ export default defineComponent({
 
     this.debouncedProcessContent = _.debounce((newContent: string) => this.processContent(newContent), 600)
     const completionOwner = `${wikiStore.user.id}:${wikiStore.offlineIdentityEpoch}:${wikiStore.page.id}:${this.locale}:${this.path}`
-    const completePageLink = (context: CompletionContext) => completeSourcePageLink(
-      context, this.locale, siteLangs.length > 0,
-      () => wikiStore.user.authenticated && !this.editorDisposed && this.collaborationStatus?.state !== 'conflict' &&
+    const pageLinkCompletion = createSourcePageLinkCompletion(
+      () => this.locale, siteLangs.length > 0,
+      () => wikiStore.user.authenticated && wikiStore.authRefreshSettled && !wikiStore.authRefreshPending &&
+        wikiStore.authRefreshOutcome === 'authenticated' && !this.editorDisposed && this.collaborationStatus?.state !== 'conflict' &&
         completionOwner === `${wikiStore.user.id}:${wikiStore.offlineIdentityEpoch}:${wikiStore.page.id}:${this.locale}:${this.path}`
+    )
+    this.$watch(
+      () => `${wikiStore.user.authenticated}:${wikiStore.user.id}:${wikiStore.user.authVersion}:${wikiStore.authRefreshPending}:${wikiStore.authRefreshSettled}:${wikiStore.authRefreshOutcome}:${wikiStore.user.permissions.join(',')}:${wikiStore.offlineIdentityEpoch}:${wikiStore.page.id}:${this.locale}:${this.path}:${this.editorDisposed}:${this.collaborationStatus?.state}`,
+      () => pageLinkCompletion.invalidate(),
+      { flush: 'sync' }
     )
     this.imageAuthoring = markRaw(createSourceImageAuthoring(
       'markdown',
@@ -1148,8 +1154,9 @@ export default defineComponent({
     const extensions = [
       this.imageAuthoring?.extension ?? [],
       this.sourceAuthoring.extension,
+      pageLinkCompletion.extension,
       markdownEditorInputTheme,
-      autocompletion({ override: [completePageLink, this.sourceAuthoring.complete] }),
+      autocompletion({ override: [pageLinkCompletion.complete, this.sourceAuthoring.complete] }),
       keymap.of([
         { key: 'F11', run: () => { this.toggleFullscreen(); return true } },
         { key: 'Mod-s', run: () => { this.save(); return true } },
@@ -1184,6 +1191,9 @@ export default defineComponent({
           expectedUpdatedAt: () => wikiStore.editor.checkoutDateActive,
           fetchImpl: (input, init) => window.fetch(input, { ...init, signal: collaborationAbortController.signal }),
           onHistoryChange: () => this.syncFormatState(),
+          presenceIdentity: () => wikiStore.user.authenticated
+            ? `${wikiStore.user.id}:${wikiStore.user.authVersion}:${wikiStore.offlineIdentityEpoch}`
+            : null,
           onBaseline: baseline => {
             wikiStore.editor.checkoutDateActive = baseline.updatedAt
             wikiStore.page.sourceRevision = baseline.sourceRevision

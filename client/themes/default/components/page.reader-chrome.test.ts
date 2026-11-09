@@ -6,7 +6,7 @@ import { manualReviewerId } from '../../../helpers/approval-reviewer-search.ts'
 import { brandingDuplicatesSiteLogo } from '../../../helpers/page-branding.ts'
 import { sameReaderPageIdentity } from '../../../helpers/page-action-events.ts'
 import { buildOutlineTree, filterOutlineTree, getInitialExpandedAnchors } from '../../../helpers/page-outline.ts'
-import { revealContentExtensionTarget } from '../../../helpers/content-extension-runtime.ts'
+import { hydrateContentExtensions, revealContentExtensionTarget } from '../../../helpers/content-extension-runtime.ts'
 import { normalizeTableOfContents } from '../../../helpers/table-of-contents.ts'
 import { publicationBoundaryTimestamp, publicationWindowOpen } from '../../../../shared/publication-window.ts'
 import { browserWindow, document as browserDocument, resetBody } from '../../../test/browser-dom.mts'
@@ -62,6 +62,7 @@ const baseState = (overrides: Record<string, unknown> = {}): Record<string, unkn
   pageProtectionBlockedReason: '',
   pageOnlineActionReady: true,
   pageOnlineActionUnavailableReason: '',
+  readerPageActionsState: { ready: true },
   hasWritePagesPermission: true,
   showEditFab: false,
   showHeaderEditButton: true,
@@ -287,6 +288,7 @@ const page = new Function(
   'NavSidebar',
   'GlossaryReader',
   'DiscussionAnnotations',
+  'PageGovernance',
   'wikiStore',
   'manualReviewerId',
   'brandingDuplicatesSiteLogo',
@@ -308,6 +310,7 @@ const page = new Function(
   <Value>(value: Value) => value,
   () => () => {},
   { t: (key: string) => key },
+  stubComponent,
   stubComponent,
   stubComponent,
   stubComponent,
@@ -1014,6 +1017,7 @@ describe('focus reading section navigation', () => {
     expect(scrollTo).toHaveBeenCalledWith(0, 160)
     expect(vm.scrollAnimationFrame).toBeNull()
     expect(vm.readerFocus).toBe(true)
+    page.methods.cancelScheduledScroll!.call(vm)
   })
 
   it('omits section controls below two headings or with the outline disabled, and closes on page or view changes', async () => {
@@ -1234,7 +1238,234 @@ describe('leading Markdown reader title', () => {
       expect(destination).toBe(hero)
       expect(browserDocument.getElementById('café guide')?.textContent).toBe('Café Guide')
     } finally {
+      page.methods.cancelScheduledScroll!.call(vm)
       frame.mockRestore()
     }
+  })
+})
+
+describe('reader localized home breadcrumbs', () => {
+  it('keeps Home public and explicit while preserving encoded private/public folder routes', () => {
+    for (const locales of [[], [{ code: 'en' }, { code: 'fr' }]]) {
+      for (const locale of ['en', 'fr', 'fr CA']) {
+        for (const visibility of ['public', 'private']) {
+          const items = call('breadcrumbs', baseState({ locales, locale, visibility, path: 'café guide/100% ready' })) as Array<{ href: string; title: string }>
+          const prefix = locales.length ? `/${encodeURIComponent(locale)}` : ''
+          const scope = visibility === 'private' ? '/_private' : ''
+          expect(items.map(item => item.href)).toEqual([
+            prefix ? `${prefix}/home` : '/',
+            `${scope}${prefix}/caf%C3%A9%20guide`,
+            `${scope}${prefix}/caf%C3%A9%20guide/100%25%20ready`
+          ])
+          expect(items.map(item => item.title)).toEqual(['common:header.home', 'café guide', '100% ready'])
+        }
+      }
+    }
+  })
+})
+
+describe('bounded anchor landing cues', () => {
+  let frames: FrameRequestCallback[]
+  let layoutCallbacks: ResizeObserverCallback[]
+  let originalObserver: typeof ResizeObserver
+  const cleanups: Array<() => void> = []
+
+  beforeEach(() => {
+    resetBody()
+    vi.useFakeTimers()
+    frames = []
+    layoutCallbacks = []
+    vi.spyOn(browserWindow, 'requestAnimationFrame').mockImplementation(callback => {
+      frames.push(callback)
+      return frames.length
+    })
+    vi.spyOn(browserWindow, 'cancelAnimationFrame').mockImplementation(() => {})
+    // The shared DOM harness binds global RAF once; window spies alone do not
+    // capture the later landing frame scheduled through the browser global.
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(callback => browserWindow.requestAnimationFrame(callback))
+    vi.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(handle => browserWindow.cancelAnimationFrame(handle))
+    originalObserver = globalThis.ResizeObserver
+    globalThis.ResizeObserver = class {
+      constructor(callback: ResizeObserverCallback) { layoutCallbacks.push(callback) }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver
+  })
+  afterEach(() => {
+    for (const cleanup of cleanups.splice(0)) cleanup()
+    globalThis.ResizeObserver = originalObserver
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+    resetBody()
+  })
+
+  const flushFrames = () => {
+    while (frames.length) frames.shift()!(performance.now())
+  }
+  const fixture = (maximum = 0) => {
+    browserDocument.body.innerHTML = '<button id="opener">Section</button><input id="other"><article><details><summary>Reveal</summary><h2 id="first">First</h2><h2 id="last">Last</h2></details></article>'
+    const article = browserDocument.querySelector<HTMLElement>('article')!
+    const first = article.querySelector<HTMLElement>('#first')!
+    const last = article.querySelector<HTMLElement>('#last')!
+    const opener = browserDocument.querySelector<HTMLButtonElement>('#opener')!
+    const scrolling = browserDocument.scrollingElement ?? browserDocument.documentElement
+    const descriptor = Object.getOwnPropertyDescriptor(scrolling, 'scrollHeight')
+    let reachable = maximum
+    Object.defineProperty(scrolling, 'scrollHeight', { configurable: true, get: () => browserWindow.innerHeight + reachable })
+    cleanups.push(() => {
+      if (descriptor) Object.defineProperty(scrolling, 'scrollHeight', descriptor)
+      else Reflect.deleteProperty(scrolling, 'scrollHeight')
+    })
+    vi.spyOn(first, 'getBoundingClientRect').mockImplementation(() => new browserWindow.DOMRect(0, 120 - browserWindow.scrollY, 200, 32))
+    vi.spyOn(last, 'getBoundingClientRect').mockImplementation(() => new browserWindow.DOMRect(0, 600 - browserWindow.scrollY, 200, 32))
+    vi.spyOn(browserWindow, 'scrollTo').mockImplementation(() => {})
+    const vm: Record<string, any> = {
+      $refs: { container: article },
+      tocFlattened: [{ anchor: '#first' }, { anchor: '#last' }],
+      scrollOpts: { duration: 0, offset: -24 },
+      scrollAnimationToken: 0,
+      scrollAnimationFrame: null,
+      scrollLandingCleanup: null,
+      outlineCleanup: { setNavigationAnchor: vi.fn() },
+      readingProgress: 0
+    }
+    for (const name of ['scrollToPageAnchor', 'cancelScheduledScroll', 'animatePageScroll', 'pageScrollTarget']) {
+      vm[name] = (...args: unknown[]) => page.methods[name]!.call(vm, ...args)
+    }
+    cleanups.push(() => vm.cancelScheduledScroll())
+    opener.focus()
+    return { vm, first, last, article, opener, setMaximum: (value: number) => { reachable = value } }
+  }
+
+  it('measures revealed geometry, cues only unreachable headings and expires without reading credit', async () => {
+    const { vm, last, article } = fixture()
+    vm.scrollToPageAnchor('#last')
+    expect(article.querySelector('details')!.open).toBe(true)
+    expect(last.classList.contains('page-anchor-landing')).toBe(false)
+    flushFrames()
+    expect(last.classList.contains('page-anchor-landing')).toBe(true)
+    expect(browserDocument.activeElement).toBe(last)
+    expect(vm.readingProgress).toBe(0)
+    expect(vm.outlineCleanup.setNavigationAnchor).toHaveBeenLastCalledWith('#last')
+    await vi.advanceTimersByTimeAsync(1800)
+    expect(last.classList.contains('page-anchor-landing')).toBe(false)
+    expect(vm.scrollLandingCleanup).toBeNull()
+    for (const callback of layoutCallbacks) callback([], {} as ResizeObserver)
+    browserWindow.dispatchEvent(new browserWindow.Event('resize'))
+    expect(last.classList.contains('page-anchor-landing')).toBe(false)
+    expect(vm.scrollLandingCleanup).toBeNull()
+  })
+
+  it('rechecks delayed layout without cuing a reachable destination or stealing optional focus', () => {
+    const { vm, last, opener, setMaximum } = fixture(1000)
+    vm.scrollToPageAnchor('#last', false)
+    flushFrames()
+    expect(last.classList.contains('page-anchor-landing')).toBe(false)
+    expect(browserDocument.activeElement).toBe(opener)
+    expect(last.hasAttribute('tabindex')).toBe(false)
+    setMaximum(0)
+    for (const callback of layoutCallbacks) callback([], {} as ResizeObserver)
+    expect(last.classList.contains('page-anchor-landing')).toBe(true)
+    setMaximum(1000)
+    for (const callback of layoutCallbacks) callback([], {} as ResizeObserver)
+    expect(last.classList.contains('page-anchor-landing')).toBe(false)
+  })
+
+  it('keeps reduced-motion landings static even when smooth scrolling is configured', () => {
+    const { vm, last } = fixture()
+    vm.scrollOpts.duration = 300
+    const originalMatchMedia = browserWindow.matchMedia.bind(browserWindow)
+    vi.spyOn(browserWindow, 'matchMedia').mockImplementation(query => ({
+      ...originalMatchMedia(query),
+      matches: query === '(prefers-reduced-motion: reduce)'
+    }))
+    vm.scrollToPageAnchor('#last')
+    flushFrames()
+    expect(last.classList.contains('page-anchor-landing')).toBe(true)
+    expect(browserDocument.activeElement).toBe(last)
+    expect(vm.scrollAnimationFrame).toBeNull()
+    expect(vm.readingProgress).toBe(0)
+  })
+
+  it('fences rapid anchors, preserves newly claimed focus and retires cues on interruption', () => {
+    const { vm, first, last } = fixture()
+    vm.scrollToPageAnchor('#first')
+    vm.scrollToPageAnchor('#last')
+    const other = browserDocument.querySelector<HTMLInputElement>('#other')!
+    other.focus()
+    flushFrames()
+    expect(first.classList.contains('page-anchor-landing')).toBe(false)
+    expect(last.classList.contains('page-anchor-landing')).toBe(true)
+    expect(browserDocument.activeElement).toBe(other)
+    browserWindow.dispatchEvent(new browserWindow.WheelEvent('wheel'))
+    expect(last.classList.contains('page-anchor-landing')).toBe(false)
+    expect(vm.scrollLandingCleanup).toBeNull()
+    for (const callback of layoutCallbacks) callback([], {} as ResizeObserver)
+    expect(last.classList.contains('page-anchor-landing')).toBe(false)
+  })
+
+  it('leaves no stale cue after missing targets, content removal or route/disposal cancellation', async () => {
+    const { vm, last } = fixture()
+    vm.scrollToPageAnchor('#last')
+    flushFrames()
+    vm.scrollToPageAnchor('#missing')
+    flushFrames()
+    expect(last.classList.contains('page-anchor-landing')).toBe(false)
+    expect(vm.scrollLandingCleanup).toBeNull()
+    vm.scrollToPageAnchor('#last')
+    last.remove()
+    flushFrames()
+    expect(vm.scrollLandingCleanup).toBeNull()
+    vm.scrollToPageAnchor('#first')
+    vm.cancelScheduledScroll()
+    flushFrames()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(browserDocument.querySelector('.page-anchor-landing')).toBeNull()
+    expect(vm.scrollAnimationFrame).toBeNull()
+    expect(vm.scrollLandingCleanup).toBeNull()
+  })
+
+  it('retires measured cues after destination removal or connected content-root replacement', () => {
+    for (const replaceRoot of [false, true]) {
+      const { vm, last } = fixture()
+      vm.scrollToPageAnchor('#last')
+      flushFrames()
+      expect(last.classList.contains('page-anchor-landing')).toBe(true)
+      if (replaceRoot) {
+        const replacement = browserDocument.createElement('article')
+        browserDocument.body.append(replacement)
+        vm.$refs.container = replacement
+      } else {
+        last.remove()
+      }
+      for (const callback of layoutCallbacks) callback([], {} as ResizeObserver)
+      expect(last.classList.contains('page-anchor-landing')).toBe(false)
+      expect(vm.scrollLandingCleanup).toBeNull()
+    }
+  })
+
+  it('measures a hydrated extension destination only after its tab has revealed', () => {
+    const { vm, article } = fixture()
+    article.innerHTML = `<section class="content-extension--tabs" data-tabs-active="0">
+      <div class="content-extension-tabs__list" role="tablist">
+        <button class="content-extension-tabs__tab" data-tab-index="0" type="button" role="tab" hidden>A</button>
+        <button class="content-extension-tabs__tab" data-tab-index="1" type="button" role="tab" hidden>B</button>
+      </div>
+      <section class="content-extension-tabs__panel" data-tab-index="0" role="tabpanel"><p>A</p></section>
+      <section class="content-extension-tabs__panel" data-tab-index="1" role="tabpanel"><h2 id="extension-target">B</h2></section>
+    </section>`
+    cleanups.push(hydrateContentExtensions(article, vi.fn()))
+    const target = article.querySelector<HTMLElement>('#extension-target')!
+    const panel = target.closest<HTMLElement>('[role="tabpanel"]')!
+    vi.spyOn(target, 'getBoundingClientRect').mockImplementation(() =>
+      new browserWindow.DOMRect(0, panel.hidden ? 0 : 600 - browserWindow.scrollY, 200, 32))
+    vm.tocFlattened = [{ anchor: '#extension-target' }]
+    expect(panel.hidden).toBe(true)
+    vm.scrollToPageAnchor('#extension-target')
+    expect(panel.hidden).toBe(false)
+    flushFrames()
+    expect(target.classList.contains('page-anchor-landing')).toBe(true)
+    expect(browserDocument.activeElement).toBe(target)
   })
 })

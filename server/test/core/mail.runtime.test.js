@@ -92,6 +92,44 @@ describe('Mail runtime configuration and lifecycle', () => {
     mail.close()
     expect(smtp.close).toHaveBeenCalledTimes(1)
   })
+  it('rechecks governed handoff after asynchronous rendering and refuses SMTP when authority expires there', async () => {
+    const logo = deferred(), smtp = transport()
+    let admitted = true
+    const beforeHandoff = vi.fn(async () => {
+      if (!admitted) throw new Error('Current governed lease expired')
+    })
+    const mail = runtime({ createTransport: () => smtp, resolveLogo: () => logo.promise }).init()
+    const pending = mail.send(message(), undefined, beforeHandoff)
+    admitted = false
+    logo.resolve('/logo.png')
+    await expect(pending).rejects.toThrow('Current governed lease expired')
+    expect(beforeHandoff).toHaveBeenCalledTimes(1)
+    expect(smtp.sendMail).not.toHaveBeenCalled()
+    mail.close()
+  })
+  it('calls the finite handoff admission directly before the real transport without cloning callbacks into mail data', async () => {
+    const smtp = transport(), order = []
+    smtp.sendMail.mockImplementation(async () => { order.push('transport'); return { accepted: ['recipient@example.test'] } })
+    const mail = runtime({ createTransport: () => smtp, resolveLogo: async () => '/logo.png' }).init()
+    await mail.send(message(), undefined, async () => { order.push('admission') })
+    expect(order).toEqual(['admission', 'transport'])
+    expect(smtp.sendMail.mock.calls[0][0]).not.toHaveProperty('beforeHandoff')
+    mail.close()
+  })
+  it('renders exact neutral lifecycle outcomes without inventing an actor or claiming a proposed move completed', async () => {
+    const smtp = transport(), mail = runtime({ createTransport: () => smtp, resolveLogo: async () => '/logo.png' }).init()
+    await mail.send({ template: 'page-watch', to: 'recipient@example.test', data: {
+      action: 'lifecycle-proposed', actorName: '', pageTitle: 'Current permitted title', url: 'https://wiki.example.test/en/current',
+      notificationOutcomes: [{ kind: 'add-tags', state: 'applied' }, { kind: 'set-notice', state: 'skipped' }, { kind: 'propose-move', state: 'proposed' }]
+    } })
+    const sent = smtp.sendMail.mock.calls[0][0]
+    expect(sent.text).toContain('Tags: Applied')
+    expect(sent.text).toContain('Lifecycle notice: Skipped; no change made')
+    expect(sent.text).toContain('Human-reviewed move: Proposed; no move made')
+    expect(sent.text).not.toContain('Someone')
+    expect(sent.text).not.toContain('Completed by an authorized human')
+    mail.close()
+  })
   it('allows a connection check to finish before closing its replaced transport', async () => {
     const check = deferred(), old = transport(), next = transport()
     old.verify.mockReturnValue(check.promise)

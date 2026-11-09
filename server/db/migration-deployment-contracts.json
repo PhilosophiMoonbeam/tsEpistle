@@ -438,6 +438,83 @@
       "rollback": "fix-forward-or-restore",
       "rehearsalPostconditions": ["native-page-accuracy-attestations-schema"],
       "runtimePostconditions": ["native-page-accuracy-attestations-schema"]
+    },
+    "tsepistle-000071-browser-session-retirement.js": {
+      "persistentState": "stateful",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": ["native-browser-session-retirement-schema"],
+      "runtimePostconditions": ["native-browser-session-retirement-schema"]
+    },
+    "tsepistle-000072-hedgedoc-import.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": ["native-hedgedoc-import-schema"],
+      "runtimePostconditions": ["native-hedgedoc-import-schema"]
+    },
+    "tsepistle-000073-page-feedback.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": ["native-page-feedback-schema"],
+      "runtimePostconditions": ["native-page-feedback-schema"]
+    },
+    "tsepistle-000074-page-review-routing.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": ["native-page-review-routing-schema"],
+      "runtimePostconditions": ["native-page-review-routing-schema"]
+    },
+    "tsepistle-000075-page-lifecycle.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": ["native-page-lifecycle-schema"],
+      "runtimePostconditions": ["native-page-lifecycle-schema"]
+    },
+    "tsepistle-000076-governed-notifications.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "compatible",
+      "drain": "graceful",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": ["native-governed-notifications-schema"],
+      "runtimePostconditions": ["native-governed-notifications-schema"]
+    },
+    "tsepistle-000077-storage-page-import-owners.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": ["native-storage-page-import-owners-schema"],
+      "runtimePostconditions": ["native-storage-page-import-owners-schema"]
     }
   }
 }

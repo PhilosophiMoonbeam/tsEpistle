@@ -54,9 +54,9 @@ const statusForDefinition = (
   }
 }
 
-export const listContentExtensions = async (): Promise<ContentExtensionStatusResponse> => {
+export const listContentExtensions = async (transaction?: Knex.Transaction): Promise<ContentExtensionStatusResponse> => {
   const wiki = WIKI as unknown as WikiRuntime
-  const rows = await wiki.models.knex<ContentExtensionRow>('contentExtensions')
+  const rows = await (transaction ?? wiki.models.knex)<ContentExtensionRow>('contentExtensions')
     .select('key', 'isEnabled', 'version')
   const rowByKey = new Map(rows.map(row => [row.key, row]))
   return {

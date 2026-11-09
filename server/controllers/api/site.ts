@@ -1,9 +1,11 @@
 import express from 'express'
-import { type Request, type Response, getWikiAuth } from '../_types.ts'
+import { type Request, type Response, getTransportRuntime, getWikiAuth } from '../_types.ts'
+import type { Knex } from 'knex'
 
 import siteOperations from '../../operations/site.ts'
 import { getGeneralAdministrationStore } from '../../operations/general-administration.ts'
 import { getSecurityAdministrationStore } from '../../operations/security-administration.ts'
+import { getNotificationSettings, updateNotificationSettings } from '../../operations/notification-settings.ts'
 import { errorStatus, objectValue } from '../_types.ts'
 
 const router = express.Router()
@@ -121,6 +123,31 @@ router.post('/general/activate', async (req, res) => {
     res.json(await getGeneralAdministrationStore().initialize(req.user, objectValue(req.body, 'fingerprint')))
   } catch (error) {
     generalError(res, error)
+  }
+})
+const notificationError = (res: Response, error: unknown) => {
+  const status = errorStatus(error),
+    expected = status && [400, 403, 409].includes(status)
+  res
+    .status(expected ? status : 500)
+    .json({ error: expected && error instanceof Error ? error.message : 'Notification settings are temporarily unavailable.' })
+}
+router.get('/notification-settings', async (req, res) => {
+  res.set('Cache-Control', 'private, no-store')
+  if (!requireSystemAccess(req, res)) return
+  try {
+    res.json(await getNotificationSettings(getTransportRuntime<{ models: { knex: Knex } }>().models.knex, req.user))
+  } catch (error) {
+    notificationError(res, error)
+  }
+})
+router.put('/notification-settings', async (req, res) => {
+  res.set('Cache-Control', 'private, no-store')
+  if (!requireSystemAccess(req, res)) return
+  try {
+    res.json(await updateNotificationSettings(getTransportRuntime<{ models: { knex: Knex } }>().models.knex, req.user, req.body))
+  } catch (error) {
+    notificationError(res, error)
   }
 })
 export default router

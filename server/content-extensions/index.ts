@@ -18,6 +18,7 @@ export const renderIndexContentExtension = async (envelope: ContentExtensionEnve
       `data-index-show-icons="${props.showIcons === true ? 'true' : 'false'}" ` +
       `data-index-show-tags="${props.showTags === true ? 'true' : 'false'}" ` +
       `data-index-show-page-accent="${props.showPageAccent === true ? 'true' : 'false'}" ` +
+      `data-index-show-updated-at="${props.showUpdatedAt === true ? 'true' : 'false'}" ` +
       `data-index-order="${props.order ?? 'path'}" ` +
       `data-index-limit="${props.limit ?? 50}" ` +
       `data-index-empty-label="${escapeHtml(emptyLabel)}">` +

@@ -192,6 +192,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', max-width='680', scroll
                       v-select(v-model='index.order', :items='indexOrders', :label='$t(`editor:editorModalBlocks.order`)')
                     v-col.d-flex.align-center(cols='12', sm='6')
                       v-switch(:model-value='index.showIcons', @update:model-value='index.showIcons = $event ?? index.showIcons', :label='$t(`editor:editorModalBlocks.showPageIcons`)', hide-details)
+                  v-checkbox.mt-2(:model-value='index.showUpdatedAt', @update:model-value='index.showUpdatedAt = $event === true', label='Show last-updated dates', hide-details)
                   v-text-field.mt-2(
                     v-model='index.emptyLabel'
                     :label='$t(`editor:editorModalBlocks.emptyStateLabelOptional`)'
@@ -331,8 +332,8 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', max-width='680', scroll
                     | {{ $t(`editor:editorModalBlocks.privacyEnhancedPlayerNot`) }}
                   v-text-field(
                     v-model='youtube.url'
-                    :label='$t(`editor:editorModalBlocks.youtubeVideoUrlId`)'
-                    :hint='$t(`editor:editorModalBlocks.watchYoutuShortsLive`)'
+                    label='YouTube video or playlist URL / video ID'
+                    hint='Supports watch, youtu.be, embed, shorts, live and playlist links. Loading still requires reader consent.'
                     persistent-hint
                     required
                   )
@@ -447,6 +448,8 @@ import {
   type LinksGridContentExtensionCard,
   type LinksGridContentExtensionEnvelope,
   parseContentExtensionEnvelope,
+  parseYoutubeContentExtensionSource,
+  type YoutubeContentExtensionSource,
   serializeContentExtensionFence,
   type ContentExtensionKey
 } from '../../../shared/content-extensions.ts'
@@ -510,24 +513,6 @@ const DIAGRAM_ALIGNMENTS = markRaw(['left', 'center'])
 const DIAGRAM_FORMATS = markRaw(['svg', 'png'])
 const KROKI_TYPES = markRaw([...KROKI_DIAGRAM_TYPES])
 
-const readYoutubeVideoId = (source: string): string | null => {
-  const value = source.trim()
-  if (/^[A-Za-z0-9_-]{6,64}$/.test(value)) return value
-  try {
-    const url = new URL(/^[a-z]+:\/\//i.test(value) ? value : `https://${value}`)
-    const host = url.hostname.toLowerCase().replace(/^(?:www|m)\./, '')
-    let id: string | null = null
-    if (host === 'youtu.be') id = url.pathname.slice(1).split('/')[0] ?? null
-    if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
-      id = url.pathname === '/watch'
-        ? url.searchParams.get('v')
-        : /^\/(?:embed|shorts|live|v)\/([^/?#]+)/.exec(url.pathname)?.[1] ?? null
-    }
-    return id && /^[A-Za-z0-9_-]{6,64}$/.test(id) ? id : null
-  } catch {
-    return null
-  }
-}
 const defaultIndexPath = (): string => wikiStore.page.path.split('/').slice(0, -1).join('/')
 const insertionOwner = (): string => JSON.stringify([
   wikiStore.user.authenticated, wikiStore.user.id, wikiStore.offlineIdentityEpoch,
@@ -566,6 +551,7 @@ export default defineComponent({
         depth: 0,
         columns: 2 as 1 | 2 | 3,
         showIcons: false,
+        showUpdatedAt: false,
         order: 'path' as 'path' | 'title' | 'updated',
         limit: 50,
         emptyLabel: ''
@@ -675,8 +661,8 @@ export default defineComponent({
       if (!this.activeStatus.isEnabled) return this.$t('editor:editorModalBlocks.extensionDisabledAdministrator')
       return this.$t('editor:editorModalBlocks.editorHostNotCompatible')
     },
-    youtubeVideoId(): string | null {
-      return readYoutubeVideoId(this.youtube.url)
+    youtubeSource(): { source: YoutubeContentExtensionSource; start: number } | null {
+      return parseYoutubeContentExtensionSource(this.youtube.url)
     },
     canSubmit(): boolean {
       if (this.selectedKey === 'qr') {
@@ -731,7 +717,7 @@ export default defineComponent({
           this.media.caption.length <= 300
       }
       if (this.selectedKey === 'youtube') {
-        return this.youtubeVideoId !== null && this.youtube.title.length <= 200 &&
+        return this.youtubeSource !== null && this.youtube.title.length <= 200 &&
           Number.isInteger(this.youtube.start) && this.youtube.start >= 0 && this.youtube.start <= 86400
       }
       if (this.selectedKey === 'diagram') {
@@ -857,6 +843,7 @@ export default defineComponent({
             depth: this.index.depth,
             columns: this.index.columns,
             showIcons: this.index.showIcons,
+            ...(this.index.showUpdatedAt ? { showUpdatedAt: true } : {}),
             order: this.index.order,
             limit: this.index.limit,
             ...(this.index.emptyLabel.length > 0 ? { emptyLabel: this.index.emptyLabel } : {})
@@ -927,16 +914,12 @@ export default defineComponent({
         }
       }
       if (this.selectedKey === 'youtube') {
-        return {
-          key: 'youtube',
-          version: 1,
-          props: {
-            videoId: this.youtubeVideoId,
-            title: this.youtube.title,
-            start: this.youtube.start,
-            controls: this.youtube.controls
-          }
-        }
+        const source = this.youtubeSource?.source
+        if (!source) throw new Error('Enter a valid YouTube video or playlist source.')
+        const props = { title: this.youtube.title, start: this.youtube.start, controls: this.youtube.controls }
+        return source.kind === 'video'
+          ? { key: 'youtube', version: 1, props: { videoId: source.videoId, ...props } }
+          : { key: 'youtube', version: 2, props: { source, ...props } }
       }
       if (this.selectedKey === 'diagram') {
         return {
@@ -1019,6 +1002,10 @@ export default defineComponent({
     }
   },
   watch: {
+    'youtube.url'(value: string) {
+      const parsed = parseYoutubeContentExtensionSource(value)
+      if (parsed) this.youtube.start = parsed.start
+    },
     currentOwner: {
       flush: 'sync',
       handler() {

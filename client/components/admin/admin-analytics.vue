@@ -571,6 +571,7 @@
   </v-container>
 </template>
 <script setup lang="ts">
+import { helpers } from '../../helpers/index.ts'
 import { confirmDiscard } from '../common/confirm-dialog.ts'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
@@ -736,7 +737,7 @@ const simulationReasonKeys: Record<string, string> = {
 const simulationReason = computed(() => t(`admin:analytics.${simulationReasonKeys[simulationResult.value.reason]}`))
 const numberFormat = new Intl.NumberFormat(),
   number = (value: number) => numberFormat.format(value),
-  dateTime = (value: string) => new Date(value).toLocaleString()
+  dateTime = (value: string) => Number.isNaN(new Date(value).valueOf()) ? 'Invalid Date' : String(helpers.formatMoment(value, 'L LT'))
 const fieldLabel = (key: string) =>
   ({
     localEnabled: tr('localReaderCounts'),

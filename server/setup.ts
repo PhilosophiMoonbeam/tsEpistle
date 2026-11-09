@@ -11,6 +11,7 @@ import fs from 'fs-extra'
 import _ from 'lodash'
 import pemJwk from 'pem-jwk'
 import favicon from 'serve-favicon'
+import { accountProfileIssues } from '../shared/account-policy.ts'
 import { BUILTIN_CONTENT_EXTENSIONS } from '../shared/content-extensions.ts'
 import type { ProductMetadata } from '../shared/product.ts'
 import { newPasswordIssue } from '../shared/security-policy.ts'
@@ -173,7 +174,10 @@ export default function startSetup(): Promise<void> {
     try {
       const body = bodyRecord(req.body as unknown)
       const siteUrl = requiredString(body, 'siteUrl')
-      const adminEmail = requiredString(body, 'adminEmail')
+      const adminEmail = requiredString(body, 'adminEmail').trim().toLowerCase()
+      const identityIssues = accountProfileIssues({ name: 'Administrator', email: adminEmail, location: '', jobTitle: '', timezone: 'UTC', groups: [] })
+      if (identityIssues.length > 0) throw new Error('Enter a valid administrator email address of at most 255 characters.')
+      if (adminEmail === 'guest@example.com') throw new Error('Choose an administrator email address other than the reserved guest@example.com account.')
       const adminPassword = requiredString(body, 'adminPassword')
       const passwordIssue = newPasswordIssue(adminPassword)
       if (passwordIssue) {
@@ -344,7 +348,7 @@ export default function startSetup(): Promise<void> {
       const adminUser = await wiki.models.knex.transaction(async trx => {
         const presentation = await resolveUserPresentation(trx)
         const user = await wiki.models.users.query(trx).insert({
-          email: adminEmail.toLowerCase(),
+          email: adminEmail,
           provider: 'local',
           password: adminPasswordHash,
           name: 'Administrator',

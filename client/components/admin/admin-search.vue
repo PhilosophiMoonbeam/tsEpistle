@@ -95,6 +95,7 @@
 </template>
 
 <script lang='ts'>
+import { helpers } from '../../helpers/index.ts'
 import { wikiStore } from '@/store/index.ts'
 import AdminSearchEvaluate from './admin-search-evaluate.vue'
 import { inspectSearchIndex } from '../../helpers/search-api'
@@ -259,7 +260,7 @@ export default {
     },
     finishLeave(leave: boolean) { const resolve = this.leaveResolve; this.leaveResolve = null; resolve?.(leave) },
     warnBeforeUnload(event: BeforeUnloadEvent) { if (this.dirty) { event.preventDefault(); event.returnValue = '' } },
-    formatDate(value: string): string { return new Date(value).toLocaleString() },
+    formatDate(value: string): string { return Number.isNaN(new Date(value).valueOf()) ? 'Invalid Date' : String(helpers.formatMoment(value, 'L LT')) },
     fingerprint(selection?: string): string { return JSON.stringify(this.engines.map(engine => ({ key: engine.key, isEnabled: engine.key === (selection ?? this.selectedEngine), config: engine.config.map(cfg => ({ key: cfg.key, value: cfg.value.value })) }))) },
     resetDraft() {
       if (this.saving || this.rebuilding) return

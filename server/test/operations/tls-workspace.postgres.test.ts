@@ -7,7 +7,7 @@ import { up, down } from '../../db/migrations/tsepistle-000025-tls-operations.ts
 import type { TlsMaterialConfiguration } from '../../repositories/tls-material.ts'
 import { prepareTlsMaterial } from '../../repositories/tls-preflight.ts'
 import { describeTlsCertificate } from '../../repositories/tls-material.ts'
-import { tlsFixture } from '../helpers/tls-fixture.ts'
+import { tlsFixture } from '../helpers/tls-fixture.mts'
 import type { SystemRequester } from '../../helpers/system-authority.ts'
 import type { TlsListenerSnapshot, TlsOperationKind, TlsConnectionEvidence } from '../../../shared/tls-workspace.ts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'

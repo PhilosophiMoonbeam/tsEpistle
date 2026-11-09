@@ -279,6 +279,57 @@ export const authorizePageCreationAccount = async (tx: Knex.Transaction, request
   return access.principal
 }
 
+/** Imports use the real current browser account, never a mapped/impersonated principal. */
+export const authorizeLiveNoteImport = async (tx: Knex.Transaction, requester: LiveNoteRequester): Promise<LiveNotePrincipal> => {
+  const access = await authority(tx, requester)
+  if (!access.write || access.principal.id === 2) fail('Current native live-note write authority is required. Sign in as the selected existing owner.', 403, 'NOTE_FORBIDDEN')
+  return access.principal
+}
+
+/** Join the import checkpoint transaction; native history records only this actor and commit time. */
+export const writeLiveNoteImport = async (
+  tx: Knex.Transaction,
+  requester: LiveNoteRequester,
+  target: { kind: 'create'; key: string } | { kind: 'update'; key: string; expectedRevision: number },
+  markdown: string
+): Promise<{ id: string; key: string; revision: number }> => {
+  const principal = await authorizeLiveNoteImport(tx, requester)
+  if (!isLiveNoteKey(target.key) || typeof markdown !== 'string' || Buffer.byteLength(markdown) > LIVE_NOTE_MAX_TEXT_BYTES) invalid()
+  const previous = await tx<Note>('liveNotes').where({ key: target.key }).forUpdate().first()
+  if (target.kind === 'create' ? !!previous : !previous || previous.deletedAt !== null || previous.ownerId !== principal.id || !isLiveNoteRevision(target.expectedRevision) || revisionNumber(previous.revision) !== target.expectedRevision)
+    fail('The import destination changed. Review an unused key or your own current note revision; no native note was replaced.', 409, 'HEDGEDOC_DESTINATION_CONFLICT')
+  const doc = previous ? document(previous.state) : new Y.Doc()
+  try {
+    const text = doc.getText(LIVE_NOTE_TEXT_KEY)
+    doc.transact(() => {
+      text.delete(0, text.length)
+      if (markdown) text.insert(0, markdown)
+    }, 'reviewed-content-import')
+    const content = textAndTitle(doc)
+    const revision = previous ? revisionNumber(previous.revision) + 1 : 0
+    if (!isLiveNoteRevision(revision)) fail('The live note revision limit was reached.', 409, 'NOTE_CONFLICT')
+    const timestamp = new Date()
+    const row: Note = {
+      id: previous?.id ?? randomUUID(), key: target.key, ownerId: principal.id, access: 'private',
+      state: encodeState(Y.encodeStateAsUpdate(doc)), title: content.title, revision, everEdited: true,
+      createdAt: previous?.createdAt ?? timestamp, updatedAt: timestamp, touchedAt: timestamp, deletedAt: null
+    }
+    if (previous) {
+      const updated = await tx('liveNotes').where({ id: previous.id, revision: previous.revision }).update({
+        state: row.state, title: row.title, access: row.access, revision, everEdited: true, updatedAt: timestamp, touchedAt: timestamp
+      })
+      if (updated !== 1) throw new Error('Live note changed while locked')
+    } else {
+      const created = await tx('liveNotes').insert(row).onConflict('key').ignore().returning('id')
+      if (created.length !== 1) fail('This native note key became unavailable. Review a different destination.', 409, 'HEDGEDOC_DESTINATION_CONFLICT')
+    }
+    await tx('liveNoteRevisions').insert({ noteId: row.id, revision, state: row.state, title: row.title, access: row.access, actorId: principal.id, createdAt: timestamp })
+    return { id: row.id, key: row.key, revision }
+  } finally {
+    doc.destroy()
+  }
+}
+
 /** Read-only within the caller's transaction: current policy fences retained snapshots. */
 export const readLiveNotePublication = async (
   tx: Knex.Transaction,

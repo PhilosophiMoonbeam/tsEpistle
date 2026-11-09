@@ -217,6 +217,21 @@ suite('PostgreSQL glossary authority and atomic catalogs', () => {
     expect(await db('glossaryTerms')).toHaveLength(1)
   })
 
+  it('preserves native matching booleans and decoded references across create, get, lookup and update', async () => {
+    const references = [{ label: 'Glossary reference', url: 'https://example.test/glossary' }]
+    const entry = await operations.create(context, term('Matching flags', { autoLink: true, caseSensitive: false, references }))
+    expect(entry).toMatchObject({ autoLink: true, caseSensitive: false, references })
+    expect(await operations.get(context, entry.id, 'en')).toMatchObject({ autoLink: true, caseSensitive: false, references })
+    expect(await operations.lookup(context, 'en', entry.term)).toMatchObject({ autoLink: true, caseSensitive: false, references })
+    const updated = await operations.update(context, entry.id, {
+      ...term(entry.term, { autoLink: false, caseSensitive: true, references }),
+      expectedRevision: entry.revision
+    })
+    expect(updated).toMatchObject({ autoLink: false, caseSensitive: true, references })
+    expect(await operations.get(context, entry.id, 'en')).toMatchObject({ autoLink: false, caseSensitive: true, references })
+    expect(await operations.lookup(context, 'en', entry.term)).toMatchObject({ autoLink: false, caseSensitive: true, references })
+  })
+
   it('preserves authored Markdown layout while rejecting forbidden controls and unsafe reference URLs', async () => {
     const definition = '\tIndented Markdown\r\n\nTrailing spaces  \n'
     const entry = await operations.create(context, term('Authored', { definition }))

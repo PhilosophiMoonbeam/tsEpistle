@@ -274,6 +274,8 @@
       template(#aside)
         LoginParticleLogo(v-if='logoEffect', :effect='logoEffect', @stage-visibility='largeLogoVisible = $event')
         p.login-colophon {{ siteTitle }}
+      p.text-center(v-if="returnTarget")
+        a(:href="returnTarget" @click="cancelRatingReturn") {{ $t('common:pageRatings.cancelSignIn', { defaultValue: 'Return to page without rating' }) }}
     v-dialog(v-model='isTFAShown', max-width='500', persistent, aria-labelledby='login-tfa-title', @keydown.esc='cancelContinuation')
       v-card.login-dialog-card(variant='flat', :aria-busy='isLoading')
         form.login-tfa.text-center.pa-5(novalidate, @submit.prevent='verifySecurityCode(false)')
@@ -381,6 +383,7 @@ import { newPasswordIssue } from '../../shared/security-policy.ts'
 
 import { defineAsyncComponent, defineComponent } from 'vue'
 import Cookies from 'js-cookie'
+import { resolveLoginReturn, safeLoginReturn } from '../helpers/login-return.ts'
 import { wikiStore, resolvePendingOfflineLogoutAfterExplicitSignIn } from '@/store/index.ts'
 import { fetchAuthStrategies, submitAuthRequest, submitStatusRequest, type AuthResponse, type AuthStrategy } from '../helpers/auth-api'
 import { getErrorMessage } from '../helpers/root-ui-store'
@@ -512,6 +515,9 @@ export default defineComponent({
       const stockBackground = this.bgUrl === '/_assets/img/splash/tsepistle-orbit.svg'
       return this.bgUrl && !(this.logoEffect && stockBackground) ? this.bgUrl : ''
     },
+    returnTarget (): string | null {
+      return safeLoginReturn(Cookies.get('loginRedirect'))
+    },
     eyebrow (): string {
       return this.wasRedirected ? this.$t('auth:loginRequired') : this.$t('auth:signIn')
     },
@@ -573,6 +579,9 @@ export default defineComponent({
     if (this.redirectTimer !== null) window.clearTimeout(this.redirectTimer)
   },
   methods: {
+    cancelRatingReturn (): void {
+      Cookies.remove('loginRedirect', { path: '/' })
+    },
     retireAuthForm (element: Element, done: () => void): void {
       if (!(element instanceof HTMLElement)) {
         done()
@@ -919,24 +928,10 @@ export default defineComponent({
         this.loaderTitle = this.$t('auth:loginSuccess')
         if (this.redirectTimer !== null) window.clearTimeout(this.redirectTimer)
         this.redirectTimer = window.setTimeout(() => {
-          const loginRedirect = Cookies.get('loginRedirect')
-          const isValidRedirect = loginRedirect && loginRedirect.startsWith('/') && !loginRedirect.startsWith('//') && !loginRedirect.includes('://')
-          if (loginRedirect === '/' && respObj.redirect) {
-            Cookies.remove('loginRedirect')
-            window.location.replace(respObj.redirect)
-          } else if (isValidRedirect) {
-            Cookies.remove('loginRedirect')
-            window.location.replace(loginRedirect)
-          } else {
-            if (loginRedirect) {
-              Cookies.remove('loginRedirect')
-            }
-            if (respObj.redirect) {
-              window.location.replace(respObj.redirect)
-            } else {
-              window.location.replace('/')
-            }
-          }
+          const target = resolveLoginReturn(Cookies.get('loginRedirect'), respObj.redirect)
+          Cookies.remove('loginRedirect', { path: '/' })
+          // Full navigation re-runs the destination's current server authorization.
+          window.location.replace(target)
           this.redirectTimer = null
         }, 1000)
       } else {

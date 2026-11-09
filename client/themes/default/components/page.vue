@@ -171,6 +171,7 @@
                   template(v-slot:activator='{ props }')
                     button.page-accuracy-pill(
                       v-bind='props'
+                      :id='`page-accuracy-review-${pageId}`'
                       type='button'
                       aria-haspopup='dialog'
                       :class='`page-accuracy-pill--${accuracyStatus}`'
@@ -248,7 +249,7 @@
               )
                 template(v-slot:item='props')
                   v-btn.ma-0(
-                    v-if='props.item.href === "/"'
+                    v-if='props.item.href === breadcrumbs[0].href'
                     :href='props.item.href'
                     size="small"
                     variant="text"
@@ -329,6 +330,17 @@
                 state='empty'
                 :title='$t(`common:page.noContent`)'
               )
+            page-governance(
+              v-show='!printView && selectedPageView === `article`'
+              :page-id='pageId'
+              :source-revision='sourceRevision'
+              :locale='locale'
+              :path='path'
+              :ready='readerPageActionsState.ready && pageTransportVerified'
+              :writer='hasWritePagesPermission'
+              :manage='hasManagePagesPermission || hasAdminPermission'
+              :attestation-href='`#page-accuracy-review-${pageId}`'
+            )
             .page-annotations-panel(v-if='!printView', v-show='selectedPageView === `article`')
               discussion-annotations(:page-id='pageId', :content-root='readerContentRoot', :enabled='commentsEnabled && commentsPerms.read && !commentsExternal', @compose='composePassage', @thread='$emit(`focus-thread`, $event)')
             section.page-links-panel.contents#page-links(v-if='linksActive', role='tabpanel', aria-labelledby='page-view-links-tab', tabindex='-1')
@@ -766,6 +778,7 @@ import PageBrandingMark from '@/components/common/page-branding-mark.vue'
 import SiteBanner from '@/components/common/site-banner.vue'
 import GlossaryReader from '@/components/common/glossary-reader.vue'
 import DiscussionAnnotations from '@/components/common/discussion-annotations.vue'
+import PageGovernance from '@/components/page-governance.vue'
 import { composeDiscussionAnnotation, onJumpDiscussionAnnotation } from '@/helpers/discussion-annotation-events'
 import type { DiscussionAnnotationAnchor } from '../../../../shared/discussion-annotations.ts'
 import { fetchPage, verifyPageAccuracy } from '@/helpers/pages-api'
@@ -1435,6 +1448,7 @@ export default defineComponent({
     AsyncState,
     GlossaryReader,
     DiscussionAnnotations,
+    PageGovernance,
     NavSidebar,
     SiteBanner,
     PageBrandingMark,
@@ -1729,6 +1743,7 @@ export default defineComponent({
       routeAnimationAbortController: null as AbortController | null,
       scrollAnimationFrame: null as number | null,
       scrollAnimationToken: 0,
+      scrollLandingCleanup: null as (() => void) | null,
     }
   },
   computed: {
@@ -2105,10 +2120,11 @@ export default defineComponent({
     },
     breadcrumbs(): Breadcrumb[] {
       const scope = this.visibility === 'private' ? '/_private' : ''
-      let currentPath = `${scope}${this.locales.length > 0 ? `/${this.locale}` : ''}`
-      const items: Breadcrumb[] = [{ href: '/', title: this.$t('common:header.home') as string }]
+      const localePrefix = this.locales.length > 0 ? `/${encodeURIComponent(this.locale)}` : ''
+      let currentPath = `${scope}${localePrefix}`
+      const items: Breadcrumb[] = [{ href: localePrefix ? `${localePrefix}/home` : '/', title: this.$t('common:header.home') as string }]
       for (const segment of this.path.split('/').filter(Boolean)) {
-        currentPath += `/${segment}`
+        currentPath += `/${encodeURIComponent(segment)}`
         items.push({ href: currentPath, title: segment })
       }
       return items
@@ -3821,6 +3837,7 @@ export default defineComponent({
     },
     refreshPageContent(): void {
       const container = this.$refs.container as HTMLElement
+      this.cancelScheduledScroll()
       this.retireReaderCitedCopy()
       this.retirePageOutline()
       this.syncLeadingTitle()
@@ -3936,7 +3953,7 @@ export default defineComponent({
       this.activeAnchor = anchor
       this.scrollToPageAnchor(anchor)
     },
-    pageScrollTarget (destination: HTMLElement | null): number {
+    pageScrollTarget (destination: HTMLElement | null, clamp = true): number {
       if (!destination) return 0
       const styles = window.getComputedStyle(destination)
       const rawLayoutOffset = this.scrollOpts.layout ? parseFloat(styles.getPropertyValue('--v-layout-top')) : 0
@@ -3949,9 +3966,9 @@ export default defineComponent({
       const target = destination.getBoundingClientRect().top + window.scrollY - layoutOffset - summaryHeight + offset
       const scrollingElement = document.scrollingElement ?? document.documentElement
       const maximum = Math.max(0, scrollingElement.scrollHeight - window.innerHeight)
-      return Math.min(maximum, Math.max(0, target))
+      return clamp ? Math.min(maximum, Math.max(0, target)) : target
     },
-    animatePageScroll (target: number, destination: HTMLElement | null, focusDestination: boolean, token: number): void {
+    animatePageScroll (target: number, destination: HTMLElement | null, focusDestination: boolean, token: number, navigationFocus = document.activeElement, onComplete?: () => void): void {
       const scrollingElement = document.scrollingElement ?? document.documentElement
       const setScrollTop = (value: number): void => {
         scrollingElement.scrollTop = value
@@ -3960,10 +3977,11 @@ export default defineComponent({
       const finish = (): void => {
         if (token !== this.scrollAnimationToken) return
         this.scrollAnimationFrame = null
-        if (focusDestination) {
+        if (focusDestination && destination?.isConnected && document.activeElement === navigationFocus) {
           destination?.setAttribute('tabindex', '-1')
           destination?.focus({ preventScroll: true })
         }
+        onComplete?.()
       }
       const start = window.scrollY
       const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true
@@ -4014,16 +4032,92 @@ export default defineComponent({
       }
       const view = container.ownerDocument.defaultView
       const token = this.scrollAnimationToken
+      const navigationFocus = document.activeElement
+      let completed = false
+      let timer: ReturnType<typeof setTimeout> | null = null
+      let landingScrollY = 0
+      let observer: ResizeObserver | null = null
+      const isCurrentDestination = (): boolean => this.$refs.container === container && container.isConnected &&
+        destination?.isConnected === true && (container.contains(destination) ||
+          (this.leadingTitle?.id === id && this.$refs.pageTitle === destination))
+      const measureLanding = (): void => {
+        if (!completed || token !== this.scrollAnimationToken) return
+        if (!destination || !isCurrentDestination()) {
+          cleanup()
+          return
+        }
+        const requested = this.pageScrollTarget(destination, false)
+        const scrollingElement = document.scrollingElement ?? document.documentElement
+        const maximum = Math.max(0, scrollingElement.scrollHeight - window.innerHeight)
+        destination.classList.toggle('page-anchor-landing', requested > maximum + 1 || requested < -1)
+      }
+      const interrupt = (): void => this.cancelScheduledScroll()
+      const interruptScroll = (): void => {
+        if (Math.abs(window.scrollY - landingScrollY) > 2) interrupt()
+      }
+      const interruptKey = (event: KeyboardEvent): void => {
+        if (['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' ', 'Escape', 'Tab'].includes(event.key)) interrupt()
+      }
+      const cleanup = (): void => {
+        if (this.scrollLandingCleanup !== cleanup) return
+        completed = false
+        destination?.classList.remove('page-anchor-landing')
+        if (timer !== null) clearTimeout(timer)
+        observer?.disconnect()
+        window.removeEventListener('wheel', interrupt)
+        window.removeEventListener('touchstart', interrupt)
+        window.removeEventListener('pointerdown', interrupt)
+        window.removeEventListener('keydown', interruptKey)
+        window.removeEventListener('resize', measureLanding)
+        window.removeEventListener('scroll', interruptScroll)
+        container.removeEventListener('load', measureLanding, true)
+        container.removeEventListener('toggle', measureLanding, true)
+        if (this.scrollLandingCleanup === cleanup) this.scrollLandingCleanup = null
+      }
+      this.scrollLandingCleanup = markRaw(cleanup)
+      window.addEventListener('wheel', interrupt, { passive: true })
+      window.addEventListener('touchstart', interrupt, { passive: true })
+      window.addEventListener('pointerdown', interrupt, { passive: true })
+      window.addEventListener('keydown', interruptKey)
+      const finishLanding = (): void => {
+        if (token !== this.scrollAnimationToken) return
+        this.scrollAnimationFrame = requestAnimationFrame(() => {
+          if (token !== this.scrollAnimationToken) return
+          this.scrollAnimationFrame = null
+          if (!isCurrentDestination()) {
+            cleanup()
+            return
+          }
+          completed = true
+          measureLanding()
+          landingScrollY = window.scrollY
+          window.addEventListener('scroll', interruptScroll, { passive: true })
+          // Layout can settle after disclosure/extension reveal (images, fonts).
+          // Observe only this bounded landing window; never create reading intent.
+          observer = new ResizeObserver(measureLanding)
+          observer.observe(container)
+          observer.observe(document.documentElement)
+          window.addEventListener('resize', measureLanding)
+          container.addEventListener('load', measureLanding, true)
+          container.addEventListener('toggle', measureLanding, true)
+          timer = setTimeout(cleanup, 1800)
+        })
+      }
       const reveal = (): void => {
         if (token !== this.scrollAnimationToken) return
         this.scrollAnimationFrame = null
-        this.animatePageScroll(this.pageScrollTarget(destination), destination, focusDestination, token)
+        if (!isCurrentDestination()) {
+          cleanup()
+          return
+        }
+        this.animatePageScroll(this.pageScrollTarget(destination), destination, focusDestination, token, navigationFocus, finishLanding)
       }
       if (view) this.scrollAnimationFrame = view.requestAnimationFrame(reveal)
       else reveal()
     },
     cancelScheduledScroll () {
       this.scrollAnimationToken += 1
+      this.scrollLandingCleanup?.()
       if (this.scrollAnimationFrame !== null) {
         cancelAnimationFrame(this.scrollAnimationFrame)
         this.scrollAnimationFrame = null
@@ -4749,6 +4843,22 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
+// Static for every motion preference: the dashed boundary carries the cue
+// independently of color, with no flash, fade or layout displacement.
+.wiki-page .page-anchor-landing {
+  outline: 2px dashed var(--wiki-focus-color, var(--wiki-accent-ink));
+  outline-offset: 4px;
+  background-color: color-mix(in srgb, var(--wiki-accent-warm) 12%, rgb(var(--v-theme-surface)));
+  animation: none !important;
+  transition: none !important;
+}
+@media (forced-colors: active) {
+  .wiki-page .page-anchor-landing {
+    outline-color: CanvasText;
+    background-color: Canvas;
+  }
+}
+
 // Respect the render-only title suppression even if content heading typography
 // supplies an explicit display value. Authored nonmatching headings stay intact.
 .wiki-page .contents h1[hidden] {

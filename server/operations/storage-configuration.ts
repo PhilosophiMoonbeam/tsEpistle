@@ -18,6 +18,8 @@ import { lockSearchIndex } from '../helpers/search-contract.ts'
 import { assertStorageTargetPathsAvailable } from '../helpers/storage-path-admission.ts'
 import { rebindAssetRelocationConfiguration } from '../jobs/asset-relocation.ts'
 import errors from './errors.ts'
+import { STORAGE_GIT_CONTENT_REVIEW_MAX_BYTES, StorageGitContentPolicySchema } from '../../shared/utility-content-import.ts'
+import { assertGitPath } from '../modules/storage/git/admission.ts'
 
 const stable = (value: unknown): string =>
   JSON.stringify(value, (_key, item) =>
@@ -112,13 +114,25 @@ export const createStorageConfigurationStore = (deps: Dependencies) => {
       throw error
     }
   }
-  return {
-    inspect,
-    reviewState: state,
-    presentState,
-    async save(requester: PagePrincipal, input: unknown, transaction?: Knex.Transaction): Promise<{ revision: string; changedTargets: string[] }> {
+  const save = async (requester: PagePrincipal, input: unknown, transaction?: Knex.Transaction, managedGitContent?: string): Promise<{ revision: string; changedTargets: string[] }> => {
       const parsed = schema.safeParse(input)
       if (!parsed.success) return fail('Provide a complete storage draft, current review and administrative reason.')
+      if (parsed.data.targets.some(target => target.key === 'git' &&
+          (Object.hasOwn(target.config, 'dotContentReview') || Object.hasOwn(target.secrets, 'dotContentReview')))) {
+        return fail('Git content review is server-managed. Use Utilities → Content import to replace or clear exact reviewed decisions.')
+      }
+      if (managedGitContent !== undefined) {
+        if (!parsed.data.targets.some(target => target.key === 'git') || Buffer.byteLength(managedGitContent, 'utf8') > STORAGE_GIT_CONTENT_REVIEW_MAX_BYTES) {
+          return fail('Exact Git content choices exceed 2 MiB. Review fewer sources in this batch; no settings or content have changed.')
+        }
+        if (managedGitContent !== '') {
+          const policy = StorageGitContentPolicySchema.parse(JSON.parse(managedGitContent))
+          for (const choice of policy.choices) {
+            assertGitPath(choice.sourcePath)
+            if (choice.destinationPath !== undefined) assertGitPath(choice.destinationPath)
+          }
+        }
+      }
       const publish = async (tx: Knex.Transaction) => {
         // Match canonical writer order before state() acquires target UPDATE locks.
         // These fences retain absent page/asset paths through publication commit.
@@ -176,8 +190,8 @@ export const createStorageConfigurationStore = (deps: Dependencies) => {
             }
             continue
           }
-          const publicFields = definition.fields.filter(field => !field.sensitive),
-            secretFields = definition.fields.filter(field => field.sensitive)
+          const publicFields = view.fields.filter(field => !field.sensitive),
+            secretFields = view.fields.filter(field => field.sensitive)
           if (
             Object.keys(target.config).length !== publicFields.length ||
             publicFields.some(field => !Object.hasOwn(target.config, field.key)) ||
@@ -198,6 +212,10 @@ export const createStorageConfigurationStore = (deps: Dependencies) => {
               config[field.key] = value
               fields.push('config.' + field.key)
             }
+          }
+          if (target.key === 'git' && managedGitContent !== undefined && config.dotContentReview !== managedGitContent) {
+            config.dotContentReview = managedGitContent
+            fields.push('managed.dotContentReview')
           }
           for (const field of secretFields) {
             const action = target.secrets[field.key]!
@@ -256,6 +274,12 @@ export const createStorageConfigurationStore = (deps: Dependencies) => {
         return { revision: event.id, changedTargets: changes.map(row => row.key) }
       }
       return transaction ? publish(transaction) : deps.db.transaction(publish)
-    }
+  }
+  return {
+    inspect,
+    reviewState: state,
+    presentState,
+    save: (requester: PagePrincipal, input: unknown, transaction?: Knex.Transaction) => save(requester, input, transaction),
+    saveImportReview: (requester: PagePrincipal, input: unknown, managedGitContent: string) => save(requester, input, undefined, managedGitContent)
   }
 }

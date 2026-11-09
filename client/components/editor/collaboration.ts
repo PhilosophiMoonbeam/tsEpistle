@@ -1,7 +1,6 @@
 import { watch, type WatchStopHandle } from 'vue'
 import { type Extension, Prec } from '@codemirror/state'
 import { keymap } from '@codemirror/view'
-import { Awareness } from 'y-protocols/awareness'
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import * as Y from 'yjs'
 
@@ -22,6 +21,7 @@ import {
   type CollaborationSession
 } from '../../../shared/collaboration'
 import type { TextEditorHistory } from './common/text-editor'
+import { CollaborationPresence } from './collaboration-presence'
 
 const REMOTE_ORIGIN = Symbol('collaboration-remote')
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_500, 5_000, 10_000] as const
@@ -59,6 +59,7 @@ interface MarkdownCollaborationOptions {
   onStatus: (status: CollaborationStatus) => void
   onBaseline: (baseline: { updatedAt: string; sourceRevision: string }) => void
   onHistoryChange?: () => void
+  presenceIdentity?: () => string | null
 }
 
 export interface MarkdownCollaboration extends TextEditorHistory {
@@ -73,7 +74,7 @@ export interface MarkdownCollaboration extends TextEditorHistory {
 class MarkdownCollaborationImpl implements MarkdownCollaboration {
   private readonly document = new Y.Doc()
   private pendingBytes = 0
-  private readonly awareness = new Awareness(this.document)
+  private readonly presence: CollaborationPresence
   private readonly text = this.document.getText(COLLABORATION_TEXT_KEY)
   private readonly pending: Uint8Array[] = []
   private inFlight: string | null = null
@@ -85,6 +86,9 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
   private pausedForConnectivity: boolean
   private session: CollaborationSession | null = null
   private stopPwaWatch: WatchStopHandle | null = null
+  private stopIdentityWatch: WatchStopHandle | null = null
+  private readonly identity: string | null | undefined
+  private synchronized = false
   private participants = 1
   private readonly undoManager: Y.UndoManager
   private lastHistoryDepth = { undo: 0, redo: 0 }
@@ -97,12 +101,28 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
     session: CollaborationSession
   ) {
     this.generation = session.generation
+    this.identity = this.options.presenceIdentity?.()
+    this.presence = new CollaborationPresence(this.text, this.generation, message => {
+      const socket = this.socket
+      if (!this.isCurrentIdentity() || !this.synchronized || this.pending.length || this.inFlight ||
+        this.destroyed || this.conflicted || this.pausedForConnectivity || isConnectivityBlocked() ||
+        !socket || socket.readyState !== WebSocket.OPEN) return false
+      try {
+        socket.send(JSON.stringify(message))
+        return true
+      } catch {
+        // Ephemeral transport failure must not alter durable sync or editing.
+        this.presence.setReady(false)
+        return false
+      }
+    })
     this.options.onBaseline({ updatedAt: session.baseUpdatedAt, sourceRevision: session.baseSourceRevision })
     Y.applyUpdate(this.document, sessionState(session), REMOTE_ORIGIN)
     this.undoManager = new Y.UndoManager(this.text)
     this.extension = [
-      yCollab(this.text, this.awareness, { undoManager: this.undoManager }),
-      Prec.high(keymap.of(yUndoManagerKeymap))
+      yCollab(this.text, null, { undoManager: this.undoManager }),
+      Prec.high(keymap.of(yUndoManagerKeymap)),
+      this.presence.extension
     ]
     // Registered after the manager so undo/redo depth is finalized before UI reads it.
     this.document.on('afterTransaction', this.handleHistoryChange)
@@ -113,16 +133,25 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
       () => pwaState.connectionState,
       state => this.handleConnectionState(state)
     )
+    if (options.presenceIdentity) {
+      this.stopIdentityWatch = watch(options.presenceIdentity, () => {
+        if (!this.isCurrentIdentity()) this.setConflict('permission-revoked')
+      }, { flush: 'sync' })
+    }
     if (this.pausedForConnectivity) this.report('offline')
     else this.connect(session)
   }
 
   static async create(options: MarkdownCollaborationOptions): Promise<MarkdownCollaborationImpl> {
+    const identity = options.presenceIdentity?.()
     if (isConnectivityBlocked()) {
       options.onStatus({ state: 'offline', participants: 1, conflict: null })
       throw new Error('Connection required for live collaboration.')
     }
     const session = await fetchCollaborationSession(options.fetchImpl.bind(window), options.pageId, options.expectedUpdatedAt())
+    if (options.presenceIdentity && (identity === null || options.presenceIdentity() !== identity)) {
+      throw new Error('Collaboration account changed.')
+    }
     if (isConnectivityBlocked()) {
       options.onStatus({ state: 'offline', participants: 1, conflict: null })
       throw new Error('Connection required for live collaboration.')
@@ -197,8 +226,14 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
     this.flushPending()
   }
 
+  private isCurrentIdentity(): boolean {
+    return !this.options.presenceIdentity || (this.identity !== null && this.options.presenceIdentity() === this.identity)
+  }
+
   private connect(session: CollaborationSession): void {
     if (this.destroyed || this.conflicted) return
+    this.synchronized = false
+    this.presence.setReady(false)
     this.session = session
     if (this.pausedForConnectivity || isConnectivityBlocked()) {
       this.pausedForConnectivity = true
@@ -223,13 +258,21 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
     })
     socket.addEventListener('message', event => {
       if (this.socket !== socket || typeof event.data !== 'string' || isConnectivityBlocked()) return
+      if (!this.isCurrentIdentity()) {
+        this.setConflict('permission-revoked')
+        return
+      }
+      let awarenessMessage = false
       try {
-        const message = parseCollaborationServerMessage(JSON.parse(event.data))
+        const parsed: unknown = JSON.parse(event.data)
+        awarenessMessage = Boolean(parsed && typeof parsed === 'object' && Reflect.get(parsed, 'type') === 'awareness')
+        const message = parseCollaborationServerMessage(parsed)
         if ((message.type === 'sync' || message.type === 'update') && message.generation !== this.generation) {
           this.setConflict('draft-discarded')
           return
         }
         if (message.type === 'sync' || message.type === 'update') {
+          if (message.type === 'sync') this.presence.clearRecent()
           Y.applyUpdate(this.document, sessionState(message), REMOTE_ORIGIN)
           if (message.type === 'update' && message.update === this.inFlight) {
             const acknowledged = this.pending.shift()
@@ -240,9 +283,16 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
           if (message.type === 'sync') {
             this.participants = message.participants
             this.options.onBaseline({ updatedAt: message.baseUpdatedAt, sourceRevision: message.baseSourceRevision })
+            this.synchronized = true
+          }
+          if (this.synchronized && !this.pending.length) {
+            this.presence.setReady(true)
+            this.presence.scheduleSend()
           }
         } else if (message.type === 'presence') {
           this.participants = message.participants
+        } else if (message.type === 'awareness') {
+          this.presence.receive(message)
         } else if (message.type === 'saved') {
           this.options.onBaseline({ updatedAt: message.baseUpdatedAt, sourceRevision: message.baseSourceRevision })
         } else {
@@ -251,11 +301,17 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
         }
         this.report('connected')
       } catch {
+        if (awarenessMessage) {
+          this.presence.setReady(false)
+          return
+        }
         this.setConflict('protocol-error')
       }
     })
     socket.addEventListener('close', event => {
       if (this.socket !== socket || this.destroyed) return
+      this.synchronized = false
+      this.presence.setReady(false)
       if (event.code === COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE) {
         this.socket = null
         this.inFlight = null
@@ -281,6 +337,7 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
     })
     socket.addEventListener('error', () => {
       if (this.socket !== socket || this.destroyed || this.conflicted) return
+      this.presence.setReady(false)
       if (isConnectivityBlocked()) {
         this.handleConnectionState(pwaState.connectionState)
         return
@@ -292,6 +349,10 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
   flushPending(): void {
     const socket = this.socket
     const update = this.pending[0]
+    if (!this.isCurrentIdentity()) {
+      this.setConflict('permission-revoked')
+      return
+    }
     if (this.pausedForConnectivity || isConnectivityBlocked() || !socket || socket.readyState !== WebSocket.OPEN || this.inFlight || !update) return
     this.inFlight = encodeCollaborationUpdate(update)
     try {
@@ -368,6 +429,8 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
     const blocked = state === 'offline' || state === 'server-unavailable'
     if (blocked) {
       this.pausedForConnectivity = true
+      this.synchronized = false
+      this.presence.setReady(false)
       clearTimeout(this.reconnectTimer ?? undefined)
       this.reconnectTimer = null
       this.inFlight = null
@@ -385,6 +448,8 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
   private setConflict(reason: CollaborationConflictReason): void {
     if (this.conflicted || this.destroyed) return
     this.conflicted = true
+    this.synchronized = false
+    this.presence.setReady(false)
     clearTimeout(this.reconnectTimer ?? undefined)
     this.reconnectTimer = null
     this.socket?.close(1000, 'Collaboration stopped')
@@ -401,6 +466,9 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
     this.destroyed = true
     this.stopPwaWatch?.()
     this.stopPwaWatch = null
+    this.stopIdentityWatch?.()
+    this.stopIdentityWatch = null
+    this.presence.destroy()
     clearTimeout(this.reconnectTimer ?? undefined)
     this.reconnectTimer = null
     this.document.off('update', this.handleDocumentUpdate)
@@ -410,7 +478,7 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
     this.socket = null
     this.pending.length = 0
     this.pendingBytes = 0
-    this.awareness.destroy()
+    this.synchronized = false
     this.document.destroy()
   }
 }

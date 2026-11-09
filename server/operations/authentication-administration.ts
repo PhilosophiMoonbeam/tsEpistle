@@ -11,6 +11,7 @@ import type {
   AuthenticationValue
 } from '../../shared/authentication-policy.ts'
 import { accountSessionIsCurrent } from '../helpers/account-session.ts'
+import { reloadPersonalMcpKeys, revokeOwnerPersonalMcpKeys } from '../helpers/personal-mcp.ts'
 import { principalId, type PagePrincipal } from '../helpers/page-access.ts'
 import errors from './errors.ts'
 
@@ -337,6 +338,7 @@ export const createAuthenticationAdministrationStore = ({ db, reviewKey, definit
           await tx('users')
             .whereIn('id', ids)
             .update({ authVersion: tx.raw('?? + 1', ['authVersion']), sessionsRevokedAt: now, adminRevision: revision })
+          await revokeOwnerPersonalMcpKeys(tx, ids)
           await tx('userAdministrationEvents').insert(
             ids.map(userId => ({
               userId,
@@ -401,6 +403,7 @@ export const getAuthenticationAdministrationStore = () => {
       strategyStatus: Record<string, AuthenticationRuntime>
       activateStrategies(): Promise<void>
       revokeUserTokens(input: { id: number; kind: 'u' }): void
+      reloadApiKeys(): Promise<void>
     }
     events: { outbound: { emit(event: string, payload?: unknown): void } }
     logger: { warn(message: string): void }
@@ -425,6 +428,7 @@ export const getAuthenticationAdministrationStore = () => {
         await deliver(() => wiki.auth.revokeUserTokens({ id, kind: 'u' }))
         await deliver(() => wiki.events.outbound.emit('addAuthRevoke', { id, kind: 'u' }))
       }
+      if (ids.length && !(await reloadPersonalMcpKeys(wiki))) applied = false
       await deliver(() => wiki.events.outbound.emit('reloadAuthStrategies'))
       await deliver(() => wiki.auth.activateStrategies())
       const enabled = await wiki.models.knex('authentication').where('isEnabled', true).select('key', 'adminRevision')

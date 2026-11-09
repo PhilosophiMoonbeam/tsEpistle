@@ -1,11 +1,13 @@
 import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards'
+import { z } from 'zod'
 import { parseCollaborationSession, type CollaborationSession } from '../../shared/collaboration'
 import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../shared/page-branding.ts'
 import { PageFeaturesSchema, normalizePageFeatures, type PageFeatures } from '../../shared/page-features.ts'
 import { PageChangeReasonSchema } from '../../shared/page-change-reason.ts'
 import { PAGE_CREATION_OWNER_HEADER, PageCreationFieldsSchema, type PageCreationOrigin } from '../../shared/page-creation.ts'
 import { WikiSourceSchema, type WikiSource } from '../../shared/wiki-source.ts'
+import { FeedbackCreateAdmissionSchema, type FeedbackCreateAdmissionInput } from '../../shared/page-feedback.ts'
 import {
   PageAccuracyViewSchema,
   VerifyPageAccuracyInputSchema,
@@ -898,6 +900,52 @@ export async function fetchPageLinks(fetchImpl: FetchImpl, locale: string, fallb
   return normalizeResponse(response, fallbackMessage, payload => normalizeArray(payload, fallbackMessage, normalizePageLinkRow))
 }
 
+export type PageLinkSuggestion = {
+  id: number
+  title: string
+  locale: string
+  path: string
+  visibility: 'public' | 'private'
+  href: string
+}
+
+export async function fetchPageLinkSuggestions(
+  fetchImpl: FetchImpl,
+  options: { locale: string; pathPrefix: string; limit?: number; signal?: AbortSignal }
+): Promise<PageLinkSuggestion[]> {
+  const limit = options.limit ?? 20
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new Error('Invalid page link suggestion limit')
+  const query = new URLSearchParams({ locale: options.locale, pathPrefix: options.pathPrefix, limit: String(limit) })
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/pages/link-suggestions?${query}`, {
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { Accept: 'application/json' },
+    signal: options.signal
+  })
+  return normalizeResponse(response, 'Page link suggestions response is invalid', (payload, message) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
+      !hasOnlyKeys(payload as Record<string, unknown>, ['items']) ||
+      !Array.isArray(Reflect.get(payload, 'items')) || Reflect.get(payload, 'items').length > limit) throw new Error(message)
+    const ids = new Set<number>()
+    return Reflect.get(payload, 'items').map((row: unknown): PageLinkSuggestion => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error(message)
+      const item = row as Record<string, unknown>
+      if (!hasOnlyKeys(item, ['id', 'title', 'locale', 'path', 'visibility', 'href']) ||
+        !isPositiveSafeInteger(item.id) || ids.has(item.id) ||
+        !nonEmptyBoundedString(item.title, 1000) || !nonEmptyBoundedString(item.locale, 64) ||
+        !nonEmptyBoundedString(item.path, 4096) || !nonEmptyBoundedString(item.href, 16384) ||
+        (item.visibility !== 'public' && item.visibility !== 'private')) throw new Error(message)
+      const encodedPath = item.path.split('/').map(encodeURIComponent).join('/')
+      const localized = `/${encodeURIComponent(item.locale)}/${encodedPath}`
+      if (item.href !== (item.visibility === 'private' ? `/_private${localized}` : `/${encodedPath}`) &&
+        !(item.visibility === 'public' && item.href === localized)) throw new Error(message)
+      if (item.href.startsWith('//') || /[\s\\?#]/u.test(item.href)) throw new Error(message)
+      ids.add(item.id)
+      return item as PageLinkSuggestion
+    })
+  })
+}
+
 export async function fetchPage(fetchImpl: FetchImpl, id: number, fallbackMessage = 'Page response is invalid'): Promise<PageDetails> {
   const response = await sameOriginJsonFetch(fetchImpl, `/_api/pages/${encodeURIComponent(id)}`, {
     credentials: 'same-origin',
@@ -1178,6 +1226,7 @@ export type PageWriteInput = {
   branding?: PageBrandingAssignment | null
   creationRequestId?: string
   creationOrigin?: PageCreationOrigin
+  feedbackSubmission?: FeedbackCreateAdmissionInput
 }
 
 export type PageConflictLatest = {
@@ -1310,6 +1359,11 @@ export async function createPage(
     if (!fields.success) throw new Error(fallbackMessage)
     normalizedInput = { ...normalizedInput, ...fields.data }
   }
+  if (input.feedbackSubmission !== undefined) {
+    const admission = FeedbackCreateAdmissionSchema.safeParse(input.feedbackSubmission)
+    if (!admission.success) throw new Error(fallbackMessage)
+    normalizedInput = { ...normalizedInput, feedbackSubmission: admission.data }
+  }
   return sendJson(
     fetchImpl,
     '/_api/pages',
@@ -1387,14 +1441,108 @@ export async function changePageVisibility(
   )
 }
 
+export type PageConversionReview = {
+  reviewToken: string
+  pageId: number
+  sourceRevision: string
+  editor: 'markdown' | 'visual-markdown'
+  originalSource: string
+  candidate: string
+  candidateDigest: string
+  report: {
+    warnings: string[]
+    differences: { text: boolean; code: boolean; links: boolean; tables: boolean }
+    roundtripSource: string
+    previewHtml: string
+    renderer: string
+  }
+  expiresAt: string
+}
+
+function normalizePageConversionReview(
+  payload: unknown,
+  id: number,
+  editor: string,
+  expectedSourceRevision: string,
+  fallbackMessage: string
+): PageConversionReview {
+  if (
+    !isRecord(payload) ||
+    !hasOnlyKeys(payload, ['reviewToken', 'pageId', 'sourceRevision', 'editor', 'originalSource', 'candidate', 'candidateDigest', 'report', 'expiresAt']) ||
+    typeof payload.reviewToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/u.test(payload.reviewToken) ||
+    payload.pageId !== id || !isPositiveSafeInteger(payload.pageId) ||
+    payload.sourceRevision !== expectedSourceRevision ||
+    (payload.editor !== 'markdown' && payload.editor !== 'visual-markdown') || payload.editor !== editor ||
+    typeof payload.originalSource !== 'string' || payload.originalSource.length > 256 * 1024 ||
+    typeof payload.candidate !== 'string' || payload.candidate.length > 1024 * 1024 ||
+    typeof payload.candidateDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(payload.candidateDigest) ||
+    !isIsoDate(payload.expiresAt) || Date.parse(payload.expiresAt) <= Date.now() ||
+    !isRecord(payload.report)
+  ) throw new Error(fallbackMessage)
+  const report = payload.report
+  if (
+    !hasOnlyKeys(report, ['warnings', 'differences', 'roundtripSource', 'previewHtml', 'renderer']) ||
+    !Array.isArray(report.warnings) || report.warnings.length > 32 ||
+    !report.warnings.every((warning): warning is string => typeof warning === 'string' && warning.length <= 2048) ||
+    typeof report.roundtripSource !== 'string' || report.roundtripSource.length > 1024 * 1024 ||
+    typeof report.previewHtml !== 'string' || report.previewHtml.length > 1024 * 1024 ||
+    !nonEmptyBoundedString(report.renderer, 256) ||
+    !isRecord(report.differences)
+  ) throw new Error(fallbackMessage)
+  const differences = report.differences
+  if (
+    !hasOnlyKeys(differences, ['text', 'code', 'links', 'tables']) ||
+    typeof differences.text !== 'boolean' || typeof differences.code !== 'boolean' ||
+    typeof differences.links !== 'boolean' || typeof differences.tables !== 'boolean'
+  ) throw new Error(fallbackMessage)
+  return {
+    reviewToken: payload.reviewToken, pageId: payload.pageId, sourceRevision: expectedSourceRevision,
+    editor: payload.editor, originalSource: payload.originalSource, candidate: payload.candidate,
+    candidateDigest: payload.candidateDigest, expiresAt: payload.expiresAt,
+    report: {
+      warnings: report.warnings,
+      differences: { text: differences.text, code: differences.code, links: differences.links, tables: differences.tables },
+      roundtripSource: report.roundtripSource, previewHtml: report.previewHtml, renderer: report.renderer
+    }
+  }
+}
+
+export async function reviewPageConversion(
+  fetchImpl: FetchImpl,
+  id: number,
+  editor: string,
+  expectedSourceRevision: string,
+  fallbackMessage = 'Page conversion review failed'
+): Promise<PageConversionReview> {
+  if (
+    !isPositiveSafeInteger(id) || (editor !== 'markdown' && editor !== 'visual-markdown') ||
+    typeof expectedSourceRevision !== 'string' || expectedSourceRevision.length > 64 || !/^[1-9][0-9]*$/u.test(expectedSourceRevision)
+  ) throw new Error(fallbackMessage)
+  return sendJson(
+    fetchImpl,
+    `/_api/pages/${encodeURIComponent(id)}/convert/review`,
+    'POST',
+    { editor, expectedSourceRevision },
+    fallbackMessage,
+    payload => normalizePageConversionReview(payload, id, editor, expectedSourceRevision, fallbackMessage)
+  )
+}
+
 export async function convertPage(
   fetchImpl: FetchImpl,
   id: number,
   editor: string,
   expectedSourceRevision: string,
+  reviewToken?: string,
   fallbackMessage = 'Page conversion failed'
 ): Promise<void> {
-  await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}/convert`, 'POST', { editor, expectedSourceRevision }, fallbackMessage)
+  await sendJson(
+    fetchImpl,
+    `/_api/pages/${encodeURIComponent(id)}/convert`,
+    'POST',
+    { editor, expectedSourceRevision, ...(reviewToken === undefined ? {} : { reviewToken }) },
+    fallbackMessage
+  )
 }
 
 export type MoveLinkReviewChange = { before: string; after: string }
@@ -1548,6 +1696,8 @@ export async function fetchMoveLinkReview(
   )
 }
 
+const PageLifecycleProposalIdSchema = z.uuid()
+
 export async function movePage(
   fetchImpl: FetchImpl,
   id: number,
@@ -1555,13 +1705,16 @@ export async function movePage(
   destinationPath: string,
   expectedSourceRevision: string,
   fallbackMessage = 'Page move failed',
-  reviewToken?: string
+  reviewToken?: string,
+  lifecycleProposalId?: string
 ): Promise<void | MovePageReceipt> {
+  if (lifecycleProposalId !== undefined && !PageLifecycleProposalIdSchema.safeParse(lifecycleProposalId).success) throw new Error(fallbackMessage)
   const body = {
     destinationLocale,
     destinationPath,
     expectedSourceRevision,
-    ...(reviewToken === undefined ? {} : { reviewToken, updateLinks: true })
+    ...(reviewToken === undefined ? {} : { reviewToken, updateLinks: true }),
+    ...(lifecycleProposalId === undefined ? {} : { lifecycleProposalId })
   }
   if (reviewToken !== undefined) {
     if (!reviewToken) throw new Error(fallbackMessage)

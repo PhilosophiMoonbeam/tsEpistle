@@ -1,4 +1,9 @@
+import { createRequire } from 'node:module'
 import { beforeEach, describe, expect, it, vi } from '../bun-test.mts'
+
+const { Client } = createRequire(import.meta.url)('pg') as {
+  Client: new (settings: unknown) => { connectionParameters: Record<string, unknown> }
+}
 
 const pubSub = vi.hoisted(() => ({
   addChannel: vi.fn(async (_channel: string, _callback: (payload: unknown) => void): Promise<void> => {}),
@@ -87,14 +92,34 @@ describe('database notifications', () => {
       error: 'connection lost'
     }))
   })
-  it('tags the listener without discarding URL-style connection settings', async () => {
+  it('composes listener policy with effective URL credentials and startup options', async () => {
     database.knex = {
-      client: { connectionSettings: { connectionString: 'postgres://database.example.test/wiki', user: 'wiki' } }
+      client: { connectionSettings: {
+        connectionString: 'postgres://url-user:url-secret@database.example.test/wiki?application_name=uri-name&options=-c%20statement_timeout%3D7000%20-c%20search_path%3Dtenant%2Cpublic%20-c%20timezone%3DAsia%2FTokyo',
+        user: 'fallback-user', options: '-c statement_timeout=3000'
+      } }
     } as never
     await database.subscribeToNotifications()
-    const settings = listenerSettings.calls.at(-1)
-    expect(settings).toMatchObject({ connectionString: 'postgres://database.example.test/wiki', user: 'wiki' })
-    expect(settings).toMatchObject({ application_name: expect.stringMatching(/^tsEpistle\/v1\/[A-Za-z0-9._~-]+\/listener$/) })
+    // The installed pg constructor resolves URL/object precedence without connect().
+    const client = new Client(listenerSettings.calls.at(-1))
+    expect(client.connectionParameters).toMatchObject({
+      host: 'database.example.test', database: 'wiki', user: 'url-user', password: 'url-secret',
+      application_name: expect.stringMatching(/^tsEpistle\/v1\/[A-Za-z0-9._~-]+\/listener$/),
+      options: '-c statement_timeout=7000 -c search_path=tenant,public -c timezone=Asia/Tokyo -c timezone=UTC'
+    })
+  })
+  it('retains non-enumerable credential descriptors and configured SSL on the listener', async () => {
+    const ssl = { rejectUnauthorized: true, ca: 'synthetic-ca' }
+    const settings = { host: 'database.example.test', user: 'wiki', database: 'wiki', ssl, options: '-c search_path=tenant,public' }
+    Object.defineProperty(settings, 'password', { configurable: true, enumerable: false, value: 'hidden-secret' })
+    database.knex = { client: { connectionSettings: settings } } as never
+    await database.subscribeToNotifications()
+    const effective = listenerSettings.calls.at(-1)
+    expect(Object.getOwnPropertyDescriptor(effective, 'password')).toMatchObject({ enumerable: false, value: 'hidden-secret' })
+    const client = new Client(effective)
+    expect(client.connectionParameters).toMatchObject({
+      password: 'hidden-secret', ssl, options: '-c search_path=tenant,public -c timezone=UTC'
+    })
   })
   it('keeps connection application names versioned and within PostgreSQL byte limits', () => {
     const applicationName = createSystemConnectionApplicationName('é'.repeat(100), 'worker')

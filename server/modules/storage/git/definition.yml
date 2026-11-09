@@ -1,6 +1,6 @@
 key: git
 title: Git
-description: Git is a version control system for tracking changes in computer files and coordinating work on those files among multiple people.
+description: Git tracks canonical content changes. Utilities → Content import inventories dot-content and legacy source ownership, preserving canonical records until exact reviewed choices resolve conflicts. Disk visibility and native asset filenames are unchanged.
 author: requarks.io
 logo: https://static.requarks.io/logo/git-alt.svg
 website: https://git-scm.com/
@@ -118,6 +118,13 @@ props:
     default: false
     hint: 'Ingestion only: map plain or legacy Markdown/AsciiDoc README at the repository or locale root to home. Nested README and OKF stay unchanged; ambiguous home sources are refused. Exports retain canonical paths.'
     order: 61
+  dotContentReview:
+    type: String
+    title: Reviewed exact dot-content decisions
+    default: ''
+    multiline: true
+    hint: 'Server-managed only by Utilities → Content import, never generic settings. Newly encountered dot-prefixed components are excluded. Retain preserves independent canonical records without creating or refreshing Git ownership. Exact current-source native import/replacement must accept actual source bytes before it can establish ownership; foreign source ownership must first be reconciled through native asset administration. Remap/removal require pinned old bytes and exact existing native ownership/revision/hash. Choices are at most 2 MiB per batch; clearing them never deletes records. No folders, globs or security exemptions. Missing/stale proofs preserve canonical content with actionable conflicts.'
+    order: 62
 actions:
   - handler: syncUntracked
     label: Add Untracked Changes
@@ -127,7 +134,7 @@ actions:
     hint: Trigger an immediate sync operation regardless of the schedule. The configured direction is respected; pending working-copy mutations must be recovered first, and unseen remote history is never force-overwritten.
   - handler: importAll
     label: Import Everything
-    hint: Will import all content currently in the local Git repository, regardless of the latest commit state. Useful for importing content from the remote repository created before git was enabled.
+    hint: Imports the bounded admitted local Git inventory. New dot-content is excluded; existing canonical dot-content is retained with actionable conflicts until reviewed in Utilities → Content import. Exact reviewed exceptions never override unsafe/internal-path refusal.
   - handler: purge
     label: Purge Local Repository
     hint: Reinitialize a clean working copy from the remote. Pending imports, uncommitted mutations, and unpublished commits must be recovered first; they are never discarded by this action. The remote is not modified.

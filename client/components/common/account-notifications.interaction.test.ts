@@ -8,7 +8,7 @@ import { pageHref } from '../../helpers/admin-pages.ts'
 import { notificationPageHref } from '../../helpers/site-notifications-api.ts'
 import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session.ts'
 import type { RenderFunction } from 'vue'
-import type { PageApprovalInboxItem, PageWatchNotification } from '../../../shared/site-notifications.ts'
+import type { GovernedNotificationReceiptList, PageApprovalInboxItem, PageWatchNotification } from '../../../shared/site-notifications.ts'
 
 const componentPath = path.join(process.cwd(), 'client/components/common/account-notifications.vue')
 const componentSource = fs.readFileSync(componentPath, 'utf8')
@@ -62,6 +62,16 @@ const translations: Record<string, string> = {
   'common:page.approvalStatus.published': 'Published',
   'common:page.submittedRevisionStale': 'Submitted revision is stale',
   'common:page.tryAgain': 'Try again',
+  'common:accountNotifications.scheduledOrigin': 'Scheduled notification',
+  'common:accountNotifications.lifecycleProposed': 'Move proposed — human review required',
+  'common:accountNotifications.lifecycleMoved': 'Human-reviewed move completed',
+  'common:accountNotifications.outcomeKind.add-tags': 'Tags',
+  'common:accountNotifications.outcomeKind.set-notice': 'Lifecycle notice',
+  'common:accountNotifications.outcomeKind.propose-move': 'Human-reviewed move',
+  'common:accountNotifications.outcomeState.applied': 'Applied',
+  'common:accountNotifications.outcomeState.skipped': 'Skipped; no change made',
+  'common:accountNotifications.outcomeState.proposed': 'Proposed; no move made',
+  'common:accountNotifications.outcomeState.fulfilled': 'Completed by an authorized human',
   'common:actions.refresh': 'Refresh'
 }
 const translate = (key: string, options: Record<string, unknown> = {}): string => {
@@ -81,8 +91,11 @@ const evaluateNotifications = new Function(
   'onBeforeUnmount',
   'wikiStore',
   'OFFLINE_SESSION_INVALIDATED_EVENT',
+  'ref',
+  'fetchGovernedNotificationReceipts',
+  'resendGovernedNotification',
   `${executableScript}
-return { section, ids, store, notificationIdentityReady, retryWatches, watchErrorAction, loadMoreWatches, retryApprovals, loadMoreApprovals, pageUrl, isUnread, watchAction, watchSummary, watchAriaLabel, approvalSummary, isOrdinaryActivation, openWatchPage, openApprovalPage }`
+return { section, ids, store, notificationIdentityReady, retryWatches, watchErrorAction, loadMoreWatches, retryApprovals, loadMoreApprovals, pageUrl, isUnread, watchAction, watchSummary, watchAriaLabel, approvalSummary, isOrdinaryActivation, openWatchPage, openApprovalPage, deliveryReceipts, receiptsLoading, receiptsLoaded, receiptsError, acknowledgedResends, loadDeliveryReceipts, acknowledgeResend, resendDelivery }`
 ) as (
   useStore: () => NotificationStore,
   href: typeof notificationPageHref,
@@ -93,7 +106,10 @@ return { section, ids, store, notificationIdentityReady, retryWatches, watchErro
   onMounted: typeof Vue.onMounted,
   onBeforeUnmount: typeof Vue.onBeforeUnmount,
   identity: NotificationIdentity,
-  sessionInvalidatedEvent: string
+  sessionInvalidatedEvent: string,
+  ref: typeof Vue.ref,
+  fetchReceipts: (ownerId: number, signal?: AbortSignal) => Promise<GovernedNotificationReceiptList>,
+  resend: (ownerId: number, id: string, signal?: AbortSignal) => Promise<void>
 ) => Record<string, unknown>
 
 type NotificationIdentity = {
@@ -223,7 +239,10 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-const mountNotifications = (store: NotificationStore, navigate = vi.fn(), section?: 'all' | 'changes' | 'approvals') => {
+const mountNotifications = (store: NotificationStore, navigate = vi.fn(), section?: 'all' | 'changes' | 'approvals', receiptApi = {
+  fetch: vi.fn(async (ownerId: number): Promise<GovernedNotificationReceiptList> => ({ ownerId, items: [] })),
+  resend: vi.fn(async (_ownerId: number, _id: string): Promise<void> => {})
+}) => {
   const identity = Vue.reactive({
     user: { id: store.ownerId ?? 0, authenticated: store.ownerId !== null, authVersion: 1 },
     offlineIdentityEpoch: 0
@@ -240,7 +259,10 @@ const mountNotifications = (store: NotificationStore, navigate = vi.fn(), sectio
         Vue.onMounted,
         Vue.onBeforeUnmount,
         identity,
-        OFFLINE_SESSION_INVALIDATED_EVENT
+        OFFLINE_SESSION_INVALIDATED_EVENT,
+        Vue.ref,
+        receiptApi.fetch,
+        receiptApi.resend
       ),
     render: renderNotifications
   })
@@ -475,7 +497,8 @@ describe('account notifications interaction', () => {
 
     expect(host.textContent).toContain('Check more approvals')
     expect(host.textContent).not.toContain('No active approvals')
-    host.querySelector('button')!.click()
+    const checkMore = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('Check more approvals'))!
+    checkMore.click()
     expect(loadMoreApprovals).toHaveBeenCalledTimes(1)
 
     // Present independent store inputs, rather than making the action mock manufacture append results.
@@ -506,5 +529,47 @@ describe('account notifications interaction', () => {
     await Vue.nextTick()
     expect(host.textContent).toContain('Approval status is not yet known.')
     expect(host.textContent).not.toContain('No active approvals')
+  })
+
+  it('requires an explicit duplicate warning acknowledgment before unknown email resend and clears outcomes on identity loss', async () => {
+    const store = makeStore()
+    const receipt: GovernedNotificationReceiptList['items'][number] = { id: '46bc4c0c-7820-48f0-8cda-d01a49384eaf', pageId: 12, category: 'pageLifecycle', channel: 'email', status: 'unknown', attempt: 0, updatedAt: '2026-11-08T00:00:00Z', canResend: true, title: 'Current permitted title', path: 'docs/start', localeCode: 'en', visibility: 'public' }
+    const api = { fetch: vi.fn(async (ownerId: number): Promise<GovernedNotificationReceiptList> => ({ ownerId, items: [receipt] })), resend: vi.fn(async (_ownerId: number, _id: string): Promise<void> => {}) }
+    const { host, identity } = mountNotifications(store, vi.fn(), 'changes', api)
+    const outcomes = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('deliveryOutcomes'))!
+    outcomes.click()
+    await settle()
+    const resend = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('resendEmail'))!
+    expect(resend.disabled).toBe(true)
+    expect(host.textContent).toContain('resendWarning')
+    expect(api.resend).toHaveBeenCalledTimes(0)
+    const acknowledgement = host.querySelector<HTMLInputElement>('.account-notifications__receipts input')!
+    acknowledgement.click()
+    await settle()
+    expect(resend.disabled).toBe(false)
+    resend.click()
+    await settle()
+    expect(api.resend).toHaveBeenCalledWith(7, receipt.id, expect.any(AbortSignal))
+    expect(host.querySelector('.account-notifications__receipts input')).toBeNull()
+    identity.user.authenticated = false
+    await settle()
+    expect(host.textContent).not.toContain('Current permitted title')
+  })
+  it('renders scheduled action receipts without inventing a human actor or calling a proposed move completed', async () => {
+    const store = makeStore({ watches: [makeWatch({ category: 'pageLifecycle', eventType: 'page.lifecycle-proposed', actorName: '', outcomes: [
+      { kind: 'add-tags', state: 'applied' }, { kind: 'set-notice', state: 'skipped' }, { kind: 'propose-move', state: 'proposed' }
+    ] })] })
+    const { host } = mountNotifications(store, vi.fn(), 'changes')
+    expect(host.textContent).toContain('Move proposed — human review required')
+    expect(host.textContent).toContain('Tags: Applied')
+    expect(host.textContent).toContain('Lifecycle notice: Skipped; no change made')
+    expect(host.textContent).toContain('Human-reviewed move: Proposed; no move made')
+    expect(host.textContent).not.toContain('Someone')
+    expect(host.textContent).not.toContain('Human-reviewed move completed')
+    store.watches = [makeWatch({ category: 'pageLifecycle', eventType: 'page.lifecycle-move-result', actorName: '', outcomes: [{ kind: 'propose-move', state: 'fulfilled' }] })]
+    await settle()
+    expect(host.textContent).toContain('Human-reviewed move completed')
+    expect(host.textContent).toContain('Completed by an authorized human')
+    expect(host.textContent).not.toContain('Proposed; no move made')
   })
 })

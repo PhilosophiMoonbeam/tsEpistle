@@ -72,10 +72,16 @@ props:
     order: 20
   wantAssertionsSigned:
     type: Boolean
-    title: Always sign assertions
-    hint: If enabled, add WantAssertionsSigned="true" to the metadata, to specify that the IdP should always sign the assertions.
+    title: Require signed assertions
+    hint: Require a verified assertion signature even when the response is signed. Without a verified response signature, a signed assertion is always required.
     default: false
     order: 21
+  wantAuthnResponseSigned:
+    type: Boolean
+    title: Require signed authentication responses
+    hint: Enabled by default for new and existing providers. Disable explicitly only for an identity provider that signs assertions but not the enclosing response; unsigned assertions are still refused unless protected by a verified signed response and the assertion requirement is disabled.
+    default: true
+    order: 21.5
   acceptedClockSkewMs:
     type: Number
     title: Accepted Clock Skew Milleseconds

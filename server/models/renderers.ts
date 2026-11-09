@@ -112,9 +112,9 @@ export default class Renderer extends Model {
     }
   }
 
-  static async getRenderingPipeline (contentType: string): Promise<RendererDefinition[]> {
+  static async getRenderingPipeline (contentType: string, transaction?: Knex.Transaction): Promise<RendererDefinition[]> {
     // The administration trace and the rendering worker share one planner.
-    const stored = await WIKI.models.renderers.query().orderBy('key')
+    const stored = await WIKI.models.renderers.query(transaction).orderBy('key')
     const modules = projectRenderingModules(stored, WIKI.data.renderers)
     return buildRenderingPlan(modules, contentType).map(stage => ({
       ...WIKI.data.renderers.find(definition => definition.key === stage.core.key)!,

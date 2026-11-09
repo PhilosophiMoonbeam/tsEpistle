@@ -2,6 +2,7 @@ import express from 'express'
 import { type Request, type Response, errorStatus, getWikiAuth } from '../_types.ts'
 import { systemRequester } from '../../helpers/system-authority.ts'
 import { getUtilitiesWorkspaceStore } from '../../operations/utilities-workspace.ts'
+import { previewUtilityContentImport } from '../../operations/utility-content-import.ts'
 
 const router = express.Router()
 
@@ -28,6 +29,15 @@ router.get('/workspace', async (req, res) => {
     failed(res, error)
   }
 })
+router.post('/content-import/preview', async (req, res) => {
+  if (!authorized(req, res)) return
+  try {
+    res.json(await previewUtilityContentImport(systemRequester(req), req.body))
+  } catch (error) {
+    failed(res, error)
+  }
+})
+
 
 router.post('/operations', async (req, res) => {
   if (!authorized(req, res)) return

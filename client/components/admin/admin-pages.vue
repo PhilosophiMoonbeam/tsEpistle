@@ -64,6 +64,7 @@
   </v-container>
 </template>
 <script lang='ts'>
+import { helpers } from '../../helpers/index.ts'
 import { requestConfirmation } from '../common/confirm-dialog.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import AdminHero from '@/components/common/admin-hero.vue'
@@ -108,7 +109,7 @@ export default {
   methods: {
     state(page: PageListRow) { return publicationState(page, this.now) },
     stateTitle(state: PublicationState): string { return this.$t(`admin:pages.publicationStates.${PUBLICATION_STATE_KEYS[state]}`) },
-    date(value: string): string { return new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) },
+    date(value: string): string { return Number.isNaN(new Date(value).valueOf()) ? 'Invalid Date' : String(helpers.formatMoment(value, 'L')) },
     toggleSelected(id: number) { this.selectedIds = this.selectedIds.includes(id) ? this.selectedIds.filter(value => value !== id) : [...this.selectedIds, id].slice(0, 25) },
     selectVisible() { this.selectedIds = [...new Set([...this.selectedIds, ...this.visiblePages.map(page => page.id)])].slice(0, 25) },
     clearFilters() { this.search = ''; this.selectedLang = null; this.visibility = 'all'; this.publication = 'all'; this.tag = null; this.untagged = false; this.filtersChanged() },

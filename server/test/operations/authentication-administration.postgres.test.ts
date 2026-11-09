@@ -1,10 +1,19 @@
 import knexModule, { type Knex } from 'knex'
+import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { load } from 'js-yaml'
+import { fileURLToPath } from 'node:url'
+import type AuthenticationModel from '../../models/authentication.ts'
 import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from '../bun-test.mts'
-import { createAuthenticationAdministrationStore, normalizeAuthenticationDomains } from '../../operations/authentication-administration.ts'
+import { authenticationDefinitions, createAuthenticationAdministrationStore, normalizeAuthenticationDomains } from '../../operations/authentication-administration.ts'
 import { createProviderGroupSynchronizer, loadEnrollmentPolicy } from '../../helpers/authentication-provisioning.ts'
 import { up, down } from '../../db/migrations/tsepistle-000019-authentication-administration.ts'
 import type { AuthenticationDefinition, AuthenticationProviderDraft } from '../../../shared/authentication-policy.ts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
+import commonHelper from '../../helpers/common.ts'
+import { readModuleDefinition } from '../../models/moduleTypes.ts'
+import { FederatedLoginStore } from '../../repositories/federated-login.ts'
+import { up as migrateFederatedLogin } from '../../db/migrations/tsepistle-000030-federated-login-state.ts'
 const connection = getPostgresTestConnection('_auth_test', import.meta.path)
 const suite = connection ? describe : describe.skip,
   admin = { id: 1, authVersion: 0 } as never
@@ -25,6 +34,10 @@ const definitions: AuthenticationDefinition[] = [
   }
 ]
 definitions.push({ ...definitions[1]!, key: 'alternate-oidc', title: 'Alternate OpenID Connect' })
+for (const key of ['saml', 'ldap']) {
+  const definition = readModuleDefinition(load(readFileSync(new URL(`../../modules/authentication/${key}/definition.yml`, import.meta.url), 'utf8')), key)
+  definitions.push(...authenticationDefinitions([{ ...definition, props: commonHelper.parseModuleProps(definition.props) }]))
+}
 const draft = (key = 'local'): AuthenticationProviderDraft => ({
   key,
   strategyKey: key === 'local' ? 'local' : 'oidc',
@@ -71,6 +84,15 @@ suite('PostgreSQL reviewed authentication administration', () => {
       t.string('adminRevision').defaultTo('')
       t.timestamp('sessionsRevokedAt')
     })
+    await db.schema.createTable('apiKeys', t => {
+      t.increments('id')
+      t.integer('personalOwnerId').references('users.id').onDelete('SET NULL')
+      t.string('personalAccess')
+      t.boolean('isRevoked').notNullable().defaultTo(false)
+      t.string('updatedAt')
+      t.text('key')
+      t.string('expiration')
+    })
     await db.schema.createTable('userGroups', t => {
       t.integer('userId').references('users.id')
       t.integer('groupId').references('groups.id')
@@ -95,6 +117,12 @@ suite('PostgreSQL reviewed authentication administration', () => {
       t.timestamp('createdAt')
     })
     await up(db)
+    await db.schema.createTable('sessions', t => {
+      t.string('sid').primary()
+      t.text('sess').notNullable()
+      t.dateTime('expired').notNullable()
+    })
+    await migrateFederatedLogin(db)
     store = createAuthenticationAdministrationStore({
       db,
       reviewKey: 'fixture-review-key',
@@ -105,6 +133,9 @@ suite('PostgreSQL reviewed authentication administration', () => {
   afterAll(async () => {
     if (!db) return
     for (const table of [
+      'federatedLoginAttempts',
+      'sessions',
+      'apiKeys',
       'authenticationAdministrationEvents',
       'groupAdministrationEvents',
       'userAdministrationEvents',
@@ -118,6 +149,9 @@ suite('PostgreSQL reviewed authentication administration', () => {
   })
   beforeEach(async () => {
     for (const table of [
+      'federatedLoginAttempts',
+      'sessions',
+      'apiKeys',
       'authenticationAdministrationEvents',
       'groupAdministrationEvents',
       'userAdministrationEvents',
@@ -127,6 +161,7 @@ suite('PostgreSQL reviewed authentication administration', () => {
       'authentication'
     ])
       await db(table).delete()
+    await db('sessions').insert({ sid: 'saml-session', sess: '{}', expired: new Date(Date.now() + 3_600_000) })
     await db('authentication').insert(
       [draft(), draft('org')].map((p, order) => ({
         key: p.key,
@@ -164,6 +199,45 @@ suite('PostgreSQL reviewed authentication administration', () => {
       { userId: 4, groupId: 4 }
     ])
   })
+  const personalKey = async (personalOwnerId = 3) => {
+    const [key] = await db('apiKeys').insert({
+      personalOwnerId, personalAccess: 'read-only', isRevoked: false,
+      key: `retained-owner-${personalOwnerId}`, expiration: '2099-01-01T00:00:00Z'
+    }).returning('*')
+    return key
+  }
+  it('permanently revokes exactly the owners selected by current provider invalidation policy', async () => {
+    const subject = await personalKey()
+    const independent = await personalKey(4)
+    const [service] = await db('apiKeys').insert({ key: 'retained-service', isRevoked: false }).returning('*')
+    for (const change of ['disable', 'disabled-config', 'enable', 'enabled-config', 'secret'] as const) {
+      const key = change === 'disable' ? subject : await personalKey()
+      const rows = (await read()).providers
+      const provider = rows.find(row => row.key === 'org')!
+      if (change === 'disable') provider.isEnabled = false
+      if (change === 'enable') provider.isEnabled = true
+      if (change === 'disabled-config' || change === 'enabled-config') provider.config.mapGroups = !provider.config.mapGroups
+      if (change === 'secret') provider.secrets.clientSecret = { action: 'replace', value: 'replacement-secret-value' }
+      await write(rows)
+      expect(await db('apiKeys').where('id', key.id).first()).toMatchObject({
+        isRevoked: true, personalOwnerId: 3, personalAccess: 'read-only', key: key.key, expiration: key.expiration
+      })
+      expect(await db('apiKeys').where('id', subject.id).first()).toMatchObject({ isRevoked: true })
+    }
+    expect(await db('apiKeys').where('id', independent.id).first()).toMatchObject({ isRevoked: false })
+    expect(await db('apiKeys').where('id', service.id).first()).toMatchObject({ isRevoked: false, personalAccess: null, key: 'retained-service' })
+    expect(JSON.stringify(await db('authenticationAdministrationEvents'))).not.toContain('replacement-secret-value')
+  })
+  it('keeps existing personal credentials across provider presentation and enrollment-only edits', async () => {
+    const key = await personalKey()
+    const rows = (await read()).providers
+    Object.assign(rows.find(row => row.key === 'org')!, {
+      displayName: 'Renamed organization', description: 'Reviewed purpose', order: 7,
+      selfRegistration: true, domainWhitelist: ['example.test'], autoEnrollGroups: [3]
+    })
+    expect(await write(rows)).toMatchObject({ sessionsEnded: 0 })
+    expect(await db('apiKeys').where('id', key.id).first()).toEqual(key)
+  })
   it('redacts secrets and unknown config while reporting observed versus pending initialization', async () => {
     const result = await read()
     expect(JSON.stringify(result)).not.toContain('stored-secret-value')
@@ -172,6 +246,126 @@ suite('PostgreSQL reviewed authentication administration', () => {
     expect(result.providers[1]?.runtime.state).toBe('pending')
     expect(result.providers[1]?.accountCount).toBe(1)
     expect(result.groups.some(g => g.id === 2)).toBe(false)
+  })
+
+  it('loads legacy SAML response policy as true, saves the default, and round-trips an explicit reviewed opt-out', async () => {
+    await db('authentication').insert({
+      key: 'saml-old', strategyKey: 'saml', displayName: 'Legacy SAML', description: '', order: 2,
+      isEnabled: true, selfRegistration: false, domainWhitelist: '{"v":[]}', autoEnrollGroups: '{"v":[]}',
+      config: '{}', adminRevision: 'saml-revision-a'
+    })
+    await db('authentication').insert({
+      key: 'saml-optout', strategyKey: 'saml', displayName: 'Assertion-only SAML', description: '', order: 3,
+      isEnabled: false, selfRegistration: false, domainWhitelist: '{"v":[]}', autoEnrollGroups: '{"v":[]}',
+      config: '{"wantAuthnResponseSigned":false}', adminRevision: 'saml-optout-revision'
+    })
+    const previousWiki = Reflect.get(globalThis, 'WIKI')
+    const logger = { info: vi.fn(), error: vi.fn() }
+    const runtime = {
+      ROOTPATH: fileURLToPath(new URL('../../../', import.meta.url)),
+      SERVERPATH: fileURLToPath(new URL('../../', import.meta.url)),
+      data: { authentication: [] },
+      logger,
+      models: {} as { authentication: typeof AuthenticationModel }
+    }
+    Reflect.set(globalThis, 'WIKI', runtime)
+    try {
+      // The model captures WIKI at module load; exercise disk hydration only after installing this database fixture.
+      const Authentication = (await import('../../models/authentication.ts')).default
+      runtime.models.authentication = Authentication.bindKnex(db)
+      await runtime.models.authentication.refreshStrategiesFromDisk()
+      expect(logger.error).not.toHaveBeenCalled()
+    } finally {
+      if (previousWiki === undefined) Reflect.deleteProperty(globalThis, 'WIKI')
+      else Reflect.set(globalThis, 'WIKI', previousWiki)
+    }
+    expect((await db('authentication').where({ key: 'saml-old' }).first()).config.wantAuthnResponseSigned).toBe(true)
+    expect((await db('authentication').where({ key: 'saml-optout' }).first()).config.wantAuthnResponseSigned).toBe(false)
+    let workspace = await read()
+    expect(workspace.definitions.find(item => item.key === 'saml')?.fields.find(field => field.key === 'wantAuthnResponseSigned'))
+      .toMatchObject({ type: 'boolean', default: true })
+    expect(workspace.providers.find(provider => provider.key === 'saml-old')?.config.wantAuthnResponseSigned).toBe(true)
+    const fresh: AuthenticationProviderDraft = { ...draft('saml-new'), strategyKey: 'saml', config: {}, secrets: {} }
+    await write([...workspace.providers, fresh])
+    for (const key of ['saml-old', 'saml-new']) {
+      expect((await db('authentication').where({ key }).first()).config.wantAuthnResponseSigned).toBe(true)
+    }
+    workspace = await read()
+    const provider = workspace.providers.find(provider => provider.key === 'saml-old')!
+    const revision = (await db('authentication').where({ key: provider.key }).first()).adminRevision
+    provider.config.wantAuthnResponseSigned = false
+    await write(workspace.providers, 'Approve assertion-only signing for this reviewed identity provider')
+    expect((await db('authentication').where({ key: provider.key }).first()).adminRevision).not.toBe(revision)
+    expect((await read()).providers.find(item => item.key === provider.key)?.config.wantAuthnResponseSigned).toBe(false)
+    // A presentation-only save that omits the policy must preserve the explicit choice.
+    workspace = await read()
+    const legacyProvider = workspace.providers.find(item => item.key === provider.key)!
+    delete legacyProvider.config.wantAuthnResponseSigned
+    legacyProvider.description = 'Reviewed assertion-only identity provider'
+    await write(workspace.providers)
+    expect((await db('authentication').where({ key: provider.key }).first()).config.wantAuthnResponseSigned).toBe(false)
+    workspace = await read()
+    workspace.providers.find(item => item.key === provider.key)!.config.wantAuthnResponseSigned = true
+    await write(workspace.providers)
+    expect((await read()).providers.find(item => item.key === provider.key)?.config.wantAuthnResponseSigned).toBe(true)
+  })
+
+  it('invalidates pending SAML requests when reviewed signature policy changes and retains provider, expiry and replay isolation', async () => {
+    const initial: AuthenticationProviderDraft = {
+      ...draft('saml-idp'), strategyKey: 'saml', isEnabled: true, config: {}, secrets: {}
+    }
+    await write([...(await read()).providers, initial])
+    const revision = (await db('authentication').where({ key: initial.key }).first()).adminRevision
+    let now = new Date()
+    const attempts = new FederatedLoginStore(db, { now: () => now })
+    const browserNonceHash = createHash('sha256').update('saml-browser-nonce').digest()
+    const issue = (requestId: string) => attempts.issue({
+      providerKey: initial.key, providerRevision: revision, protocol: 'saml', sessionId: 'saml-session',
+      browserNonceHash, payload: { requestId }
+    })
+    const consume = {
+      providerKey: initial.key, providerRevision: revision, protocol: 'saml' as const, sessionId: 'saml-session',
+      browserNonceHash, requestId: '_pending'
+    }
+    await issue('_pending')
+    await expect(attempts.consume({ ...consume, providerKey: 'org' })).resolves.toBeNull()
+    await expect(attempts.consume({ ...consume, browserNonceHash: createHash('sha256').update('wrong-browser').digest() })).resolves.toBeNull()
+    await expect(attempts.consume(consume)).resolves.toMatchObject({ providerKey: initial.key })
+    await expect(attempts.consume(consume)).resolves.toBeNull()
+    await issue('_expired')
+    now = new Date(now.getTime() + 600_001)
+    await expect(attempts.consume({ ...consume, requestId: '_expired' })).resolves.toBeNull()
+    now = new Date()
+    await issue('_old-policy')
+    const workspace = await read()
+    workspace.providers.find(provider => provider.key === initial.key)!.config.wantAuthnResponseSigned = false
+    await write(workspace.providers, 'Review an explicit assertion-only provider policy')
+    const changedRevision = (await db('authentication').where({ key: initial.key }).first()).adminRevision
+    expect(changedRevision).not.toBe(revision)
+    await expect(attempts.consume({ ...consume, requestId: '_old-policy', providerRevision: changedRevision })).resolves.toBeNull()
+    await expect(attempts.consume({ ...consume, requestId: '_old-policy' })).resolves.toBeNull()
+  })
+
+  it('round-trips intentional anonymous LDAP search without replacing empty DN or exposing credentials', async () => {
+    const anonymous: AuthenticationProviderDraft = {
+      ...draft('ldap-anonymous'), strategyKey: 'ldap', config: { bindDn: '' }, secrets: { bindCredentials: { action: 'clear' } }
+    }
+    await write([...(await read()).providers, anonymous])
+    expect((await db('authentication').where({ key: anonymous.key }).first()).config).toMatchObject({ bindDn: '', bindCredentials: '' })
+    const workspace = await read()
+    const provider = workspace.providers.find(item => item.key === anonymous.key)!
+    expect(provider.config.bindDn).toBe('')
+    expect(provider.config).not.toHaveProperty('bindCredentials')
+    expect(provider.configuredSecrets).toEqual([])
+    provider.config.bindDn = 'cn=reader,dc=example,dc=com'
+    provider.secrets.bindCredentials = { action: 'replace', value: 'directory-search-secret' }
+    await write(workspace.providers)
+    const loaded = await read()
+    expect(JSON.stringify(loaded)).not.toContain('directory-search-secret')
+    expect(loaded.providers.find(item => item.key === anonymous.key)?.configuredSecrets).toEqual(['bindCredentials'])
+    expect((await db('authentication').where({ key: anonymous.key }).first()).config).toMatchObject({
+      bindDn: 'cn=reader,dc=example,dc=com', bindCredentials: 'directory-search-secret'
+    })
   })
   it('requires current persisted system authority, independent of claimed permissions', async () => {
     await expect(store.inspect({ id: 4, authVersion: 0, permissions: ['manage:system'] } as never)).rejects.toMatchObject({ status: 403 })
@@ -317,6 +511,7 @@ suite('PostgreSQL reviewed authentication administration', () => {
     expect((await db('authentication').where('key', 'org').first()).autoEnrollGroups).toEqual({ v: [] })
   })
   it('rolls back provider, account and event writes together when history insertion fails', async () => {
+    const key = await personalKey()
     await db.raw(`CREATE FUNCTION reject_auth_history() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'history unavailable'; END $$`)
     await db.raw('CREATE TRIGGER reject_auth_history BEFORE INSERT ON "authenticationAdministrationEvents" FOR EACH ROW EXECUTE FUNCTION reject_auth_history()')
     try {
@@ -326,6 +521,7 @@ suite('PostgreSQL reviewed authentication administration', () => {
       expect((await db('authentication').where('key', 'org').first()).isEnabled).toBe(true)
       expect((await db('users').where('id', 3).first()).authVersion).toBe(0)
       expect(await db('userAdministrationEvents')).toHaveLength(0)
+      expect(await db('apiKeys').where('id', key.id).first()).toEqual(key)
     } finally {
       await db.raw('DROP TRIGGER reject_auth_history ON "authenticationAdministrationEvents"')
       await db.raw('DROP FUNCTION reject_auth_history()')

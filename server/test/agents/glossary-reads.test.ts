@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { createGlossaryOperations, type GlossaryOperations } from '../../operations/glossary.ts'
 import { createApiPrincipal } from '../../helpers/api-principal.ts'
 import type { PageRuleAuthority } from '../../helpers/group-access.ts'
+import { AGENT_FEATURE_FLAG_KEYS, type AgentFeatureFlags } from '../../../shared/agents/contracts.ts'
+import { ActionKernel, createActionAuthority, type ActionAdmissionSnapshot } from '../../agents/actions/kernel.ts'
+import { registerGlossaryReadActions } from '../../agents/actions/glossary-reads.ts'
 
 // Exercise native authorization/projection without PostgreSQL-only mutation or
 // search syntax. Existing glossary PostgreSQL tests cover writes and name search.
@@ -139,5 +142,38 @@ describe('native glossary reads for MCP principals', () => {
     expect(await operations.get(context, 1, 'en')).toMatchObject({
       documentation: { id: 42, title: 'Confidential title', label: 'Confidential label', href: '/en/secret/guide' }
     })
+  })
+
+  it('serializes native matching flags through the strict MCP action boundary without dropping false', async () => {
+    const references = [{ label: 'Glossary reference', url: 'https://example.test/glossary' }]
+    await db('glossaryTerms').whereIn('id', [1, 2]).update({ references: JSON.stringify(references) })
+    await db('glossaryTerms').where({ id: 2 }).update({ autoLink: false, caseSensitive: true })
+    const kernel = new ActionKernel()
+    registerGlossaryReadActions(kernel, { operations, resolveRequester: async () => requester })
+    const admission: ActionAdmissionSnapshot = {
+      transport: 'mcp',
+      executionMode: 'agent',
+      supportsTools: true,
+      permissions: ['use:mcp', 'read:glossary', 'read:pages'],
+      groupIds: [3],
+      featureFlags: Object.fromEntries(AGENT_FEATURE_FLAG_KEYS.map(flag => [flag, true])) as AgentFeatureFlags
+    }
+    const authority = createActionAuthority(
+      'glossary.get',
+      '00000000-0000-4000-8000-000000000024',
+      { kind: 'apiKey', apiKeyId: 9, groupId: 3, ownershipUserId: null, principal: requester },
+      admission
+    )
+    for (const [id, autoLink, caseSensitive] of [[1, true, false], [2, false, true]] as const) {
+      expect(await operations.get(context, id, 'en')).toMatchObject({ autoLink, caseSensitive, references })
+      const result = await kernel.execute({
+        authority,
+        input: { id, locale: 'en' },
+        actionCallId: `glossary-${id}`,
+        signal: new AbortController().signal,
+        refreshAdmission: async () => admission
+      })
+      expect(JSON.parse(JSON.stringify(result))).toMatchObject({ id, autoLink, caseSensitive, references, documentation: null })
+    }
   })
 })

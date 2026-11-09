@@ -10,7 +10,9 @@
     "client/**/*.test.ts",
     "client/test/**/*.mts",
     "client/**/*.d.ts",
-    "server/global.d.ts"
+    "server/global.d.ts",
+    "server/entrypoints.d.ts",
+    "server/models/vendor.d.ts"
   ],
   "exclude": [
     "client/**/*.js",

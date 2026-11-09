@@ -19,6 +19,7 @@ import { Base64 } from 'js-base64'
 import { isSafeEditorImageSource, normalizeEditorImageDimension } from '../../../helpers/editor-image-properties.ts'
 import { findSourceImage } from '../../../helpers/editor-image-source.ts'
 import MarkdownIt from 'markdown-it'
+import mdMultiTable from 'markdown-it-multimd-table'
 import markdownItQuoteAttribution, { parseQuoteAttribution } from '../../../../shared/markdown-it-quote-attribution.ts'
 
 const IMAGE_HTML_ATTRIBUTES: Record<string, true> = {
@@ -627,9 +628,28 @@ function isFence(line: string): RegExpMatchArray | null {
 }
 
 const quoteAttributionParser = new MarkdownIt({ html: true }).use(markdownItQuoteAttribution)
+const nativeTableParser = new MarkdownIt().use(mdMultiTable, { multiline: true, rowspan: true, headerless: true })
+
+function unsupportedTableSources(source: string, lines: string[]): Map<number, number> {
+  const tables = new Map<number, number>()
+  if (!source.includes('|')) return tables
+  for (const token of nativeTableParser.parse(source, {})) {
+    if (token.type !== 'table_open' || token.level !== 0 || !token.map) continue
+    const [start, end] = token.map
+    const raw = lines.slice(start, end).join('\n')
+    // GFM cannot represent native spans/multiline cells or attrs. Its pipe
+    // serializer also changes escaped/code pipes. Keep those tables opaque.
+    if (
+      /\|\||\\\||\^\^|\{[^}\n]*\}|\\\s*\|?\s*$/m.test(raw) ||
+      [...raw.matchAll(/(`+)([^\n]*?)\1/g)].some(match => match[2]?.includes('|'))
+    ) tables.set(start, end)
+  }
+  return tables
+}
 
 export function prepareTiptapMarkdown(source: string): string {
   const lines = source.replace(/\r\n/g, '\n').split('\n')
+  const sourceTables = unsupportedTableSources(source, lines)
   // Only real first-paragraph quote markers bypass inline source preservation.
   // Inert author text must reach the native node parser without HTML/math placeholders.
   const attributionLines = new Set<number>()
@@ -710,15 +730,11 @@ export function prepareTiptapMarkdown(source: string): string {
       continue
     }
 
-    if (line.includes('|') && !attributionLines.has(index)) {
-      let end = index
-      while (end < lines.length && (lines[end] ?? '').includes('|')) end += 1
-      const tableLines = lines.slice(index, end)
-      if (tableLines.some(tableLine => /\^\^|\\\s*\|?\s*$/.test(tableLine))) {
-        output.push(blockPlaceholder('multiline-table', tableLines.join('\n')))
-        index = end
-        continue
-      }
+    const tableEnd = sourceTables.get(index)
+    if (tableEnd !== undefined && !attributionLines.has(index)) {
+      output.push(blockPlaceholder('multiline-table', lines.slice(index, tableEnd).join('\n')))
+      index = tableEnd
+      continue
     }
 
     output.push(protectInlineSource(line, attributionLines.has(index)))
@@ -794,9 +810,20 @@ const SUPPORTED_HTML_TAGS: Record<string, true> = {
 
 export function prepareTiptapHtml(source: string): string {
   if (!source || typeof document === 'undefined') return source
-  const withoutComments = source.replace(/<!--[\s\S]*?-->/g, comment => sourceNodeHtml('block', 'html', comment))
   const template = document.createElement('template')
-  template.innerHTML = withoutComments
+  template.innerHTML = source
+  // The native table schema flattens row groups and normalizes table attrs.
+  // Preserve such source as one inert block, not partially editable cells.
+  for (const table of [...template.content.querySelectorAll('table')]) {
+    const structured = table.querySelector('thead, tfoot, caption, colgroup')
+    const attributed = table.attributes.length > 0 || [...table.querySelectorAll('*')].some(element => element.attributes.length > 0)
+    if (!structured && !attributed) continue
+    const replacement = document.createElement('wiki-source-block')
+    replacement.setAttribute('data-kind', 'html')
+    replacement.setAttribute('data-source', encodeWikiSource(table.outerHTML))
+    table.replaceWith(replacement)
+  }
+  template.innerHTML = template.innerHTML.replace(/<!--[\s\S]*?-->/g, comment => sourceNodeHtml('block', 'html', comment))
   const elements = [...template.content.querySelectorAll('*')]
   for (const element of elements) {
     if (!element.isConnected && !template.content.contains(element)) continue
@@ -818,8 +845,9 @@ export function restoreTiptapHtmlSources(source: string): string {
   template.innerHTML = source
   for (const element of [...template.content.querySelectorAll('wiki-source-block, wiki-source-inline')]) {
     const restored = decodeWikiSource(element.getAttribute('data-source'))
-    const marker = document.createTextNode(`__WIKI_SOURCE_${encodeWikiSource(restored)}__`)
+    // Colons are outside Base64url, so adjacent source markers stay distinct.
+    const marker = document.createTextNode(`__WIKI_SOURCE:${encodeWikiSource(restored)}:__`)
     element.replaceWith(marker)
   }
-  return template.innerHTML.replace(/__WIKI_SOURCE_([A-Za-z0-9_-]+)__/g, (_match, encoded: string) => decodeWikiSource(encoded))
+  return template.innerHTML.replace(/__WIKI_SOURCE:([A-Za-z0-9_-]+):__/g, (_match, encoded: string) => decodeWikiSource(encoded))
 }

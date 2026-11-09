@@ -100,6 +100,7 @@
 </template>
 
 <script lang='ts'>
+import { helpers } from '../../helpers/index.ts'
 import AdminWebhookGuide from './admin-webhook-guide.vue'
 import { WEBHOOK_EVENTS, isWebhookEventName } from '../../../shared/webhook-events.ts'
 import { wikiStore } from '@/store/index.ts'
@@ -259,7 +260,7 @@ export default {
     },
     toggleEvent (name: string) { this.eventsText = (this.subscribedEvents.includes(name) ? this.subscribedEvents.filter(event => event !== name) : [...this.subscribedEvents, name]).join('\n') },
     endpointHost (url: string): string { try { return new URL(url).host } catch { return url } },
-    formatDate (value: string | null): string { return value ? new Date(value).toLocaleString() : '—' },
+    formatDate (value: string | null): string { return value ? (Number.isNaN(new Date(value).valueOf()) ? 'Invalid Date' : String(helpers.formatMoment(value, 'L LT'))) : '—' },
     deliveryLabel (delivery: WebhookDelivery): string { return delivery.responseSnippet === 'Webhook disabled before delivery' ? this.$t('admin:webhooks.skippedDisabled') : delivery.state },
     async sendTest () {
       if (this.webhookBusy || this.dirty || !this.savedHook?.isEnabled || !this.draft.id || this.revealedSecret) return

@@ -227,4 +227,62 @@ describe('distributed config reload', () => {
     expect(canonicalConfig.flags).toEqual({ ldapdebug: false, sqllog: true })
     expect(knexConfig.debug).toBe(true)
   })
+
+  it.each([1, '1', 65535, '65535'])('normalizes a complete saved HTTP port override %j on the canonical configuration', async port => {
+    const canonicalConfig = { port: 3000, retained: true }
+    const savedConfig = configured({ port })
+    const persistedChanges = new Map<string, unknown>()
+    const logger = { error: vi.fn(), warn: vi.fn() }
+    const emit = vi.fn()
+    globalThis.WIKI = {
+      config: canonicalConfig,
+      models: {
+        settings: {
+          getConfig: async () => savedConfig,
+          query: () => ({
+            patch: ({ value }: { value: unknown }) => ({
+              where: async (column: string, key: string) => {
+                expect(column).toBe('key')
+                if (!Object.hasOwn(savedConfig, key) && !persistedChanges.has(key)) return 0
+                persistedChanges.set(key, value)
+                return 1
+              }
+            }),
+            insert: async ({ key, value }: { key: string; value: unknown }) => {
+              persistedChanges.set(key, value)
+            }
+          })
+        }
+      },
+      logger,
+      events: { outbound: { emit } },
+      product: { name: 'tsEpistle' }
+    } as typeof globalThis.WIKI
+    const { default: configService } = await vi.importFresh<typeof ConfigModule>('../../core/config.ts', import.meta.url)
+    await configService.loadFromDb()
+    expect(globalThis.WIKI.config).toBe(canonicalConfig)
+    expect(canonicalConfig.port).toBe(Number(port))
+    expect(canonicalConfig.retained).toBe(true)
+    expect(logger.error).not.toHaveBeenCalled()
+    expect(logger.warn).not.toHaveBeenCalled()
+    expect(emit).not.toHaveBeenCalled()
+    // An installation-level environment override legitimately persists its missing DB row during reload.
+    const siteId = process.env.OFFLINE_DRAFT_SITE_ID?.trim()
+    expect(Object.fromEntries(persistedChanges)).toEqual(siteId ? { offlineDraftSiteId: { v: siteId } } : {})
+  })
+
+  it.each([0, -1, 65536, 1.5, NaN, Infinity, 'private-invalid-value', null, true, {}])(
+    'rejects invalid saved HTTP port %j before publishing any overlay',
+    async port => {
+      const canonicalConfig = { port: 3000, title: 'Unchanged' }
+      globalThis.WIKI = {
+        config: canonicalConfig,
+        models: { settings: { getConfig: async () => configured({ port, title: 'Must not publish', sessionSecret: 'private-session-secret' }) } },
+        product: { name: 'tsEpistle' }
+      } as typeof globalThis.WIKI
+      const { default: configService } = await vi.importFresh<typeof ConfigModule>('../../core/config.ts', import.meta.url)
+      await expect(configService.loadFromDb()).rejects.toThrow('Invalid HTTP listener port from saved setting "port": expected an integer from 1 to 65535.')
+      expect(canonicalConfig).toEqual({ port: 3000, title: 'Unchanged' })
+    }
+  )
 })

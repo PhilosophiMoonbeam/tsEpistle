@@ -5,6 +5,9 @@ import { createApiPrincipal } from '../../helpers/api-principal.ts'
 import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
 import { up as addLeaseToken } from '../../db/migrations/2.5.158.ts'
 import { up as createAssetRelocation } from '../../db/migrations/tsepistle-000037-asset-relocation.ts'
+import { up as createReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
 
 
 const originalWIKI = global.WIKI
@@ -148,6 +151,10 @@ const createMutationSchema = async db => {
     table.dateTime('createdAt').notNullable()
     table.dateTime('publishedAt').nullable()
   })
+  await db.schema.createTable('groups', table => { table.integer('id').primary() })
+  await createReviewRouting(db)
+  await createLifecycle(db)
+  await createStoragePageImportOwners(db)
 }
 describe('private page mutation existence isolation', () => {
   let Page
@@ -169,6 +176,7 @@ describe('private page mutation existence isolation', () => {
   beforeEach(async () => {
     vi.resetModules()
     const mutationOutboxRows = []
+    let lifecycleClock
     const knex = vi.fn(table => {
       if (table === 'storage') return { where: () => ({ orderBy: () => ({ forShare: () => ({ select: async () => [] }) }) }) }
       if (table === 'pages') {
@@ -176,12 +184,14 @@ describe('private page mutation existence isolation', () => {
           select: vi.fn().mockReturnThis(),
           where: vi.fn().mockReturnThis(),
           forUpdate: vi.fn().mockReturnThis(),
+          forShare: vi.fn().mockReturnThis(),
           first: vi.fn().mockResolvedValue({
             id: 17,
             sourceRevision: '2',
             renderedSourceRevision: null,
             updatedAt: '2026-08-14T00:00:00.000Z',
             content: 'changed content',
+            contentType: 'markdown',
             localeCode: 'en',
             path: 'secret',
             visibility: 'private',
@@ -195,6 +205,18 @@ describe('private page mutation existence isolation', () => {
           where: vi.fn().mockReturnThis(),
           first: vi.fn().mockResolvedValue(undefined)
         }
+      }
+      if (table === 'pageLifecycleClocks') return {
+        insert: vi.fn(row => {
+          lifecycleClock ??= { ...row }
+          return { onConflict: () => ({ ignore: async () => [] }) }
+        }),
+        where: vi.fn().mockReturnThis(), forUpdate: vi.fn().mockReturnThis(),
+        first: vi.fn(async () => lifecycleClock),
+        update: vi.fn(async patch => { Object.assign(lifecycleClock, patch); return 1 })
+      }
+      if (table === 'pageReviewRouting') return {
+        where: vi.fn().mockReturnThis(), whereNot: vi.fn().mockReturnThis(), update: vi.fn(async () => 0)
       }
       if (table === 'pageMutationOutbox') {
         return {
@@ -215,7 +237,7 @@ describe('private page mutation existence isolation', () => {
       return { insert: vi.fn().mockResolvedValue(1) }
     })
     knex.client = { config: { client: 'pg' } }
-    knex.raw = vi.fn()
+    knex.raw = vi.fn(async () => ({ rows: [{ now: new Date() }] }))
     knex.transaction = vi.fn(callback => callback(knex))
     global.WIKI = {
       ROOTPATH: '/test',
@@ -997,7 +1019,13 @@ describe('private page mutation existence isolation', () => {
       deletePageFromCache: vi.fn()
     }
 
-    await Page.convertPage({ id: 17, user: owner, editor: 'markdown' })
+    // Share retained custody with the model's post-reset module instance.
+    const { retainPageConversionReview } = await import('../../helpers/page-conversion-review.ts')
+    const review = retainPageConversionReview({ pageId: 17, sourceRevision: originalPage.sourceRevision, editor: 'markdown', userId: owner.id, source: originalPage.content }, {
+      candidate: convertedPage.content,
+      report: { warnings: [], differences: { text: false, code: false, links: false, tables: false }, roundtripSource: '', previewHtml: '', renderer: 'native test review' }
+    })
+    await Page.convertPage({ id: 17, user: owner, editor: 'markdown', reviewToken: review.reviewToken })
 
     const patchValue = patch.mock.calls[0][0]
     expect(patchValue).toMatchObject({

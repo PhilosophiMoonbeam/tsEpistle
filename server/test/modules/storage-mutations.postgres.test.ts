@@ -1,21 +1,34 @@
 import knexModule, { type Knex } from 'knex'
 import * as Objection from 'objection'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import * as yaml from 'js-yaml'
+import { EventEmitter } from 'node:events'
+import auth, { loadPageRuleAuthority } from '../../core/auth.ts'
+import pageErrors from '../../helpers/error.ts'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { DurableJobDeferral, DurableJobStore, runDurableJobBatch } from '../../core/durable-jobs.ts'
 import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { up as createOutbox } from '../../db/migrations/2.5.131.ts'
+import { up as createProtection } from '../../db/migrations/2.5.134.ts'
+import { up as createCanonicalMutationStore } from '../../db/migrations/2.5.139.ts'
 import { up as addLeaseToken } from '../../db/migrations/2.5.158.ts'
 import { up as createAssetRelocation } from '../../db/migrations/tsepistle-000037-asset-relocation.ts'
+import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
+import { up as installRevisionTrigger } from '../../db/migrations/tsepistle-000035-page-search-inclusion.ts'
+import { up as createReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { recordStoragePageImportOwner } from '../../helpers/storage-page-import-owner.ts'
+import type PageModel from '../../models/pages.ts'
 import { createAssetRelocationHandler } from '../../jobs/asset-relocation.ts'
 import { up as createStorageAdministration } from '../../db/migrations/tsepistle-000023-storage-administration.ts'
 import { createStorageMutationHandler, enqueueAssetStorageMutation, enqueuePageStorageMutation } from '../../jobs/storage-mutations.ts'
 import { withGitMutationLock } from '../../modules/storage/git/mutation-lock.ts'
-import { openStorageRoot, type StorageRootHandle } from '../../modules/storage/local-filesystem.ts'
+import { openStorageRoot, StorageRootHandle } from '../../modules/storage/local-filesystem.ts'
 import { okfFilePath, parseOkfDocument } from '../../okf/format.ts'
 import type StorageModel from '../../models/storage.ts'
 import type AssetModel from '../../models/assets.ts'
@@ -25,10 +38,12 @@ import { storageModuleDefinition } from '../../repositories/storage-configuratio
 import { readModuleDefinition } from '../../models/moduleTypes.ts'
 import commonHelper from '../../helpers/common.ts'
 import type { StorageModuleDefinition, StorageTargetDraft } from '../../../shared/storage-workspace.ts'
+import { storageImportLocationKey, storageImportSourceKey } from '../../modules/storage/import-identity.ts'
+import commonDisk from '../../modules/storage/disk/common.ts'
 
 const connection = getPostgresTestConnection('_storage_mutation_test', import.meta.path)
 const suite = connection ? describe : describe.skip
-const author = { id: 1, name: 'Native Storage Test', email: 'storage@example.test' }
+const author = { id: 1, name: 'Native Storage Test', email: 'storage@example.test', permissions: ['manage:system'] }
 const mutationHandler = createStorageMutationHandler()
 const handlers = { 'storage-mutation@1': mutationHandler, 'storage-mutation@2': mutationHandler }
 
@@ -38,6 +53,7 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
   let gitDefinition: StorageModuleDefinition
   let Storage: typeof StorageModel
   let Asset: typeof AssetModel
+  let Page: typeof PageModel
   let root: StorageRootHandle
   let directory: string
   let repository: string
@@ -60,6 +76,41 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     extra: {},
     isPublished: true
   })
+  const importPage = async (
+    transaction: Knex.Transaction,
+    input: { path: string; sourcePath: string; content: string; editor?: 'markdown' | 'ckeditor'; mapped?: boolean; isPublished?: boolean }
+  ): Promise<number> => {
+    const target = await transaction('storage').where({ key: 'git' }).first('config')
+    const imported = await Page.createPage({
+      user: author,
+      locale: 'en',
+      path: input.path,
+      title: input.path,
+      description: '',
+      content: input.content,
+      editor: input.editor ?? 'markdown',
+      visibility: 'public',
+      isPublished: input.isPublished ?? true,
+      skipStorage: true,
+      okfProducer: 'import:git',
+      transaction,
+      canonicalTransactionHook: async (canonical, commit) => {
+        await recordStoragePageImportOwner(canonical, {
+          owner: {
+            sourceKey: storageImportSourceKey(root.sourceIdentity, 'GIT', target.config),
+            sourcePath: input.sourcePath,
+            sourceSha256: createHash('sha256').update(input.content).digest('hex'),
+            locationKey: storageImportLocationKey('GIT', target.config),
+            mapped: input.mapped ?? false
+          },
+          pageId: commit.id,
+          sourceRevision: commit.sourceRevision,
+          outboxId: commit.outboxId
+        })
+      }
+    })
+    return imported.id
+  }
   const mutatePage = async (id: number, patch: Record<string, unknown>, changeReason?: string) =>
     db.transaction(async transaction => {
       await lockSearchIndex(transaction, false)
@@ -115,15 +166,38 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     await addLeaseToken(db)
     await db.raw(`
       CREATE TABLE storage (key text PRIMARY KEY, "isEnabled" boolean NOT NULL, mode text NOT NULL, "syncInterval" text NOT NULL, config jsonb NOT NULL, state jsonb);
-      CREATE TABLE users (id integer PRIMARY KEY, name text NOT NULL, email text NOT NULL, "isActive" boolean NOT NULL DEFAULT true, "authVersion" integer NOT NULL DEFAULT 0);
+      CREATE TABLE users (id integer PRIMARY KEY, name text NOT NULL, email text NOT NULL, "isActive" boolean NOT NULL DEFAULT true, "isSystem" boolean NOT NULL DEFAULT false, "authVersion" integer NOT NULL DEFAULT 0);
       CREATE TABLE settings (key text PRIMARY KEY, value jsonb, "updatedAt" text NOT NULL);
-      CREATE TABLE groups (id integer PRIMARY KEY, permissions jsonb NOT NULL, "adminRevision" text NOT NULL);
+      CREATE TABLE locales (code text PRIMARY KEY);
+      INSERT INTO locales (code) VALUES ('en');
+      CREATE TABLE groups (id integer PRIMARY KEY, name text NOT NULL DEFAULT 'Native storage administrators', permissions jsonb NOT NULL, "pageRules" jsonb NOT NULL DEFAULT '[]', "adminRevision" text NOT NULL);
       CREATE TABLE "userGroups" ("userId" integer NOT NULL, "groupId" integer NOT NULL);
-      CREATE TABLE pages (id integer PRIMARY KEY, path text NOT NULL, "localeCode" text NOT NULL, content text NOT NULL, "contentType" text NOT NULL,
-        visibility text NOT NULL, title text NOT NULL, description text NOT NULL, "sourceRevision" bigint NOT NULL, "authorId" integer NOT NULL,
-        "createdAt" timestamptz NOT NULL, "updatedAt" timestamptz NOT NULL, "editorKey" text NOT NULL, extra jsonb NOT NULL, "isPublished" boolean NOT NULL);
-      CREATE TABLE tags (id integer PRIMARY KEY, tag text NOT NULL);
+      CREATE TABLE pages (id serial PRIMARY KEY, path text NOT NULL, hash text NOT NULL DEFAULT '', "localeCode" text NOT NULL, content text NOT NULL, "contentType" text NOT NULL,
+        visibility text NOT NULL, title text NOT NULL, description text NOT NULL, "authorId" integer NOT NULL, "creatorId" integer NOT NULL DEFAULT 1, "ownerId" integer, "changeReason" varchar(200),
+        "createdAt" timestamptz NOT NULL, "updatedAt" timestamptz NOT NULL, "editorKey" text NOT NULL, extra jsonb NOT NULL, "isPublished" boolean NOT NULL,
+        "renderedSourceRevision" bigint, render text NOT NULL DEFAULT '', toc text NOT NULL DEFAULT '[]', "publishStartDate" text NOT NULL DEFAULT '', "publishEndDate" text NOT NULL DEFAULT '');
+      CREATE TABLE comments (
+        id serial PRIMARY KEY, "authorId" integer NOT NULL REFERENCES users(id), "pageId" integer REFERENCES pages(id),
+        content text NOT NULL, render text NOT NULL DEFAULT '', "replyTo" integer NOT NULL DEFAULT 0,
+        name text NOT NULL DEFAULT '', email text NOT NULL DEFAULT '', ip text NOT NULL DEFAULT '',
+        "isHidden" boolean NOT NULL DEFAULT false, "moderationRevision" text NOT NULL DEFAULT '',
+        "moderatedBy" integer, "moderatedAt" timestamptz, "moderationReason" text NOT NULL DEFAULT '',
+        "createdAt" timestamptz NOT NULL DEFAULT now(), "updatedAt" timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE TABLE "pageHistory" (
+        id serial PRIMARY KEY, "pageId" integer NOT NULL, "authorId" integer NOT NULL, path text NOT NULL, hash text NOT NULL,
+        title text NOT NULL, description text NOT NULL, visibility text NOT NULL, "ownerId" integer, "isPublished" boolean NOT NULL,
+        "publishStartDate" text NOT NULL, "publishEndDate" text NOT NULL, content text NOT NULL, "contentType" text NOT NULL, "editorKey" text NOT NULL,
+        extra jsonb NOT NULL, "localeCode" text NOT NULL, action text NOT NULL, "versionDate" timestamptz NOT NULL,
+        "changeReason" varchar(200), "createdAt" timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE TABLE "pageHistoryTags" ("pageId" integer NOT NULL, "tagId" integer NOT NULL);
+      CREATE TABLE "deletedPageRecovery" ("pageId" integer NOT NULL, "deletionVersionId" integer NOT NULL, "deletionRevision" bigint NOT NULL,
+        "securityContext" text, "createdAt" timestamptz NOT NULL DEFAULT now(), PRIMARY KEY ("pageId", "deletionVersionId"));
+      CREATE TABLE "apiKeys" (id integer PRIMARY KEY);
+      CREATE TABLE tags (id integer PRIMARY KEY, tag text NOT NULL, title text NOT NULL DEFAULT '', "redirectToId" integer, "isArchived" boolean NOT NULL DEFAULT false);
       CREATE TABLE "pageTags" ("pageId" integer NOT NULL, "tagId" integer NOT NULL);
+      CREATE TABLE "pageLinks" ("pageId" integer NOT NULL, "localeCode" text NOT NULL, path text NOT NULL);
       CREATE TABLE "assetFolders" (id integer PRIMARY KEY, name text NOT NULL DEFAULT '', slug text NOT NULL, "parentId" integer);
       CREATE TABLE assets (id serial PRIMARY KEY, hash text NOT NULL UNIQUE, filename text NOT NULL, "folderId" integer, "authorId" integer NOT NULL,
         ext text NOT NULL, kind text NOT NULL, mime text NOT NULL, "fileSize" integer NOT NULL, metadata jsonb NOT NULL DEFAULT '{}',
@@ -131,8 +205,15 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
       CREATE TABLE "assetData" (id integer PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE, data bytea NOT NULL);
     `)
     await createStorageAdministration(db)
+    await createOutbox(db)
+    await createProtection(db)
+    await createCanonicalMutationStore(db)
+    await installRevisionTrigger(db)
+    await createReviewRouting(db)
+    await createLifecycle(db)
     await createAssetRelocation(db)
-    await db('users').insert(author)
+    await createStoragePageImportOwners(db)
+    await db('users').insert({ id: author.id, name: author.name, email: author.email })
     await db('groups').insert({ id: 1, permissions: '["manage:system"]', adminRevision: 'initial' })
     await db('userGroups').insert({ userId: author.id, groupId: 1 })
     const definitionPath = path.resolve('server/modules/storage/git/definition.yml')
@@ -142,8 +223,15 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
   beforeEach(async () => {
     await db('durableJobs').delete()
     await db('assetRelocationOperations').delete()
+    await db('comments').delete()
     await db('pageTags').delete()
-    await db('pages').delete()
+    await db('deletedPageRecovery').delete()
+    await db('pageHistoryTags').delete()
+    await db('pageHistory').delete()
+    await db('outboxEvents').delete()
+    await db('pageMutationOutbox').delete()
+    await db('storagePageImportOwners').delete()
+    await db.raw('TRUNCATE pages RESTART IDENTITY CASCADE')
     await db('assets').delete()
     await db('storage').delete()
     await db('settings').where({ key: 'storageAdministration' }).update({ value: '{}' })
@@ -183,14 +271,19 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
         lang: { code: 'en', namespacing: false },
         uploads: { maxFileSize: 1_048_576, scanSVG: false, forceDownload: false }
       },
-      data: { storage: [{ key: 'git', isAvailable: true, schedule: false, internalSchedule: false }], reservedPaths: [] },
-      logger: console,
-      auth: {
-        checkAccess: () => true,
-        checkPageAccess: () => true,
-        loadPageRuleAuthority: async () => ({ requester: author, permissions: ['manage:system'], groups: [], tagAliases: {} })
+      configSvc: {},
+      events: { inbound: new EventEmitter(), outbound: new EventEmitter() },
+      lang: {},
+      startedAt: {},
+      data: {
+        storage: [{ key: 'git', isAvailable: true, schedule: false, internalSchedule: false }],
+        reservedPaths: [],
+        editors: [{ key: 'markdown', contentType: 'markdown' }, { key: 'ckeditor', contentType: 'html' }]
       },
+      logger: console,
+      auth: { checkAccess: auth.checkAccess, checkPageAccess: auth.checkPageAccess, loadPageRuleAuthority },
       Error: {
+        ...pageErrors,
         AssetInvalid: Error,
         AssetRenameInvalidExt: Error,
         AssetRenameInvalid: Error,
@@ -219,6 +312,20 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     Asset.knex(db)
     Folder.knex(db)
     Object.assign(wiki.models, { storage: Storage, assets: Asset, assetFolders: Folder })
+    // Page, Tag and User also capture WIKI; static imports would bind the preload runtime.
+    Page = (await import('../../models/pages.ts')).default
+    const Tag = (await import('../../models/tags.ts')).default
+    const User = (await import('../../models/users.ts')).default
+    const History = (await import('../../models/pageHistory.ts')).default
+    const Comment = (await import('../../models/comments.ts')).default
+    for (const model of [Page, Tag, User, History, Comment]) model.knex(db)
+    Object.assign(wiki.models, {
+      pages: Page, tags: Tag, users: User, pageHistory: History, comments: Comment,
+      editors: { getDefaultEditor: async (contentType: string) => contentType === 'html' ? 'ckeditor' : contentType }
+    })
+    // Tree scheduling is derived work; canonical source, authority, root event,
+    // projection intents and accepted ownership all use their native transaction.
+    vi.spyOn(Page, 'rebuildTree').mockResolvedValue(undefined)
     await activate()
   })
   afterEach(async () => {
@@ -230,6 +337,7 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     Storage.targets = []
     await root?.close()
     await rm(directory, { recursive: true, force: true })
+    vi.restoreAllMocks()
   })
   afterAll(async () => {
     globalThis.WIKI = originalWiki
@@ -252,6 +360,48 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     })
     return { provider, remote }
   }
+
+  it('retains an actual canonical create root in its immutable intent without adopting its equal-byte native Git export', async () => {
+    const created = await Page.createPage({
+      user: author, locale: 'en', path: 'unassociated-export', title: 'Native page without an imported source',
+      description: '', content: 'Equal exported bytes do not establish external import ownership.\n',
+      editor: 'markdown', visibility: 'public', isPublished: true
+    })
+    const admitted = await db('durableJobs').where({ type: 'storage-mutation' }).first()
+    const payload = JSON.parse(admitted.payload)
+    const rootEvent = await db('outboxEvents').where({ id: payload.sourceOutboxId }).first('*')
+    expect(admitted.version).toBe(2)
+    expect(payload).toMatchObject({
+      entityType: 'page', entityId: created.id, sourceRevision: String(created.sourceRevision),
+      paths: [okfFilePath('en', 'unassociated-export')]
+    })
+    expect(rootEvent).toMatchObject({
+      type: 'page.created', aggregateType: 'page', aggregateId: String(created.id)
+    })
+    expect(JSON.parse(rootEvent.payload)).toMatchObject({ pageId: created.id, path: 'unassociated-export', localeCode: 'en' })
+    expect(await db('storagePageImportOwners')).toEqual([])
+    await drain()
+    expect(await db('durableJobs').where({ id: admitted.id }).first('state', 'payload')).toEqual({
+      state: 'succeeded', payload: admitted.payload
+    })
+    const filename = okfFilePath('en', 'unassociated-export')
+    const published = await readFile(path.join(repository, filename), 'utf8')
+    expect(git('show', `HEAD:${filename}`)).toBe(published.trimEnd())
+    expect(parseOkfDocument(published)).toMatchObject({
+      body: 'Equal exported bytes do not establish external import ownership.\n',
+      metadata: { title: 'Native page without an imported source' }
+    })
+    expect(git('status', '--porcelain')).toBe('')
+    expect(await db('storagePageImportOwners')).toEqual([])
+    const beforePage = await db('pages').where({ id: created.id }).first('*')
+    const beforeEvents = await db('outboxEvents').orderBy('id')
+    const target = await db('storage').where({ key: 'git' }).first('config')
+    await expect(withGitMutationLock(replica, 'git', () =>
+      commonDisk.importFromDisk({ root, moduleName: 'GIT', ingestion: target.config }))).rejects.toThrow(/ownership|accepted native revision/u)
+    expect(await db('pages').where({ id: created.id }).first('*')).toEqual(beforePage)
+    expect(await db('outboxEvents').orderBy('id')).toEqual(beforeEvents)
+    expect(await db('storagePageImportOwners')).toEqual([])
+  })
 
   it.each(['sync', 'push'] as const)('publishes in %s mode when the remote advertises optional signing but no signer is configured', async mode => {
     const { provider, remote } = await prepareRemote(mode)
@@ -634,6 +784,14 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     expect(git('ls-tree', '-r', '--name-only', 'HEAD').split('\n')).not.toContain('guide.html')
     await expect(readFile(formerDiskPath)).rejects.toThrow()
     expect(await readFile(path.join(directory, 'disk-content', okfFilePath('en', 'guide')), 'utf8')).toContain('Converted canonical Markdown')
+    expect(await db('durableJobs').whereNot({ state: 'succeeded' })).toHaveLength(0)
+    const convertedHead = git('rev-parse', 'HEAD')
+    await db('durableJobs').update({ state: 'pending', completedAt: null, nextRunAt: new Date(0) })
+    await drain()
+    expect(git('rev-parse', 'HEAD')).toBe(convertedHead)
+    expect(await db('durableJobs').whereNot({ state: 'succeeded' })).toHaveLength(0)
+    await expect(readFile(formerDiskPath)).rejects.toThrow()
+    expect(await readFile(path.join(directory, 'disk-content', okfFilePath('en', 'guide')), 'utf8')).toContain('Converted canonical Markdown')
     await mutatePage(1, { visibility: 'private', content: 'Private converted source', sourceRevision: 3 })
     await drain()
     expect(git('ls-tree', '-r', '--name-only', 'HEAD')).toBe('')
@@ -702,6 +860,102 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
       await expect(readFile(exported)).rejects.toThrow()
       expect(git('ls-tree', '-r', '--name-only', 'HEAD')).toBe('')
     })
+  }
+
+  for (const key of ['git', 'disk'] as const) {
+    it.each(['private', 'delete', 'outside-bytes', 'foreign-root', 'unrelated'] as const)(
+      `withdraws only the actual accepted imported HTML through native ${key} producers (%s)`,
+      async scenario => {
+        if (key === 'disk') {
+          await db('storage').where({ key: 'git' }).update({ isEnabled: false })
+          Storage.activeTargets = []
+          Storage.targets = []
+          await enableDiskTarget()
+        }
+        const target = Storage.activeTargets.find(candidate => candidate.key === key)
+        const nativeRoot = target?.fn.root
+        if (!target || !(nativeRoot instanceof StorageRootHandle)) throw new Error('Missing actual native import root')
+        const acceptedBytes = '<p>Actual imported public HTML to withdraw</p>'
+        await nativeRoot.writeAtomic('guide.html', acceptedBytes)
+        if (key === 'git') {
+          git('add', '--', 'guide.html')
+          git('commit', '--quiet', '-m', 'Accept actual HTML import source')
+        }
+        let importingRoot = nativeRoot
+        if (scenario === 'foreign-root') {
+          const foreign = path.join(directory, 'foreign-import')
+          await mkdir(foreign)
+          importingRoot = await openStorageRoot(foreign)
+          await importingRoot.writeAtomic('guide.html', acceptedBytes)
+          if (key === 'git') {
+            execFileSync('git', ['init', '--quiet', '--initial-branch=main'], { cwd: foreign })
+            execFileSync('git', ['add', '--', 'guide.html'], { cwd: foreign })
+            execFileSync('git', ['-c', `user.name=${author.name}`, '-c', `user.email=${author.email}`, 'commit', '--quiet', '-m', 'Foreign accepted source'], { cwd: foreign })
+          }
+        }
+        try {
+          const imported = key === 'git'
+            ? await withGitMutationLock(replica, 'git', () => commonDisk.importFromDisk({ root: importingRoot, moduleName: 'GIT', ingestion: target.config }))
+            : await commonDisk.importFromDisk({ root: importingRoot, moduleName: 'DISK', ingestion: target.config })
+          expect(imported).toHaveLength(1)
+          expect(imported[0]).toMatchObject({ ok: true, relPath: 'guide.html' })
+        } finally {
+          if (importingRoot !== nativeRoot) await importingRoot.close()
+        }
+        const canonical = await db('pages').where({ path: 'guide' }).first('*')
+        expect(canonical).toMatchObject({ contentType: 'html', visibility: 'public' })
+        expect(await db('storagePageImportOwners')).toHaveLength(1)
+        if (scenario === 'outside-bytes') {
+          await nativeRoot.writeAtomic('guide.html', '<p>Unaccepted outside replacement</p>')
+          if (key === 'git') {
+            git('add', '--', 'guide.html')
+            git('commit', '--quiet', '-m', 'Preserve unaccepted outside source')
+          }
+        }
+        if (scenario === 'delete') await Page.deletePage({ id: canonical.id, user: author })
+        else await Page.changeVisibility({ id: canonical.id, visibility: 'private', user: author, skipStorage: scenario === 'unrelated' })
+        if (scenario === 'unrelated') {
+          await db.transaction(transaction => enqueueAssetStorageMutation(transaction, { assetId: canonical.id, paths: ['guide.html'], author }))
+        }
+        const ownerBefore = await db('storagePageImportOwners').where({ pageId: canonical.id }).first('*')
+        const jobs = await db('durableJobs').where({ type: 'storage-mutation' })
+        expect(jobs).toHaveLength(1)
+        const payload = JSON.parse(jobs[0].payload)
+        if (scenario !== 'unrelated') {
+          expect(jobs[0].version).toBe(2)
+          expect(payload).toMatchObject({ entityType: 'page', entityId: canonical.id, paths: ['guide.html'] })
+          expect(typeof payload.sourceOutboxId).toBe('string')
+        }
+        await drain()
+        const finished = await db('durableJobs').where({ id: jobs[0].id }).first('*')
+        if (scenario === 'private' || scenario === 'delete') {
+          expect(finished.state).toBe('succeeded')
+          await expect(nativeRoot.openFile('guide.html')).rejects.toThrow()
+          if (key === 'git') expect(git('ls-tree', '-r', '--name-only', 'HEAD')).toBe('')
+        } else {
+          expect(finished.state).toBe(scenario === 'unrelated' ? 'succeeded' : 'pending')
+          if (scenario !== 'unrelated') expect(finished.lastError).toContain('withdrawal provenance is unreviewed')
+          const retained = await nativeRoot.openFile('guide.html')
+          try {
+            expect((await retained.readBounded(4096)).toString()).toBe(
+              scenario === 'outside-bytes' ? '<p>Unaccepted outside replacement</p>' : acceptedBytes
+            )
+          } finally {
+            await retained.close()
+          }
+        }
+        expect(await db('storagePageImportOwners').where({ pageId: canonical.id }).first('*')).toEqual(ownerBefore)
+        expect(await db('storagePageImportOwners')).toHaveLength(1)
+        if (scenario === 'delete') {
+          expect(await db('pages').where({ id: canonical.id })).toHaveLength(0)
+          expect(ownerBefore.status).toBe('deleted')
+        } else {
+          expect(await db('pages').where({ id: canonical.id }).first('visibility', 'content')).toEqual({
+            visibility: 'private', content: canonical.content
+          })
+        }
+      }
+    )
   }
 
   it('retains native relocation for an enabled inactive offline target and reconciles real Git after recovery', async () => {
@@ -1089,8 +1343,7 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
           // This is the same native canonical fence used by ordinary and skipStorage page producers.
           await lockSearchIndex(transaction, false)
           expect(removed).toBe(true)
-          await transaction('pages').insert({ ...page(1, 'new-page', importedSource), contentType: 'html', editorKey: 'code' })
-          await enqueuePageStorageMutation(transaction, { pageId: 1, author, skipStorage: true })
+          await importPage(transaction, { path: 'new-page', sourcePath: 'new-page.html', content: importedSource, editor: 'ckeditor' })
         })
         .catch(error => error)
       const pid = await Promise.race([
@@ -1140,8 +1393,7 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     await db.transaction(async transaction => {
       await transaction('assets').where({ id: asset.id }).delete()
       await enqueueAssetStorageMutation(transaction, { assetId: asset.id, paths: ['legacy.md'], author })
-      await transaction('pages').insert(page(1, 'legacy', 'Newer imported page source'))
-      await enqueuePageStorageMutation(transaction, { pageId: 1, author, skipStorage: true })
+      await importPage(transaction, { path: 'legacy', sourcePath: 'legacy.md', content: 'Newer imported page source' })
     })
     await root.writeAtomic('legacy.md', 'Newer imported page source')
     git('add', '--', 'legacy.md')
@@ -1151,6 +1403,67 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     expect(git('show', 'HEAD:legacy.md')).toBe('Newer imported page source')
     expect(git('rev-parse', 'HEAD')).toBe(imported)
     expect(await db('durableJobs').whereNot({ state: 'succeeded' })).toHaveLength(0)
+  })
+
+  it('retains an ordinary former asset path when a matching page has no reviewed source ownership, even if their numeric ids match', async () => {
+    const source = path.join(directory, 'guide.html')
+    const bytes = Buffer.from('Former HTML asset bytes')
+    await writeFile(source, bytes)
+    await Asset.upload({
+      originalname: 'guide.html', assetPath: 'guide.html', mimetype: 'text/html', size: bytes.length,
+      folderId: null, path: source, mode: 'import', user: author
+    })
+    await drain()
+    const asset = await db('assets').first()
+    await db.transaction(async transaction => {
+      await transaction('assets').where({ id: asset.id }).delete()
+      await enqueueAssetStorageMutation(transaction, { assetId: asset.id, paths: ['guide.html'], author })
+      await transaction('pages').insert(page(asset.id, 'guide', 'Unassociated canonical Markdown'))
+    })
+    await root.writeAtomic('guide.html', '<p>External source with unknown ownership</p>')
+    git('add', '--', 'guide.html')
+    git('commit', '--quiet', '-m', 'External source replaces former asset')
+    const head = git('rev-parse', 'HEAD')
+    const canonical = await db('pages').where({ id: asset.id }).first()
+    await drain()
+    expect(git('rev-parse', 'HEAD')).toBe(head)
+    expect(git('show', 'HEAD:guide.html')).toBe('<p>External source with unknown ownership</p>')
+    expect(await db('pages').where({ id: asset.id }).first()).toEqual(canonical)
+    expect(await db('durableJobs').whereNot({ state: 'succeeded' })).toHaveLength(1)
+    expect((await db('durableJobs').where({ state: 'pending' }).first()).lastError).toContain('ownership is unreviewed')
+  })
+
+  it.each([false, true])('preserves a dotted upstream source during durable delete recovery (reviewed ownership=%s)', async associated => {
+    const source = path.join(directory, 'a.b.md')
+    const bytes = Buffer.from('Former asset at dotted source')
+    await writeFile(source, bytes)
+    await Asset.upload({
+      originalname: 'a.b.md', assetPath: 'a.b.md', mimetype: 'text/plain', size: bytes.length,
+      folderId: null, path: source, mode: 'import', user: author
+    })
+    await drain()
+    const asset = await db('assets').first()
+    await db.transaction(async transaction => {
+      await transaction('assets').where({ id: asset.id }).delete()
+      await enqueueAssetStorageMutation(transaction, { assetId: asset.id, paths: ['a.b.md'], author })
+      if (associated) {
+        await importPage(transaction, { path: 'ab', sourcePath: 'a.b.md', content: 'Reviewed source bytes', mapped: true, isPublished: false })
+      } else {
+        await transaction('pages').insert({ ...page(1, 'ab', 'Canonical page must never be inferred from a.b.md'), isPublished: false })
+      }
+    })
+    await root.writeAtomic('a.b.md', 'Reviewed source bytes')
+    git('add', '--', 'a.b.md')
+    git('commit', '--quiet', '-m', 'External source occupies former asset path')
+    const head = git('rev-parse', 'HEAD')
+    const canonical = await db('pages').where({ id: 1 }).first()
+    await drain()
+    expect(git('rev-parse', 'HEAD')).toBe(head)
+    expect(git('show', 'HEAD:a.b.md')).toBe('Reviewed source bytes')
+    expect(await db('pages').where({ id: 1 }).first()).toEqual(canonical)
+    const remaining = await db('durableJobs').whereNot({ state: 'succeeded' })
+    if (associated) expect(remaining).toHaveLength(0)
+    else expect(remaining).toHaveLength(1)
   })
 
   it('reclaims a crashed final-attempt lease and rejects stale-token and forged-identity receipts', async () => {

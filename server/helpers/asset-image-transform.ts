@@ -12,12 +12,19 @@ export const ASSET_IMAGE_TRANSFORM_LIMITS = {
   outputPixels: 25_000_000,
   outputTotalPixels: 100_000_000,
   outputBytes: 25 * 1024 * 1024,
-  processingSeconds: 12
+  processingSeconds: 12,
+  operations: 16
 } as const
 
 export type AssetImageFormat = 'png' | 'jpeg' | 'webp' | 'gif'
 export type AssetImageAspectPolicy = 'preserve' | 'stretch'
 export type AssetImageAnimationPolicy = 'preserve' | 'first-frame'
+
+export type AssetImageOperation =
+  | { type: 'crop'; left: number; top: number; width: number; height: number }
+  | { type: 'rotate'; turns: 1 | 2 | 3 }
+  | { type: 'mirror'; axis: 'horizontal' | 'vertical' }
+  | { type: 'fill'; left: number; top: number; width: number; height: number; color: string }
 
 export type AssetImageTransformOptions = {
   width: number
@@ -26,6 +33,7 @@ export type AssetImageTransformOptions = {
   format: AssetImageFormat
   quality: number
   animationPolicy: AssetImageAnimationPolicy
+  operations?: AssetImageOperation[]
 }
 
 export type AssetImageTransformResult = {
@@ -34,6 +42,8 @@ export type AssetImageTransformResult = {
   height: number
   format: AssetImageFormat
   frames: number
+  editWidth: number
+  editHeight: number
 }
 
 export type AssetImageTransformErrorCode =
@@ -154,6 +164,39 @@ const validateMetadata = (metadata: Metadata): { frames: number; format: AssetIm
   return { frames, format }
 }
 
+// Validate the whole program before decoding pixels. Every region addresses the
+// EXIF-oriented image produced by all preceding edits, before the final resize.
+const operationGeometry = (operations: unknown, initialWidth: number, initialHeight: number): { width: number; height: number } => {
+  if (!Array.isArray(operations) || operations.length > ASSET_IMAGE_TRANSFORM_LIMITS.operations) {
+    fail('ASSET_IMAGE_INVALID', 'Use at most 16 image operations.')
+  }
+  let width = initialWidth
+  let height = initialHeight
+  for (const operation of operations) {
+    if (!operation || typeof operation !== 'object' || Array.isArray(operation)) fail('ASSET_IMAGE_INVALID', 'Invalid image operation.')
+    const keys = Object.keys(operation)
+    if (operation.type === 'rotate') {
+      if (keys.some(key => !['type', 'turns'].includes(key)) || ![1, 2, 3].includes(operation.turns)) fail('ASSET_IMAGE_INVALID', 'Rotation must be one, two or three quarter turns.')
+      if (operation.turns !== 2) [width, height] = [height, width]
+    } else if (operation.type === 'mirror') {
+      if (keys.some(key => !['type', 'axis'].includes(key)) || !['horizontal', 'vertical'].includes(operation.axis)) fail('ASSET_IMAGE_INVALID', 'Choose a mirror axis.')
+    } else if (operation.type === 'crop' || operation.type === 'fill') {
+      const fields = operation.type === 'fill' ? ['type', 'left', 'top', 'width', 'height', 'color'] : ['type', 'left', 'top', 'width', 'height']
+      if (keys.some(key => !fields.includes(key)) ||
+        ![operation.left, operation.top, operation.width, operation.height].every(Number.isSafeInteger) ||
+        operation.left < 0 || operation.top < 0 || operation.width < 1 || operation.height < 1 ||
+        operation.left + operation.width > width || operation.top + operation.height > height ||
+        (operation.type === 'fill' && (typeof operation.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(operation.color)))) {
+        fail('ASSET_IMAGE_INVALID', 'Image regions must be nonempty integer rectangles inside the current image; fill must be an opaque RGB color.')
+      }
+      if (operation.type === 'crop') { width = operation.width; height = operation.height }
+    } else {
+      fail('ASSET_IMAGE_INVALID', 'Unknown image operation.')
+    }
+  }
+  return { width, height }
+}
+
 const encode = (image: Sharp, format: AssetImageFormat, quality: number): Sharp => {
   switch (format) {
     case 'png':
@@ -172,16 +215,30 @@ export const transformAssetImage = async (
   source: Buffer | Uint8Array,
   options: AssetImageTransformOptions
 ): Promise<AssetImageTransformResult> => {
+  const deadline = Date.now() + ASSET_IMAGE_TRANSFORM_LIMITS.processingSeconds * 1000
   validateOptions(options)
   const bytes = inputBytes(source)
   if (bytes.length < 1) fail('ASSET_IMAGE_INVALID', 'The source image is empty.')
   if (bytes.length > ASSET_IMAGE_TRANSFORM_LIMITS.inputBytes) {
     fail('ASSET_IMAGE_TOO_LARGE', 'The source image exceeds the input byte limit.')
   }
+  operationGeometry(options.operations === undefined ? [] : options.operations, ASSET_IMAGE_TRANSFORM_LIMITS.inputDimension, ASSET_IMAGE_TRANSFORM_LIMITS.inputDimension)
 
   const metadata = await inputMetadata(bytes)
   const input = validateMetadata(metadata)
   const animated = input.frames > 1
+  const operations = options.operations === undefined ? [] : options.operations
+  const swapped = (metadata.orientation ?? 1) >= 5
+  const initialWidth = swapped ? (metadata.pageHeight ?? metadata.height)! : metadata.width!
+  const initialHeight = swapped ? metadata.width! : (metadata.pageHeight ?? metadata.height)!
+  const geometry = operationGeometry(operations, initialWidth, initialHeight)
+  const opaqueFill = operations.some(operation => operation.type === 'fill')
+  if (animated && operations.length > 0 && options.animationPolicy !== 'first-frame') {
+    fail('ASSET_IMAGE_UNSUPPORTED', 'Image edits on animated input require explicit first-frame conversion.')
+  }
+  if (opaqueFill && options.format !== 'png' && options.format !== 'webp') {
+    fail('ASSET_IMAGE_UNSUPPORTED', 'Opaque fill requires lossless PNG or WebP output.')
+  }
   if (animated && options.animationPolicy === 'preserve' && options.format !== 'gif') {
     fail('ASSET_IMAGE_UNSUPPORTED', 'Animated input can be preserved only as GIF; select first-frame conversion to change formats.')
   }
@@ -208,19 +265,56 @@ export const transformAssetImage = async (
       callback()
     }
   })
-  const resized = encode(
-    sharp(bytes, sharpOptions)
-      .rotate()
-      .resize({
-        width: options.width,
-        height: options.height,
-        fit: options.aspectPolicy === 'stretch' ? 'fill' : 'inside',
-        withoutEnlargement: false
-      })
-      .timeout({ seconds: ASSET_IMAGE_TRANSFORM_LIMITS.processingSeconds }),
-    options.format,
-    options.quality
-  )
+  const remainingProcessingTime = (): number => {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) fail('ASSET_IMAGE_PROCESSING_LIMIT', 'Image transformation exceeded the processing time limit.')
+    return remaining
+  }
+  const bounded = (image: Sharp): Sharp =>
+    image.timeout({ seconds: Math.max(1, Math.ceil(remainingProcessingTime() / 1000)) })
+  let image = sharp(bytes, sharpOptions).rotate()
+  try {
+    if (operations.length > 0) {
+      // Separate native pipelines are essential: Sharp otherwise coalesces or
+      // reorders repeated rotate/extract/flip operations.
+      let pixels = await bounded(image.toColourspace('srgb').ensureAlpha().raw({ depth: 'uchar' })).toBuffer({ resolveWithObject: true })
+      for (const operation of operations) {
+        bounded(image)
+        if (operation.type === 'fill') {
+          const rgba = Buffer.from(`${operation.color.slice(1)}ff`, 'hex')
+          const rowBytes = operation.width * 4
+          for (let y = operation.top; y < operation.top + operation.height; y++) {
+            remainingProcessingTime()
+            const offset = (y * pixels.info.width + operation.left) * 4
+            // Each native write is bounded by one admitted input row, with no
+            // intermediate raster or per-pixel JavaScript work.
+            pixels.data.fill(rgba, offset, offset + rowBytes)
+          }
+        } else {
+          image = sharp(pixels.data, { raw: { width: pixels.info.width, height: pixels.info.height, channels: 4 } })
+          if (operation.type === 'crop') image = image.extract({ left: operation.left, top: operation.top, width: operation.width, height: operation.height })
+          else if (operation.type === 'rotate') image = image.rotate(operation.turns * 90)
+          else image = operation.axis === 'horizontal' ? image.flop() : image.flip()
+          pixels = await bounded(image.raw()).toBuffer({ resolveWithObject: true })
+        }
+      }
+      image = sharp(pixels.data, { raw: { width: pixels.info.width, height: pixels.info.height, channels: 4 } })
+    }
+    image = bounded(image.resize({
+      width: options.width,
+      height: options.height,
+      fit: options.aspectPolicy === 'stretch' ? 'fill' : 'inside',
+      ...(opaqueFill ? { kernel: sharp.kernel.nearest } : {}),
+      withoutEnlargement: false
+    }))
+  } catch (error: unknown) {
+    if (error instanceof AssetImageTransformError) throw error
+    if (error instanceof Error && /timeout|timed out/i.test(error.message)) fail('ASSET_IMAGE_PROCESSING_LIMIT', 'Image transformation exceeded the processing time limit.')
+    fail('ASSET_IMAGE_INVALID', 'The source image could not be safely edited.')
+  }
+  const resized = opaqueFill
+    ? options.format === 'webp' ? image.webp({ lossless: true, effort: 5 }) : image.png()
+    : encode(image, options.format, options.quality)
 
   try {
     await pipeline(resized, sink)
@@ -284,6 +378,19 @@ export const transformAssetImage = async (
   if ((!animated || options.animationPolicy === 'first-frame') && outputFrames !== 1) {
     fail('ASSET_IMAGE_INVALID', 'The image codec produced unexpected animation frames.')
   }
+  if (opaqueFill) {
+    if (outputMetadata.exif || outputMetadata.xmp || outputMetadata.iptc || outputMetadata.icc || outputMetadata.orientation) {
+      fail('ASSET_IMAGE_INVALID', 'Opaque output retained unexpected source metadata.')
+    }
+    try {
+      await bounded(sharp(data, { failOn: 'warning', limitInputPixels: ASSET_IMAGE_TRANSFORM_LIMITS.outputPixels }).raw()).toBuffer()
+    } catch (error: unknown) {
+      if (error instanceof AssetImageTransformError) throw error
+      if (error instanceof Error && /timed out|timeout/i.test(error.message)) fail('ASSET_IMAGE_PROCESSING_LIMIT', 'Image verification exceeded the processing time limit.')
+      fail('ASSET_IMAGE_INVALID', 'Opaque output could not be completely decoded.')
+    }
+  }
 
-  return { data, width: outputWidth, height: outputHeight, format: options.format, frames: outputFrames }
+  if (Date.now() > deadline) fail('ASSET_IMAGE_PROCESSING_LIMIT', 'Image transformation exceeded the processing time limit.')
+  return { data, width: outputWidth, height: outputHeight, format: options.format, frames: outputFrames, editWidth: geometry.width, editHeight: geometry.height }
 }

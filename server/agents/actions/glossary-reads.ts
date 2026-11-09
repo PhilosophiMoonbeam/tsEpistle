@@ -25,6 +25,8 @@ export const registerGlossaryReadActions = (kernel: ActionKernel, dependencies: 
       expansion: term.expansion,
       category: term.category,
       definition: term.definition,
+      autoLink: term.autoLink,
+      caseSensitive: term.caseSensitive,
       aliases: term.aliases,
       relatedTerms: term.relatedTerms,
       references: term.references,

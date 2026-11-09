@@ -7,6 +7,11 @@ import { getPostgresTestConnection } from './postgres-test-connection.mts'
 import { up as createKnowledgeProjectionStore } from '../db/migrations/2.5.152.ts'
 import { up as createKnowledgeSearchStore } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
 import { up as createKnowledgeMaintenanceStore } from '../db/migrations/tsfranki-000006-knowledge-maintenance.ts'
+import { up as createDurableJobs } from '../db/migrations/2.5.130.ts'
+import { up as addDurableJobLeaseTokens } from '../db/migrations/2.5.158.ts'
+import { up as createPageReviewRouting } from '../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createPageLifecycle } from '../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createStoragePageImportOwners } from '../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
 import { enqueuePageMutationEffects } from '../core/page-mutation-outbox.ts'
 import { lockSearchIndex } from '../helpers/search-contract.ts'
 import { PageKnowledgeLifecycle, PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
@@ -214,7 +219,7 @@ suite('PostgreSQL knowledge projection search', () => {
   beforeAll(async () => {
     db = knexModule({ client: 'pg', connection: connection ?? undefined })
     await db.raw(`
-      DROP TABLE IF EXISTS "pageKnowledgeMaintenance", "pageKnowledgeProjections", "pageMutationOutbox", "pagesSearchMetadata", "agentProviderProfiles", "agentProviderProfileVersions", "pageAccessPasswords", "pageTags", tags, pages CASCADE;
+      DROP TABLE IF EXISTS "storagePageImportOwners", "pageKnowledgeMaintenance", "pageKnowledgeProjections", "pageMutationOutbox", "pagesSearchMetadata", "agentProviderProfiles", "agentProviderProfileVersions", "pageAccessPasswords", "pageTags", tags, pages CASCADE;
       CREATE TABLE pages (
         id integer PRIMARY KEY,
         "sourceRevision" bigint NOT NULL,
@@ -286,6 +291,13 @@ suite('PostgreSQL knowledge projection search', () => {
     await createKnowledgeProjectionStore(db)
     await createKnowledgeSearchStore(db)
     await createKnowledgeMaintenanceStore(db)
+    await db.schema.createTable('users', table => table.integer('id').primary())
+    await db.schema.createTable('groups', table => table.integer('id').primary())
+    await createDurableJobs(db)
+    await addDurableJobLeaseTokens(db)
+    await createPageReviewRouting(db)
+    await createPageLifecycle(db)
+    await createStoragePageImportOwners(db)
 
     originalWiki = wikiRuntime.WIKI
     wikiRuntime.WIKI = {
@@ -316,7 +328,7 @@ suite('PostgreSQL knowledge projection search', () => {
 
   beforeEach(async () => {
     vi.setSystemTime(new Date('2026-08-19T00:00:00.000Z'))
-    await db.raw('TRUNCATE TABLE "pageKnowledgeMaintenance", "pageKnowledgeProjections", "pageMutationOutbox", "agentProviderProfiles", "agentProviderProfileVersions", "pageAccessPasswords", "pageTags", tags, pages RESTART IDENTITY CASCADE')
+    await db.raw('TRUNCATE TABLE "storagePageImportOwners", "pageKnowledgeMaintenance", "pageKnowledgeProjections", "pageMutationOutbox", "durableJobs", "agentProviderProfiles", "agentProviderProfileVersions", "pageAccessPasswords", "pageTags", tags, pages RESTART IDENTITY CASCADE')
     await db('pageKnowledgeMaintenance').insert({ id: 1 })
     await db('pagesSearchMetadata').insert({ contractId: 1, schemaVersion: 2, dictionary: 'english' }).onConflict('contractId').merge()
     const data = Reflect.get(wikiRuntime.WIKI as object, 'data') as { searchEngine: { config: { dictLanguage: string } } | undefined }
@@ -327,7 +339,7 @@ suite('PostgreSQL knowledge projection search', () => {
 
   afterAll(async () => {
     if (db) {
-      await db.raw('DROP TABLE IF EXISTS "pageKnowledgeMaintenance", "pageKnowledgeProjections", "pageMutationOutbox", "pagesSearchMetadata", "agentProviderProfiles", "agentProviderProfileVersions", "pageAccessPasswords", "pageTags", tags, pages CASCADE')
+      await db.raw('DROP TABLE IF EXISTS "storagePageImportOwners", "pageKnowledgeMaintenance", "pageKnowledgeProjections", "pageMutationOutbox", "pagesSearchMetadata", "agentProviderProfiles", "agentProviderProfileVersions", "pageAccessPasswords", "pageTags", tags, pages CASCADE')
       await db.destroy()
     }
     wikiRuntime.WIKI = originalWiki

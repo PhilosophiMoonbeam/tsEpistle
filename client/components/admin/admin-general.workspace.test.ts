@@ -6,6 +6,7 @@ import { translateEnglish } from '../../test/english-translate.mts'
 import { createApp } from 'vue'
 import { document } from '../../test/browser-dom.mts'
 import { useTranslate, type Translate } from '../../helpers/use-translate.ts'
+import { helpers } from '../../helpers/index.ts'
 // The shell's themed confirm dialog is replaced by the fake window.confirm in these isolated script tests.
 const confirmStubs = (host: { confirm: (text: string) => boolean }) => ({
   confirmDiscard: async (title: string) => host.confirm(title),
@@ -34,6 +35,8 @@ function arrange(overrides = {}) {
     AsyncState: {},
     SiteBanner: {},
     GeneralLogoManager: {},
+    AdminNotificationSettings: {},
+    helpers,
     wikiStore,
     generalFieldLabels,
     validateGeneralPolicy,

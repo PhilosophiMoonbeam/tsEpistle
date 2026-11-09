@@ -8,6 +8,11 @@ import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { up as createProtectionSchema } from '../../db/migrations/2.5.134.ts'
 import { up as createKnowledgeSchema } from '../../db/migrations/2.5.152.ts'
 import { up as createKnowledgeSearch } from '../../db/migrations/tsepistle-000027-knowledge-search.ts'
+import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { up as addDurableJobLeaseTokens } from '../../db/migrations/2.5.158.ts'
+import { up as createPageReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createPageLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
 import { enqueuePageMutationEffects, PageProjectionLifecycle } from '../../core/page-mutation-outbox.ts'
 import type PageModel from '../../models/pages.ts'
 import type pageOperations from '../../operations/pages.ts'
@@ -90,6 +95,12 @@ suite('PostgreSQL protection search withdrawal', () => {
     await db.schema.alterTable('pageProtectedAssets', table => table.integer('assetId').nullable())
     await createKnowledgeSchema(db)
     await createKnowledgeSearch(db)
+    await db.schema.createTable('groups', table => table.integer('id').primary())
+    await createDurableJobs(db)
+    await addDurableJobLeaseTokens(db)
+    await createPageReviewRouting(db)
+    await createPageLifecycle(db)
+    await createStoragePageImportOwners(db)
     await db('users').insert({ id: 7, name: 'Editor', email: requester.email })
     await db('assets').insert({ id: 101, hash: createHash('sha1').update(assetPath).digest('hex') })
     await db('pages').insert({

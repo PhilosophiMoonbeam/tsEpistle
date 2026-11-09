@@ -47,11 +47,15 @@ export interface GlossaryOperations {
   update(context: GlossaryRequestContext, id: unknown, input: unknown): Promise<GlossaryTerm>
   remove(context: GlossaryRequestContext, id: unknown, expectedRevision: unknown): Promise<{ deleted: true }>
 }
-interface TermRow extends Omit<GlossaryTermInput, 'aliases' | 'relatedIds'> {
+interface TermRow extends Omit<GlossaryTermInput, 'aliases' | 'relatedIds' | 'references' | 'autoLink' | 'caseSensitive'> {
   id: number
   revision: number
   createdAt: string | Date
   updatedAt: string | Date
+  // PostgreSQL decodes these columns; SQLite returns their storage values.
+  references: GlossaryReference[] | string
+  autoLink: boolean | 0 | 1
+  caseSensitive: boolean | 0 | 1
 }
 type TermTable = Knex.CompositeTableType<TermRow, Omit<TermRow, 'id' | 'references'> & { references: string }>
 interface NameRow {
@@ -260,10 +264,10 @@ export const createGlossaryOperations = (deps: Dependencies): GlossaryOperations
       aliases: names.map(name => name.name),
       relatedIds,
       relatedTerms: related.map(summary),
-      references: row.references,
+      references: typeof row.references === 'string' ? (JSON.parse(row.references) as GlossaryReference[]) : row.references,
       category: row.category,
-      autoLink: row.autoLink,
-      caseSensitive: row.caseSensitive,
+      autoLink: row.autoLink === true || row.autoLink === 1,
+      caseSensitive: row.caseSensitive === true || row.caseSensitive === 1,
       documentationPageId: doc?.id ?? null,
       documentationLabel: doc ? row.documentationLabel : '',
       documentation: doc,
@@ -403,7 +407,7 @@ export const createGlossaryOperations = (deps: Dependencies): GlossaryOperations
           aliases.push(name.name)
           byTerm.set(name.termId, aliases)
         }
-        items = page.map(row => ({ id: row.id, term: row.term, aliases: byTerm.get(row.id) ?? [], caseSensitive: row.caseSensitive }))
+        items = page.map(row => ({ id: row.id, term: row.term, aliases: byTerm.get(row.id) ?? [], caseSensitive: row.caseSensitive === true || row.caseSensitive === 1 }))
       }
       return {
         items,

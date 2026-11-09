@@ -1,7 +1,7 @@
 import { once } from 'node:events'
 import type { AddressInfo } from 'node:net'
 
-import express, { type RequestHandler } from 'express'
+import express, { type ErrorRequestHandler, type Express, type RequestHandler } from 'express'
 import session from 'express-session'
 import type { default as StartMaster, HttpTransportRuntime } from '../../master.ts'
 import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
@@ -44,7 +44,8 @@ const resolveIdentity = async (trustProxy: boolean, forwardedFor: string): Promi
 const withAuthorizationSession = async <Result>(
   currentPublicHost: () => string,
   trustProxy: boolean,
-  exercise: (baseUrl: string) => Promise<Result>
+  exercise: (baseUrl: string, app: Express) => Promise<Result>,
+  lateSaveError?: Error
 ): Promise<Result> => {
   const pass: RequestHandler = (_req, _res, next) => next()
   const emptyController = () => ({ default: () => express.Router() })
@@ -66,7 +67,23 @@ const withAuthorizationSession = async <Result>(
   vi.mockModule('../../controllers/api/user-avatar.ts', import.meta.url, () => ({ userAvatarPreBodyRouter: express.Router() }))
   vi.mockModule('serve-favicon', import.meta.url, () => ({ default: () => pass }))
   // Substitute only persistence; express-session and master's cookie/rotation middleware are real.
-  vi.mockModule('connect-session-knex', import.meta.url, () => ({ ConnectSessionKnexStore: session.MemoryStore }))
+  vi.mockModule('../../helpers/browser-session-store.ts', import.meta.url, () => ({
+    BrowserSessionStore: class {
+      readonly ready = Promise.resolve()
+      private readonly store = new session.MemoryStore()
+
+      middleware(options: Omit<session.SessionOptions, 'store'>): RequestHandler {
+        if (lateSaveError) {
+          this.store.set = (_sid, _data, callback) => {
+            setImmediate(() => callback?.(lateSaveError))
+          }
+        }
+        return session({ ...options, store: this.store })
+      }
+
+      async close() {}
+    }
+  }))
   vi.mockModule('../../core/auth.ts', import.meta.url, () => ({
     default: { init: () => ({ authenticate: pass, passport: { initialize: () => pass }, groups: {} }) }
   }))
@@ -94,6 +111,12 @@ const withAuthorizationSession = async <Result>(
         const app = wiki.app
         app.get('/authorize', (req, res) => {
           req.session.pageUnlockEstablishedAt = (req.session.pageUnlockEstablishedAt ?? 0) + 1
+          if (lateSaveError) {
+            res.setHeader('x-committed-response', 'original')
+            res.write('committed ')
+            res.end('body')
+            return
+          }
           res.sendStatus(204)
         })
         app.get('/authorization', (req, res) => {
@@ -113,7 +136,7 @@ const withAuthorizationSession = async <Result>(
 
   try {
     const address = server.address() as AddressInfo
-    return await exercise(`http://127.0.0.1:${address.port}`)
+    return await exercise(`http://127.0.0.1:${address.port}`, app)
   } finally {
     try {
       await new Promise<void>((resolve, reject) => {
@@ -153,6 +176,41 @@ describe('trusted proxy client identity', () => {
 })
 
 describe('authorization session cookie security', () => {
+  it('delegates the original late session-save error once without writing another response', async () => {
+    const originalError = new Error('late persistence failure')
+    const delegatedErrors: unknown[] = []
+    const lateHeaderWrites: string[] = []
+    const setHeader = express.response.setHeader
+    vi.spyOn(express.response, 'setHeader').mockImplementation(function (this: express.Response, name, value) {
+      if (this.headersSent) lateHeaderWrites.push(name)
+      return setHeader.call(this, name, value)
+    })
+
+    await withAuthorizationSession(
+      () => 'http://localhost:3000',
+      false,
+      async (baseUrl, app) => {
+        const { promise: delegation, resolve: delegated } = Promise.withResolvers<void>()
+        const terminal: ErrorRequestHandler = (error, _req, res, _next) => {
+          delegatedErrors.push(error)
+          expect(res.headersSent).toBe(true)
+          delegated()
+        }
+        app.use(terminal)
+
+        const response = await fetch(`${baseUrl}/authorize`)
+        expect(response.status).toBe(200)
+        expect(response.headers.get('x-committed-response')).toBe('original')
+        expect(await response.text()).toBe('committed body')
+        await delegation
+        expect(delegatedErrors).toHaveLength(1)
+        expect(delegatedErrors[0]).toBe(originalError)
+        expect(lateHeaderWrites).toEqual([])
+      },
+      originalError
+    )
+  })
+
   it('serializes secure cookie attributes behind the trusted TLS proxy without issuing the identifier on plaintext', async () => {
     await withAuthorizationSession(
       () => 'https://wiki.example.test',

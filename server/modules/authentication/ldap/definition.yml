@@ -16,16 +16,16 @@ props:
     hint: (e.g. ldap://serverhost:389 or ldaps://serverhost:636)
     order: 1
   bindDn:
-    title: Admin Bind DN
+    title: Search Bind DN
     type: String
     default: cn='root'
-    hint: The distinguished name (dn) of the account used for binding.
+    hint: Leave exactly empty for intentionally unbound anonymous user and group searches (only if the directory permits them). Whitespace-only DNs are refused. A configured DN must bind successfully; there is no anonymous fallback. User authentication always uses a separate nonempty-password bind.
     maxWidth: 600
     order: 2
   bindCredentials:
-    title: Admin Bind Credentials
+    title: Search Bind Credentials
     type: String
-    hint: The password of the account used above for binding.
+    hint: Required nonempty password for the search DN. Must be empty for anonymous search; orphan credentials are refused rather than ignored.
     sensitive: true
     maxWidth: 600
     order: 3

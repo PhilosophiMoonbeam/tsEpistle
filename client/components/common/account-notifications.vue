@@ -32,6 +32,19 @@ section.account-notifications(:aria-labelledby='section === `all` ? ids.title : 
           span.account-notifications__unread-state(v-if='isUnread(item)') {{$t('common:accountNotifications.unread')}}
     .account-notifications__state(v-if='!store.watchesLoading && !store.watchesError && notificationIdentityReady() && store.watches.length > 0 && store.watchesNextCursor !== null', role='status')
       v-btn(size='small', variant='text', color='primary', :disabled='store.watchesLoading', @click='loadMoreWatches') {{$t('common:accountNotifications.loadMoreActivity', { defaultValue: 'Load more activity' })}}
+    v-btn.mt-3(v-if='notificationIdentityReady()', size='small', variant='text', :loading='receiptsLoading', :disabled='receiptsLoading', @click='loadDeliveryReceipts') {{$t('common:accountNotifications.deliveryOutcomes')}}
+    p(v-if='receiptsLoading', role='status') {{$t('common:accountNotifications.checkingDeliveryOutcomes')}}
+    p(v-if='receiptsLoaded && !receiptsLoading && !receiptsError && deliveryReceipts.length === 0', role='status') {{$t('common:accountNotifications.noDeliveryOutcomes')}}
+    p(v-if='receiptsError', role='alert') {{ receiptsError }}
+    ul.account-notifications__receipts(v-if='notificationIdentityReady() && deliveryReceipts.length')
+      li(v-for='receipt in deliveryReceipts', :key='receipt.id')
+        span {{ receipt.title }} · {{$t(`common:accountNotifications.deliveryStatus.${receipt.status}`)}}
+        template(v-if='receipt.canResend')
+          p {{$t('common:accountNotifications.resendWarning')}}
+          label
+            input(type='checkbox', :checked='acknowledgedResends.has(receipt.id)', :disabled='receiptsLoading', @change='acknowledgeResend(receipt.id, $event)')
+            | {{$t('common:accountNotifications.acknowledgeResend')}}
+          v-btn(size='small', variant='text', :disabled='receiptsLoading || !acknowledgedResends.has(receipt.id)', @click='resendDelivery(receipt.id)') {{$t('common:accountNotifications.resendEmail')}}
 
   v-divider.my-2(v-if='section === `all`')
 
@@ -62,13 +75,13 @@ section.account-notifications(:aria-labelledby='section === `all` ? ids.title : 
 </template>
 
 <script setup lang='ts'>
-import { onBeforeUnmount, onMounted, useId, watch } from 'vue'
-import { notificationPageHref } from '../../helpers/site-notifications-api.ts'
+import { onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
+import { notificationPageHref, fetchGovernedNotificationReceipts, resendGovernedNotification } from '../../helpers/site-notifications-api.ts'
 import { wikiStore } from '../../store/index.ts'
 import { OFFLINE_SESSION_INVALIDATED_EVENT } from '../../helpers/offline-session.ts'
 import { navigateToWikiPage } from '../../helpers/wiki-navigation.ts'
 import { useSiteNotificationsStore } from '../../store/site-notifications.ts'
-import type { PageApprovalInboxItem, PageWatchNotification } from '../../../shared/site-notifications.ts'
+import type { GovernedNotificationReceiptList, PageApprovalInboxItem, PageWatchNotification } from '../../../shared/site-notifications.ts'
 
 /** `all` shows both groups; the account menu shows each group in its own tab. */
 const { section = 'all' } = defineProps<{ section?: 'all' | 'changes' | 'approvals' }>()
@@ -83,10 +96,23 @@ const ids = {
 const store = useSiteNotificationsStore()
 const pendingWatchReads = new Set<string>()
 let identityGeneration = 0
+const deliveryReceipts = ref<GovernedNotificationReceiptList['items']>([])
+const receiptsLoading = ref(false)
+const receiptsLoaded = ref(false)
+const receiptsError = ref('')
+const acknowledgedResends = ref(new Set<string>())
+let receiptController: AbortController | undefined
 let disposed = false
 const invalidatePendingNavigation = (): void => {
   identityGeneration += 1
   pendingWatchReads.clear()
+  receiptController?.abort()
+  receiptController = undefined
+  deliveryReceipts.value = []
+  acknowledgedResends.value = new Set()
+  receiptsLoading.value = false
+  receiptsLoaded.value = false
+  receiptsError.value = ''
 }
 const invalidateSession = (): void => {
   invalidatePendingNavigation()
@@ -136,6 +162,51 @@ const pageUrl = (item: NotificationPageItem): string => {
   return notificationPageHref(item)
 }
 
+const loadDeliveryReceipts = async (): Promise<void> => {
+  if (!notificationIdentityReady() || receiptsLoading.value) return
+  const ownerId = store.ownerId!, generation = identityGeneration, controller = new AbortController()
+  receiptController = controller
+  receiptsLoading.value = true
+  receiptsError.value = ''
+  try {
+    const response = await fetchGovernedNotificationReceipts(ownerId, controller.signal)
+    if (!disposed && !controller.signal.aborted && generation === identityGeneration && ownerId === store.ownerId) {
+      deliveryReceipts.value = response.items
+      receiptsLoaded.value = true
+      acknowledgedResends.value = new Set()
+    }
+  } catch (error) {
+    if (!controller.signal.aborted && generation === identityGeneration) receiptsError.value = error instanceof Error ? error.message : 'Delivery outcomes unavailable.'
+  } finally {
+    if (generation === identityGeneration) { receiptsLoading.value = false; receiptController = undefined }
+  }
+}
+const acknowledgeResend = (id: string, event: Event): void => {
+  if (receiptsLoading.value || !(event.target instanceof HTMLInputElement)) return
+  const values = new Set(acknowledgedResends.value)
+  if (event.target.checked) values.add(id)
+  else values.delete(id)
+  acknowledgedResends.value = values
+}
+const resendDelivery = async (id: string): Promise<void> => {
+  if (!notificationIdentityReady() || receiptsLoading.value || !acknowledgedResends.value.has(id)) return
+  const ownerId = store.ownerId!, generation = identityGeneration, controller = new AbortController()
+  receiptController = controller
+  receiptsLoading.value = true
+  receiptsError.value = ''
+  try {
+    await resendGovernedNotification(ownerId, id, controller.signal)
+    if (!disposed && !controller.signal.aborted && generation === identityGeneration && ownerId === store.ownerId) {
+      const receipt = deliveryReceipts.value.find(row => row.id === id)
+      if (receipt) { receipt.status = 'pending'; receipt.canResend = false; receipt.attempt++ }
+      acknowledgedResends.value = new Set()
+    }
+  } catch (error) {
+    if (!controller.signal.aborted && generation === identityGeneration) receiptsError.value = error instanceof Error ? error.message : 'Resend unavailable.'
+  } finally {
+    if (generation === identityGeneration) { receiptsLoading.value = false; receiptController = undefined }
+  }
+}
 const isUnread = (item: PageWatchNotification): boolean => item.readAt === null
 
 const watchEventKeys: Record<string, string> = {
@@ -150,6 +221,8 @@ const watchEventKeys: Record<string, string> = {
   'page.visibility-changed': 'common:page.watchEventVisibilityChanged',
   'visibility-changed': 'common:page.watchEventVisibilityChanged',
   'page.ownership-transferred': 'common:page.watchEventOwnershipTransferred',
+  'page.lifecycle-result': 'common:accountNotifications.lifecycleResult',
+  'page.lifecycle-move-result': 'common:accountNotifications.lifecycleMoved',
   'ownership-transferred': 'common:page.watchEventOwnershipTransferred'
 }
 
@@ -161,19 +234,27 @@ const watchAction = (item: PageWatchNotification, t: Translate): string => {
     pageDeleted: 'Page deleted',
     watchedPageComment: 'Comment on a watched page',
     commentReply: 'Reply in your discussion',
-    mention: 'You were mentioned'
+    mention: 'You were mentioned',
+    feedbackStatus: 'Feedback status changed',
+    reviewReminder: 'Review reminder',
+    pageLifecycle: 'Automated lifecycle result'
   }
+  if (item.category === 'pageLifecycle') return t(item.eventType === 'page.lifecycle-move-result'
+    ? 'common:accountNotifications.lifecycleMoved' : item.eventType === 'page.lifecycle-proposed'
+      ? 'common:accountNotifications.lifecycleProposed' : 'common:accountNotifications.lifecycleResult')
   if (item.category !== 'pageWatch') return t(`common:accountNotifications.category.${item.category}`, { defaultValue: categoryLabels[item.category] })
   return t(watchEventKeys[item.eventType] ?? 'common:page.watchEventChanged', { actor: watchActor(item, t) })
 }
 
 const watchSummary = (item: PageWatchNotification, t: Translate): string => {
-  const actor = watchActor(item, t)
+  const actor = item.category === 'reviewReminder' || item.category === 'pageLifecycle'
+    ? t('common:accountNotifications.scheduledOrigin') : watchActor(item, t)
   const when = new Date(item.createdAt)
   const date = Number.isNaN(when.valueOf())
     ? t('common:accountNotifications.recently')
     : when.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-  return `${actor} · ${date}`
+  const outcomes = item.outcomes?.map(outcome => `${t(`common:accountNotifications.outcomeKind.${outcome.kind}`)}: ${t(`common:accountNotifications.outcomeState.${outcome.state}`)}`).join('; ')
+  return `${actor}${outcomes ? ` · ${outcomes}` : ''} · ${date}`
 }
 
 const watchAriaLabel = (item: PageWatchNotification, t: Translate): string => {

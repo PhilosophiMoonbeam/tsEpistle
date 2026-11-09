@@ -10,6 +10,11 @@ import { getPostgresTestConnection } from './postgres-test-connection.mts'
 import { up as createKnowledgeProjectionStore } from '../db/migrations/2.5.152.ts'
 import { up as createKnowledgeSearchStore } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
 import { up as createKnowledgeMaintenanceStore } from '../db/migrations/tsfranki-000006-knowledge-maintenance.ts'
+import { up as createDurableJobs } from '../db/migrations/2.5.130.ts'
+import { up as addDurableJobLeaseTokens } from '../db/migrations/2.5.158.ts'
+import { up as createPageReviewRouting } from '../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createPageLifecycle } from '../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createStoragePageImportOwners } from '../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
 import { lockSearchIndex, lockSearchPage, publicationTimestampSql } from '../helpers/search-contract.ts'
 import { PageKnowledgeLifecycle, PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
 import type { AgentKnowledgeEnrichmentRequest } from '../agents/providers/utility.ts'
@@ -141,6 +146,13 @@ suite('Utility admission on PostgreSQL', () => {
     await createKnowledgeProjectionStore(db)
     await createKnowledgeSearchStore(db)
     await createKnowledgeMaintenanceStore(db)
+    await db.schema.createTable('users', table => table.integer('id').primary())
+    await db.schema.createTable('groups', table => table.integer('id').primary())
+    await createDurableJobs(db)
+    await addDurableJobLeaseTokens(db)
+    await createPageReviewRouting(db)
+    await createPageLifecycle(db)
+    await createStoragePageImportOwners(db)
   })
 
   afterAll(async () => {
@@ -164,6 +176,8 @@ suite('Utility admission on PostgreSQL', () => {
     await db('pageKnowledgeMaintenance').insert({ id: 1 })
     await db('pagesSearchMetadata').insert({ contractId: 1, schemaVersion: 2, dictionary: 'english' }).onConflict('contractId').merge()
     await db('pageMutationOutbox').delete()
+    await db('durableJobs').delete()
+    await db('storagePageImportOwners').delete()
     await db('pages').delete()
   })
 

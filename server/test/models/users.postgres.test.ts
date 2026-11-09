@@ -4,6 +4,7 @@ import tfa from 'node-2fa'
 import bcrypt from 'bcryptjs-then'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
+import { up as personalMcpUp } from '../../db/migrations/tsepistle-000062-personal-mcp-keys.ts'
 
 const connection = getPostgresTestConnection('_user_tfa_test', import.meta.path)
 const suite = connection ? describe : describe.skip
@@ -26,7 +27,10 @@ const wikiRuntime = {
     certs: { private: 'private-key' },
     auth: { enforce2FA: false, audience: 'test', tokenExpiration: '1h' }
   },
-  models: {} as Record<string, unknown>
+  models: {} as Record<string, unknown>,
+  auth: { reloadApiKeys: async () => {} },
+  events: { outbound: { emit: () => {} } },
+  logger: { warn: () => {} }
 }
 ;(globalThis as typeof globalThis & { WIKI: typeof wikiRuntime }).WIKI = wikiRuntime
 // These models capture WIKI during module evaluation, so load them after installing the isolated test context.
@@ -108,9 +112,20 @@ suite('PostgreSQL account security transactions', () => {
       table.string('key').primary()
       table.json('value')
     })
+    await db.schema.createTable('apiKeys', table => {
+      table.increments('id')
+      table.string('name')
+      table.text('key')
+      table.string('expiration')
+      table.boolean('isRevoked').notNullable()
+      table.string('createdAt')
+      table.string('updatedAt')
+    })
+    await personalMcpUp(db)
   })
 
   beforeEach(async () => {
+    await db('apiKeys').delete()
     await db('userKeys').delete()
     await db('users').delete()
     await db('users').insert({
@@ -137,10 +152,15 @@ suite('PostgreSQL account security transactions', () => {
     observations.afterLoginTransactionCompletions = []
     observations.transactionCompletions = 0
     installModels()
+    await db('apiKeys').insert([
+      { id: 1, personalOwnerId: 10, personalAccess: 'read-only', key: 'retained-personal-key', isRevoked: false, expiration: '2099-01-01T00:00:00Z' },
+      { id: 2, key: 'retained-service-key', isRevoked: false, expiration: '2099-01-01T00:00:00Z' }
+    ])
   })
 
   afterAll(async () => {
     if (db) {
+      await db.schema.dropTableIfExists('apiKeys')
       await db.schema.dropTableIfExists('settings')
       await db.schema.dropTableIfExists('userAvatars')
       await db.schema.dropTableIfExists('userKeys')
@@ -261,6 +281,8 @@ suite('PostgreSQL account security transactions', () => {
     expect(await bcrypt.compare(newPassword, account.password)).toBe(true)
     expect(await bcrypt.compare(oldPassword, account.password)).toBe(false)
     expect(await db('userKeys').where('userId', 10)).toHaveLength(0)
+    expect(await db('apiKeys').where('id', 1).first()).toMatchObject({ key: 'retained-personal-key', isRevoked: true, personalAccess: 'read-only', personalOwnerId: 10 })
+    expect(await db('apiKeys').where('id', 2).first()).toMatchObject({ key: 'retained-service-key', isRevoked: false, personalAccess: null })
     expect(observations.transactionCompletions).toBe(1)
     expect(observations.afterLoginCalls).toBe(0)
   })

@@ -3,6 +3,7 @@ import type { Knex } from 'knex'
 import { DurableJobStore } from './durable-jobs.ts'
 import { isCommentWebhookEventName } from '../../shared/webhook-events.ts'
 import { enqueueNotificationAudience } from '../jobs/notification-audience.ts'
+import { enqueueGovernedNotificationAudience } from '../jobs/governed-notifications.ts'
 
 interface OutboxEventRow {
   id: string
@@ -82,8 +83,10 @@ export const publishOutboxEvents = async (knex: Knex, options: PublishOutboxOpti
         throw new TypeError(`Outbox event ${event.id} payload must be an object`)
       }
 
-      // This internal event also covers private/protected discussions; no webhook subscription may export it.
-      const hooks = event.type === 'discussion.comment-created' ? [] : await transaction<WebhookRow>('webhooks').where('isEnabled', true)
+      // Internal governance/discussion events include recipient identities or private scopes, never webhook exports.
+      const internal = event.type === 'discussion.comment-created' || event.type === 'feedback.status-changed' ||
+        event.type.startsWith('page.lifecycle-') || event.type.startsWith('page.review-')
+      const hooks = internal ? [] : await transaction<WebhookRow>('webhooks').where('isEnabled', true)
       const durableJobs = new DurableJobStore(transaction)
       for (const hook of hooks) {
         const subscriptions = eventSubscriptions(hook.events)
@@ -121,8 +124,11 @@ export const publishOutboxEvents = async (knex: Knex, options: PublishOutboxOpti
       }
 
       const pageId = Reflect.get(payload, 'pageId')
+      const governed = await enqueueGovernedNotificationAudience(transaction, event)
+      const correlatedDiscussion = event.type === 'discussion.comment-created' && typeof Reflect.get(payload, 'rootTransitionEventId') === 'string'
       if (
-        (event.type.startsWith('page.') || event.type === 'discussion.comment-created') &&
+        !governed && !correlatedDiscussion &&
+        (['page.created', 'page.updated', 'page.restored', 'page.moved', 'page.deleted', 'page.visibility-changed', 'page.ownership-transferred'].includes(event.type) || event.type === 'discussion.comment-created') &&
         typeof pageId === 'number' &&
         Number.isSafeInteger(pageId) &&
         pageId > 0

@@ -563,6 +563,7 @@
   </v-container>
 </template>
 <script setup lang="ts">
+import { helpers } from '../../helpers/index.ts'
 import { confirmDiscard } from '../common/confirm-dialog.ts'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, toRaw, nextTick } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
@@ -744,10 +745,7 @@ const dateTime = (value: string) => {
   const date = new Date(value)
   return Number.isNaN(date.getTime())
     ? t('admin:mail.unknownTime')
-    : date.toLocaleString(undefined, {
-        dateStyle: 'medium',
-        timeStyle: 'short'
-      })
+    : String(helpers.formatMoment(date, 'L LT'))
 }
 const checkTitle = (kind: MailCheck['kind']) =>
   ({

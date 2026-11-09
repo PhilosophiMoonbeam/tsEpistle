@@ -1,4 +1,5 @@
 import knexModule, { type Knex } from 'knex'
+import { JSDOM } from 'jsdom'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { createDiscussionSettingsStore, type DiscussionDefinition, writeDiscussionWorkspace } from '../../operations/discussion-settings.ts'
@@ -8,6 +9,7 @@ import { up, down } from '../../db/migrations/tsepistle-000016-discussion-modera
 import { up as addCommentMentions, down as removeCommentMentions } from '../../db/migrations/tsepistle-000033-comment-mentions.ts'
 import { createDiscussionAnnotationStore } from '../../operations/discussion-annotations.ts'
 import { up as addAnnotations, down as removeAnnotations } from '../../db/migrations/tsepistle-000057-discussion-annotations.ts'
+import { up as addLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
 const connection = getPostgresTestConnection('_discussion_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const definitions: DiscussionDefinition[] = [
@@ -55,6 +57,7 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     throw new Error('Expected the policy change to wait for the admitted post advisory lock')
   }
   beforeAll(async () => {
+    oldWiki = globalThis.WIKI
     globalThis.WIKI = {
       auth: {
         checkAccess: (user: unknown, requested: string[]) => requested.some(p => permissions(user).includes(p)),
@@ -82,6 +85,9 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
       table.string('visibility')
       table.integer('ownerId')
       table.string('updatedAt')
+      table.text('content').notNullable().defaultTo('')
+      table.string('contentType').notNullable().defaultTo('markdown')
+      table.bigInteger('sourceRevision').notNullable().defaultTo(1)
       table.boolean('isPublished').defaultTo(true)
       table.string('publishStartDate')
       table.string('publishEndDate')
@@ -145,6 +151,7 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     await addCommentMentions(db)
     await up(db)
     await db.transaction(addAnnotations)
+    await addLifecycle(db)
     settings = createDiscussionSettingsStore({
       db,
       definitions: () => definitions,
@@ -168,6 +175,8 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
   beforeEach(async () => {
     for (const table of [
       'outboxEvents',
+      'pageLifecycleCommentEvents',
+      'pageLifecycleClocks',
       'commentAnnotations',
       'discussionModerationHistory',
       'pageDiscussionPolicy',
@@ -202,6 +211,16 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
       await db.transaction(removeAnnotations)
       await removeCommentMentions(db)
       for (const table of [
+        'pageLifecycleMoveProposals',
+        'pageLifecycleNotices',
+        'pageLifecycleActionReceipts',
+        'pageLifecycleCycles',
+        'pageLifecycleBatches',
+        'pageLifecycleRulePages',
+        'pageLifecyclePreviews',
+        'pageLifecycleRules',
+        'pageLifecycleCommentEvents',
+        'pageLifecycleClocks',
         'outboxEvents',
         'discussionModerationHistory',
         'pageDiscussionPolicy',
@@ -443,7 +462,13 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     const closed = await moderation.setPolicy(admin, 1, { closed: true, reason: 'Question has been resolved', fingerprint: initial.fingerprint })
     expect(closed.closed).toBe(true)
     expect((await moderation.closedPages(admin, {})).total).toBe(1)
-    await expect(posts.post(post({ user: { ...post().user, id: 3 } }))).rejects.toMatchObject({ status: 409 })
+    const clock = await db('pageLifecycleClocks').where('pageId', 1).first()
+    const events = await db('outboxEvents').orderBy('id')
+    const commentEvents = await db('pageLifecycleCommentEvents').where('pageId', 1)
+    await expect(Promise.resolve(posts.post(post({ user: { ...post().user, id: 3 } })))).rejects.toMatchObject({ status: 409 })
+    expect(await db('pageLifecycleClocks').where('pageId', 1).first()).toEqual(clock)
+    expect(await db('outboxEvents').orderBy('id')).toEqual(events)
+    expect(await db('pageLifecycleCommentEvents').where('pageId', 1)).toEqual(commentEvents)
     expect(await db('comments').where('id', id)).toHaveLength(1)
     const reopened = await moderation.setPolicy(admin, 1, { closed: false, reason: 'New evidence available', fingerprint: closed.fingerprint })
     expect(reopened.closed).toBe(false)
@@ -466,7 +491,7 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     const result = await Promise.allSettled([posts.post(post({ user })), posts.post(post({ user }))])
     expect(result.filter(row => row.status === 'fulfilled')).toHaveLength(1)
     expect((result.find(row => row.status === 'rejected') as PromiseRejectedResult).reason.status).toBe(429)
-    await expect(posts.post(post({ user: { ...user, ip: '192.0.2.2' } }))).resolves.toBeNumber()
+    await expect(Promise.resolve(posts.post(post({ user: { ...user, ip: '192.0.2.2' } })))).resolves.toBeNumber()
   })
   it('uses creation time rather than edit time for posting delay', async () => {
     const id = await posts.post(post())
@@ -484,7 +509,7 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     await db('pageAccessPasswords').insert({ pageId: 1, version: 2 })
     const requester = { id: 8, permissions: ['read:pages', 'write:comments'] } as never,
       input = post({ requester, user: { ...post().user, id: 8 } })
-    await expect(posts.post(input)).rejects.toMatchObject({ status: 403, name: 'PAGE_LOCKED' })
+    await expect(Promise.resolve(posts.post(input))).rejects.toMatchObject({ status: 403, name: 'PAGE_LOCKED' })
     await db('pageUnlockGrants').insert({
       id: 'grant',
       pageId: 1,
@@ -504,16 +529,19 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     expect((await db('comments').where('id', nested).first()).replyTo).toBe(root)
 
     const otherPageRoot = await posts.post(post({ pageId: 2, user: { ...post().user, id: 5 } }))
-    await expect(posts.post(post({ replyTo: otherPageRoot, user: { ...post().user, id: 6 } }))).rejects.toMatchObject({ status: 409 })
+    await expect(Promise.resolve(posts.post(post({ replyTo: otherPageRoot, user: { ...post().user, id: 6 } })))).rejects.toMatchObject({ status: 409 })
     await db('comments').where('id', root).update({ isHidden: true })
-    await expect(posts.post(post({ replyTo: reply, user: { ...post().user, id: 7 } }))).rejects.toMatchObject({ status: 409 })
+    await expect(Promise.resolve(posts.post(post({ replyTo: reply, user: { ...post().user, id: 7 } })))).rejects.toMatchObject({ status: 409 })
   })
 
   it('rejects posting when paused, external provider active or reply parent unavailable before spam checking', async () => {
     await settings.patchFeatures({ featurePageComments: false })
-    await expect(posts.post(post())).rejects.toMatchObject({ status: 409 })
+    await expect(Promise.resolve(posts.post(post()))).rejects.toMatchObject({ status: 409 })
     await settings.patchFeatures({ featurePageComments: true })
-    await expect(posts.post(post({ replyTo: 999 }))).rejects.toMatchObject({ status: 409 })
+    await expect(Promise.resolve(posts.post(post({ replyTo: 999 })))).rejects.toMatchObject({ status: 409 })
+    expect(await db('pageLifecycleClocks')).toHaveLength(0)
+    expect(await db('pageLifecycleCommentEvents')).toHaveLength(0)
+    expect(await db('outboxEvents')).toHaveLength(0)
     const current = await settings.read()
     await settings.write(
       {
@@ -524,8 +552,11 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
       },
       current.fingerprint
     )
-    await expect(posts.post(post())).rejects.toMatchObject({ status: 409 })
+    await expect(Promise.resolve(posts.post(post()))).rejects.toMatchObject({ status: 409 })
     expect(spamChecks).toEqual([])
+    expect(await db('pageLifecycleClocks')).toHaveLength(0)
+    expect(await db('pageLifecycleCommentEvents')).toHaveLength(0)
+    expect(await db('outboxEvents')).toHaveLength(0)
   })
   it('holds the page closure boundary until an in-flight accepted post is persisted', async () => {
     const { promise: ready, resolve: entered } = Promise.withResolvers<void>()
@@ -542,7 +573,7 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     })
     const initial = await moderation.policy(admin, 1)
     let closed = false
-    const posting = slow.post(post())
+    const posting = Promise.resolve(slow.post(post()))
     let drained: Promise<PromiseSettledResult<unknown>[]> = Promise.allSettled([posting])
     try {
       await Promise.race([
@@ -563,7 +594,7 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
       const accepted = await posting
       expect(await db('comments').where('id', accepted).first()).toMatchObject({ pageId: 1, content: post().content })
       await closing
-      await expect(posts.post(post({ user: { ...post().user, id: 3 } }))).rejects.toMatchObject({ status: 409 })
+      await expect(Promise.resolve(posts.post(post({ user: { ...post().user, id: 3 } })))).rejects.toMatchObject({ status: 409 })
     } finally {
       release()
       await drained
@@ -584,7 +615,7 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     })
     expect(await db('settings').where('key', 'features').first()).toBeUndefined()
     let paused = false
-    const posting = slow.post(post())
+    const posting = Promise.resolve(slow.post(post()))
     let drained: Promise<PromiseSettledResult<unknown>[]> = Promise.allSettled([posting])
     try {
       await Promise.race([
@@ -605,7 +636,7 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
       const accepted = await posting
       expect(await db('comments').where('id', accepted).first()).toMatchObject({ pageId: 1, content: post().content })
       await pausing
-      await expect(posts.post(post({ user: { ...post().user, id: 3 } }))).rejects.toMatchObject({ status: 409 })
+      await expect(Promise.resolve(posts.post(post({ user: { ...post().user, id: 3 } })))).rejects.toMatchObject({ status: 409 })
     } finally {
       release()
       await drained
@@ -760,6 +791,149 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     expect(await annotations().pageAnnotations(reader, 1, {}, 'reader')).toEqual({ items: [], nextAfter: null })
     await expect(annotations().pageAnnotations(reader, 1, { limit: 101 }, 'reader')).rejects.toMatchObject({ status: 400 })
   })
+  it('uses the native provider sanitizer and supplied transaction rather than a post-commit post', async () => {
+    const runtime = globalThis.WIKI as unknown as Record<string, unknown>
+    const saved = new Map(['models', 'config', 'data', 'logger'].map(key => [key, Object.getOwnPropertyDescriptor(runtime, key)]))
+    Object.assign(runtime, {
+      models: { knex: db, comments: { query: () => db('comments') } },
+      config: { features: { featurePageComments: true } },
+      data: { commentProvider: { key: 'default', config: { akismet: '', minDelay: 0 } } },
+      logger: { warn() {} }
+    })
+    try {
+      // The native provider captures WIKI at module load; bind its real database fixture first.
+      const provider = (await import('../../modules/comments/default/comment.ts')).default
+      const page = { id: 1, path: 'guide', localeCode: 'en', updatedAt: new Date() }
+      const rootTransitionEventId = 'b63f534d-3987-490a-bb85-42d8cb47bf93'
+      const input = {
+        page, replyTo: 0, content: '**Native** <img src=x onerror="alert(1)"> <script>alert(2)</script>',
+        user: { ...post().user, groups: [] }, requester: admin, sessionId: 'test-session', rootTransitionEventId
+      }
+      const id = await db.transaction(transaction => provider.create({ ...input, transaction }))
+      const row = await db('comments').where('id', id).first()
+      expect(row.render).toContain('<strong>Native</strong>')
+      const rendered = JSDOM.fragment(row.render)
+      expect(rendered.querySelector('strong')?.textContent).toBe('Native')
+      expect(rendered.querySelector('img, script, [onerror]')).toBeNull()
+      expect(rendered.textContent).toContain('<img src=x onerror="alert(1)"> <script>alert(2)</script>')
+      expect(row.content).toBe(input.content)
+      const event = await db('outboxEvents').where({ type: 'discussion.comment-created', aggregateId: String(id) }).first()
+      expect(JSON.parse(event.payload).rootTransitionEventId).toBe(rootTransitionEventId)
+      const clock = await db('pageLifecycleClocks').where('pageId', 1).first()
+      expect(clock.bodyAnchorKind).toBe('unknown')
+      expect(clock.bodyAnchorAt).toBeNull()
+      expect(clock).toMatchObject({ commentAnchorKind: 'known-change', lastCommentEvent: event.id })
+      expect(await db('pageLifecycleCommentEvents').where('pageId', 1).select('eventId')).toEqual([{ eventId: event.id }])
+      await expect(Promise.resolve(db.transaction(async transaction => {
+        await provider.create({ ...input, user: { ...input.user, id: 3 }, transaction })
+        throw new Error('Caller rejected transition')
+      }))).rejects.toThrow('Caller rejected transition')
+      expect(await db('comments').select('id')).toEqual([{ id }])
+      expect(await db('outboxEvents')).toHaveLength(1)
+      expect(await db('pageLifecycleClocks').where('pageId', 1).first()).toEqual(clock)
+      expect(await db('pageLifecycleCommentEvents').where('pageId', 1).select('eventId')).toEqual([{ eventId: event.id }])
+      const standaloneRoot = await provider.create({ ...input, user: { ...input.user, id: 4 } })
+      const standaloneRootEvent = await db('outboxEvents').where({ type: 'discussion.comment-created', aggregateId: String(standaloneRoot) }).first()
+      expect(JSON.parse(standaloneRootEvent.payload)).toEqual({ pageId: 1, commentId: standaloneRoot, actorId: 4 })
+      const standaloneRootClock = await db('pageLifecycleClocks').where('pageId', 1).first()
+      expect(standaloneRootClock).toMatchObject({ commentAnchorKind: 'known-change', lastCommentEvent: standaloneRootEvent.id })
+      expect(standaloneRootClock.commentEpoch).not.toBe(clock.commentEpoch)
+      const standaloneReply = await provider.create({ ...input, replyTo: standaloneRoot, user: { ...input.user, id: 5 } })
+      expect(await db('comments').where('id', standaloneReply).first()).toMatchObject({ replyTo: standaloneRoot, content: input.content })
+      const standaloneReplyEvent = await db('outboxEvents').where({ type: 'discussion.comment-created', aggregateId: String(standaloneReply) }).first()
+      expect(JSON.parse(standaloneReplyEvent.payload)).toEqual({ pageId: 1, commentId: standaloneReply, actorId: 5 })
+      const standaloneReplyClock = await db('pageLifecycleClocks').where('pageId', 1).first()
+      expect(standaloneReplyClock.lastCommentEvent).toBe(standaloneReplyEvent.id)
+      expect(standaloneReplyClock.commentEpoch).not.toBe(standaloneRootClock.commentEpoch)
+      expect(new Date(standaloneReplyClock.commentAnchorAt).valueOf()).toBeGreaterThanOrEqual(new Date(standaloneRootClock.commentAnchorAt).valueOf())
+      expect(await db('pageLifecycleCommentEvents').where('pageId', 1).orderBy('eventId').select('eventId')).toEqual(
+        [event.id, standaloneRootEvent.id, standaloneReplyEvent.id].sort().map(eventId => ({ eventId }))
+      )
+      const rejectedInput = { ...input, user: { ...input.user, id: 6 } }
+      await expect(provider.create({ ...rejectedInput, content: '' })).rejects.toMatchObject({ status: 400, name: 'APPLICATION_ERROR' })
+      const policy = await moderation.policy(admin, 1)
+      await moderation.setPolicy(admin, 1, { closed: true, reason: 'Native provider admission', fingerprint: policy.fingerprint })
+      await expect(provider.create(rejectedInput)).rejects.toMatchObject({ status: 409, name: 'APPLICATION_ERROR' })
+      expect(await db('comments').orderBy('id').select('id')).toEqual([{ id }, { id: standaloneRoot }, { id: standaloneReply }])
+      expect(await db('outboxEvents')).toHaveLength(3)
+      expect(await db('pageLifecycleClocks').where('pageId', 1).first()).toEqual(standaloneReplyClock)
+      expect(await db('pageLifecycleCommentEvents').where('pageId', 1).orderBy('eventId').select('eventId')).toEqual(
+        [event.id, standaloneRootEvent.id, standaloneReplyEvent.id].sort().map(eventId => ({ eventId }))
+      )
+    } finally {
+      for (const [key, descriptor] of saved) {
+        if (descriptor) Object.defineProperty(runtime, key, descriptor)
+        else Reflect.deleteProperty(runtime, key)
+      }
+    }
+  })
+
+  it('records native roots and permitted guest replies as comment activity without counting moderation or removal', async () => {
+    const root = await posts.post(post())
+    const firstClock = await db('pageLifecycleClocks').where('pageId', 1).first()
+    const rootEvent = await db('outboxEvents').where({ type: 'discussion.comment-created', aggregateId: String(root) }).first()
+    expect(firstClock).toMatchObject({ commentAnchorKind: 'known-change', lastCommentEvent: rootEvent.id })
+    expect(new Date(firstClock.commentAnchorAt).valueOf()).toBeGreaterThan(0)
+    const guest = { id: 2, permissions: ['read:pages', 'write:comments'] } as never
+    const reply = await posts.post(post({ replyTo: root, requester: guest, user: { ...post().user, id: 2 } }))
+    const replyEvent = await db('outboxEvents').where({ type: 'discussion.comment-created', aggregateId: String(reply) }).first()
+    const replyClock = await db('pageLifecycleClocks').where('pageId', 1).first()
+    expect(replyClock.lastCommentEvent).toBe(replyEvent.id)
+    expect(replyClock.commentEpoch).not.toBe(firstClock.commentEpoch)
+    expect(new Date(replyClock.commentAnchorAt).valueOf()).toBeGreaterThanOrEqual(new Date(firstClock.commentAnchorAt).valueOf())
+    expect(replyClock.bodyEpoch).toBe(firstClock.bodyEpoch)
+    expect(replyClock.bodyAnchorAt).toBe(firstClock.bodyAnchorAt)
+    const inspection = await moderation.inspect(admin, reply)
+    await moderation.moderate(admin, reply, { hidden: true, reason: 'Review reply', fingerprint: inspection.fingerprint })
+    await db('comments').where('id', reply).delete()
+    expect(await db('pageLifecycleClocks').where('pageId', 1).first()).toEqual(replyClock)
+  })
+
+  it('keeps caller-owned changes, annotations, correlated outbox and comment clocks atomic', async () => {
+    const rootTransitionEventId = 'd6d312ae-d7ee-449e-a9b8-e75b8c5d96f1'
+    const id = await db.transaction(async tx => {
+      await tx('pageDiscussionPolicy').insert({ pageId: 1, closed: false, reason: 'Transition explanation', revision: rootTransitionEventId, updatedAt: new Date().toISOString() })
+      return posts.postInTransaction(tx, post({ annotations: [annotationInput] }), { rootTransitionEventId })
+    })
+    const event = await db('outboxEvents').where({ type: 'discussion.comment-created', aggregateId: String(id) }).first()
+    expect(JSON.parse(event.payload)).toEqual({ pageId: 1, commentId: id, actorId: 1, rootTransitionEventId })
+    expect(await db('commentAnnotations').where('commentId', id)).toHaveLength(1)
+    const clock = await db('pageLifecycleClocks').where('pageId', 1).first()
+    expect(clock.lastCommentEvent).toBe(event.id)
+    await expect(Promise.resolve(db.transaction(async tx => {
+      await tx('pageDiscussionPolicy').where('pageId', 1).update({ reason: 'Must roll back' })
+      await posts.postInTransaction(tx, post({ user: { ...post().user, id: 3 } }), { rootTransitionEventId })
+      throw new Error('Caller transition failed')
+    }))).rejects.toThrow('Caller transition failed')
+    expect((await db('pageDiscussionPolicy').where('pageId', 1).first()).reason).toBe('Transition explanation')
+    expect(await db('comments').select('id')).toEqual([{ id }])
+    expect(await db('outboxEvents')).toHaveLength(1)
+    expect(await db('pageLifecycleClocks').where('pageId', 1).first()).toEqual(clock)
+    for (const rejected of [
+      post({ requester: { id: 7, permissions: ['read:pages'] } as never, user: { ...post().user, id: 7 } }),
+      post({ replyTo: id, annotations: [annotationInput], user: { ...post().user, id: 8 } })
+    ]) {
+      await expect(Promise.resolve(db.transaction(async tx => {
+        await tx('pageDiscussionPolicy').where('pageId', 1).update({ reason: 'Invalid comment transition' })
+        await posts.postInTransaction(tx, rejected, { rootTransitionEventId })
+      }))).rejects.toMatchObject({ status: rejected.annotations ? 400 : 403 })
+      expect((await db('pageDiscussionPolicy').where('pageId', 1).first()).reason).toBe('Transition explanation')
+      expect(await db('comments').select('id')).toEqual([{ id }])
+      expect(await db('outboxEvents')).toHaveLength(1)
+      expect(await db('pageLifecycleClocks').where('pageId', 1).first()).toEqual(clock)
+    }
+    await db.raw(`ALTER TABLE "pageLifecycleClocks" ADD CONSTRAINT native_clock_failure CHECK ("lastCommentEvent" IS NULL) NOT VALID`)
+    try {
+      await expect(Promise.resolve(posts.post(post({ user: { ...post().user, id: 4 }, annotations: [annotationInput] })))).rejects.toThrow()
+      expect(await db('comments').select('id')).toEqual([{ id }])
+      expect(await db('commentAnnotations').where('commentId', id)).toHaveLength(1)
+      expect(await db('outboxEvents')).toHaveLength(1)
+      expect(await db('pageLifecycleClocks').where('pageId', 1).first()).toEqual(clock)
+    } finally {
+      await db.raw('ALTER TABLE "pageLifecycleClocks" DROP CONSTRAINT native_clock_failure')
+    }
+  })
+
   it('persists ordered root annotations and the internal event in the posting transaction, refusing invalid replies and rolling back storage failures', async () => {
     const id = await posts.post(post({ annotations: [annotationInput, { ...annotationInput, note: 'Second passage' }] }))
     const rows = await db('commentAnnotations').where('commentId', id).orderBy('position')
@@ -771,15 +945,15 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
       .where({ type: 'discussion.comment-created', aggregateId: String(id) })
       .first()
     expect(JSON.parse(event.payload)).toEqual({ pageId: 1, commentId: id, actorId: 1 })
-    await expect(posts.post(post({ replyTo: id, annotations: [annotationInput] }))).rejects.toMatchObject({ status: 400 })
-    await expect(posts.post(post({ annotations: Array.from({ length: 9 }, () => annotationInput) }))).rejects.toMatchObject({ status: 400 })
-    await expect(posts.post(post({ annotations: [{ ...annotationInput, anchor: { ...annotationInput.anchor, offset: 1.5 } }] }))).rejects.toMatchObject({
+    await expect(Promise.resolve(posts.post(post({ replyTo: id, annotations: [annotationInput] })))).rejects.toMatchObject({ status: 400 })
+    await expect(Promise.resolve(posts.post(post({ annotations: Array.from({ length: 9 }, () => annotationInput) })))).rejects.toMatchObject({ status: 400 })
+    await expect(Promise.resolve(posts.post(post({ annotations: [{ ...annotationInput, anchor: { ...annotationInput.anchor, offset: 1.5 } }] })))).rejects.toMatchObject({
       status: 400
     })
     await db('comments').where('id', id).update({ createdAt: '2020-01-01T00:00:00.000Z' })
     await db.raw(`ALTER TABLE "commentAnnotations" ADD CONSTRAINT annotation_test_failure CHECK ("note" <> 'Fail storage')`)
     try {
-      await expect(posts.post(post({ annotations: [annotationInput, { ...annotationInput, note: 'Fail storage' }] }))).rejects.toThrow()
+      await expect(Promise.resolve(posts.post(post({ annotations: [annotationInput, { ...annotationInput, note: 'Fail storage' }] })))).rejects.toThrow()
       expect(await db('comments').select('id')).toEqual([{ id }])
       expect(await db('commentAnnotations').where('commentId', id)).toHaveLength(2)
       expect(await db('outboxEvents')).toHaveLength(1)
@@ -788,7 +962,7 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     }
     await db.raw(`ALTER TABLE "outboxEvents" ADD CONSTRAINT annotation_outbox_test_failure CHECK ("type" <> 'discussion.comment-created') NOT VALID`)
     try {
-      await expect(posts.post(post({ annotations: [annotationInput] }))).rejects.toThrow()
+      await expect(Promise.resolve(posts.post(post({ annotations: [annotationInput] })))).rejects.toThrow()
       expect(await db('comments').select('id')).toEqual([{ id }])
       expect(await db('commentAnnotations').where('commentId', id)).toHaveLength(2)
       expect(await db('outboxEvents')).toHaveLength(1)

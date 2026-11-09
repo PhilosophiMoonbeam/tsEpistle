@@ -727,6 +727,7 @@
   </v-container>
 </template>
 <script lang="ts">
+import { helpers } from '../../helpers/index.ts'
 import { confirmDiscard } from '../common/confirm-dialog.ts'
 import AsyncState from '@/components/common/async-state.vue'
 import AuthFields from './admin-auth-fields.vue'
@@ -978,10 +979,7 @@ export default {
       )
     },
     date(value: string) {
-      return new Date(value).toLocaleString(undefined, {
-        dateStyle: 'medium',
-        timeStyle: 'short'
-      })
+      return Number.isNaN(new Date(value).valueOf()) ? 'Invalid Date' : String(helpers.formatMoment(value, 'L LT'))
     },
     fieldTitle(key: string, field: string) {
       const provider =

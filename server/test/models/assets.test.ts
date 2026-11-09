@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
+import express, { type Response } from 'express'
+import type { Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { openStorageRoot } from '../../modules/storage/local-filesystem.ts'
+import { PdfFixtureDocument } from '../agents/pdf-fixture.ts'
+import sharp from 'sharp'
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import os from 'node:os'
@@ -19,6 +25,7 @@ let removeAsset: typeof assetOperations.remove
 let branding: typeof AssetBranding
 let localLookup = vi.fn()
 let assetHierarchy = vi.fn(async (folderId: number): Promise<Array<{ slug: string }>> => (folderId === 42 ? [{ slug: '.git' }] : []))
+let assetServer: Server | undefined
 
 interface AssetResponse {
   req: { method: string; headers: Record<string, string> }
@@ -27,7 +34,9 @@ interface AssetResponse {
   body?: unknown
   headers: Record<string, string>
   status: (statusCode: number) => AssetResponse
-  set: (name: string, value: string) => AssetResponse
+  set: (name: string, value: string | string[]) => AssetResponse
+  getHeader: (name: string) => string | undefined
+  removeHeader: (name: string) => void
   type: (value: string) => AssetResponse
   sendStatus: (statusCode: number) => AssetResponse
   send: (body: unknown) => AssetResponse
@@ -44,10 +53,12 @@ const responseForAsset = (method = 'GET', range?: string): AssetResponse => {
     response.statusCode = statusCode
     return response
   })
-  response.set = vi.fn((name: string, value: string) => {
-    response.headers[name] = value
+  response.set = vi.fn((name: string, value: string | string[]) => {
+    response.headers[name] = Array.isArray(value) ? value.join(', ') : value
     return response
   })
+  response.getHeader = vi.fn((name: string) => response.headers[name])
+  response.removeHeader = vi.fn((name: string) => { delete response.headers[name] })
   response.type = vi.fn((value: string) => {
     response.headers['Content-Type'] = value
     return response
@@ -93,6 +104,20 @@ const insertAsset = async (assetPath: string, data: Buffer, overrides: Record<st
 }
 
 const asResponse = (response: AssetResponse): Response => response as unknown as Response
+
+const startAssetHttp = async (sitePolicy?: string, reportOnly = false): Promise<string> => {
+  const app = express()
+  app.use((req, res) => {
+    if (sitePolicy) res.set(reportOnly ? 'Content-Security-Policy-Report-Only' : 'Content-Security-Policy', sitePolicy)
+    void Asset.getAsset(decodeURIComponent(req.path.slice(1)), res)
+  })
+  assetServer = app.listen(0, '127.0.0.1')
+  const listening = Promise.withResolvers<void>()
+  assetServer.once('listening', listening.resolve)
+  assetServer.once('error', listening.reject)
+  await listening.promise
+  return `http://127.0.0.1:${(assetServer.address() as AddressInfo).port}`
+}
 
 const upload = async (source: string, contents: string, options: { skipStorage?: boolean } = {}): Promise<void> => {
   await writeFile(source, contents)
@@ -192,6 +217,14 @@ describe('asset aggregate persistence', () => {
   })
 
   afterEach(async () => {
+    if (assetServer) {
+      const server = assetServer
+      assetServer = undefined
+      server.closeAllConnections()
+      const closed = Promise.withResolvers<void>()
+      server.close(error => error ? closed.reject(error) : closed.resolve())
+      await closed.promise
+    }
     await db.destroy()
     await rm(tempRoot, { force: true, recursive: true })
     if (originalWiki === undefined) delete wikiGlobal.WIKI
@@ -333,7 +366,7 @@ describe('asset aggregate persistence', () => {
     expect(JSON.parse(jobs[0].payload)).toMatchObject({ entityType: 'asset', entityId: asset.id, paths: [assetPath] })
   })
 
-  it('uploads safe and hostile SVGs through the real scheduler worker and serves only sanitized canonical bytes', async () => {
+  it('scans imports without changing originals and contains configured storage copies that differ from canonical bytes', async () => {
     const coreDirectory = path.join(tempRoot, 'server', 'core')
     await mkdir(coreDirectory, { recursive: true })
     await mkdir(path.join(tempRoot, 'server', 'app'), { recursive: true })
@@ -359,6 +392,7 @@ describe('asset aggregate persistence', () => {
     const safe = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M1 1h20v20H1z"/></svg>'
     const hostile = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" onload="alert(1)"><script>alert(2)</script><foreignObject><iframe src="https://example.invalid/"/></foreignObject><a href="javascript:alert(3)"><path onclick="alert(4)" fill="currentColor" d="M1 1h20v20H1z"/></a></svg>'
     try {
+      const origin = await startAssetHttp()
       for (const [filename, contents] of [['safe.svg', safe], ['hostile.svg', hostile]] as const) {
         const source = path.join(tempRoot, filename)
         await writeFile(source, contents)
@@ -395,6 +429,22 @@ describe('asset aggregate persistence', () => {
         expect(Buffer.from((await db('assetData').where({ id: row.id }).first('data')).data).toString()).toBe(served)
         expect(row.fileSize).toBe(Buffer.byteLength(served))
         expect(await readFile(source, 'utf8')).toBe(contents)
+        const root = await openStorageRoot(tempRoot)
+        try {
+          localLookup.mockResolvedValue([{ key: 'disk', location: { open: () => root.openFile(filename) } }])
+          await rm(path.join(tempRoot, 'data', 'cache', `${row.hash}.dat`))
+          const originalResponse = await fetch(`${origin}/${filename}`)
+          expect(originalResponse.status).toBe(200)
+          expect(originalResponse.headers.get('Content-Type')).toContain('image/svg+xml')
+          expect(originalResponse.headers.get('Content-Security-Policy')).toContain('sandbox')
+          expect(originalResponse.headers.get('X-Content-Type-Options')).toBe('nosniff')
+          expect(await originalResponse.text()).toBe(contents)
+          expect(await readFile(source, 'utf8')).toBe(contents)
+          expect(Buffer.from((await db('assetData').where({ id: row.id }).first('data')).data).toString()).toBe(served)
+        } finally {
+          localLookup.mockResolvedValue([])
+          await root.close()
+        }
       }
       expect(wiki.config.uploads.scanSVG).toBe(true)
     } finally {
@@ -638,5 +688,169 @@ describe('asset aggregate persistence', () => {
         folderId: null
       }
     })
+  })
+
+  it.each(['cache', 'local', 'db'].flatMap(source => ['drawing.svg', 'document.html'].map(filename => ({ source, filename }))))('contains actual active-document responses from %j even when storage differs from canonical bytes', async ({ source, filename }) => {
+    const svg = filename.endsWith('.svg')
+    const scanned = Buffer.from(svg ? '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>' : '<p>Canonical document</p>')
+    const original = Buffer.from(svg ? '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(2)</script></svg>' : '<!doctype html><script>alert(document.cookie)</script>')
+    const asset = await insertAsset(filename, scanned)
+    const cachePath = path.join(tempRoot, 'data', 'cache', `${asset.hash}.dat`)
+    const root = await openStorageRoot(tempRoot)
+    try {
+      if (source === 'cache') {
+        await mkdir(path.dirname(cachePath), { recursive: true })
+        await writeFile(cachePath, original)
+      } else if (source === 'local') {
+        await writeFile(path.join(tempRoot, filename), original)
+        localLookup.mockResolvedValue([{ key: 'disk', location: { open: () => root.openFile(filename) } }])
+      }
+      const selected = source === 'db' ? scanned : original
+      const origin = await startAssetHttp("script-src 'unsafe-inline'", true)
+      for (const [method, range, status] of [
+        ['GET', undefined, 200], ['HEAD', undefined, 200],
+        ['GET', 'bytes=1-7', 206], ['HEAD', 'bytes=1-7', 206],
+        ['GET', 'bytes=9999-', 416], ['HEAD', 'bytes=9999-', 416]
+      ] as const) {
+        if (source === 'db') await rm(cachePath, { force: true })
+        const response = await fetch(`${origin}/${filename}`, { method, headers: range ? { Range: range } : {} })
+        expect(response.status).toBe(status)
+        expect(response.headers.get('Content-Type')).toContain(svg ? 'image/svg+xml' : 'text/html')
+        expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff')
+        expect(response.headers.get('Content-Security-Policy')).toContain("sandbox; default-src 'none'; script-src 'none'")
+        expect(response.headers.get('Content-Security-Policy')).not.toContain('allow-same-origin')
+        expect(response.headers.get('Content-Security-Policy-Report-Only')).toBe("script-src 'unsafe-inline'")
+        expect(response.headers.get('Content-Disposition')).toBeNull()
+        const body = Buffer.from(await response.arrayBuffer())
+        expect(body).toEqual(method === 'HEAD' || status === 416 ? Buffer.alloc(0) : status === 206 ? selected.subarray(1, 8) : selected)
+        if (status === 206) expect(response.headers.get('Content-Range')).toBe(`bytes 1-7/${selected.length}`)
+        if (status === 416) expect(response.headers.get('Content-Range')).toBe(`bytes */${selected.length}`)
+      }
+      expect(Buffer.from((await db('assetData').where({ id: asset.id }).first()).data)).toEqual(scanned)
+      if (source === 'local') expect(await readFile(path.join(tempRoot, filename))).toEqual(original)
+    } finally {
+      await root.close()
+    }
+  })
+
+  it.each(['cache', 'local', 'db'])('admits a PDF exception only from verified bytes selected from %s', async source => {
+    const document = new PdfFixtureDocument()
+    const catalog = document.reserveObject()
+    const pages = document.reserveObject()
+    const page = document.reserveObject()
+    const content = document.addStream('', Buffer.from('0 0 20 20 re S'))
+    document.setObject(catalog, `<< /Type /Catalog /Pages ${pages} 0 R >>`)
+    document.setObject(pages, `<< /Type /Pages /Kids [${page} 0 R] /Count 1 >>`)
+    document.setObject(page, `<< /Type /Page /Parent ${pages} 0 R /MediaBox [0 0 100 100] /Contents ${content} 0 R >>`)
+    const pdf = document.toBuffer(catalog)
+    const fake = Buffer.from('<!doctype html><script>alert(document.cookie)</script>')
+    const valid = await insertAsset('valid.pdf', pdf, { mime: 'text/html' })
+    const ambiguous = await insertAsset('legacy.pdf', pdf, { mime: 'application/pdf' })
+    const root = await openStorageRoot(tempRoot)
+    try {
+      if (source === 'cache') {
+        const cache = path.join(tempRoot, 'data', 'cache')
+        await mkdir(cache, { recursive: true })
+        await writeFile(path.join(cache, `${valid.hash}.dat`), pdf)
+        await writeFile(path.join(cache, `${ambiguous.hash}.dat`), fake)
+      } else if (source === 'local') {
+        await writeFile(path.join(tempRoot, 'valid.pdf'), pdf)
+        await writeFile(path.join(tempRoot, 'legacy.pdf'), fake)
+        localLookup.mockImplementation(async ({ asset }) => [{ key: 'disk', location: { open: () => root.openFile(asset.filename) } }])
+      } else {
+        await db('assetData').where({ id: ambiguous.id }).update({ data: fake })
+      }
+      const persistedAssets = await db('assets').orderBy('id')
+      const persistedData = await db('assetData').orderBy('id')
+      const sitePolicy = "frame-ancestors 'none'; object-src 'none'"
+      const origin = await startAssetHttp(sitePolicy)
+      for (const [filename, bytes, verified] of [['valid.pdf', pdf, true], ['legacy.pdf', fake, false]] as const) {
+        const cachePath = path.join(tempRoot, 'data', 'cache', `${filename === 'valid.pdf' ? valid.hash : ambiguous.hash}.dat`)
+        for (const [method, range, status] of [
+          ['GET', undefined, 200], ['HEAD', undefined, 200],
+          ['GET', 'bytes=0-3', 206], ['HEAD', 'bytes=0-3', 206],
+          ['GET', 'bytes=9999-', 416], ['HEAD', 'bytes=9999-', 416]
+        ] as const) {
+          if (source === 'db') await rm(cachePath, { force: true })
+          // Exercise the DB-selected response and its repopulated cache, not just
+          // an already cached copy that would hide a driver binary-type mismatch.
+          for (let attempt = 0; attempt < (source === 'db' ? 2 : 1); attempt++) {
+            const response = await fetch(`${origin}/${filename}`, { method, headers: range ? { Range: range } : {} })
+            expect(response.status).toBe(status)
+            expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff')
+            expect(response.headers.get('Content-Security-Policy')).toContain(sitePolicy)
+            expect(response.headers.get('Content-Type')).toContain(verified ? 'application/pdf' : 'application/octet-stream')
+            expect(response.headers.get('X-Wiki-Asset-Type')).toBe(verified && status !== 416 ? 'pdf' : null)
+            if (verified && status !== 416) expect(response.headers.get('Content-Security-Policy')).not.toContain('sandbox')
+            else expect(response.headers.get('Content-Security-Policy')).toContain('sandbox')
+            if (!verified) {
+              expect(response.headers.get('Content-Disposition')).toBe('attachment; filename=legacy.pdf')
+            }
+            const body = Buffer.from(await response.arrayBuffer())
+            expect(body).toEqual(method === 'HEAD' || status === 416 ? Buffer.alloc(0) : status === 206 ? bytes.subarray(0, 4) : bytes)
+            if (status === 206) expect(response.headers.get('Content-Range')).toBe(`bytes 0-3/${bytes.length}`)
+            if (status === 416) expect(response.headers.get('Content-Range')).toBe(`bytes */${bytes.length}`)
+            if (source === 'db') expect(await readFile(cachePath)).toEqual(bytes)
+          }
+        }
+      }
+      expect(await db('assets').orderBy('id')).toEqual(persistedAssets)
+      expect(await db('assetData').orderBy('id')).toEqual(persistedData)
+      if (source === 'cache') {
+        expect(await readFile(path.join(tempRoot, 'data', 'cache', `${valid.hash}.dat`))).toEqual(pdf)
+        expect(await readFile(path.join(tempRoot, 'data', 'cache', `${ambiguous.hash}.dat`))).toEqual(fake)
+      }
+      if (source === 'local') {
+        expect(await readFile(path.join(tempRoot, 'valid.pdf'))).toEqual(pdf)
+        expect(await readFile(path.join(tempRoot, 'legacy.pdf'))).toEqual(fake)
+      }
+    } finally {
+      await root.close()
+    }
+  })
+
+  it('retains containment for empty bodies, missing data and storage errors with general CSP absent', async () => {
+    await insertAsset('empty.html', Buffer.alloc(0))
+    const missing = await insertAsset('missing.html', Buffer.from('removed'))
+    await db('assetData').where({ id: missing.id }).del()
+    const origin = await startAssetHttp()
+    for (const [filename, range, status] of [['empty.html', undefined, 200], ['empty.html', 'bytes=0-', 416], ['missing.html', undefined, 404], ['unknown.html', undefined, 404]] as const) {
+      const response = await fetch(`${origin}/${filename}`, { headers: range ? { Range: range } : {} })
+      expect(response.status).toBe(status)
+      expect(response.headers.get('Content-Security-Policy')).toContain('sandbox')
+      expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff')
+      expect(response.headers.get('X-Wiki-Asset-Type')).toBeNull()
+      await response.arrayBuffer()
+    }
+    await insertAsset('broken.pdf', Buffer.from('%PDF-1.7\n%%EOF\n'))
+    localLookup.mockRejectedValueOnce(new Error('configured storage unavailable'))
+    const failed = await fetch(`${origin}/broken.pdf`)
+    expect(failed.status).toBe(500)
+    expect(failed.headers.get('Content-Security-Policy')).toContain('sandbox')
+    expect(failed.headers.get('X-Content-Type-Options')).toBe('nosniff')
+    expect(failed.headers.get('X-Wiki-Asset-Type')).toBeNull()
+    expect(failed.headers.get('Content-Type')).toContain('text/plain')
+    await failed.arrayBuffer()
+  })
+
+  it('preserves forced-download names and raster/SVG inline image use without relaxing an existing sandbox policy for PDFs', async () => {
+    const wiki = wikiGlobal.WIKI as { config: { uploads: { forceDownload: boolean } } }
+    wiki.config.uploads.forceDownload = true
+    await insertAsset('download name.html', Buffer.from('<script>alert(1)</script>'))
+    const raster = await sharp({ create: { width: 1, height: 1, channels: 3, background: 'red' } }).png().toBuffer()
+    await insertAsset('image.png', raster)
+    await insertAsset('image.svg', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'))
+    await insertAsset('read.pdf', Buffer.from('%PDF-1.7\n%%EOF\n'))
+    const origin = await startAssetHttp("sandbox; default-src 'none'")
+    for (const filename of ['download name.html', 'image.png', 'image.svg', 'read.pdf']) {
+      const response = await fetch(`${origin}/${encodeURIComponent(filename)}`, { method: 'HEAD' })
+      expect(response.status).toBe(200)
+      expect(response.headers.get('Content-Security-Policy')).toContain("sandbox; default-src 'none'")
+      expect(response.headers.get('Content-Disposition')).toBe(filename === 'read.pdf' ? 'attachment; filename=read.pdf' : filename === 'download name.html' ? 'attachment; filename=download%20name.html' : null)
+    }
+    const response = responseForAsset('HEAD')
+    await Asset.getAsset('download name.html', asResponse(response))
+    expect(response.headers['Content-disposition']).toBe('attachment; filename=download%20name.html')
+    expect(response.headers['X-Content-Type-Options']).toBe('nosniff')
   })
 })

@@ -2,6 +2,7 @@ import { setImmediate as yieldEventLoop } from 'node:timers/promises'
 
 import {
   buildOkfMetadataPayload,
+  convertPage,
   createPage,
   deletePage,
   discardCollaborationDraft,
@@ -19,6 +20,7 @@ import {
   linkPageLocaleRelation,
   movePage,
   restorePageVersion,
+  reviewPageConversion,
   searchPages,
   unlinkPageLocaleRelation,
   updatePage,
@@ -102,6 +104,24 @@ const pagePayload = (okf = missingOkf) => ({
     status: 'needs-verification'
   },
   okf
+})
+
+const conversionReviewPayload = () => ({
+  reviewToken: 'r'.repeat(43),
+  pageId: 7,
+  sourceRevision: '8',
+  editor: 'markdown',
+  originalSource: '<p><strong>Review me</strong></p>',
+  candidate: '**Review me**',
+  candidateDigest: 'a'.repeat(64),
+  report: {
+    warnings: ['Compare the original source before confirming.'],
+    differences: { text: false, code: false, links: false, tables: false },
+    roundtripSource: '**Review me**',
+    previewHtml: '<p><strong>Review me</strong></p>',
+    renderer: 'native markdownCore'
+  },
+  expiresAt: new Date(Date.now() + 60_000).toISOString()
 })
 
 describe('pages api helper', () => {
@@ -596,6 +616,28 @@ describe('pages api helper', () => {
     await expect(updatePage(fetchImpl, 7, {}, '0')).rejects.toThrow('Page update failed')
     await expect(updatePage(fetchImpl, 7, {}, '8', 0)).rejects.toThrow('Page update failed')
   })
+  test('carries explicit feedback admission only on an opted-in canonical creation', async () => {
+    const feedbackSubmission = { boardId: 'ad105de9-c686-45b3-8c8c-72e7d3c3a6b2', expectedBoardRevision: '12', acknowledged: true }
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ page: { id: 7, updatedAt: '2026-01-03T00:00:00.000Z', sourceRevision: '1' } }))
+    await createPage(fetchImpl, { content: 'Canonical proposal source', feedbackSubmission })
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ content: 'Canonical proposal source', feedbackSubmission })
+    await createPage(fetchImpl, { content: 'Ordinary page source' })
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({ content: 'Ordinary page source' })
+  })
+
+  test('rejects malformed or unacknowledged feedback admission before canonical creation', async () => {
+    const admission = { boardId: 'ad105de9-c686-45b3-8c8c-72e7d3c3a6b2', expectedBoardRevision: '12', acknowledged: true }
+    const fetchImpl = vi.fn()
+    for (const feedbackSubmission of [
+      null, {}, { ...admission, acknowledged: false }, { ...admission, boardId: 'not-a-board' },
+      { ...admission, expectedBoardRevision: '012' }, { ...admission, expectedBoardRevision: 12 },
+      { ...admission, userId: 7 }, { ...admission, sessionId: 'browser-authored' }
+    ]) {
+      await expect(createPage(fetchImpl, { content: 'Canonical source', feedbackSubmission }, 'Submission not created')).rejects.toThrow('Submission not created')
+    }
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   test('rejects invalid receipt identities before any page is posted', async () => {
     const requestId = '1ce8ef11-12c4-4a45-a761-2743761911aa'
     const origin = { kind: 'live-note', noteId: '146e48d1-d094-498a-8c0b-a1cf862ce44e', revision: 17 }
@@ -711,6 +753,85 @@ describe('pages api helper', () => {
     const invalidFetch = vi.fn()
     await expect(updatePageFeatures(invalidFetch, 7, { ...customPageFeatures, retired: true }, '8')).rejects.toThrow('Page feature update failed')
     expect(invalidFetch).not.toHaveBeenCalled()
+  })
+
+  test('requests a revision-bound review without sending candidate or confirmation fields', async () => {
+    const payload = conversionReviewPayload()
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
+
+    expect(await reviewPageConversion(fetchImpl, 7, 'markdown', '8')).toEqual(payload)
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/7/convert/review', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ editor: 'markdown', expectedSourceRevision: '8' })
+    })
+  })
+
+  test('keeps a valid empty candidate rather than replacing it with the authored HTML', async () => {
+    const payload = conversionReviewPayload()
+    payload.candidate = ''
+    payload.report.roundtripSource = ''
+    payload.report.previewHtml = ''
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
+
+    expect((await reviewPageConversion(fetchImpl, 7, 'markdown', '8')).candidate).toBe('')
+  })
+
+  test('rejects incomplete, cross-page, stale and non-strict conversion review responses', async () => {
+    const valid = conversionReviewPayload()
+    for (const patch of [
+      { reviewToken: undefined }, { reviewToken: 'not-a-review' },
+      { pageId: 8 }, { sourceRevision: '9' }, { sourceRevision: 8 }, { editor: 'visual-markdown' },
+      { originalSource: null }, { candidate: null }, { candidateDigest: 'not-a-digest' },
+      { expiresAt: 'invalid' }, { expiresAt: new Date(Date.now() - 1000).toISOString() },
+      { unexpected: 'must not be silently stripped' },
+      { report: { ...valid.report, warnings: [null] } },
+      { report: { ...valid.report, differences: { text: false, code: false, links: false } } },
+      { report: { ...valid.report, differences: { ...valid.report.differences, tables: 'false' } } },
+      { report: { ...valid.report, differences: { ...valid.report.differences, extra: false } } },
+      { report: { ...valid.report, roundtripSource: null } },
+      { report: { ...valid.report, previewHtml: null } },
+      { report: { ...valid.report, renderer: undefined } },
+      { report: { ...valid.report, extra: true } }
+    ]) {
+      const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ...valid, ...patch }))
+      await expect(reviewPageConversion(fetchImpl, 7, 'markdown', '8', 'Review unavailable')).rejects.toThrow('Review unavailable')
+    }
+  })
+
+  test('rejects invalid review inputs before starting conversion work', async () => {
+    const fetchImpl = vi.fn()
+    for (const [id, editor, revision] of [[0, 'markdown', '8'], [7, 'ckeditor', '8'], [7, 'markdown', '08'], [7, 'markdown', 8]]) {
+      await expect(reviewPageConversion(fetchImpl, id, editor, revision)).rejects.toThrow('Page conversion review failed')
+    }
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  test('confirms only the reviewed token and revision, retaining an explicit fallback message', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Page has been converted.' }))
+    const token = 'r'.repeat(43)
+    await convertPage(fetchImpl, 7, 'markdown', '8', token, 'Unable to confirm')
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({ editor: 'markdown', expectedSourceRevision: '8', reviewToken: token })
+    await convertPage(fetchImpl, 7, 'visual-markdown', '8', undefined, 'Unable to confirm')
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({ editor: 'visual-markdown', expectedSourceRevision: '8' })
+    const malformedFetch = vi.fn().mockResolvedValue({ ok: true, headers: { get: () => 'text/html' } })
+    await expect(convertPage(malformedFetch, 7, 'markdown', '8', token, 'Unable to confirm')).rejects.toThrow('Unable to confirm')
+  })
+
+  test('surfaces revision conflict and cancellation without replaying review or confirmation', async () => {
+    for (const action of [
+      fetchImpl => reviewPageConversion(fetchImpl, 7, 'markdown', '8'),
+      fetchImpl => convertPage(fetchImpl, 7, 'markdown', '8', 'r'.repeat(43))
+    ]) {
+      const staleFetch = vi.fn().mockResolvedValue({ ...createJsonResponse({ error: 'Page source changed. Review again.' }, false), status: 409 })
+      await expect(action(staleFetch)).rejects.toMatchObject({ message: 'Page source changed. Review again.', status: 409 })
+      expect(staleFetch).toHaveBeenCalledTimes(1)
+      const abort = new DOMException('Conversion cancelled.', 'AbortError')
+      const abortedFetch = vi.fn().mockRejectedValue(abort)
+      await expect(action(abortedFetch)).rejects.toBe(abort)
+      expect(abortedFetch).toHaveBeenCalledTimes(1)
+    }
   })
 
   test('rejects malformed page detail payloads', async () => {
@@ -1380,6 +1501,30 @@ describe('pages api helper', () => {
         }
       ]
     ])
+  })
+
+  test('carries a lifecycle proposal through native moves with or without reviewed link repair', async () => {
+    const proposalId = 'ad105de9-c686-45b3-8c8c-72e7d3c3a6b2'
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
+      message: 'Page has been moved.', pageId: 7, sourceRevision: '9',
+      updated: [], projections: 'pending'
+    }))
+    await movePage(fetchImpl, 7, 'en', 'archive/proposal', '8', 'Move not confirmed', undefined, proposalId)
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      destinationLocale: 'en', destinationPath: 'archive/proposal', expectedSourceRevision: '8', lifecycleProposalId: proposalId
+    })
+    await movePage(fetchImpl, 7, 'en', 'archive/proposal', '8', 'Move not confirmed', 'signed-review-token', proposalId)
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({
+      destinationLocale: 'en', destinationPath: 'archive/proposal', expectedSourceRevision: '8',
+      reviewToken: 'signed-review-token', updateLinks: true, lifecycleProposalId: proposalId
+    })
+    await movePage(fetchImpl, 7, 'en', 'archive/ordinary', '8', 'Move not confirmed')
+    expect(JSON.parse(fetchImpl.mock.calls[2][1].body)).toEqual({
+      destinationLocale: 'en', destinationPath: 'archive/ordinary', expectedSourceRevision: '8'
+    })
+    const invalidFetch = vi.fn()
+    await expect(movePage(invalidFetch, 7, 'en', 'archive/proposal', '8', 'Move not confirmed', undefined, 'not-a-proposal')).rejects.toThrow('Move not confirmed')
+    expect(invalidFetch).not.toHaveBeenCalled()
   })
 
   test('requires reviewed selections to carry a token and verifies move receipt identity', async () => {

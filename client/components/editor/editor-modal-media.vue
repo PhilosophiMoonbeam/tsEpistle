@@ -49,11 +49,12 @@ component(:is='embedded ? `div` : mediaDialogComponent', :style='embedded && isB
             .editor-media-folders(v-if='folders.length > 0 || currentFolderId > 0')
               v-btn.editor-media-icon-button(variant="outlined", icon, :aria-label='$t(`editor:editorModalMedia.openParentFolder`)', @click='upFolder()', :disabled='currentFolderId === 0')
                 v-icon mdi-folder-upload
-              v-btn.editor-media-folder(v-for='folder of displayedFolders', :key='folder.id', variant="tonal", color="primary", @click='downFolder(folder)')
+              v-btn.editor-media-folder(v-for='folder of displayedFolders', :key='folder.id', variant="tonal", color="primary", :class='{ "editor-media-drop-target": dragFolderId === folder.id }', @click='downFolder(folder)', @dragover='overAssetFolder($event, folder.id)', @dragleave='dragFolderId = null', @drop='dropAssetOnFolder($event, folder.id)')
                 v-icon(start) mdi-folder
                 span.text-body-small {{ folder.name }}
             v-alert.editor-media-branding-notice.mb-3(v-if='isBranding', type='info', variant='tonal', density='compact')
               .text-body-small {{ $t(`editor:editorModalMedia.pageBrandingAcceptsStatic`) }}
+            .text-body-small(role='status', aria-live='polite') {{ dragStatus }}
             v-alert.mb-3(v-if='mediaLoadError', type='error', variant='tonal', role='alert')
               .d-flex.align-center
                 span {{mediaLoadError}}
@@ -78,6 +79,10 @@ component(:is='embedded ? `div` : mediaDialogComponent', :style='embedded && isB
                   :aria-current='currentFileId === props.item.id ? `true` : undefined'
                   :aria-disabled='!isAssetActionable(props.item.id)'
                   :aria-label='assetAriaLabel(props.item)'
+                  :draggable='canDragAsset(props.item.id)'
+                  :data-editor-media-row='props.item.id'
+                  @dragstart='startAssetDrag($event, props.item.id)'
+                  @dragend='clearAssetDrag'
                   @keydown.enter.space.prevent='isAssetActionable(props.item.id) && selectAsset(props.item.id)'
                   @click.left='isAssetActionable(props.item.id) && selectAsset(props.item.id)'
                 )
@@ -315,7 +320,7 @@ component(:is='embedded ? `div` : mediaDialogComponent', :style='embedded && isB
     //- IMAGE SAVE-AS RESIZE DIALOG
     v-dialog(
       v-model='resizeDialog'
-      max-width='650'
+      max-width='850'
       :persistent='resizeLoading'
       content-class='editor-media-owned-overlay'
       aria-labelledby='editor-media-resize-title'
@@ -327,6 +332,35 @@ component(:is='embedded ? `div` : mediaDialogComponent', :style='embedded && isB
           span#editor-media-resize-title {{ $t(`editor:editorModalMedia.resizeImageSaveNew`) }}
         v-card-text.pt-5
           .text-body-medium {{ $t(`editor:editorModalMedia.createNewAssetOriginal`, { resizeSourceName, interpolation: { escapeValue: false } }) }}
+          v-alert.mt-3(type='warning', variant='tonal', density='compact')
+            | Save-as leaves the original, existing links, copies and prior versions accessible. Opaque fill only replaces pixels in this new copy; it is not global secret deletion.
+          .d-flex.flex-wrap.ga-2.mt-3
+            v-btn(variant='tonal', :disabled='resizeLoading || editOperations.length === 0', @click='undoImageEdit') Undo
+            v-btn(variant='tonal', :disabled='resizeLoading || editRedo.length === 0', @click='redoImageEdit') Redo
+            v-btn(variant='tonal', :disabled='resizeLoading || !isResizeValid || previewLoading', :loading='previewLoading', @click='loadEditPreview') Update preview
+          .text-body-small.mt-2(role='status', aria-live='polite') {{ editOperations.length }} / 16 ordered edits. {{ editPreview ? `Current image: ${editPreview.editWidth} × ${editPreview.editHeight} pixels; output ${editPreview.width} × ${editPreview.height}.` : 'Update preview before editing or saving.' }}
+          .editor-media-edit-surface.mt-3(v-if='editPreview', @pointerdown='startEditRegion', @pointermove='moveEditRegion', @pointerup='finishEditRegion', @pointercancel='cancelEditRegion', @lostpointercapture='cancelEditRegion')
+            img(:src='editPreviewUrl', alt='Server-rendered image copy preview', draggable='false')
+            .editor-media-edit-region(v-if='editRegionStyle', :style='editRegionStyle', aria-hidden='true')
+          fieldset.mt-3.pa-3(:disabled='resizeLoading || previewLoading || !editPreview')
+            legend.px-2 Ordered image edits (before final resize)
+            .text-body-small Coordinates use the EXIF-oriented image after preceding edits. Drag on the preview with mouse or touch, or enter pixel values below.
+            v-select.mt-2(v-model='editRegionKind', :items='[{ title: "Crop region", value: "crop" }, { title: "Opaque fill region", value: "fill" }]', label='Region operation', variant='outlined')
+            .editor-media-resize-dimensions
+              v-text-field(v-model.number='editLeft', label='Left (pixels)', type='number', min='0', step='1', variant='outlined')
+              v-text-field(v-model.number='editTop', label='Top (pixels)', type='number', min='0', step='1', variant='outlined')
+              v-text-field(v-model.number='editWidth', label='Width (pixels)', type='number', min='1', step='1', variant='outlined')
+              v-text-field(v-model.number='editHeight', label='Height (pixels)', type='number', min='1', step='1', variant='outlined')
+            v-text-field(v-if='editRegionKind === "fill"', v-model='editColor', label='Opaque RGB fill (#RRGGBB)', variant='outlined')
+            .d-flex.flex-wrap.ga-2
+              v-btn(variant='tonal', :disabled='!editRegionValid || editOperations.length >= 16', @click='applyImageRegion') Apply region
+              v-btn(variant='tonal', :disabled='editOperations.length >= 16', @click='appendImageEdit({ type: "rotate", turns: 1 })') Rotate 90°
+              v-btn(variant='tonal', :disabled='editOperations.length >= 16', @click='appendImageEdit({ type: "mirror", axis: "horizontal" })') Mirror horizontally
+              v-btn(variant='tonal', :disabled='editOperations.length >= 16', @click='appendImageEdit({ type: "mirror", axis: "vertical" })') Mirror vertically
+          ol.text-body-small.mt-2(v-if='editOperations.length')
+            li(v-for='(operation, index) in editOperations', :key='index') {{ describeImageEdit(operation) }}
+          v-checkbox(v-if='editOperations.length > 0', :model-value='editFirstFrameConfirmed', @update:model-value='confirmEditFirstFrame($event)', label='I explicitly allow first-frame conversion if this source is animated.', density='compact', :disabled='resizeLoading')
+          .text-body-small.mt-2(v-if='editOperations.some(operation => operation.type === "fill")') Opaque fill uses lossless PNG or WebP (quality setting does not apply). JPEG/GIF are refused; final resizing uses nearest-neighbor pixels to keep replacement coverage opaque.
           v-text-field.mt-4(
             v-model='resizeDestinationName'
             :label='$t(`editor:editorModalMedia.newAssetFilename`)'
@@ -426,7 +460,7 @@ component(:is='embedded ? `div` : mediaDialogComponent', :style='embedded && isB
             color='primary'
             @click='resizeSelectedAsset'
             :loading='resizeLoading'
-            :disabled='resizeLoading || !isResizeValid || Boolean(resizeReceipt)'
+            :disabled='resizeLoading || !canSaveEdit || Boolean(resizeReceipt)'
           ) {{ $t(`editor:editorModalMedia.saveCopy`) }}
     //- DELETE DIALOG
 
@@ -494,7 +528,16 @@ type ResizeImageRequest = {
   format: ResizeImageFormat
   quality: number
   animationPolicy: ResizeAnimationPolicy
+  operations?: ImageEditOperation[]
+  expectedSourceSha256?: string
+  expectedSourceRevision?: string
 }
+type ImageEditOperation =
+  | { type: 'crop'; left: number; top: number; width: number; height: number }
+  | { type: 'fill'; left: number; top: number; width: number; height: number; color: string }
+  | { type: 'rotate'; turns: 1 | 2 | 3 }
+  | { type: 'mirror'; axis: 'horizontal' | 'vertical' }
+type ImageEditPreview = { status: 'previewed'; dataUrl: string; sourceSha256: string; sourceRevision: string; width: number; height: number; editWidth: number; editHeight: number; frames: number; format: ResizeImageFormat }
 type ResizeImageReceipt = {
   status: 'succeeded'
   assetId: number
@@ -708,6 +751,12 @@ export default defineComponent({
       relocationFolderId: 0,
       relocationMode: 'rename' as 'rename' | 'move',
       relocationReceipt: null as AssetRelocationReceipt | null,
+      relocationContext: null as { assetId: number; sourcePath: string; folderId: number; owner: string } | null,
+      dragAssetId: null as number | null,
+      dragSourceFolderId: null as number | null,
+      dragFolderId: null as number | null,
+      dragGhost: null as HTMLElement | null,
+      dragStatus: '',
       renameAssetLoading: false,
       deleteAssetLoading: false,
       resizeDialog: false,
@@ -723,6 +772,22 @@ export default defineComponent({
       resizeAnimationPolicy: 'preserve' as ResizeAnimationPolicy,
       resizeReceipt: null as ResizeImageReceipt | null,
       resizeError: '',
+      editOperations: [] as ImageEditOperation[],
+      editRedo: [] as ImageEditOperation[],
+      editPreview: null as ImageEditPreview | null,
+      editPreviewUrl: '',
+      editPreviewKey: '',
+      editPreviewRequest: 0,
+      editPreviewAbort: null as AbortController | null,
+      previewLoading: false,
+      editFirstFrameConfirmed: false,
+      editRegionKind: 'crop' as 'crop' | 'fill',
+      editLeft: 0 as number | string,
+      editTop: 0 as number | string,
+      editWidth: 1 as number | string,
+      editHeight: 1 as number | string,
+      editColor: '#000000',
+      editPointer: null as { id: number; x: number; y: number; target: HTMLElement } | null,
       resizeFormats: RESIZE_FORMAT_ITEMS.map(item => ({ ...item, title: this.$t(`editor:editorModalMedia.format_${item.value}`) })),
       resizeAnimationPolicies: RESIZE_ANIMATION_POLICIES.map(item => ({ ...item, title: this.$t(`editor:editorModalMedia.animationPolicy_${item.value}`) })),
       mediaLoadError: '',
@@ -745,6 +810,23 @@ export default defineComponent({
     }
   },
   computed: {
+    editRequestKey(): string {
+      return JSON.stringify([this.resizeAssetId, this.resizeDestinationName, this.resizeDestinationFolderId, this.resizeWidth, this.resizeHeight, this.resizeDistortionUnlocked, this.resizeFormat, this.resizeQuality, this.resizeAnimationPolicy, this.editOperations, this.currentInsertionOwner])
+    },
+    editRegionValid(): boolean {
+      const preview = this.editPreview
+      const values = [this.editLeft, this.editTop, this.editWidth, this.editHeight]
+      const [left, top, width, height] = values.map(Number)
+      return Boolean(preview && values.every(value => typeof value === 'number' && Number.isSafeInteger(value)) && left! >= 0 && top! >= 0 && width! > 0 && height! > 0 && left! + width! <= preview.editWidth && top! + height! <= preview.editHeight && (this.editRegionKind !== 'fill' || /^#[0-9a-f]{6}$/i.test(this.editColor)))
+    },
+    editRegionStyle(): Record<string, string> | null {
+      const preview = this.editPreview
+      if (!preview || !this.editRegionValid) return null
+      return { left: `${Number(this.editLeft) / preview.editWidth * 100}%`, top: `${Number(this.editTop) / preview.editHeight * 100}%`, width: `${Number(this.editWidth) / preview.editWidth * 100}%`, height: `${Number(this.editHeight) / preview.editHeight * 100}%` }
+    },
+    canSaveEdit(): boolean {
+      return this.isResizeValid && this.editPreview !== null && this.editPreviewKey === this.editRequestKey && (this.editOperations.length === 0 || this.editFirstFrameConfirmed)
+    },
     currentInsertionOwner(): string {
       return this.isManaging
         ? JSON.stringify([wikiStore.user.authenticated, wikiStore.user.id, wikiStore.offlineIdentityEpoch])
@@ -834,7 +916,7 @@ export default defineComponent({
       return Boolean(
         this.resizeAssetId !== null &&
         this.isAssetActionable(this.resizeAssetId) &&
-        this.currentAsset &&
+        this.currentAsset?.id === this.resizeAssetId &&
         Number.isSafeInteger(width) &&
         Number.isSafeInteger(height) &&
         width > 0 &&
@@ -862,7 +944,8 @@ export default defineComponent({
       const current = this.currentAsset
       const name = this.renameAssetName.trim()
       const currentFolderId = current?.folderId ?? this.currentFolderId
-      return Boolean(current && name && name.length <= 255 && !/[\/\\]/.test(name) && (name !== current.filename || this.relocationFolderId !== currentFolderId))
+      const context = this.relocationContext
+      return Boolean(current && context && !this.relocationReceipt && context.assetId === current.id && context.owner === this.currentInsertionOwner && context.folderId === this.currentFolderId && context.sourcePath === this.assetPath(current) && this.isAssetActionable(current.id) && this.relocationFolderItems.some(folder => folder.value === this.relocationFolderId) && name && name.length <= 255 && !/[\/\\]/.test(name) && (name !== current.filename || this.relocationFolderId !== currentFolderId))
     },
     relocationFolderItems(): Array<{ title: string; value: number; path: string }> {
       return this.resizeFolderItems
@@ -940,10 +1023,16 @@ export default defineComponent({
     }
   },
   watch: {
+    editRequestKey() { this.retireEditPreview() },
+    resizeDialog(value: boolean) { if (!value) this.retireEditPreview() },
     currentInsertionOwner: {
       flush: 'sync',
       handler() {
+        this.clearAssetDrag()
+        this.retireEditPreview()
         if (this.isBranding) return
+        this.renameDialog = false
+        this.resizeDialog = false
         this.disposed = true
         this.mediaRequest += 1
         this.mediaAbortController?.abort()
@@ -962,6 +1051,8 @@ export default defineComponent({
       if (!this.disposed) void this.loadMedia()
     },
     currentFileId(newValue: number | null) {
+      if (newValue !== this.resizeAssetId && !this.resizeLoading) { this.retireEditPreview(); this.resizeDialog = false }
+      if (this.relocationContext && newValue !== this.relocationContext.assetId && !this.renameAssetLoading && !this.relocationReceipt) this.renameDialog = false
       if (this.isBranding && newValue === null) this.invalidateBrandingSelection()
       this.imageAlt = this.assets.find(asset => asset.id === newValue)?.filename ?? ''
       this.imageInsertError = ''
@@ -994,6 +1085,10 @@ export default defineComponent({
       })
     },
     currentFolderId () {
+      this.clearAssetDrag()
+      this.retireEditPreview()
+      if (!this.renameAssetLoading && !this.relocationReceipt) this.renameDialog = false
+      if (!this.resizeLoading) this.resizeDialog = false
       this.actionMenuAssetId = null
       void this.loadMedia()
     }
@@ -1012,6 +1107,8 @@ export default defineComponent({
     }
   },
   beforeUnmount() {
+    this.clearAssetDrag()
+    this.retireEditPreview()
     this.disposed = true
     this.mediaRequest++
     this.mediaAbortController?.abort()
@@ -1027,6 +1124,218 @@ export default defineComponent({
     }
   },
   methods: {
+    retireEditPreview() {
+      this.editPreviewRequest++
+      this.editPreviewAbort?.abort()
+      this.editPreviewAbort = null
+      this.previewLoading = false
+      this.editPreview = null
+      this.editPreviewUrl = ''
+      this.editPreviewKey = ''
+      this.cancelEditRegion()
+    },
+    imageEditRequest(): ResizeImageRequest {
+      return {
+        destination: { filename: this.resizeDestinationName.trim(), folderId: Number(this.resizeDestinationFolderId) },
+        width: Number(this.resizeWidth), height: Number(this.resizeHeight),
+        aspectPolicy: this.resizeDistortionUnlocked ? 'stretch' : 'preserve',
+        format: this.resizeFormat, quality: Number(this.resizeQuality),
+        animationPolicy: this.resizeAnimationPolicy, operations: this.editOperations
+      }
+    },
+    async loadEditPreview() {
+      if (!this.isResizeValid || this.resizeAssetId === null || this.resizeLoading) return
+      this.retireEditPreview()
+      const request = this.editPreviewRequest
+      const key = this.editRequestKey
+      const assetId = this.resizeAssetId
+      const controller = markRaw(new AbortController())
+      this.editPreviewAbort = controller
+      this.previewLoading = true
+      this.resizeError = ''
+      try {
+        const response = await sameOriginJsonFetch(window.fetch.bind(window), `/_api/assets/${assetId}/resize-preview`, {
+          method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.imageEditRequest())
+        })
+        const payload: unknown = await response.json()
+        if (!response.ok) throw new Error(isRecord(payload) && typeof payload.error === 'string' ? payload.error : 'Image preview failed.')
+        if (!isRecord(payload) || payload.status !== 'previewed' || typeof payload.dataUrl !== 'string' ||
+          payload.dataUrl.length > 35_000_000 || !/^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(payload.dataUrl) ||
+          typeof payload.sourceSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(payload.sourceSha256) ||
+          ![payload.width, payload.height, payload.editWidth, payload.editHeight, payload.frames].every(value => typeof value === 'number' && Number.isSafeInteger(value) && value > 0) ||
+          typeof payload.sourceRevision !== 'string' || !/^[0-9a-f]{64}$/.test(payload.sourceRevision) ||
+          Number(payload.width) > 8192 || Number(payload.height) > 8192 || Number(payload.width) * Number(payload.height) > 25_000_000 ||
+          Number(payload.editWidth) > 10000 || Number(payload.editHeight) > 10000 || !Object.hasOwn(RESIZE_FORMATS, String(payload.format))) {
+          throw new Error('Invalid bounded image preview.')
+        }
+        if (this.disposed || !this.resizeDialog || request !== this.editPreviewRequest || key !== this.editRequestKey || assetId !== this.resizeAssetId) return
+        this.editPreview = payload as unknown as ImageEditPreview
+        this.editPreviewUrl = payload.dataUrl
+        this.editPreviewKey = key
+        this.editLeft = 0
+        this.editTop = 0
+        this.editWidth = Number(payload.editWidth)
+        this.editHeight = Number(payload.editHeight)
+      } catch (error: unknown) {
+        if (!this.disposed && request === this.editPreviewRequest && !isAbortError(error)) this.resizeError = error instanceof Error ? error.message : 'Image preview failed.'
+      } finally {
+        if (this.editPreviewAbort === controller) this.editPreviewAbort = null
+        if (request === this.editPreviewRequest) this.previewLoading = false
+      }
+    },
+    confirmEditFirstFrame(value: boolean | null) {
+      this.editFirstFrameConfirmed = value === true
+      if (value === true) this.resizeAnimationPolicy = 'first-frame'
+    },
+    describeImageEdit(operation: ImageEditOperation): string {
+      if (operation.type === 'rotate') return `Rotate ${operation.turns * 90}° clockwise`
+      if (operation.type === 'mirror') return `Mirror ${operation.axis}`
+      return `${operation.type === 'crop' ? 'Crop' : `Opaque fill ${operation.color}`} at (${operation.left}, ${operation.top}), ${operation.width} × ${operation.height}`
+    },
+    appendImageEdit(operation: ImageEditOperation) {
+      if (this.resizeLoading || this.previewLoading || !this.editPreview || this.editOperations.length >= 16) return
+      if (operation.type === 'fill' && this.resizeFormat !== 'png' && this.resizeFormat !== 'webp') this.onResizeFormatChanged('png')
+      this.editOperations = [...this.editOperations, operation]
+      this.editRedo = []
+      this.retireEditPreview()
+      this.$nextTick(() => { if (this.resizeDialog && !this.disposed) void this.loadEditPreview() })
+    },
+    applyImageRegion() {
+      if (!this.editRegionValid) return
+      const region = { left: Number(this.editLeft), top: Number(this.editTop), width: Number(this.editWidth), height: Number(this.editHeight) }
+      this.appendImageEdit(this.editRegionKind === 'crop' ? { type: 'crop', ...region } : { type: 'fill', ...region, color: this.editColor })
+    },
+    undoImageEdit() {
+      if (this.resizeLoading) return
+      const operation = this.editOperations.at(-1)
+      if (!operation) return
+      this.editRedo = [...this.editRedo, operation]
+      this.editOperations = this.editOperations.slice(0, -1)
+      this.retireEditPreview()
+      this.$nextTick(() => { if (!this.disposed && this.resizeDialog) void this.loadEditPreview() })
+    },
+    redoImageEdit() {
+      if (this.resizeLoading || this.editOperations.length >= 16) return
+      const operation = this.editRedo.at(-1)
+      if (!operation) return
+      this.editOperations = [...this.editOperations, operation]
+      this.editRedo = this.editRedo.slice(0, -1)
+      this.retireEditPreview()
+      this.$nextTick(() => { if (!this.disposed && this.resizeDialog) void this.loadEditPreview() })
+    },
+    editPoint(event: PointerEvent, target: HTMLElement): { x: number; y: number } | null {
+      const preview = this.editPreview
+      const box = target.getBoundingClientRect()
+      if (!preview || box.width <= 0 || box.height <= 0) return null
+      return { x: Math.max(0, Math.min(preview.editWidth, Math.floor((event.clientX - box.left) / box.width * preview.editWidth))), y: Math.max(0, Math.min(preview.editHeight, Math.floor((event.clientY - box.top) / box.height * preview.editHeight))) }
+    },
+    startEditRegion(event: PointerEvent) {
+      if (this.resizeLoading || this.previewLoading || event.button !== 0 || !(event.currentTarget instanceof HTMLElement)) return
+      const point = this.editPoint(event, event.currentTarget)
+      if (!point) return
+      event.preventDefault()
+      event.currentTarget.setPointerCapture(event.pointerId)
+      this.editPointer = { id: event.pointerId, ...point, target: event.currentTarget }
+      this.editLeft = point.x
+      this.editTop = point.y
+      this.editWidth = 0
+      this.editHeight = 0
+    },
+    moveEditRegion(event: PointerEvent) {
+      const pointer = this.editPointer
+      if (!pointer || event.pointerId !== pointer.id) return
+      const point = this.editPoint(event, pointer.target)
+      if (!point) return
+      this.editLeft = Math.min(point.x, pointer.x)
+      this.editTop = Math.min(point.y, pointer.y)
+      this.editWidth = Math.abs(point.x - pointer.x)
+      this.editHeight = Math.abs(point.y - pointer.y)
+    },
+    finishEditRegion(event: PointerEvent) { this.moveEditRegion(event); this.cancelEditRegion() },
+    cancelEditRegion() {
+      const pointer = this.editPointer
+      this.editPointer = null
+      if (pointer?.target.hasPointerCapture(pointer.id)) pointer.target.releasePointerCapture(pointer.id)
+    },
+    canDragAsset(id: number): boolean {
+      return !this.disposed && !this.loading && !this.renameDialog && !this.resizeDialog && !this.deleteDialog && this.isAssetActionable(id) &&
+        this.assets.some(asset => asset.id === id) && wikiStore.user.permissions.some(permission => permission === 'manage:assets' || permission === 'manage:system')
+    },
+    clearAssetDrag() {
+      if (this.dragAssetId !== null) {
+        this.dragStatus = 'Drag ended. No changes until confirmation.'
+        this.restoreMediaDialogFocus()
+      }
+      this.dragGhost?.remove()
+      this.dragGhost = null
+      this.dragAssetId = null
+      this.dragSourceFolderId = null
+      this.dragFolderId = null
+    },
+    startAssetDrag(event: DragEvent, id: number) {
+      this.clearAssetDrag()
+      if (!this.canDragAsset(id) || !event.dataTransfer) { event.preventDefault(); return }
+      const asset = this.assets.find(candidate => candidate.id === id)
+      if (!asset) { event.preventDefault(); return }
+      const ghost = document.createElement('div')
+      ghost.className = 'editor-media-drag-ghost'
+      ghost.textContent = asset.filename
+      const root = (this.$refs.mediaContent as { $el?: HTMLElement } | undefined)?.$el
+      ;(root ?? document.body).append(ghost)
+      this.rememberMediaDialogFocus(id)
+      this.dragGhost = markRaw(ghost)
+      this.dragAssetId = id
+      this.dragSourceFolderId = this.currentFolderId
+      try {
+        event.dataTransfer.effectAllowed = 'move'
+        event.dataTransfer.setData('application/x-tsepistle-asset', String(id))
+        event.dataTransfer.setDragImage(ghost, 12, 12)
+        this.dragStatus = `Moving ${asset.filename}: drop on a folder to review, or use the Move action. No changes until confirmation.`
+      } catch {
+        this.clearAssetDrag()
+        event.preventDefault()
+      }
+    },
+    overAssetFolder(event: DragEvent, folderId: number) {
+      if (this.dragAssetId === null || !this.canDragAsset(this.dragAssetId) || this.dragSourceFolderId !== this.currentFolderId ||
+        !this.displayedFolders.some(folder => folder.id === folderId) || folderId === this.currentFolderId ||
+        !event.dataTransfer?.types.includes('application/x-tsepistle-asset')) return
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'move'
+      this.dragFolderId = folderId
+    },
+    async dropAssetOnFolder(event: DragEvent, folderId: number) {
+      const id = this.dragAssetId
+      const folder = this.currentFolderId
+      const epoch = this.mediaRequest
+      const owner = this.currentInsertionOwner
+      const valid = id !== null && this.canDragAsset(id) && this.dragSourceFolderId === folder && folderId !== folder &&
+        this.displayedFolders.some(candidate => candidate.id === folderId) && event.dataTransfer?.getData('application/x-tsepistle-asset') === String(id)
+      this.clearAssetDrag()
+      if (!valid || id === null) return
+      event.preventDefault()
+      this.dragStatus = 'Checking move destination; no changes have been made.'
+      try {
+        const response = await sameOriginJsonFetch(window.fetch.bind(window), `/_api/assets/${id}/move-preview`, {
+          method: 'POST', credentials: 'same-origin', cache: 'no-store',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ folderId })
+        })
+        const payload: unknown = await response.json()
+        if (!response.ok) throw new Error(isRecord(payload) && typeof payload.error === 'string' ? payload.error : 'This move is unavailable.')
+        if (this.disposed || epoch !== this.mediaRequest || owner !== this.currentInsertionOwner || folder !== this.currentFolderId || !this.canDragAsset(id)) return
+        const asset = this.assets.find(candidate => candidate.id === id)
+        const destination = this.relocationFolderItems.find(candidate => candidate.value === folderId)
+        if (!asset || !destination || !isRecord(payload) || payload.sourcePath !== this.assetPath(asset).replace(/^\//, '') ||
+          payload.destinationPath !== (destination.path ? `${destination.path}/${asset.filename}` : asset.filename)) throw new Error('The move context changed; refresh and try again.')
+        this.openMoveDialog(id)
+        this.relocationFolderId = folderId
+        this.dragStatus = 'Review the source, destination and publication warnings, then confirm Move. No changes have been made.'
+      } catch (error: unknown) {
+        if (!this.disposed && epoch === this.mediaRequest && owner === this.currentInsertionOwner) this.dragStatus = error instanceof Error ? error.message : 'This move is unavailable.'
+      }
+    },
     setActionMenu (assetId: number, isOpen: boolean) {
       this.actionMenuAssetId = isOpen && this.isAssetActionable(assetId) ? assetId : null
     },
@@ -1037,6 +1346,7 @@ export default defineComponent({
       this.loading = false
     },
     handleMediaEscape () {
+      this.clearAssetDrag()
       if (this.actionMenuAssetId !== null) {
         this.actionMenuAssetId = null
         return
@@ -1366,6 +1676,10 @@ export default defineComponent({
       this.resizeAnimationPolicy = 'preserve'
       this.resizeReceipt = null
       this.resizeError = ''
+      this.editOperations = []
+      this.editRedo = []
+      this.editFirstFrameConfirmed = false
+      this.retireEditPreview()
       this.resizeDialog = true
     },
     onResizeFormatChanged(format: ResizeImageFormat) {
@@ -1386,6 +1700,7 @@ export default defineComponent({
       this.renameAssetName = this.currentAsset.filename
       this.relocationFolderId = this.currentAsset.folderId ?? this.currentFolderId
       this.relocationReceipt = null
+      this.relocationContext = { assetId: id, sourcePath: this.assetPath(this.currentAsset), folderId: this.currentFolderId, owner: this.currentInsertionOwner }
       this.renameDialog = true
     },
     openRenameDialog(id: number) {
@@ -1403,7 +1718,7 @@ export default defineComponent({
       this.deleteDialog = true
     },
     async resizeSelectedAsset() {
-      if (!this.isResizeValid || this.resizeLoading || this.resizeAssetId === null) return
+      if (!this.canSaveEdit || this.resizeLoading || this.resizeAssetId === null) return
       const assetId = this.resizeAssetId
       const destinationFolderId = Number(this.resizeDestinationFolderId)
       const request: ResizeImageRequest = {
@@ -1413,7 +1728,10 @@ export default defineComponent({
         aspectPolicy: this.resizeDistortionUnlocked ? 'stretch' : 'preserve',
         format: this.resizeFormat,
         quality: Number(this.resizeQuality),
-        animationPolicy: this.resizeAnimationPolicy
+        animationPolicy: this.resizeAnimationPolicy,
+        operations: this.editOperations,
+        expectedSourceSha256: this.editPreview?.sourceSha256,
+        expectedSourceRevision: this.editPreview?.sourceRevision
       }
       wikiStore.startLoading('editor-media-resizeasset')
       this.resizeLoading = true
@@ -1486,9 +1804,29 @@ export default defineComponent({
       const currentFolderId = this.currentAsset?.folderId ?? this.currentFolderId
       const input: AssetRelocationInput = { filename: assetName }
       if (folderId !== currentFolderId) input.folderId = folderId
+      const sourcePath = this.relocationSourcePath
+      const destinationPath = this.relocationDestinationPath
+      const owner = this.currentInsertionOwner
+      const epoch = this.mediaRequest
       wikiStore.startLoading('editor-media-relocateasset')
       this.renameAssetLoading = true
       try {
+        if (this.relocationMode === 'move' && folderId !== currentFolderId) {
+          const response = await sameOriginJsonFetch(window.fetch.bind(window), `/_api/assets/${assetId}/move-preview`, {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store',
+            headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ folderId })
+          })
+          const payload: unknown = await response.json()
+          if (!response.ok) throw new Error(isRecord(payload) && typeof payload.error === 'string' ? payload.error : 'This move is unavailable.')
+          const previewDestination = isRecord(payload) && typeof payload.destinationPath === 'string' ? payload.destinationPath : ''
+          const slash = previewDestination.lastIndexOf('/')
+          const reviewedDestination = slash >= 0 ? `${previewDestination.slice(0, slash + 1)}${assetName}` : assetName
+          if (this.disposed || owner !== this.currentInsertionOwner || epoch !== this.mediaRequest ||
+            !isRecord(payload) || payload.sourcePath !== sourcePath || reviewedDestination !== destinationPath) {
+            this.renameDialog = false
+            throw new Error('The source or destination changed. Refresh and review the move again.')
+          }
+        }
         const receipt = await relocateAssetRequest(window.fetch.bind(window), assetId, input)
         this.relocationReceipt = receipt
         this.invalidateMediaLoad()
@@ -1567,6 +1905,9 @@ export default defineComponent({
       }
     },
     async loadMedia (): Promise<boolean> {
+      this.clearAssetDrag()
+      this.retireEditPreview()
+      if (this.renameDialog && !this.renameAssetLoading && !this.relocationReceipt) this.renameDialog = false
       const request = ++this.mediaRequest
       const folderId = this.currentFolderId
       const folderPath = this.folderTree.map(folder => folder.slug).join('/')
@@ -1640,6 +1981,42 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
+.editor-media-drag-ghost {
+  position: fixed;
+  top: -100px;
+  left: -1000px;
+  max-width: 260px;
+  padding: 8px 12px;
+  border: 1px solid rgb(var(--v-theme-primary));
+  border-radius: 8px;
+  background: rgb(var(--v-theme-surface));
+  color: rgb(var(--v-theme-on-surface));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.editor-media-drop-target { outline: 3px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
+.editor-media-edit-surface {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  touch-action: none;
+  user-select: none;
+  img { display: block; max-width: 100%; max-height: 420px; object-fit: contain; }
+}
+.editor-media-edit-region {
+  position: absolute;
+  border: 2px solid rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), .15);
+  pointer-events: none;
+}
+.editor-media-owned-overlay .editor-media-resize-dimensions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  @media (max-width: 599px) { grid-template-columns: minmax(0, 1fr); }
+}
 .editor-modal-media {
   background: var(--wiki-canvas-bg, rgb(var(--v-theme-background))) !important;
   color: rgb(var(--v-theme-on-background));

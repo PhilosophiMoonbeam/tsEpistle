@@ -15,6 +15,7 @@ import {
   loadDiscussionNotificationAccess
 } from './notification-access.ts'
 import type { NotificationPage } from './notification-access.ts'
+import { ceilingChannels, lockNotificationSettings, readNotificationCeilings } from './notification-ceilings.ts'
 
 interface PageWatchPayload {
   deliveryId: string
@@ -49,19 +50,18 @@ export interface PageWatchWikiContext {
     }): Promise<unknown>
   }
   auth: {
-    loadPageRuleAuthority(requester: Express.User | undefined): Promise<PageRuleAuthority>
+    loadPageRuleAuthority(requester: Express.User | undefined, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
   }
   models: {
-    pages: { getPageFromDb(id: number): Promise<Record<string, unknown> | undefined> }
+    pages: { getPageFromDb(id: number, transaction?: Knex.Transaction): Promise<Record<string, unknown> | undefined> }
     users: {
-      query(): {
+      query(transaction?: Knex.Transaction): {
         findById(id: number): {
           withGraphJoined(relation: string): {
             modifyGraph(relation: string, callback: (builder: { select(...columns: string[]): unknown }) => void): Promise<Record<string, unknown> | undefined>
           }
         }
       }
-      getRootUser(): Promise<Record<string, unknown>>
     }
   }
 }
@@ -133,10 +133,13 @@ const PAGE_WATCH_ACTIONS: Record<string, MailPageWatchAction> = {
 }
 const eventAction = (type: string): MailPageWatchAction => PAGE_WATCH_ACTIONS[type] ?? 'changed'
 
-const loadUser = async (wiki: PageWatchWikiContext, userId: number): Promise<Record<string, unknown> | undefined> => {
-  if (userId === 1) return wiki.models.users.getRootUser()
+const loadUser = async (wiki: PageWatchWikiContext, userId: number, transaction: Knex.Transaction): Promise<Record<string, unknown> | undefined> => {
+  if (userId === 1) {
+    const root = await transaction('users').where('id', userId).first()
+    return root ? { ...root, permissions: ['manage:system'] } : undefined
+  }
   const user = await wiki.models.users
-    .query()
+    .query(transaction)
     .findById(userId)
     .withGraphJoined('groups')
     .modifyGraph('groups', builder => {
@@ -151,8 +154,8 @@ const loadUser = async (wiki: PageWatchWikiContext, userId: number): Promise<Rec
 
 type CurrentPage = NotificationPage
 
-const loadCurrentPage = async (wiki: PageWatchWikiContext, knex: Knex, pageId: number): Promise<CurrentPage | undefined> => {
-  const page = await wiki.models.pages.getPageFromDb(pageId)
+const loadCurrentPage = async (wiki: PageWatchWikiContext, knex: Knex.Transaction, pageId: number): Promise<CurrentPage | undefined> => {
+  const page = await wiki.models.pages.getPageFromDb(pageId, knex)
   if (!page) return undefined
   const tags = Reflect.get(page, 'tags')
   if (Array.isArray(tags)) return { ...page, id: pageId } as CurrentPage
@@ -181,11 +184,15 @@ export const createPageWatchNotificationHandler =
       })
       return
     }
+    return knex.transaction(async knex => {
     const payload = parseJobPayload(job.payload)
-    const delivery = await knex('pageWatchDeliveries').where({ id: payload.deliveryId, eventId: payload.eventId, userId: payload.userId }).first()
+    await knex('users').where('id', payload.userId).first('id').forShare()
+    await lockNotificationSettings(knex)
+    const delivery = await knex('pageWatchDeliveries').where({ id: payload.deliveryId, eventId: payload.eventId, userId: payload.userId }).forUpdate().first()
     if (!delivery || delivery.deliveredAt) return
     const event = await knex<NotificationOutboxEvent>('outboxEvents').where('id', payload.eventId).first()
     if (!event) throw new Error('Page watch event no longer exists')
+    const eventTime = event.createdAt instanceof Date ? event.createdAt.valueOf() : new Date(event.createdAt).valueOf()
     const rawEvent: unknown = JSON.parse(event.payload)
     if (!rawEvent || typeof rawEvent !== 'object' || Array.isArray(rawEvent)) throw new TypeError('Notification event is invalid')
     const pageId = positiveInteger(Reflect.get(rawEvent, 'pageId'), 'pageId')
@@ -203,6 +210,16 @@ export const createPageWatchNotificationHandler =
         .where({ id: payload.deliveryId, eventId: payload.eventId, userId: payload.userId })
         .update({ deliveredAt: new Date(), lastError })
     }
+    const ceilingState = await readNotificationCeilings(knex)
+    const queuedChannels = ceilingChannels(ceilingState, payload.category, event.createdAt, { emailEnabled, inAppEnabled })
+    emailEnabled = queuedChannels.emailEnabled
+    inAppEnabled = queuedChannels.inAppEnabled
+    const stopped = await knex('userNotificationPreferences').where({ userId: payload.userId, category: 'allEmailStopped' }).first('updatedAt')
+    if (stopped && eventTime <= new Date(stopped.updatedAt).valueOf()) emailEnabled = false
+    if (!emailEnabled && !inAppEnabled) {
+      await complete('Notification channels suppressed by administrator ceiling or email opt-out')
+      return
+    }
     if (isDiscussion) {
       const recipient = await resolveNotificationRecipient(knex, event, payload.userId)
       if (!recipient) {
@@ -213,18 +230,22 @@ export const createPageWatchNotificationHandler =
       commentId = recipient.commentId
       actorId = recipient.actorId
       actorName = recipient.actorName
-      emailEnabled = recipient.emailEnabled
-      inAppEnabled = recipient.inAppEnabled
+      emailEnabled = emailEnabled && recipient.emailEnabled
+      inAppEnabled = inAppEnabled && recipient.inAppEnabled
     } else if (category !== 'pageWatch') {
       const preference = await knex('userNotificationPreferences').where({ userId: payload.userId, category }).first()
       emailEnabled = emailEnabled && (preference?.emailEnabled === true || preference?.emailEnabled === 1)
       inAppEnabled = inAppEnabled && (preference?.inAppEnabled === true || preference?.inAppEnabled === 1)
+    } else if (event.type !== 'page.deleted') {
+      const watcher = await knex('pageWatchers').where({ userId: payload.userId, pageId }).first()
+      emailEnabled = emailEnabled && (watcher?.emailEnabled === true || watcher?.emailEnabled === 1)
+      inAppEnabled = inAppEnabled && (watcher?.inAppEnabled === true || watcher?.inAppEnabled === 1)
     }
     if (actorId === payload.userId || (!emailEnabled && !inAppEnabled)) {
       await complete('Recipient has no enabled notification channels')
       return
     }
-    const user = await loadUser(wiki, payload.userId)
+    const user = await loadUser(wiki, payload.userId, knex)
     const active = user && Reflect.get(user, 'isActive')
     const isActive = user && (category === 'pageWatch' ? active !== false && active !== 0 : active === true || active === 1)
     const email = user && Reflect.get(user, 'email')
@@ -242,7 +263,7 @@ export const createPageWatchNotificationHandler =
     const currentPage = await loadCurrentPage(wiki, knex, pageId)
     const deletedScopes = !currentPage && category === 'pageDeleted' ? await loadDeletedNotificationScopes(knex, [event]) : null
     const page = currentPage ?? deletedScopes?.get(event.id)
-    const authority = await wiki.auth.loadPageRuleAuthority(user as Express.User)
+    const authority = await wiki.auth.loadPageRuleAuthority(user as Express.User, knex)
     const hasMetadata =
       page &&
       typeof page.title === 'string' &&
@@ -288,7 +309,6 @@ export const createPageWatchNotificationHandler =
             : eventAction(event.type)
     const route = pageRoute(page)
     const url = `${wiki.config.host.replace(/\/$/, '')}${route}${commentId === null ? '' : `#comment-post-id-${commentId}`}`
-    try {
       signal.throwIfAborted()
       if (inAppEnabled) {
         // Only routing and current page metadata are retained. Discussion text/render never enter this inbox.
@@ -321,12 +341,15 @@ export const createPageWatchNotificationHandler =
           data: { action, actorName, pageTitle: page.title, url }
         })
       }
-      await complete(null)
-    } catch (error) {
+      await complete(queuedChannels.emailEnabled !== payload.emailEnabled || queuedChannels.inAppEnabled !== payload.inAppEnabled ||
+        (stopped && eventTime <= new Date(stopped.updatedAt).valueOf())
+        ? 'Some notification channels suppressed by administrator ceiling or email opt-out'
+        : null)
+    }).catch(async error => {
       signal.throwIfAborted()
-      await knex('pageWatchDeliveries')
-        .where({ id: payload.deliveryId, eventId: payload.eventId, userId: payload.userId })
+      const payload = parseJobPayload(job.payload)
+      await knex('pageWatchDeliveries').where({ id: payload.deliveryId, eventId: payload.eventId, userId: payload.userId })
         .update({ lastError: error instanceof Error ? error.message : String(error) })
       throw error
-    }
+    })
   }

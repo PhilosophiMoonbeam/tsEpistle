@@ -432,8 +432,9 @@ export function getVisualEditorStats(editor: Editor): VisualEditorStats {
 
 export function serializeVisualEditorData(format: VisualEditorFormat, editor: Editor): string {
   if (format === 'markdown') return editor.getMarkdown()
-  const html = restoreTiptapHtmlSources(editor.getHTML())
-  return beautify(html, { indent_size: 2, end_with_newline: true })
+  // Format the editable document before restoring opaque source bytes.
+  const html = beautify(editor.getHTML(), { indent_size: 2, end_with_newline: true })
+  return restoreTiptapHtmlSources(html)
 }
 
 /**

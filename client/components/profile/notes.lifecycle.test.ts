@@ -56,6 +56,7 @@ const AsyncState = Vue.defineComponent({
     () =>
       Vue.h('div', slots.actions?.())
 })
+const AdminUtilitiesHedgedoc = Vue.defineComponent({ setup: () => () => Vue.h('div', { 'data-native-hedgedoc-import': '' }) })
 function mount(api: Partial<LiveNotesApi>) {
   const store = Vue.reactive({
     authRefreshOutcome: 'authenticated' as string | null,
@@ -65,13 +66,14 @@ function mount(api: Partial<LiveNotesApi>) {
   })
   const errors: unknown[] = []
   const component = Vue.defineComponent({
-    components: { AdminHero, AsyncState, VBtn },
+    components: { AdminHero, AsyncState, VBtn, AdminUtilitiesHedgedoc },
     setup: () =>
       evaluate({
         ...Vue,
         AdminHero,
         AsyncState,
         wikiStore: store,
+        AdminUtilitiesHedgedoc,
         createLiveNotesApi: () => api,
         LiveNotesApiError,
         translate: (_key: string, options: { defaultValue: string }) => options.defaultValue,
@@ -295,3 +297,15 @@ for (const mismatch of ['owner', 'address'] as const) {
     expect(mounted.errors).toEqual([])
   })
 }
+
+it('offers the native HedgeDoc form to nonadministrative note writers and retires it on permission loss', async () => {
+  const mounted = mount({ list: vi.fn(async () => empty) })
+  await settle()
+  expect(mounted.store.user.permissions).toEqual(['write:notes'])
+  expect(mounted.host.textContent).toContain('Import or resume HedgeDoc notes')
+  expect(mounted.host.querySelector('[data-native-hedgedoc-import]')).not.toBeNull()
+  mounted.store.user.permissions = []
+  await settle()
+  expect(mounted.host.querySelector('[data-native-hedgedoc-import]')).toBeNull()
+  expect(mounted.errors).toEqual([])
+})

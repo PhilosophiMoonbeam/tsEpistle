@@ -48,10 +48,11 @@ const encodingDate = (value: Date | string): string => {
 /**
  * Encode one DB-owned page for storage.
  *
- * Markdown is always emitted as canonical OKF. Existing valid metadata is
- * authoritative and is never passed through a mutation boundary, while the
- * bounded x-wiki extension carries the DB facts needed to round-trip the
- * page. Other content types retain the historical page metadata serializer.
+ * Markdown is always emitted as canonical OKF. Existing valid authored metadata
+ * is preserved without a mutation boundary, while the bounded x-wiki extension
+ * carries the DB facts needed to round-trip the page. Local import receipts are
+ * excluded: external bytes cannot carry their own operational ownership/hash.
+ * Other content types retain the historical page metadata serializer.
  */
 export const encodeStoragePageDocument = (page: StoragePageEncodingInput): OkfPageDocument | string | Record<string, unknown> => {
   const tags = encodingTags(page.tags)
@@ -86,13 +87,16 @@ export const encodeStoragePageDocument = (page: StoragePageEncodingInput): OkfPa
   const stored = hasStoredOkf ? validateStoredOkfMetadata(page.extra?.okf) : null
   if (hasStoredOkf && stored === null) throw new TypeError('Storage page extra.okf must contain valid OKF metadata')
   const storedXWiki = stored?.metadata['x-wiki']
+  const exportedXWiki: Record<string, unknown> =
+    typeof storedXWiki === 'object' && storedXWiki !== null && !Array.isArray(storedXWiki) ? { ...storedXWiki } : {}
+  delete exportedXWiki.storage_import
   const metadata: OkfMetadata = {
     ...(stored?.metadata ?? { type: 'Reference', status: 'stable' }),
     title: page.title,
     ...(page.description.trim().length > 0 ? { description: page.description } : {}),
     tags,
     'x-wiki': {
-      ...(typeof storedXWiki === 'object' && storedXWiki !== null && !Array.isArray(storedXWiki) ? (storedXWiki as Record<string, unknown>) : {}),
+      ...exportedXWiki,
       published: page.isPublished === true || page.isPublished === 1,
       editor: page.editorKey,
       source_revision: String(page.sourceRevision),

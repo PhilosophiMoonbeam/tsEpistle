@@ -293,6 +293,8 @@ make_plan() {
         agent-quota-daily-token-reset-credit-column|agent-media-table|agent-runs-media-request-column|native-gemini-profile-reconformance|historical-agent-content-retained|native-gemini-generate-content|retired-live-google-search-disabled|external-mcp-owner-isolation-and-grants|guarded-native-external-mcp-discovery-and-invocation|independent-decision-provider-configuration|native-typesafe-environment-fallback-and-validated-usage|immutable-model-task-declarations-and-routing-policy|eligible-owner-routing-and-accounted-safe-fallback|independent-draft-root-preserves-legacy-ciphertext|offline-draft-key-survives-session-protection-rotation|owner-root-bound-specialist-context-and-idempotent-invocation|delegated-context-reuse-preserves-incumbent-root-and-accounting|independent-media-provider-versions-preserve-legacy-models-prices-grants-and-credentials|authorized-current-media-version-bindings-and-retained-credentials) ;;
         native-page-creation-receipts-schema|native-live-notes-schema|native-glossary-schema|native-discussion-annotations-schema|native-discussion-notifications-schema|native-account-profile-schema|native-links-grid-registration) ;;
         native-page-accuracy-attestations-schema|native-page-history-reasons-schema) ;;
+        native-browser-session-retirement-schema|native-hedgedoc-import-schema|native-page-feedback-schema|native-page-review-routing-schema|native-page-lifecycle-schema|native-governed-notifications-schema) ;;
+        native-storage-page-import-owners-schema) ;;
         personal-mcp-credential-kind-and-owner-schema) ;;
         external-mcp-oauth-grants-and-pending-schema|external-mcp-generic-oauth-schema|external-mcp-retired-oauth-configuration-schema) ;;
         *) die "Unsupported named migration postcondition: $probe" ;;
@@ -1272,6 +1274,925 @@ verify_postconditions() {
         # Existing registry rows retain administrator-managed enablement and version state.
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "SELECT count(*) FROM \"contentExtensions\" WHERE key='links-grid';")"
         [[ "$result" == 1 ]] || die "Postcondition failed: $probe (native extension registration)"
+        ;;
+      native-browser-session-retirement-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,column_name,data_type,nullable) AS (VALUES
+            ('sessions','sid','character varying','NO'),
+            ('sessions','sess','json','NO'),
+            ('sessions','expired','timestamp with time zone','NO'),
+            ('browserSessionLifecycles','sid','character varying','NO'),
+            ('browserSessionLifecycles','generation','uuid','NO'),
+            ('browserSessionLifecycles','retiredAt','timestamp with time zone','YES'),
+            ('browserSessionLifecycles','expiresAt','timestamp with time zone','NO')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+          WHERE c.data_type=e.data_type AND c.is_nullable=e.nullable;
+        ")"
+        [[ "$result" == 7 ]] || die "Postcondition failed: $probe (native columns and nullability)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns,is_primary) AS (VALUES
+            ('sessions','sid',true),
+            ('browserSessionLifecycles','sid',true)
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name
+              AND i.indisunique AND i.indisvalid AND i.indisready AND i.indpred IS NULL
+              AND i.indisprimary=e.is_primary AND i.indnkeyatts=i.indnatts
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+          );
+        ")"
+        [[ "$result" == 2 ]] || die "Postcondition failed: $probe (durable primary and unique identities)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns) AS (VALUES
+            ('sessions','expired'),
+            ('browserSessionLifecycles','expiresAt')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name
+              AND i.indisvalid AND i.indisready AND i.indpred IS NULL AND i.indnkeyatts=i.indnatts
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+          );
+        ")"
+        [[ "$result" == 2 ]] || die "Postcondition failed: $probe (bounded lookup and recovery indexes)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM \"sessions\" s LEFT JOIN \"browserSessionLifecycles\" l USING (sid)
+          WHERE l.sid IS NULL OR l.\"retiredAt\" IS NOT NULL OR l.\"expiresAt\" IS DISTINCT FROM s.expired;
+        ")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe (invalid durable rows or destructive canonical-page foreign keys)"
+        ;;
+      native-hedgedoc-import-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,column_name,data_type,nullable) AS (VALUES
+            ('hedgedocImports','namespace','character varying','NO'),
+            ('hedgedocImports','sourceId','character varying','NO'),
+            ('hedgedocImports','sourceDigest','character varying','NO'),
+            ('hedgedocImports','snapshotDigest','character varying','NO'),
+            ('hedgedocImports','reviewDigest','character varying','NO'),
+            ('hedgedocImports','noteId','uuid','NO'),
+            ('hedgedocImports','nativeRevision','bigint','NO'),
+            ('hedgedocImports','importedBy','integer','YES'),
+            ('hedgedocImports','source','text','NO'),
+            ('hedgedocImports','assets','text','NO'),
+            ('hedgedocImports','importedAt','timestamp with time zone','NO')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+          WHERE c.data_type=e.data_type AND c.is_nullable=e.nullable;
+        ")"
+        [[ "$result" == 11 ]] || die "Postcondition failed: $probe (native columns and nullability)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns,is_primary) AS (VALUES
+            ('hedgedocImports','noteId',false),
+            ('hedgedocImports','namespace,sourceId',true)
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name
+              AND i.indisunique AND i.indisvalid AND i.indisready AND i.indpred IS NULL
+              AND i.indisprimary=e.is_primary AND i.indnkeyatts=i.indnatts
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+          );
+        ")"
+        [[ "$result" == 2 ]] || die "Postcondition failed: $probe (durable primary and unique identities)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns,target_table,target_columns,delete_mode) AS (VALUES
+            ('hedgedocImports','noteId','liveNotes','id','r'),
+            ('hedgedocImports','importedBy','users','id','n')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_class target ON target.oid=c.confrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND target.relnamespace=current_schema()::regnamespace
+              AND t.relname=e.table_name AND target.relname=e.target_table AND c.contype='f' AND c.convalidated
+              AND c.confdeltype::text=e.delete_mode
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(c.conkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(c.confkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=target.oid AND a.attnum=k.attnum)=e.target_columns
+          );
+        ")"
+        [[ "$result" == 2 ]] || die "Postcondition failed: $probe (native foreign keys and retention actions)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM \"hedgedocImports\" WHERE \"nativeRevision\"<0
+            OR length(\"sourceDigest\")<>64 OR length(\"snapshotDigest\")<>64 OR length(\"reviewDigest\")<>64;
+        ")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe (invalid durable rows or destructive canonical-page foreign keys)"
+        ;;
+      native-page-feedback-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,column_name,data_type,nullable) AS (VALUES
+            ('feedbackBoards','id','uuid','NO'),
+            ('feedbackBoards','boardPageId','integer','NO'),
+            ('feedbackBoards','name','character varying','NO'),
+            ('feedbackBoards','enabled','boolean','NO'),
+            ('feedbackBoards','boardRevision','bigint','NO'),
+            ('feedbackBoards','createdAt','timestamp with time zone','NO'),
+            ('feedbackBoards','updatedAt','timestamp with time zone','NO'),
+            ('feedbackCategories','id','uuid','NO'),
+            ('feedbackCategories','boardId','uuid','NO'),
+            ('feedbackCategories','label','character varying','NO'),
+            ('feedbackCategories','active','boolean','NO'),
+            ('feedbackCategories','displayOrder','integer','NO'),
+            ('feedbackCategories','createdAt','timestamp with time zone','NO'),
+            ('feedbackCategories','updatedAt','timestamp with time zone','NO'),
+            ('feedbackIdeas','id','uuid','NO'),
+            ('feedbackIdeas','boardId','uuid','NO'),
+            ('feedbackIdeas','pageId','integer','NO'),
+            ('feedbackIdeas','submittedBy','integer','YES'),
+            ('feedbackIdeas','state','character varying','NO'),
+            ('feedbackIdeas','previousState','character varying','YES'),
+            ('feedbackIdeas','ideaRevision','bigint','NO'),
+            ('feedbackIdeas','categoryId','uuid','YES'),
+            ('feedbackIdeas','categoryLabel','character varying','YES'),
+            ('feedbackIdeas','withdrawnAt','timestamp with time zone','YES'),
+            ('feedbackIdeas','moderatorWithdrawal','boolean','NO'),
+            ('feedbackIdeas','submittedAt','timestamp with time zone','NO'),
+            ('feedbackIdeas','createdAt','timestamp with time zone','NO'),
+            ('feedbackIdeas','updatedAt','timestamp with time zone','NO'),
+            ('feedbackVotes','ideaId','uuid','NO'),
+            ('feedbackVotes','userId','integer','NO'),
+            ('feedbackVotes','voted','boolean','NO'),
+            ('feedbackVotes','activatedAt','timestamp with time zone','YES'),
+            ('feedbackVotes','updatedAt','timestamp with time zone','NO'),
+            ('feedbackSubscriptions','ideaId','uuid','NO'),
+            ('feedbackSubscriptions','userId','integer','NO'),
+            ('feedbackSubscriptions','createdAt','timestamp with time zone','NO'),
+            ('feedbackTransitions','id','uuid','NO'),
+            ('feedbackTransitions','boardId','uuid','NO'),
+            ('feedbackTransitions','ideaId','uuid','YES'),
+            ('feedbackTransitions','actorId','integer','YES'),
+            ('feedbackTransitions','kind','character varying','NO'),
+            ('feedbackTransitions','fromState','character varying','YES'),
+            ('feedbackTransitions','toState','character varying','YES'),
+            ('feedbackTransitions','explanation','text','YES'),
+            ('feedbackTransitions','categoryLabel','character varying','YES'),
+            ('feedbackTransitions','details','jsonb','NO'),
+            ('feedbackTransitions','createdAt','timestamp with time zone','NO'),
+            ('feedbackRequestReceipts','requestId','uuid','NO'),
+            ('feedbackRequestReceipts','actorId','integer','YES'),
+            ('feedbackRequestReceipts','boardId','uuid','NO'),
+            ('feedbackRequestReceipts','ideaId','uuid','NO'),
+            ('feedbackRequestReceipts','commandHash','character varying','NO'),
+            ('feedbackRequestReceipts','result','jsonb','NO'),
+            ('feedbackRequestReceipts','createdAt','timestamp with time zone','NO'),
+            ('feedbackAdmissions','id','uuid','NO'),
+            ('feedbackAdmissions','boardId','uuid','NO'),
+            ('feedbackAdmissions','actorId','integer','YES'),
+            ('feedbackAdmissions','createdAt','timestamp with time zone','NO'),
+            ('feedbackWriteAdmissions','id','uuid','NO'),
+            ('feedbackWriteAdmissions','actorId','integer','NO'),
+            ('feedbackWriteAdmissions','createdAt','timestamp with time zone','NO')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+          WHERE c.data_type=e.data_type AND c.is_nullable=e.nullable;
+        ")"
+        [[ "$result" == 61 ]] || die "Postcondition failed: $probe (native columns and nullability)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns,is_primary) AS (VALUES
+            ('feedbackBoards','id',true),
+            ('feedbackBoards','boardPageId',false),
+            ('feedbackCategories','id',true),
+            ('feedbackCategories','id,boardId',false),
+            ('feedbackIdeas','id',true),
+            ('feedbackIdeas','pageId',false),
+            ('feedbackVotes','ideaId,userId',true),
+            ('feedbackSubscriptions','ideaId,userId',true),
+            ('feedbackTransitions','id',true),
+            ('feedbackRequestReceipts','requestId',true),
+            ('feedbackAdmissions','id',true),
+            ('feedbackWriteAdmissions','id',true)
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name
+              AND i.indisunique AND i.indisvalid AND i.indisready AND i.indpred IS NULL
+              AND i.indisprimary=e.is_primary AND i.indnkeyatts=i.indnatts
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+          );
+        ")"
+        [[ "$result" == 12 ]] || die "Postcondition failed: $probe (durable primary and unique identities)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns,target_table,target_columns,delete_mode) AS (VALUES
+            ('feedbackCategories','boardId','feedbackBoards','id','c'),
+            ('feedbackIdeas','boardId','feedbackBoards','id','c'),
+            ('feedbackIdeas','submittedBy','users','id','n'),
+            ('feedbackIdeas','categoryId,boardId','feedbackCategories','id,boardId','a'),
+            ('feedbackVotes','ideaId','feedbackIdeas','id','c'),
+            ('feedbackVotes','userId','users','id','c'),
+            ('feedbackSubscriptions','ideaId','feedbackIdeas','id','c'),
+            ('feedbackSubscriptions','userId','users','id','c'),
+            ('feedbackTransitions','boardId','feedbackBoards','id','c'),
+            ('feedbackTransitions','ideaId','feedbackIdeas','id','c'),
+            ('feedbackTransitions','actorId','users','id','n'),
+            ('feedbackRequestReceipts','actorId','users','id','n'),
+            ('feedbackRequestReceipts','boardId','feedbackBoards','id','c'),
+            ('feedbackRequestReceipts','ideaId','feedbackIdeas','id','c'),
+            ('feedbackAdmissions','boardId','feedbackBoards','id','c'),
+            ('feedbackAdmissions','actorId','users','id','n'),
+            ('feedbackWriteAdmissions','actorId','users','id','c')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_class target ON target.oid=c.confrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND target.relnamespace=current_schema()::regnamespace
+              AND t.relname=e.table_name AND target.relname=e.target_table AND c.contype='f' AND c.convalidated
+              AND c.confdeltype::text=e.delete_mode
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(c.conkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(c.confkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=target.oid AND a.attnum=k.attnum)=e.target_columns
+          );
+        ")"
+        [[ "$result" == 17 ]] || die "Postcondition failed: $probe (native foreign keys and retention actions)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns) AS (VALUES
+            ('feedbackIdeas','boardId,submittedAt,id'),
+            ('feedbackTransitions','ideaId,createdAt'),
+            ('feedbackAdmissions','boardId,actorId,createdAt'),
+            ('feedbackWriteAdmissions','actorId,createdAt')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name
+              AND i.indisvalid AND i.indisready AND i.indpred IS NULL AND i.indnkeyatts=i.indnatts
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+          );
+        ")"
+        [[ "$result" == 4 ]] || die "Postcondition failed: $probe (bounded lookup and recovery indexes)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,expression) AS (VALUES
+            ('feedbackBoards','boardrevision>0'),
+            ('feedbackIdeas','statein''proposed'',''planned'',''in-progress'',''completed'',''closed'',''withdrawn'''),
+            ('feedbackIdeas','idearevision>0')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name AND c.contype='c' AND c.convalidated
+              AND replace(regexp_replace(lower(replace(replace(pg_get_expr(c.conbin,c.conrelid),
+                '::character varying',''),'::text','')), '[[:space:]()\"\\[\\]]', '', 'g'),'=anyarray','in')=e.expression
+          );
+        ")"
+        [[ "$result" == 3 ]] || die "Postcondition failed: $probe (validated native value and revision checks)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,column_name,default_value) AS (VALUES
+            ('feedbackBoards','enabled','false'),
+            ('feedbackBoards','boardRevision','1'),
+            ('feedbackCategories','active','true'),
+            ('feedbackCategories','displayOrder','0'),
+            ('feedbackIdeas','ideaRevision','1'),
+            ('feedbackIdeas','moderatorWithdrawal','false')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+          WHERE regexp_replace(replace(replace(replace(c.column_default,'::bigint',''),'::integer',''),'::boolean',''),
+            '[()''[:space:]]','','g')=e.default_value;
+        ")"
+        [[ "$result" == 6 ]] || die "Postcondition failed: $probe (native defaults including explicit opt-in)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT (SELECT count(*) FROM \"feedbackBoards\" WHERE \"boardRevision\"<=0)
+            + (SELECT count(*) FROM \"feedbackIdeas\" WHERE \"ideaRevision\"<=0
+              OR state NOT IN ('proposed','planned','in-progress','completed','closed','withdrawn'))
+            + (SELECT count(*) FROM pg_constraint WHERE conrelid IN ('\"feedbackBoards\"'::regclass,'\"feedbackIdeas\"'::regclass)
+              AND contype='f' AND confrelid='pages'::regclass);
+        ")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe (invalid durable rows or destructive canonical-page foreign keys)"
+        ;;
+      native-page-review-routing-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,column_name,data_type,nullable) AS (VALUES
+            ('pageReviewRouting','pageId','integer','NO'),
+            ('pageReviewRouting','revision','bigint','NO'),
+            ('pageReviewRouting','mode','character varying','NO'),
+            ('pageReviewRouting','enabled','boolean','NO'),
+            ('pageReviewRouting','scheduleMode','character varying','NO'),
+            ('pageReviewRouting','scheduleGeneration','bigint','NO'),
+            ('pageReviewRouting','independentAnchorAt','timestamp with time zone','YES'),
+            ('pageReviewRouting','independentIntervalDays','integer','YES'),
+            ('pageReviewRouting','enabledAt','timestamp with time zone','YES'),
+            ('pageReviewRouting','observedSourceRevision','bigint','NO'),
+            ('pageReviewRouting','unverifiedAt','timestamp with time zone','NO'),
+            ('pageReviewRouting','createdBy','integer','YES'),
+            ('pageReviewRouting','updatedBy','integer','YES'),
+            ('pageReviewRouting','createdAt','timestamp with time zone','NO'),
+            ('pageReviewRouting','updatedAt','timestamp with time zone','NO'),
+            ('pageReviewRouting','lastScannedAt','timestamp with time zone','NO'),
+            ('pageReviewCycles','id','uuid','NO'),
+            ('pageReviewCycles','pageId','integer','NO'),
+            ('pageReviewCycles','scheduleGeneration','bigint','NO'),
+            ('pageReviewCycles','epochKey','character varying','NO'),
+            ('pageReviewCycles','milestone','character varying','NO'),
+            ('pageReviewCycles','cycleNo','bigint','YES'),
+            ('pageReviewCycles','dueAt','timestamp with time zone','NO'),
+            ('pageReviewCycles','sourceRevision','bigint','NO'),
+            ('pageReviewCycles','status','character varying','NO'),
+            ('pageReviewCycles','audienceRevision','bigint','NO'),
+            ('pageReviewCycles','coalescedThrough','bigint','YES'),
+            ('pageReviewCycles','createdAt','timestamp with time zone','NO'),
+            ('pageReviewConsumed','pageId','integer','NO'),
+            ('pageReviewConsumed','scheduleGeneration','bigint','NO'),
+            ('pageReviewConsumed','epochKey','character varying','NO'),
+            ('pageReviewConsumed','milestone','character varying','NO'),
+            ('pageReviewConsumed','highWater','bigint','YES'),
+            ('pageReviewConsumed','updatedAt','timestamp with time zone','NO'),
+            ('pageReviewChannelReceipts','id','uuid','NO'),
+            ('pageReviewChannelReceipts','cycleId','uuid','NO'),
+            ('pageReviewChannelReceipts','userId','integer','NO'),
+            ('pageReviewChannelReceipts','channel','character varying','NO'),
+            ('pageReviewChannelReceipts','status','character varying','NO'),
+            ('pageReviewChannelReceipts','consentAtAdmission','boolean','NO'),
+            ('pageReviewChannelReceipts','attempt','integer','NO'),
+            ('pageReviewChannelReceipts','messageId','character varying','YES'),
+            ('pageReviewChannelReceipts','handoffJobId','uuid','YES'),
+            ('pageReviewChannelReceipts','handoffLeaseOwner','character varying','YES'),
+            ('pageReviewChannelReceipts','handoffLeaseToken','uuid','YES'),
+            ('pageReviewChannelReceipts','safeFailureReason','character varying','YES'),
+            ('pageReviewChannelReceipts','createdAt','timestamp with time zone','NO'),
+            ('pageReviewChannelReceipts','updatedAt','timestamp with time zone','NO'),
+            ('pageReviewChannelReceipts','acknowledgedAt','timestamp with time zone','YES'),
+            ('pageReviewEmailAttempts','receiptId','uuid','NO'),
+            ('pageReviewEmailAttempts','attempt','integer','NO'),
+            ('pageReviewEmailAttempts','messageId','character varying','NO'),
+            ('pageReviewEmailAttempts','status','character varying','NO'),
+            ('pageReviewEmailAttempts','createdAt','timestamp with time zone','NO'),
+            ('pageReviewEmailAttempts','updatedAt','timestamp with time zone','NO'),
+            ('pageReviewRoutingAudit','id','uuid','NO'),
+            ('pageReviewRoutingAudit','pageId','integer','NO'),
+            ('pageReviewRoutingAudit','routingRevision','bigint','NO'),
+            ('pageReviewRoutingAudit','scheduleGeneration','bigint','NO'),
+            ('pageReviewRoutingAudit','actorId','integer','YES'),
+            ('pageReviewRoutingAudit','command','character varying','NO'),
+            ('pageReviewRoutingAudit','createdAt','timestamp with time zone','NO'),
+            ('pageReviewRoutingUsers','pageId','integer','NO'),
+            ('pageReviewRoutingUsers','referenceId','integer','NO'),
+            ('pageReviewRoutingUsers','userId','integer','YES'),
+            ('pageReviewRoutingGroups','pageId','integer','NO'),
+            ('pageReviewRoutingGroups','referenceId','integer','NO'),
+            ('pageReviewRoutingGroups','groupId','integer','YES')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+          WHERE c.data_type=e.data_type AND c.is_nullable=e.nullable;
+        ")"
+        [[ "$result" == 68 ]] || die "Postcondition failed: $probe (native columns and nullability)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns,is_primary) AS (VALUES
+            ('pageReviewRouting','pageId',true),
+            ('pageReviewCycles','id',true),
+            ('pageReviewCycles','pageId,scheduleGeneration,epochKey,milestone',false),
+            ('pageReviewConsumed','pageId,scheduleGeneration,epochKey,milestone',true),
+            ('pageReviewChannelReceipts','id',true),
+            ('pageReviewChannelReceipts','cycleId,userId,channel',false),
+            ('pageReviewEmailAttempts','receiptId,attempt',true),
+            ('pageReviewRoutingAudit','id',true),
+            ('pageReviewRoutingUsers','pageId,referenceId',true),
+            ('pageReviewRoutingUsers','pageId,userId',false),
+            ('pageReviewRoutingGroups','pageId,referenceId',true),
+            ('pageReviewRoutingGroups','pageId,groupId',false)
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name
+              AND i.indisunique AND i.indisvalid AND i.indisready AND i.indpred IS NULL
+              AND i.indisprimary=e.is_primary AND i.indnkeyatts=i.indnatts
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+          );
+        ")"
+        [[ "$result" == 12 ]] || die "Postcondition failed: $probe (durable primary and unique identities)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns,target_table,target_columns,delete_mode) AS (VALUES
+            ('pageReviewRouting','pageId','pages','id','c'),
+            ('pageReviewRouting','createdBy','users','id','n'),
+            ('pageReviewRouting','updatedBy','users','id','n'),
+            ('pageReviewCycles','pageId','pageReviewRouting','pageId','c'),
+            ('pageReviewConsumed','pageId','pageReviewRouting','pageId','c'),
+            ('pageReviewChannelReceipts','cycleId','pageReviewCycles','id','c'),
+            ('pageReviewChannelReceipts','userId','users','id','c'),
+            ('pageReviewChannelReceipts','handoffJobId','durableJobs','id','n'),
+            ('pageReviewEmailAttempts','receiptId','pageReviewChannelReceipts','id','c'),
+            ('pageReviewRoutingAudit','pageId','pageReviewRouting','pageId','c'),
+            ('pageReviewRoutingAudit','actorId','users','id','n'),
+            ('pageReviewRoutingUsers','pageId','pageReviewRouting','pageId','c'),
+            ('pageReviewRoutingUsers','userId','users','id','n'),
+            ('pageReviewRoutingGroups','pageId','pageReviewRouting','pageId','c'),
+            ('pageReviewRoutingGroups','groupId','groups','id','n')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_class target ON target.oid=c.confrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND target.relnamespace=current_schema()::regnamespace
+              AND t.relname=e.table_name AND target.relname=e.target_table AND c.contype='f' AND c.convalidated
+              AND c.confdeltype::text=e.delete_mode
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(c.conkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(c.confkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=target.oid AND a.attnum=k.attnum)=e.target_columns
+          );
+        ")"
+        [[ "$result" == 15 ]] || die "Postcondition failed: $probe (native foreign keys and retention actions)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns) AS (VALUES
+            ('pageReviewRouting','enabled,lastScannedAt,pageId'),
+            ('pageReviewCycles','pageId,createdAt'),
+            ('pageReviewChannelReceipts','status,updatedAt')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name
+              AND i.indisvalid AND i.indisready AND i.indpred IS NULL AND i.indnkeyatts=i.indnatts
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+          );
+        ")"
+        [[ "$result" == 3 ]] || die "Postcondition failed: $probe (bounded lookup and recovery indexes)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,expression) AS (VALUES
+            ('pageReviewRouting','revision>0andschedulegeneration>0andobservedsourcerevision>0'),
+            ('pageReviewRouting','modein''contacts'',''users'',''groups'''),
+            ('pageReviewRouting','schedulemode=''accuracy-age''andindependentanchoratisnullandindependentintervaldaysisnullorschedulemode=''independent''andindependentanchoratisnotnullandindependentintervaldays>=1andindependentintervaldays<=3650'),
+            ('pageReviewChannelReceipts','channelin''email'',''in-app''')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name AND c.contype='c' AND c.convalidated
+              AND replace(regexp_replace(lower(replace(replace(pg_get_expr(c.conbin,c.conrelid),
+                '::character varying',''),'::text','')), '[[:space:]()\"\\[\\]]', '', 'g'),'=anyarray','in')=e.expression
+          );
+        ")"
+        [[ "$result" == 4 ]] || die "Postcondition failed: $probe (validated native value and revision checks)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,column_name,default_value) AS (VALUES
+            ('pageReviewRouting','revision','1'),
+            ('pageReviewRouting','enabled','false'),
+            ('pageReviewRouting','scheduleGeneration','1'),
+            ('pageReviewCycles','audienceRevision','0'),
+            ('pageReviewChannelReceipts','attempt','0')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+          WHERE regexp_replace(replace(replace(replace(c.column_default,'::bigint',''),'::integer',''),'::boolean',''),
+            '[()''[:space:]]','','g')=e.default_value;
+        ")"
+        [[ "$result" == 5 ]] || die "Postcondition failed: $probe (native defaults including explicit opt-in)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT (SELECT count(*) FROM \"pageReviewRouting\" WHERE revision<=0 OR \"scheduleGeneration\"<=0 OR \"observedSourceRevision\"<=0
+              OR mode NOT IN ('contacts','users','groups') OR (
+                (\"scheduleMode\"='accuracy-age' AND \"independentAnchorAt\" IS NULL AND \"independentIntervalDays\" IS NULL)
+                OR (\"scheduleMode\"='independent' AND \"independentAnchorAt\" IS NOT NULL AND \"independentIntervalDays\" BETWEEN 1 AND 3650)) IS NOT TRUE)
+            + (SELECT count(*) FROM \"pageReviewChannelReceipts\" WHERE channel NOT IN ('email','in-app'));
+        ")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe (invalid durable rows or destructive canonical-page foreign keys)"
+        ;;
+      native-page-lifecycle-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,column_name,data_type,nullable) AS (VALUES
+            ('pageLifecycleClocks','pageId','integer','NO'),
+            ('pageLifecycleClocks','bodyEpoch','uuid','NO'),
+            ('pageLifecycleClocks','bodyAnchorAt','timestamp with time zone','YES'),
+            ('pageLifecycleClocks','bodyAnchorKind','character varying','NO'),
+            ('pageLifecycleClocks','bodyDigest','character varying','NO'),
+            ('pageLifecycleClocks','bodyObservedSourceRevision','bigint','NO'),
+            ('pageLifecycleClocks','commentEpoch','uuid','NO'),
+            ('pageLifecycleClocks','commentAnchorAt','timestamp with time zone','YES'),
+            ('pageLifecycleClocks','commentAnchorKind','character varying','NO'),
+            ('pageLifecycleClocks','lastCommentEvent','character varying','YES'),
+            ('pageLifecycleCommentEvents','pageId','integer','NO'),
+            ('pageLifecycleCommentEvents','eventId','character varying','NO'),
+            ('pageLifecycleRules','id','uuid','NO'),
+            ('pageLifecycleRules','version','integer','NO'),
+            ('pageLifecycleRules','revision','integer','NO'),
+            ('pageLifecycleRules','humanOwnerId','integer','YES'),
+            ('pageLifecycleRules','authVersion','integer','NO'),
+            ('pageLifecycleRules','unattendedConsent','boolean','NO'),
+            ('pageLifecycleRules','definition','jsonb','NO'),
+            ('pageLifecycleRules','status','character varying','NO'),
+            ('pageLifecycleRules','reason','character varying','YES'),
+            ('pageLifecycleRules','selectorFingerprint','character varying','NO'),
+            ('pageLifecycleRules','selectedPages','jsonb','NO'),
+            ('pageLifecycleRules','executionId','uuid','YES'),
+            ('pageLifecycleRules','currentBatchId','uuid','YES'),
+            ('pageLifecycleRules','createdAt','timestamp with time zone','NO'),
+            ('pageLifecycleRules','updatedAt','timestamp with time zone','NO'),
+            ('pageLifecycleRules','retiredAt','timestamp with time zone','YES'),
+            ('pageLifecycleRules','lastScannedAt','timestamp with time zone','YES'),
+            ('pageLifecyclePreviews','id','uuid','NO'),
+            ('pageLifecyclePreviews','actorId','integer','YES'),
+            ('pageLifecyclePreviews','ruleId','uuid','YES'),
+            ('pageLifecyclePreviews','ruleRevision','integer','YES'),
+            ('pageLifecyclePreviews','authVersion','integer','NO'),
+            ('pageLifecyclePreviews','fingerprint','character varying','NO'),
+            ('pageLifecyclePreviews','request','jsonb','NO'),
+            ('pageLifecyclePreviews','pages','jsonb','NO'),
+            ('pageLifecyclePreviews','createdAt','timestamp with time zone','NO'),
+            ('pageLifecyclePreviews','expiresAt','timestamp with time zone','NO'),
+            ('pageLifecyclePreviews','consumedAt','timestamp with time zone','YES'),
+            ('pageLifecycleRulePages','ruleId','uuid','NO'),
+            ('pageLifecycleRulePages','pageId','integer','NO'),
+            ('pageLifecycleRulePages','originalRelativePath','text','NO'),
+            ('pageLifecycleRulePages','originalLocale','character varying','NO'),
+            ('pageLifecycleRulePages','consumedBodyEpoch','uuid','YES'),
+            ('pageLifecycleRulePages','consumedCommentEpoch','uuid','YES'),
+            ('pageLifecycleRulePages','intervalHighWater','bigint','NO'),
+            ('pageLifecycleRulePages','attemptedRevision','integer','NO'),
+            ('pageLifecycleRulePages','attemptedBodyEpoch','uuid','YES'),
+            ('pageLifecycleRulePages','attemptedCommentEpoch','uuid','YES'),
+            ('pageLifecycleRulePages','attemptedIntervalHighWater','bigint','NO'),
+            ('pageLifecycleRulePages','lastExecutionId','uuid','YES'),
+            ('pageLifecycleRulePages','updatedAt','timestamp with time zone','NO'),
+            ('pageLifecycleBatches','id','uuid','NO'),
+            ('pageLifecycleBatches','ruleId','uuid','NO'),
+            ('pageLifecycleBatches','ruleRevision','integer','NO'),
+            ('pageLifecycleBatches','pages','jsonb','NO'),
+            ('pageLifecycleBatches','scheduledCount','integer','NO'),
+            ('pageLifecycleBatches','status','character varying','NO'),
+            ('pageLifecycleBatches','createdAt','timestamp with time zone','NO'),
+            ('pageLifecycleBatches','completedAt','timestamp with time zone','YES'),
+            ('pageLifecycleCycles','id','uuid','NO'),
+            ('pageLifecycleCycles','ruleId','uuid','NO'),
+            ('pageLifecycleCycles','batchId','uuid','NO'),
+            ('pageLifecycleCycles','ruleRevision','integer','NO'),
+            ('pageLifecycleCycles','pageId','integer','NO'),
+            ('pageLifecycleCycles','conditionKey','character varying','NO'),
+            ('pageLifecycleCycles','executionKey','uuid','NO'),
+            ('pageLifecycleCycles','conditionEpoch','uuid','YES'),
+            ('pageLifecycleCycles','cycleNo','bigint','YES'),
+            ('pageLifecycleCycles','coalescedFrom','bigint','YES'),
+            ('pageLifecycleCycles','coalescedThrough','bigint','YES'),
+            ('pageLifecycleCycles','dueAt','timestamp with time zone','NO'),
+            ('pageLifecycleCycles','selectedSourceRevision','bigint','NO'),
+            ('pageLifecycleCycles','nextExpectedSourceRevision','bigint','NO'),
+            ('pageLifecycleCycles','selectorFingerprint','character varying','NO'),
+            ('pageLifecycleCycles','status','character varying','NO'),
+            ('pageLifecycleCycles','reason','character varying','YES'),
+            ('pageLifecycleCycles','jobId','uuid','YES'),
+            ('pageLifecycleCycles','createdAt','timestamp with time zone','NO'),
+            ('pageLifecycleCycles','updatedAt','timestamp with time zone','NO'),
+            ('pageLifecycleCycles','completedAt','timestamp with time zone','YES'),
+            ('pageLifecycleActionReceipts','cycleId','uuid','NO'),
+            ('pageLifecycleActionReceipts','effectIndex','integer','NO'),
+            ('pageLifecycleActionReceipts','kind','character varying','NO'),
+            ('pageLifecycleActionReceipts','state','character varying','NO'),
+            ('pageLifecycleActionReceipts','reason','character varying','YES'),
+            ('pageLifecycleActionReceipts','beforeSourceRevision','bigint','NO'),
+            ('pageLifecycleActionReceipts','afterSourceRevision','bigint','NO'),
+            ('pageLifecycleActionReceipts','operationId','uuid','YES'),
+            ('pageLifecycleActionReceipts','proposalId','uuid','YES'),
+            ('pageLifecycleActionReceipts','outboxId','uuid','YES'),
+            ('pageLifecycleActionReceipts','createdAt','timestamp with time zone','NO'),
+            ('pageLifecycleActionReceipts','updatedAt','timestamp with time zone','NO'),
+            ('pageLifecycleNotices','ruleId','uuid','NO'),
+            ('pageLifecycleNotices','pageId','integer','NO'),
+            ('pageLifecycleNotices','text','text','NO'),
+            ('pageLifecycleNotices','createdAt','timestamp with time zone','NO'),
+            ('pageLifecycleNotices','updatedAt','timestamp with time zone','NO'),
+            ('pageLifecycleMoveProposals','id','uuid','NO'),
+            ('pageLifecycleMoveProposals','ruleId','uuid','NO'),
+            ('pageLifecycleMoveProposals','cycleId','uuid','NO'),
+            ('pageLifecycleMoveProposals','effectIndex','integer','NO'),
+            ('pageLifecycleMoveProposals','ruleRevision','integer','NO'),
+            ('pageLifecycleMoveProposals','pageId','integer','NO'),
+            ('pageLifecycleMoveProposals','sourceRevision','bigint','NO'),
+            ('pageLifecycleMoveProposals','sourcePath','text','NO'),
+            ('pageLifecycleMoveProposals','sourceLocale','character varying','NO'),
+            ('pageLifecycleMoveProposals','destinationPath','text','NO'),
+            ('pageLifecycleMoveProposals','destinationLocale','character varying','NO'),
+            ('pageLifecycleMoveProposals','selectorFingerprint','character varying','NO'),
+            ('pageLifecycleMoveProposals','status','character varying','NO'),
+            ('pageLifecycleMoveProposals','reason','character varying','YES'),
+            ('pageLifecycleMoveProposals','resultSourceRevision','bigint','YES'),
+            ('pageLifecycleMoveProposals','fulfilledBy','integer','YES'),
+            ('pageLifecycleMoveProposals','outboxId','uuid','YES'),
+            ('pageLifecycleMoveProposals','createdAt','timestamp with time zone','NO'),
+            ('pageLifecycleMoveProposals','expiresAt','timestamp with time zone','NO'),
+            ('pageLifecycleMoveProposals','settledAt','timestamp with time zone','YES')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+          WHERE c.data_type=e.data_type AND c.is_nullable=e.nullable;
+        ")"
+        [[ "$result" == 119 ]] || die "Postcondition failed: $probe (native columns and nullability)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns,is_primary) AS (VALUES
+            ('pageLifecycleClocks','pageId',true),
+            ('pageLifecycleCommentEvents','pageId,eventId',true),
+            ('pageLifecycleRules','id',true),
+            ('pageLifecyclePreviews','id',true),
+            ('pageLifecycleRulePages','ruleId,pageId',true),
+            ('pageLifecycleBatches','id',true),
+            ('pageLifecycleCycles','id',true),
+            ('pageLifecycleCycles','ruleId,ruleRevision,pageId,conditionKey,executionKey',false),
+            ('pageLifecycleActionReceipts','cycleId,effectIndex',true),
+            ('pageLifecycleNotices','ruleId,pageId',true),
+            ('pageLifecycleMoveProposals','id',true),
+            ('pageLifecycleMoveProposals','cycleId,effectIndex',false)
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name
+              AND i.indisunique AND i.indisvalid AND i.indisready AND i.indpred IS NULL
+              AND i.indisprimary=e.is_primary AND i.indnkeyatts=i.indnatts
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+          );
+        ")"
+        [[ "$result" == 12 ]] || die "Postcondition failed: $probe (durable primary and unique identities)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns,target_table,target_columns,delete_mode) AS (VALUES
+            ('pageLifecycleClocks','pageId','pages','id','c'),
+            ('pageLifecycleCommentEvents','pageId','pages','id','c'),
+            ('pageLifecycleRules','humanOwnerId','users','id','n'),
+            ('pageLifecyclePreviews','actorId','users','id','n'),
+            ('pageLifecycleRulePages','ruleId','pageLifecycleRules','id','r'),
+            ('pageLifecycleBatches','ruleId','pageLifecycleRules','id','r'),
+            ('pageLifecycleCycles','ruleId','pageLifecycleRules','id','r'),
+            ('pageLifecycleCycles','batchId','pageLifecycleBatches','id','r'),
+            ('pageLifecycleActionReceipts','cycleId','pageLifecycleCycles','id','c'),
+            ('pageLifecycleNotices','ruleId','pageLifecycleRules','id','r'),
+            ('pageLifecycleNotices','pageId','pages','id','c'),
+            ('pageLifecycleMoveProposals','ruleId','pageLifecycleRules','id','r'),
+            ('pageLifecycleMoveProposals','cycleId','pageLifecycleCycles','id','r'),
+            ('pageLifecycleMoveProposals','fulfilledBy','users','id','n')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_class target ON target.oid=c.confrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND target.relnamespace=current_schema()::regnamespace
+              AND t.relname=e.table_name AND target.relname=e.target_table AND c.contype='f' AND c.convalidated
+              AND c.confdeltype::text=e.delete_mode
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(c.conkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(c.confkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=target.oid AND a.attnum=k.attnum)=e.target_columns
+          );
+        ")"
+        [[ "$result" == 14 ]] || die "Postcondition failed: $probe (native foreign keys and retention actions)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns) AS (VALUES
+            ('pageLifecycleRules','status,lastScannedAt,id'),
+            ('pageLifecycleRules','humanOwnerId,status'),
+            ('pageLifecyclePreviews','expiresAt'),
+            ('pageLifecycleBatches','ruleId,status'),
+            ('pageLifecycleCycles','batchId,status'),
+            ('pageLifecycleCycles','completedAt'),
+            ('pageLifecycleMoveProposals','ruleId,pageId,status'),
+            ('pageLifecycleMoveProposals','expiresAt')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name
+              AND i.indisvalid AND i.indisready AND i.indpred IS NULL AND i.indnkeyatts=i.indnatts
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+          );
+        ")"
+        [[ "$result" == 8 ]] || die "Postcondition failed: $probe (bounded lookup and recovery indexes)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,expression) AS (VALUES
+            ('pageLifecycleClocks','bodyanchorkindin''known-change'',''observed-baseline'',''unknown'''),
+            ('pageLifecycleClocks','commentanchorkindin''known-change'',''observed-baseline'',''unknown'''),
+            ('pageLifecycleRules','version=1andrevision>0')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name AND c.contype='c' AND c.convalidated
+              AND replace(regexp_replace(lower(replace(replace(pg_get_expr(c.conbin,c.conrelid),
+                '::character varying',''),'::text','')), '[[:space:]()\"\\[\\]]', '', 'g'),'=anyarray','in')=e.expression
+          );
+        ")"
+        [[ "$result" == 3 ]] || die "Postcondition failed: $probe (validated native value and revision checks)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,column_name,default_value) AS (VALUES
+            ('pageLifecycleRules','unattendedConsent','false'),
+            ('pageLifecycleRulePages','intervalHighWater','-1'),
+            ('pageLifecycleRulePages','attemptedRevision','0'),
+            ('pageLifecycleRulePages','attemptedIntervalHighWater','-1'),
+            ('pageLifecycleBatches','scheduledCount','0')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+          WHERE regexp_replace(replace(replace(replace(c.column_default,'::bigint',''),'::integer',''),'::boolean',''),
+            '[()''[:space:]]','','g')=e.default_value;
+        ")"
+        [[ "$result" == 5 ]] || die "Postcondition failed: $probe (native defaults including explicit opt-in)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT (SELECT count(*) FROM pages p LEFT JOIN \"pageLifecycleClocks\" c ON c.\"pageId\"=p.id
+              WHERE c.\"pageId\" IS NULL OR c.\"bodyObservedSourceRevision\">p.\"sourceRevision\")
+            + (SELECT count(*) FROM \"pageLifecycleClocks\" WHERE length(\"bodyDigest\")<>64 OR \"bodyObservedSourceRevision\"<=0
+              OR (\"bodyAnchorKind\"='unknown' AND \"bodyAnchorAt\" IS NOT NULL)
+              OR (\"commentAnchorKind\"='unknown' AND \"commentAnchorAt\" IS NOT NULL)
+              OR \"bodyAnchorKind\" NOT IN ('known-change','observed-baseline','unknown')
+              OR \"commentAnchorKind\" NOT IN ('known-change','observed-baseline','unknown'))
+            + (SELECT count(*) FROM \"pageLifecycleRules\" WHERE version<>1 OR revision<=0)
+            + (SELECT count(*) FROM pg_constraint WHERE conrelid IN ('\"pageLifecycleRulePages\"'::regclass,
+                '\"pageLifecycleCycles\"'::regclass,'\"pageLifecycleMoveProposals\"'::regclass)
+              AND contype='f' AND confrelid='pages'::regclass);
+        ")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe (invalid durable rows or destructive canonical-page foreign keys)"
+        ;;
+      native-governed-notifications-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,column_name,data_type,nullable) AS (VALUES
+            ('governedNotificationReceipts','id','uuid','NO'),
+            ('governedNotificationReceipts','eventId','uuid','NO'),
+            ('governedNotificationReceipts','userId','integer','NO'),
+            ('governedNotificationReceipts','pageId','integer','NO'),
+            ('governedNotificationReceipts','category','character varying','NO'),
+            ('governedNotificationReceipts','channel','character varying','NO'),
+            ('governedNotificationReceipts','status','character varying','NO'),
+            ('governedNotificationReceipts','attempt','integer','NO'),
+            ('governedNotificationReceipts','messageId','text','YES'),
+            ('governedNotificationReceipts','safeFailureReason','text','YES'),
+            ('governedNotificationReceipts','admittedAt','timestamp with time zone','NO'),
+            ('governedNotificationReceipts','createdAt','timestamp with time zone','NO'),
+            ('governedNotificationReceipts','updatedAt','timestamp with time zone','NO'),
+            ('governedNotificationEmailAttempts','receiptId','uuid','NO'),
+            ('governedNotificationEmailAttempts','attempt','integer','NO'),
+            ('governedNotificationEmailAttempts','status','character varying','NO'),
+            ('governedNotificationEmailAttempts','messageId','text','YES'),
+            ('governedNotificationEmailAttempts','duplicateAcknowledged','boolean','NO'),
+            ('governedNotificationEmailAttempts','createdAt','timestamp with time zone','NO'),
+            ('governedNotificationEmailAttempts','updatedAt','timestamp with time zone','NO')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+          WHERE c.data_type=e.data_type AND c.is_nullable=e.nullable;
+        ")"
+        [[ "$result" == 20 ]] || die "Postcondition failed: $probe (native columns and nullability)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns,is_primary) AS (VALUES
+            ('governedNotificationReceipts','id',true),
+            ('governedNotificationReceipts','eventId,userId,channel',false),
+            ('governedNotificationEmailAttempts','receiptId,attempt',true)
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name
+              AND i.indisunique AND i.indisvalid AND i.indisready AND i.indpred IS NULL
+              AND i.indisprimary=e.is_primary AND i.indnkeyatts=i.indnatts
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+          );
+        ")"
+        [[ "$result" == 3 ]] || die "Postcondition failed: $probe (durable primary and unique identities)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns,target_table,target_columns,delete_mode) AS (VALUES
+            ('governedNotificationReceipts','eventId','outboxEvents','id','r'),
+            ('governedNotificationReceipts','userId','users','id','c'),
+            ('governedNotificationEmailAttempts','receiptId','governedNotificationReceipts','id','c')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_class target ON target.oid=c.confrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND target.relnamespace=current_schema()::regnamespace
+              AND t.relname=e.table_name AND target.relname=e.target_table AND c.contype='f' AND c.convalidated
+              AND c.confdeltype::text=e.delete_mode
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(c.conkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(c.confkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=target.oid AND a.attnum=k.attnum)=e.target_columns
+          );
+        ")"
+        [[ "$result" == 3 ]] || die "Postcondition failed: $probe (native foreign keys and retention actions)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,columns) AS (VALUES
+            ('governedNotificationReceipts','userId,updatedAt,id'),
+            ('governedNotificationReceipts','status,updatedAt'),
+            ('governedNotificationEmailAttempts','status,updatedAt')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name
+              AND i.indisvalid AND i.indisready AND i.indpred IS NULL AND i.indnkeyatts=i.indnatts
+              AND (SELECT string_agg(a.attname,',' ORDER BY k.ordinality) FROM unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum)=e.columns
+          );
+        ")"
+        [[ "$result" == 3 ]] || die "Postcondition failed: $probe (bounded lookup and recovery indexes)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,expression) AS (VALUES
+            ('governedNotificationReceipts','categoryin''feedbackstatus'',''pagelifecycle'''),
+            ('governedNotificationReceipts','channelin''in-app'',''email'''),
+            ('governedNotificationReceipts','statusin''pending'',''sending'',''delivered'',''sent'',''suppressed'',''unknown'',''failed'''),
+            ('governedNotificationReceipts','attempt>=0'),
+            ('governedNotificationEmailAttempts','statusin''sending'',''sent'',''suppressed'',''unknown'',''retry-before-handoff'',''failed'''),
+            ('governedNotificationEmailAttempts','attempt>=0')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname=e.table_name AND c.contype='c' AND c.convalidated
+              AND replace(regexp_replace(lower(replace(replace(pg_get_expr(c.conbin,c.conrelid),
+                '::character varying',''),'::text','')), '[[:space:]()\"\\[\\]]', '', 'g'),'=anyarray','in')=e.expression
+          );
+        ")"
+        [[ "$result" == 6 ]] || die "Postcondition failed: $probe (validated native value and revision checks)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,column_name,default_value) AS (VALUES
+            ('governedNotificationReceipts','attempt','0'),
+            ('governedNotificationEmailAttempts','duplicateAcknowledged','false')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name=e.table_name AND c.column_name=e.column_name
+          WHERE regexp_replace(replace(replace(replace(c.column_default,'::bigint',''),'::integer',''),'::boolean',''),
+            '[()''[:space:]]','','g')=e.default_value;
+        ")"
+        [[ "$result" == 2 ]] || die "Postcondition failed: $probe (native defaults including explicit opt-in)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT (SELECT count(*) FROM \"governedNotificationReceipts\" WHERE category NOT IN ('feedbackStatus','pageLifecycle')
+              OR channel NOT IN ('in-app','email') OR status NOT IN ('pending','sending','delivered','sent','suppressed','unknown','failed') OR attempt<0)
+            + (SELECT count(*) FROM \"governedNotificationEmailAttempts\" WHERE attempt<0
+              OR status NOT IN ('sending','sent','suppressed','unknown','retry-before-handoff','failed'));
+        ")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe (invalid durable rows or destructive canonical-page foreign keys)"
+        ;;
+      native-storage-page-import-owners-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(column_name,data_type,max_length,nullable) AS (VALUES
+            ('pageId','integer',NULL,'NO'),('sourceKey','character varying',64,'NO'),
+            ('sourcePath','text',NULL,'NO'),('sourceSha256','character varying',64,'NO'),
+            ('locationKey','character varying',64,'NO'),('mapped','boolean',NULL,'NO'),
+            ('nativeRevision','bigint',NULL,'NO'),('nativePath','text',NULL,'NO'),
+            ('nativeLocaleCode','character varying',255,'NO'),('status','character varying',16,'NO'),
+            ('operationId','uuid',NULL,'NO'),('moveBinding','jsonb',NULL,'YES'),
+            ('updatedAt','timestamp with time zone',NULL,'NO'),('deletedAt','timestamp with time zone',NULL,'YES')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c
+            ON c.table_schema=current_schema() AND c.table_name='storagePageImportOwners' AND c.column_name=e.column_name
+          WHERE c.data_type=e.data_type AND c.character_maximum_length IS NOT DISTINCT FROM e.max_length AND c.is_nullable=e.nullable;
+        ")"
+        [[ "$result" == 14 ]] || die "Postcondition failed: $probe (native columns, bounds and nullability)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid
+          WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='storagePageImportOwners'
+            AND i.indisprimary AND i.indisunique AND i.indisvalid AND i.indisready AND i.indpred IS NULL
+            AND i.indnkeyatts=1 AND i.indnatts=1 AND pg_get_indexdef(i.indexrelid,1,true)=quote_ident('pageId');
+        ")"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (durable primary and unique identities)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid JOIN pg_class idx ON idx.oid=i.indexrelid
+          WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='storagePageImportOwners'
+            AND i.indisvalid AND i.indisready AND i.indnkeyatts=2 AND i.indnatts=2
+            AND pg_get_indexdef(i.indexrelid,1,true)=quote_ident('sourceKey')
+            AND pg_get_indexdef(i.indexrelid,2,true)=quote_ident('sourcePath') AND (
+              (idx.relname='storage_page_import_source_idx' AND NOT i.indisunique AND i.indpred IS NULL)
+              OR (idx.relname='storage_page_import_active_source_unique' AND i.indisunique
+                AND regexp_replace(replace(replace(pg_get_expr(i.indpred,i.indrelid),'::character varying',''),'::text',''),
+                  '[[:space:]()\"]','','g')='status=''active''')
+            );
+        ")"
+        [[ "$result" == 2 ]] || die "Postcondition failed: $probe (bounded lookup and active-only source uniqueness)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(name,expression) AS (VALUES
+            ('storage_page_import_native_identity_check','pageid>0andnativerevision>0'),
+            ('storage_page_import_digest_check','sourcekey~''^[a-f0-9]{64}\$''andsourcesha256~''^[a-f0-9]{64}\$''andlocationkey~''^[a-f0-9]{64}\$'''),
+            ('storage_page_import_path_bounds_check','lengthsourcepath>=1andlengthsourcepath<=4096andlengthnativepath>=1andlengthnativepath<=2048andlengthnativelocalecode>=1andlengthnativelocalecode<=255'),
+            ('storage_page_import_status_check','status=''active''anddeletedatisnullorstatus=''deleted''anddeletedatisnotnull'),
+            ('storage_page_import_move_binding_check','movebindingisnullorjsonb_typeofmovebinding=''object''')
+          ) SELECT count(*) FROM expected e WHERE EXISTS (
+            SELECT 1 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+            WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='storagePageImportOwners'
+              AND c.conname=e.name AND c.contype='c' AND c.convalidated
+              AND regexp_replace(lower(replace(replace(pg_get_expr(c.conbin,c.conrelid),'::character varying',''),'::text','')),
+                '[[:space:]()\"]','','g')=e.expression
+          );
+        ")"
+        [[ "$result" == 5 ]] || die "Postcondition failed: $probe (validated native identity, digest, path, retirement and JSON checks)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='storagePageImportOwners'
+            AND ((column_name='mapped' AND column_default='false')
+              OR (column_name='status' AND replace(column_default,'::character varying','')='''active''')
+              OR (column_name='updatedAt' AND lower(column_default) IN ('current_timestamp','now()')));
+        ")"
+        [[ "$result" == 3 ]] || die "Postcondition failed: $probe (native unmapped, active and timestamp defaults)"
+        # These receipts deliberately outlive canonical pages and pruned root
+        # outbox events; existence of those referenced objects is not a probe.
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+          WHERE t.relnamespace=current_schema()::regnamespace AND t.relname='storagePageImportOwners' AND c.contype='f';
+        ")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe (ownership must survive canonical and outbox deletion)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM \"storagePageImportOwners\" WHERE \"pageId\"<=0 OR \"nativeRevision\"<=0
+            OR \"sourceKey\" !~ '^[a-f0-9]{64}\$' OR \"sourceSha256\" !~ '^[a-f0-9]{64}\$' OR \"locationKey\" !~ '^[a-f0-9]{64}\$'
+            OR length(\"sourcePath\") NOT BETWEEN 1 AND 4096 OR length(\"nativePath\") NOT BETWEEN 1 AND 2048
+            OR length(\"nativeLocaleCode\") NOT BETWEEN 1 AND 255
+            OR \"sourcePath\" ~ '(^|/)([.]|[.][.]|)(/|\$)' OR position(chr(92) in \"sourcePath\")>0
+            OR \"sourcePath\" ~ '[\\x01-\\x1f\\x7f]' OR \"nativeLocaleCode\" ~ '[[:space:]/]'
+            OR position(chr(92) in \"nativeLocaleCode\")>0 OR \"nativeLocaleCode\" ~ '[\\x01-\\x1f\\x7f]'
+            OR ((status='active' AND \"deletedAt\" IS NULL) OR (status='deleted' AND \"deletedAt\" IS NOT NULL)) IS NOT TRUE
+            OR (\"moveBinding\" IS NOT NULL AND jsonb_typeof(\"moveBinding\")<>'object');
+        ")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe (invalid retained native ownership rows)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM \"storagePageImportOwners\" o WHERE \"moveBinding\" IS NOT NULL AND
+            CASE WHEN jsonb_typeof(\"moveBinding\")='object' THEN (
+              \"moveBinding\" ?& ARRAY['phase','fromGitRevision','toGitRevision','oldSourcePath','newSourcePath',
+                'oldSourceSha256','newSourceSha256','previousNativeRevision','previousNativePath',
+                'previousNativeLocaleCode','moveOperationId','moveNativeRevision']
+              AND (SELECT count(*) FROM jsonb_object_keys(\"moveBinding\"))=12
+              AND NOT EXISTS (SELECT 1 FROM jsonb_each(\"moveBinding\") field WHERE jsonb_typeof(field.value)<>'string')
+              AND \"moveBinding\"->>'phase' IN ('moved','completed')
+              AND \"moveBinding\"->>'fromGitRevision' ~ '^([a-f0-9]{40}|[a-f0-9]{64})\$'
+              AND \"moveBinding\"->>'toGitRevision' ~ '^([a-f0-9]{40}|[a-f0-9]{64})\$'
+              AND \"moveBinding\"->>'oldSourceSha256' ~ '^[a-f0-9]{64}\$'
+              AND \"moveBinding\"->>'newSourceSha256' ~ '^[a-f0-9]{64}\$'
+              AND NOT EXISTS (
+                SELECT 1 FROM (VALUES ('oldSourcePath',4096),('newSourcePath',4096),
+                  ('previousNativePath',2048),('previousNativeLocaleCode',255)) field(name,max_length)
+                WHERE length(o.\"moveBinding\"->>field.name) NOT BETWEEN 1 AND field.max_length
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM (VALUES ('oldSourcePath'),('newSourcePath')) field(name)
+                WHERE o.\"moveBinding\"->>field.name ~ '(^|/)([.]|[.][.]|)(/|\$)'
+                  OR position(chr(92) in (o.\"moveBinding\"->>field.name))>0
+                  OR o.\"moveBinding\"->>field.name ~ '[\\x01-\\x1f\\x7f]'
+              )
+              AND \"moveBinding\"->>'previousNativeLocaleCode' !~ '[[:space:]/]'
+              AND position(chr(92) in (\"moveBinding\"->>'previousNativeLocaleCode'))=0
+              AND \"moveBinding\"->>'previousNativeLocaleCode' !~ '[\\x01-\\x1f\\x7f]'
+              AND NOT EXISTS (
+                SELECT 1 FROM (VALUES ('previousNativeRevision'),('moveNativeRevision')) field(name)
+                WHERE o.\"moveBinding\"->>field.name !~ '^[1-9][0-9]{0,18}\$'
+                  OR (length(o.\"moveBinding\"->>field.name)=19
+                    AND (o.\"moveBinding\"->>field.name) COLLATE \"C\">'9223372036854775807')
+              )
+              AND \"moveBinding\"->>'moveOperationId' ~* '^([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)\$'
+            ) IS NOT TRUE ELSE true END;
+        ")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe (invalid finite native move binding)"
         ;;
       *) die "Unsupported named migration postcondition: $probe" ;;
     esac

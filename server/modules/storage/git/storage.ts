@@ -1,6 +1,5 @@
 import type {
   QueryBuilder,
-  UnknownRecord,
   StorageConfig,
   StorageAssetIdentity,
   StorageAssetRelocation,
@@ -19,10 +18,10 @@ import _ from 'lodash'
 
 import pageHelper from '../../../helpers/page.ts'
 import assetHelper from '../../../helpers/asset.ts'
-import commonDisk, { assertStorageImportIdentities, collectStorageEntries, isImportSourceMissing, validateStoragePaths } from '../disk/common.ts'
+import commonDisk, { collectStorageEntries, isImportSourceMissing, validateStoragePaths } from '../disk/common.ts'
 import type { StorageImportAdmission } from '../disk/common.ts'
 import type { StorageImportResult } from '../types.ts'
-import { classifyStoragePageImport, encodeStoragePageDocument, type StoragePageEncodingInput } from '../page-document.ts'
+import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../page-document.ts'
 import { PageChangeReasonSchema } from '../../../../shared/page-change-reason.ts'
 import { isStorageGitBranchName, storageGitRepositoryIssue } from '../../../../shared/storage-workspace.ts'
 import {
@@ -53,7 +52,7 @@ import {
   runBoundedProcess
 } from './bounded-process.ts'
 import { isStorageGitMetadataPath, isStorageInternalPath, isStorageReservedPath } from '../internal-path.ts'
-import { OKF_MAX_DOCUMENT_BYTES, parseOkfFilePath } from '../../../okf/format.ts'
+import { OKF_MAX_DOCUMENT_BYTES } from '../../../okf/format.ts'
 import { gitStorageSshCommand, gitStorageHttpRemote, writeGitStorageConnectionFile } from './connection.ts'
 import { openStorageRoot, type StorageFileIdentityExpectation, type StorageFileHandle, type StorageRootHandle } from '../local-filesystem.ts'
 import type { StorageLocalLocation } from '../../types.ts'
@@ -61,6 +60,23 @@ import { currentGitMutationTurn, GitStorageBusyError, withGitMutationLock } from
 import type { StorageMutationDispatch } from '../../../jobs/storage-mutations.ts'
 import { storagePagePath } from '../../../helpers/storage-page-path.ts'
 import { assertNoPublicStoragePageAtPath, assertStorageAssetDestinationAllowed } from '../../../helpers/storage-path-admission.ts'
+import {
+  assertNativeStoragePageIdentity, guardStorageImportReview, prepareStorageImportIdentities,
+  storageImportLocationKey, storageImportSourceKey, storageAssetImportOwner, type StorageAssetImportReview, type StorageImportPreviousSource
+} from '../import-identity.ts'
+import {
+  bindGitPreviousContent, collectGitContentEntries, gitContentAction, gitContentDigest,
+  gitDotContentPath, gitPreviousContent, gitRetainedContentRef, inspectGitPreviousContent, type GitPreviousContent
+} from './content-visibility.ts'
+import type { StorageGitContentEntry, StorageGitContentChoice } from '../../../../shared/utility-content-import.ts'
+import type { PageRuleAuthority } from '../../../helpers/group-access.ts'
+import {
+  loadStoragePageImportOwners, recordStoragePageImportOwner, storagePageImportOwnerMatches,
+  type StoragePageExportHook, type StoragePageImportMoveBinding, type StoragePageImportOwnerRecord
+} from '../../../helpers/storage-page-import-owner.ts'
+import type { CanonicalTransactionHook } from '../../../models/pages.ts'
+import { PageProjectionPayloadSchema } from '../../../core/page-mutation-outbox.ts'
+import { requireSystemAuthority } from '../../../helpers/system-authority.ts'
 
 export interface GitStorageFile {
   file: { stats: StorageFileIdentityExpectation }
@@ -104,14 +120,11 @@ interface GitStoragePlugin extends StoragePlugin<StorageConfig, GitStorageContex
   syncUntracked(this: GitStorageContext): Promise<void>
   purge(this: GitStorageContext): Promise<void>
   withMutationTurn?(this: GitStorageContext, work: (dispatch: StorageMutationDispatch) => Promise<void>, signal: AbortSignal): Promise<void>
-  updated(this: GitStorageContext, page: Parameters<StorageMutationDispatch['writePage']>[0]): Promise<void>
+  updated(this: GitStorageContext, page: Parameters<StorageMutationDispatch['writePage']>[0], onWritten?: StoragePageExportHook): Promise<void>
   assetUploaded(this: GitStorageContext, asset: Omit<Parameters<StorageMutationDispatch['writeAsset']>[0], 'authorId'>): Promise<void>
   assetDeleted(this: GitStorageContext, asset: Omit<Parameters<StorageMutationDispatch['removePath']>[0], 'authorId'>): Promise<void>
 }
 
-interface CacheableWikiAsset extends WikiAsset {
-  deleteAssetCache(): Promise<void>
-}
 
 interface PageExportRow {
   id: number
@@ -139,10 +152,6 @@ function gitPagePath(page: Pick<PageExportRow, 'path' | 'localeCode' | 'contentT
   })
 }
 
-function changedPagePath(filePath: string): { locale: string; path: string } {
-  const canonicalIdentity = parseOkfFilePath(filePath)
-  return canonicalIdentity === null ? pageHelper.getPagePath(filePath) : { locale: canonicalIdentity.locale, path: canonicalIdentity.pagePath }
-}
 
 interface AssetExportRow {
   filename: string
@@ -354,75 +363,67 @@ function shouldQuarantineGitFailure(error: unknown): boolean {
   return error instanceof BoundedProcessError && error.quarantine
 }
 
-function hasAssetCache(asset: WikiAsset): asset is CacheableWikiAsset {
-  return 'deleteAssetCache' in asset && typeof asset.deleteAssetCache === 'function'
-}
-
-function requireAssetCache(asset: WikiAsset): CacheableWikiAsset {
-  if (!hasAssetCache(asset)) {
-    throw new Error('Asset model does not implement deleteAssetCache')
-  }
-  return asset
-}
-
-type GitAssetTransaction = Knex.Transaction | undefined
-
-async function withGitAssetTransaction<T>(work: (transaction: GitAssetTransaction) => Promise<T>): Promise<T> {
-  const knex = wiki.models.knex as unknown as
-    | {
-        transaction?: (callback: (transaction: Knex.Transaction) => Promise<T>) => Promise<T>
-      }
-    | undefined
-  if (typeof knex?.transaction === 'function') return knex.transaction(transaction => work(transaction))
-  return work(undefined)
-}
 
 type GitAssetQuery = QueryBuilder<WikiAsset>
 
-function queryGitAssets(transaction: GitAssetTransaction): GitAssetQuery {
-  if (transaction === undefined) return (wiki.models.assets.query as unknown as () => GitAssetQuery)()
+function queryGitAssets(transaction: Knex.Transaction): GitAssetQuery {
   return (wiki.models.assets.query as unknown as (transaction: Knex.Transaction) => GitAssetQuery)(transaction)
 }
 
-async function findGitAssetForMutation(transaction: GitAssetTransaction, hash: string): Promise<WikiAsset | undefined> {
-  if (transaction === undefined) return queryGitAssets(transaction).findOne({ hash })
-  const row = await transaction('assets').where({ hash }).forUpdate().first('id')
-  if (!row) return undefined
-  return queryGitAssets(transaction).findOne({ id: row.id })
+function sameGitPageAcceptance(left: StoragePageImportOwnerRecord | undefined, right: StoragePageImportOwnerRecord): boolean {
+  return left !== undefined && left.pageId === right.pageId && left.status === right.status &&
+    left.sourceKey === right.sourceKey && left.sourcePath === right.sourcePath && left.sourceSha256 === right.sourceSha256 &&
+    left.locationKey === right.locationKey && left.mapped === right.mapped &&
+    left.nativeRevision === right.nativeRevision && left.nativePath === right.nativePath && left.nativeLocaleCode === right.nativeLocaleCode &&
+    left.operationId === right.operationId && _.isEqual(left.moveBinding, right.moveBinding)
 }
+
+function gitPageDeleteHook(association: StoragePageImportOwnerRecord, user: WikiUser): CanonicalTransactionHook {
+  const turn = currentGitMutationTurn()
+  return async (transaction, committed) => {
+    await requireSystemAuthority(transaction, { user }, true)
+    await guardStorageImportReview(transaction)
+    const [persisted] = await loadStoragePageImportOwners(transaction, { pageIds: [association.pageId], limit: 1 })
+    if (committed.id !== association.pageId || BigInt(committed.sourceRevision) <= BigInt(association.nativeRevision) ||
+        persisted?.deletedAt == null || !sameGitPageAcceptance(persisted, {
+          ...association, status: 'deleted', nativeRevision: committed.sourceRevision, operationId: committed.outboxId
+        })) {
+      throw new Error('Native Git deletion lost its exact accepted source association')
+    }
+    await turn.assertHeld(transaction)
+  }
+}
+
+/** Validate the actual move before its durable ledger binding becomes authoritative. */
+async function assertGitPageMoveEffect(
+  transaction: Knex.Transaction,
+  binding: StoragePageImportMoveBinding,
+  pageId: number,
+  destination: { path: string; locale: string },
+  previousContent: string
+): Promise<void> {
+  const effect = await transaction('pageMutationOutbox').where({
+    pageId, sourceRevision: binding.moveNativeRevision, effectKind: 'knowledge'
+  }).first('payload', 'payloadSha256', 'desiredState')
+  if (!effect || typeof effect.payload !== 'string' || effect.desiredState !== 'present' ||
+      createHash('sha256').update(effect.payload).digest('hex') !== effect.payloadSha256) {
+    throw new Error('The exact native Git move effect is unavailable')
+  }
+  const payload = PageProjectionPayloadSchema.parse(JSON.parse(effect.payload))
+  if (payload.action !== 'move' || payload.effectKind !== 'knowledge' || payload.desiredState !== 'present' ||
+      payload.pageId !== pageId || payload.sourceRevision !== binding.moveNativeRevision ||
+      payload.sourceSha256 !== createHash('sha256').update(previousContent).digest('hex') ||
+      payload.location?.path !== destination.path || payload.location.locale !== destination.locale ||
+      payload.location.visibility !== 'public' || payload.location.ownerId !== null ||
+      payload.previousLocation?.path !== binding.previousNativePath || payload.previousLocation.locale !== binding.previousNativeLocaleCode ||
+      payload.previousLocation.visibility !== 'public' || payload.previousLocation.ownerId !== null) {
+    throw new Error('The actual native Git move identities or revision changed')
+  }
+}
+
 
 const previousPageSources = new WeakMap<GitStorageFile, Buffer>()
 
-function importedGitPageIdentity(
-  context: GitStorageContext,
-  relativePath: string,
-  contentType: string,
-  rawDocument?: Buffer
-): { locale: string; path: string } {
-  if (rawDocument === undefined) {
-    if (context.config?.mapReadmeToHome === true && /^readme$/iu.test(pageHelper.getPagePath(relativePath).path)) {
-      throw new Error('The previous README source must be classified before changing its imported page')
-    }
-    return changedPagePath(relativePath)
-  }
-  const original = pageHelper.getPagePath(relativePath)
-  const imported = classifyStoragePageImport(
-    {
-      rawDocument,
-      contentType,
-      locale: original.locale,
-      pagePath: original.path,
-      importer: 'import:git'
-    },
-    relativePath,
-    context.config ?? {}
-  )
-  if (imported.document.format === 'okf_invalid') throw new Error('Invalid OKF source cannot rename or delete a page')
-  if (imported.document.format === 'okf_valid' && parseOkfFilePath(relativePath) === null) {
-    throw new Error('OKF page path is not canonical')
-  }
-  return imported.identity
-}
 
 async function buildGitImportPlan(
   root: StorageRootHandle,
@@ -434,6 +435,8 @@ async function buildGitImportPlan(
   if (admission.root !== root) throw new Error('Git import admission belongs to a different storage root')
   const seen = new Set<string>()
   const files: GitStorageFile[] = []
+  const previousContent: GitPreviousContent[] = []
+  let previousBytes = 0
   const paths: string[] = []
   for (const change of changes) {
     const key = `${change.status}\0${change.oldPath}\0${change.path}`
@@ -450,7 +453,7 @@ async function buildGitImportPlan(
     const fileStats = fileEntry?.identity ?? { size: 0 }
     const isDelete = change.status === 'D'
     const isRename = change.status === 'R'
-    const binary = pageHelper.getContentType(change.path) === undefined
+    const binary = pageHelper.getContentType(change.path) === false
     const planned: GitStorageFile = {
       file: { stats: fileStats },
       oldPath: change.oldPath,
@@ -463,13 +466,19 @@ async function buildGitImportPlan(
       after: isDelete ? 0 : 1,
       importAll: false
     }
-    if (!binary && (isDelete || isRename)) {
-      const previous = await command.run(['show', `${previousCommit}:${change.oldPath}`], { maxStdoutBytes: OKF_MAX_DOCUMENT_BYTES })
+    if (isDelete || isRename) {
+      const previous = await command.run(['show', `${previousCommit}:${change.oldPath}`], {
+        maxStdoutBytes: pageHelper.getContentType(change.oldPath) ? OKF_MAX_DOCUMENT_BYTES : admission.budget.maxBytes
+      })
+      previousBytes += previous.stdout.byteLength
+      if (previousBytes > admission.budget.maxBytes) throw new RangeError('Git previous source bytes exceed the import bound')
       previousPageSources.set(planned, previous.stdout)
+      previousContent.push({ path: change.oldPath, bytes: previous.stdout, revision: previousCommit, ...(isRename ? { destinationPath: change.path } : {}) })
     }
     files.push(planned)
   }
   await validateStoragePaths(root, paths, admission)
+  bindGitPreviousContent(admission, previousContent)
   return { admission, files }
 }
 
@@ -477,7 +486,7 @@ function serializeGitMutation<Args extends unknown[], Result>(
   method: (this: GitStorageContext, ...args: Args) => Promise<Result>
 ): (this: GitStorageContext, ...args: Args) => Promise<Result> {
   return async function (...args) {
-    return withGitMutationLock(wiki.models.knex as unknown as Knex, this.targetKey ?? 'git', async turn => {
+    return withGitMutationLock(wiki.models.knex, this.targetKey ?? 'git', async turn => {
       try {
         await turn.assertHeld()
         return await method.apply(this, args)
@@ -528,7 +537,7 @@ async function commitGitPaths(command: GitNativeCommand, message: string, paths:
 }
 
 async function hasPendingCanonicalMutations(context: GitStorageContext): Promise<boolean> {
-  const db = wiki.models.knex as unknown as Knex
+  const db = wiki.models.knex
   const row = await db('durableJobs')
     .where(identity => identity.where('type', 'storage-mutation').whereIn('version', [1, 2]).orWhere({ type: 'asset-relocation', version: 1 }))
     .whereNot('state', 'succeeded')
@@ -542,6 +551,191 @@ async function assertGitWorktreeSettled(command: GitNativeCommand): Promise<void
   if (status.stdout.length !== 0) {
     throw new Error('Git working copy contains pending mutations; commit or recover them before synchronization or purge')
   }
+}
+
+function gitAssetImportReview(
+  entry: StorageGitContentEntry, user: WikiUser, locationKey: string, maxBytes: number,
+  previous?: StorageGitContentEntry, reviewedReplacement = false
+): StorageAssetImportReview {
+  let preparedTransaction: Knex.Transaction | undefined
+  const turn = currentGitMutationTurn()
+  const expected = previous ?? entry
+  return {
+    ...(previous === undefined ? {} : { previousPath: previous.owner?.path ?? previous.sourcePath }),
+    async prepare(transaction) {
+      await requireSystemAuthority(transaction, { user }, true)
+      const auth = wiki.auth as unknown as {
+        loadPageRuleAuthority(user: WikiUser, transaction: Knex.Transaction): Promise<PageRuleAuthority>
+        checkPageAccess(user: WikiUser, permissions: readonly string[], context: { path: string }, authority: PageRuleAuthority): boolean
+      }
+      const authority = await auth.loadPageRuleAuthority(user, transaction)
+      for (const assetPath of new Set([entry.sourcePath, expected.owner?.path ?? expected.sourcePath])) {
+        if (!auth.checkPageAccess(user, ['manage:system', 'write:assets'], { path: assetPath }, authority)) throw new Error('Native Git asset import authority is unavailable')
+      }
+      await guardStorageImportReview(transaction)
+      await turn.assertHeld(transaction)
+      preparedTransaction = transaction
+    },
+    async check(transaction) {
+      if (preparedTransaction !== transaction) throw new Error('Native Git asset import authority was not prepared in this transaction')
+      if (previous !== undefined && (entry.owner !== null || !previous.sourceAvailable || previous.owner === null ||
+          (previous.owner.sourceSha256 ?? previous.owner.sha256) !== previous.sourceSha256 ||
+          await transaction('assets').where({ hash: assetHelper.generateHash(entry.sourcePath) }).first('id'))) {
+        throw new Error('Git asset rename source proof or destination ownership changed')
+      }
+      const asset = await transaction('assets').where({ hash: assetHelper.generateHash(expected.owner?.path ?? expected.sourcePath) }).first('*')
+      if (expected.owner === null) {
+        if (asset !== undefined) throw new Error('Git asset destination acquired an unrelated native owner after review')
+      } else {
+        if (asset?.id !== expected.owner.id) throw new Error('Reviewed Git asset import owner changed')
+        const data = await transaction('assetData').where({ id: asset.id }).whereRaw('length(data) <= ?', [maxBytes]).first('data')
+        if (!data || !(data.data instanceof Uint8Array)) throw new Error('Reviewed Git asset import bytes are unavailable')
+        const sha256 = createHash('sha256').update(data.data).digest('hex')
+        if (sha256 !== expected.owner.sha256 || gitContentDigest({ asset, sha256 }) !== expected.owner.revision ||
+            !expected.owner.sourceOwned && !reviewedReplacement) throw new Error('Reviewed Git asset import owner/revision/hash changed')
+        const metadata: unknown = typeof asset.metadata === 'string' ? JSON.parse(asset.metadata) : asset.metadata
+        const hasClaim = metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata) && Object.hasOwn(metadata, 'storage_import')
+        const proof = storageAssetImportOwner(asset.metadata)
+        if (hasClaim && (proof === undefined || proof.sourceKey !== expected.sourceKey || proof.sourcePath !== expected.sourcePath || proof.assetId !== asset.id)) {
+          throw new Error('Another or unverified native source owns this asset. Retain it and reconcile ownership through native asset administration before importing.')
+        }
+        if (!reviewedReplacement || previous !== undefined) {
+          if (proof?.sourceKey !== expected.sourceKey || proof.sourcePath !== expected.sourcePath || proof.assetId !== asset.id ||
+              proof.assetSha256 !== sha256 || proof.sourceSha256 !== (expected.owner.sourceSha256 ?? expected.owner.sha256)) {
+            throw new Error('Current native Git source ownership is unavailable; preserve and review the canonical asset')
+          }
+        }
+      }
+      await turn.assertHeld(transaction)
+      return { sourceKey: entry.sourceKey, sourcePath: entry.sourcePath, sourceSha256: entry.sourceSha256,
+        locationKey, mapped: false }
+    },
+    async beforeCommit(transaction) {
+      if (preparedTransaction !== transaction) throw new Error('Native Git asset import authority was not prepared in this transaction')
+      await requireSystemAuthority(transaction, { user }, true)
+      await guardStorageImportReview(transaction)
+      await turn.assertHeld(transaction)
+    }
+  }
+}
+
+/** A visibility choice is never itself deletion authority: recheck native proof under locks. */
+async function reconcileGitContent(
+  admission: StorageImportAdmission,
+  entry: StorageGitContentEntry,
+  choice: StorageGitContentChoice,
+  user: WikiUser,
+  locationKey: string
+): Promise<void> {
+  const owner = entry.owner
+  if ((choice.action !== 'remove' && choice.action !== 'remap') || owner === null || !owner.sourceOwned) {
+    throw new Error(`Git content has no reviewed native source owner: ${entry.sourcePath}`)
+  }
+  const previous = gitPreviousContent(admission).find(source => source.path === entry.sourcePath)
+  if (previous !== undefined) {
+    if (createHash('sha256').update(previous.bytes).digest('hex') !== entry.sourceSha256) throw new Error('Pinned old Git content changed')
+  } else {
+    const admitted = admission.filesByPath.get(entry.sourcePath)
+    if (admitted?.kind !== 'file') throw new Error(`Actual old Git content is unavailable: ${entry.sourcePath}`)
+    const source = await admission.root.openFile(entry.sourcePath, admitted.identity)
+    try {
+      if (await source.sha256Bounded(admission.budget.maxBytes) !== entry.sourceSha256) throw new Error('Reviewed Git content changed after preflight')
+    } finally { await source.close() }
+  }
+  await guardStorageImportReview()
+  const turn = currentGitMutationTurn()
+  if (owner.kind === 'page') {
+    const page = await wiki.models.pages.getPageFromDb({ path: owner.path, locale: owner.locale, visibility: 'public', ownerId: null })
+    const [association] = await loadStoragePageImportOwners(wiki.models.knex, { pageIds: [owner.id], limit: 1 })
+    if (page?.id !== owner.id || String(page.sourceRevision) !== owner.revision ||
+        association === undefined || !storagePageImportOwnerMatches(association, page) ||
+        association.sourceKey !== entry.sourceKey || association.sourcePath !== entry.sourcePath ||
+        association.locationKey !== locationKey ||
+        association.sourceSha256 !== entry.sourceSha256) throw new Error('Reviewed Git page ownership changed')
+    if (choice.action === 'remove') {
+      await wiki.models.pages.deletePage({ user, id: owner.id, path: owner.path, locale: owner.locale,
+        expectedSourceRevision: owner.revision, skipStorage: true, canonicalTransactionHook: gitPageDeleteHook(association, user) })
+    } else if (choice.action === 'remap') {
+      const destinationPath = choice.destinationPath!
+      assertNativeStoragePageIdentity({ path: destinationPath, locale: owner.locale }, entry.sourcePath)
+      if (destinationPath === owner.path) return
+      const canonicalTransactionHook: CanonicalTransactionHook = async (transaction, committed) => {
+        await guardStorageImportReview(transaction)
+        const [persisted] = await loadStoragePageImportOwners(transaction, { pageIds: [owner.id], limit: 1 })
+        if (!sameGitPageAcceptance(persisted, association)) throw new Error('Reviewed Git page association changed before remap')
+        await recordStoragePageImportOwner(transaction, {
+          owner: { sourceKey: association.sourceKey, sourcePath: association.sourcePath, sourceSha256: association.sourceSha256,
+            locationKey: association.locationKey, mapped: true },
+          pageId: committed.id, sourceRevision: committed.sourceRevision, outboxId: committed.outboxId
+        })
+        await turn.assertHeld(transaction)
+      }
+      await wiki.models.pages.movePage({ user, id: owner.id, path: owner.path, locale: owner.locale, destinationPath,
+        destinationLocale: owner.locale, expectedSourceRevision: association.nativeRevision, okfProducer: 'import:git', skipStorage: true,
+        canonicalTransactionHook })
+    }
+    return
+  }
+  await withAssetLocationLocks(['assets'], async (assertHeld, connection) => {
+    const transaction = await wiki.models.knex.transaction(connection === undefined ? undefined : { connection })
+    let committed = false
+    try {
+      await assertHeld?.()
+      await requireSystemAuthority(transaction, { user }, true)
+      const auth = wiki.auth as unknown as {
+        loadPageRuleAuthority(user: WikiUser, transaction: Knex.Transaction): Promise<PageRuleAuthority>
+        checkPageAccess(user: WikiUser, permissions: readonly string[], context: { path: string }, authority: PageRuleAuthority): boolean
+      }
+      const authority = await auth.loadPageRuleAuthority(user, transaction)
+      if (!auth.checkPageAccess(user, ['manage:system', 'manage:assets'], { path: owner.path }, authority)) throw new Error('Native Git asset mutation authority is unavailable')
+      const destination = choice.action === 'remap' ? choice.destinationPath! : undefined
+      if (destination !== undefined) {
+        assertStorageAssetDestinationAllowed(destination)
+        if (!auth.checkPageAccess(user, ['manage:system', 'write:assets'], { path: destination }, authority)) throw new Error('Native Git asset destination authority is unavailable')
+      }
+      await guardStorageImportReview(transaction)
+      await turn.assertHeld(transaction)
+      if (destination !== undefined) await assertNoPublicStoragePageAtPath(transaction, destination)
+      const paths = destination === undefined ? [owner.path] : [owner.path, destination].sort()
+      for (const assetPath of paths) await lockAssetLocation(transaction, assetPath)
+      const asset = await transaction('assets').where({ id: owner.id }).forUpdate().first('*')
+      const data = await transaction('assetData').where({ id: owner.id }).whereRaw('length(data) <= ?', [admission.budget.maxBytes]).forUpdate().first('data')
+      if (!asset || !data || !(data.data instanceof Uint8Array)) throw new Error('Reviewed Git asset owner is unavailable')
+      const sha256 = createHash('sha256').update(data.data).digest('hex')
+      if (asset.hash !== assetHelper.generateHash(owner.path) || (owner.sourceSha256 ?? entry.sourceSha256) !== entry.sourceSha256 ||
+          sha256 !== owner.sha256 || gitContentDigest({ asset, sha256 }) !== owner.revision) throw new Error('Reviewed Git asset ownership or bytes changed')
+      await assertAssetLocationAssetSettled(transaction, owner.id)
+      await assertAssetLocationReservations(transaction, paths)
+      const nativeProof = storageAssetImportOwner(asset.metadata)
+      if (nativeProof?.sourceKey !== entry.sourceKey || nativeProof.sourcePath !== entry.sourcePath ||
+          nativeProof.sourceSha256 !== entry.sourceSha256 || nativeProof.assetId !== owner.id || nativeProof.assetSha256 !== sha256) {
+        throw new Error('Current native Git source ownership is unavailable; preserve and review the canonical asset')
+      }
+      if (destination !== undefined) {
+        if (await transaction('assets').where({ hash: assetHelper.generateHash(destination) }).first('id')) throw new Error('Git asset remap destination is occupied')
+        const folderId = await commonDisk.resolveAssetFolder(destination, transaction)
+        const metadata: unknown = typeof asset.metadata === 'string' ? JSON.parse(asset.metadata) : asset.metadata
+        if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new Error('Native asset metadata is unavailable for reviewed remap')
+        await queryGitAssets(transaction).patch({
+          filename: path.posix.basename(destination), folderId, hash: assetHelper.generateHash(destination),
+          metadata: { ...metadata, storage_import: { ...nativeProof, mapped: destination !== entry.sourcePath } }
+        }).findById(owner.id)
+      } else {
+        await transaction('assetData').where({ id: owner.id }).delete()
+        await queryGitAssets(transaction).delete().where({ id: owner.id })
+      }
+      await turn.assertHeld(transaction)
+      await transaction.commit()
+      committed = true
+      await assertHeld?.()
+      const nativeAssets = wiki.models.assets as unknown as { deleteAssetCaches(hashes: readonly string[]): Promise<void> }
+      await nativeAssets.deleteAssetCaches(destination === undefined
+        ? [String(asset.hash)]
+        : [String(asset.hash), assetHelper.generateHash(destination)])
+    } finally {
+      if (!committed) await transaction.rollback()
+    }
+  }, wiki.models.knex)
 }
 
 const plugin: GitStoragePlugin = {
@@ -731,12 +925,13 @@ const plugin: GitStoragePlugin = {
       if (_.includes(['sync', 'pull'], this.mode) && importBase !== null && !reattached && importBase !== finalCommit) {
         let admission: StorageImportAdmission
         try {
-          admission = await collectStorageEntries(root, { maxAssetBytes: wiki.config.uploads.maxFileSize })
+          admission = await collectGitContentEntries(root, wiki.config.uploads.maxFileSize)
         } catch (error: unknown) {
           throw new BoundedProcessError('parser', `Git worktree admission failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error })
         }
         const changes = await streamGitNameStatus(command, importBase, finalCommit)
         plan = await buildGitImportPlan(root, admission, changes, command, importBase)
+        await inspectGitPreviousContent(admission, this.config, command)
       }
 
       if (_.includes(['sync', 'push'], this.mode)) {
@@ -753,10 +948,14 @@ const plugin: GitStoragePlugin = {
       if (plan !== undefined) {
         const rootUser = await wiki.models.users.getRootUser()
         const results = await this.processFiles(plan, rootUser)
-        if (results.every(result => result.ok)) await command.run(['update-ref', '-d', importRef])
+        if (results.every(result => result.ok)) {
+          await command.run(['update-ref', '-d', importRef])
+        }
         return results
       }
-      if (_.includes(['sync', 'pull'], this.mode)) await command.run(['update-ref', '-d', importRef])
+      if (_.includes(['sync', 'pull'], this.mode)) {
+        await command.run(['update-ref', '-d', importRef])
+      }
       return []
     } catch (error: unknown) {
       if (shouldQuarantineGitFailure(error)) await quarantineGitContext(this)
@@ -771,8 +970,29 @@ const plugin: GitStoragePlugin = {
   async processFiles(plan: GitStorageImportPlan, user: WikiUser) {
     const root = requireRoot(this)
     if (plan.admission.root !== root) throw new Error('Git import admission belongs to a different storage root')
-    const files = plan.files
     const admission = plan.admission
+    const files = [...plan.files]
+    const previousGitSources = new Map(gitPreviousContent(admission).map(source => [source.path, source]))
+    let importHead: string | undefined
+    const plannedOld = new Set(files.filter(item => !item.importAll && (item.status === 'R' || item.status === 'D')).map(item => item.oldPath))
+    const indexes = new Map(files.map((item, index) => [item.relPath, index]))
+    for (const previous of previousGitSources.values()) {
+      if (previous.retained || plannedOld.has(previous.path)) continue
+      let item: GitStorageFile
+      if (previous.destinationPath !== undefined) {
+        const index = indexes.get(previous.destinationPath)
+        if (index === undefined) throw new Error(`Pending Git rename destination is unavailable: ${previous.destinationPath}`)
+        item = { ...files[index]!, oldPath: previous.path, status: 'R', importAll: false }
+        files[index] = item
+      } else {
+        if (admission.filesByPath.has(previous.path)) continue
+        item = { file: { stats: { size: previous.bytes.byteLength } }, oldPath: previous.path, relPath: previous.path,
+          binary: !pageHelper.getContentType(previous.path), status: 'D', importAll: false, insertions: 0, deletions: 1, before: 0, after: 0 }
+        files.push(item)
+      }
+      previousPageSources.set(item, previous.bytes)
+      plannedOld.add(previous.path)
+    }
     const seen = new Set<string>()
     for (const item of files) {
       const status = item.status ?? (item.relPath !== item.oldPath ? 'R' : item.deletions > 0 && item.insertions === 0 ? 'D' : 'M')
@@ -786,10 +1006,103 @@ const plugin: GitStoragePlugin = {
         throw new BoundedProcessError('parser', `Git import plan has no admitted destination: ${item.relPath}`)
       }
     }
-    await assertStorageImportIdentities(admission, this.config ?? {}, 'GIT')
+    const previousSources: StorageImportPreviousSource[] = []
+    for (const item of files) {
+      const status = item.status ?? (item.relPath !== item.oldPath ? 'R' : item.deletions > 0 && item.insertions === 0 ? 'D' : 'M')
+      if (item.importAll || (status !== 'D' && status !== 'R')) continue
+      const oldType = pageHelper.getContentType(item.oldPath)
+      const newType = pageHelper.getContentType(item.relPath)
+      if (status === 'R' && Boolean(oldType) !== Boolean(newType)) throw new Error(`Git rename changes page/asset ownership class: ${item.oldPath} -> ${item.relPath}`)
+      if (!oldType) continue
+      const rawDocument = previousPageSources.get(item)
+      if (rawDocument === undefined) throw new Error(`Previous Git page source is unavailable: ${item.oldPath}`)
+      previousSources.push({
+        sourcePath: item.oldPath, contentType: oldType, rawDocument,
+        ...(status === 'R' ? { destinationSourcePath: item.relPath } : {})
+      })
+    }
+    const identities = await prepareStorageImportIdentities(admission, this.config ?? {}, 'GIT', previousSources)
+    const sourceHashes = new Map(identities.preview.entries.map(entry => [entry.sourcePath, entry.sourceSha256]))
 
     const results: GitStorageImportResult[] = []
+    const choices = identities.gitChoices ?? new Map<string, StorageGitContentChoice>()
+    const contentEntries = identities.gitContent ?? new Map<string, StorageGitContentEntry>()
+    const handled = new Set<string>()
+    const importLocationKey = storageImportLocationKey('GIT', this.config ?? {})
+    for (const entry of contentEntries.values()) {
+      const action = gitContentAction(entry, choices)
+      if ((action === 'retain' || action === 'remap') && entry.sourceRevision && entry.sourceAvailable) {
+        try {
+          await guardStorageImportReview()
+          await mutationGit(this).run(['update-ref', gitRetainedContentRef(entry.sourceKey, entry.sourcePath), entry.sourceRevision])
+        } catch (error) {
+          handled.add(entry.sourcePath)
+          results.push({ kind: entry.kind, relPath: entry.sourcePath, ok: false, outcome: 'conflict',
+            error: error instanceof Error ? error.message : String(error) })
+        }
+      }
+      if (action === 'conflict') {
+        handled.add(entry.sourcePath)
+        results.push({ kind: entry.kind, relPath: entry.sourcePath, ok: false, outcome: 'conflict',
+          error: 'Excluded Git content has a canonical record. Preview Utilities → Content import and explicitly retain, remap, or remove its exact source association.' })
+      } else if (action === 'remove' || action === 'remap') {
+        handled.add(entry.sourcePath)
+        try {
+          await reconcileGitContent(admission, entry, choices.get(entry.sourcePath)!, user, importLocationKey)
+          results.push({ kind: entry.kind, relPath: entry.sourcePath, ok: true })
+        } catch (error) {
+          results.push({ kind: entry.kind, relPath: entry.sourcePath, ok: false, outcome: 'conflict',
+            error: error instanceof Error ? error.message : String(error) })
+        }
+      }
+    }
+    const effective: GitStorageFile[] = []
     for (const item of files) {
+      const status = item.status ?? (item.relPath !== item.oldPath ? 'R' : item.deletions > 0 && item.insertions === 0 ? 'D' : 'M')
+      const oldEntry = contentEntries.get(item.oldPath)
+      const newEntry = contentEntries.get(item.relPath)
+      const oldVisible = !gitDotContentPath(item.oldPath) || oldEntry !== undefined && gitContentAction(oldEntry, choices) === 'include'
+      const newVisible = !gitDotContentPath(item.relPath) || newEntry !== undefined && gitContentAction(newEntry, choices) === 'include'
+      if (handled.has(item.oldPath) || handled.has(item.relPath)) {
+        if (status === 'R' && !oldVisible && newVisible && !handled.has(item.relPath) &&
+            (newEntry === undefined || gitContentAction(newEntry, choices) === 'include') &&
+            choices.get(item.oldPath)?.action === 'remove' && results.find(result => result.relPath === item.oldPath)?.ok === true) {
+          effective.push({ ...item, oldPath: item.relPath, status: 'A' })
+        }
+        continue
+      }
+      if (status === 'R' && oldVisible && !newVisible) {
+        const action = oldEntry === undefined ? undefined : gitContentAction(oldEntry, choices)
+        if (action !== 'retain') results.push({ kind: item.binary ? 'asset' : 'page', relPath: item.oldPath, ok: false,
+          outcome: 'conflict', error: 'Visible-to-excluded Git rename requires reviewed source-owned removal or explicit retention; canonical content was preserved.' })
+        else results.push({ kind: item.binary ? 'asset' : 'page', relPath: item.oldPath, ok: true })
+        continue
+      }
+      if (newEntry !== undefined && gitContentAction(newEntry, choices) === 'retain') {
+        results.push({ kind: item.binary ? 'asset' : 'page', relPath: item.relPath, ok: true })
+        continue
+      }
+      if (status === 'R' && oldEntry !== undefined && gitContentAction(oldEntry, choices) === 'retain') {
+        if (newVisible) effective.push({ ...item, oldPath: item.relPath, status: 'A', insertions: 1, deletions: 0 })
+        continue
+      }
+      if (status === 'R' && !oldVisible && newVisible) {
+        effective.push({ ...item, oldPath: item.relPath, status: 'A', insertions: 1, deletions: 0 })
+        continue
+      }
+      if (newEntry?.kind === 'asset' && newEntry.owner !== null &&
+          (newEntry.owner.path !== item.relPath || !newEntry.owner.sourceOwned && choices.get(item.relPath)?.action !== 'include')) {
+        results.push({ kind: 'asset', relPath: item.relPath, ok: false, outcome: 'conflict',
+          error: 'Review and retain the exact native asset source association before importing changed or remapped content.' })
+        continue
+      }
+      if (!newVisible) {
+        results.push({ kind: item.binary ? 'asset' : 'page', relPath: item.relPath, ok: true })
+        continue
+      }
+      effective.push(item)
+    }
+    for (const item of effective) {
       const status = item.status ?? (item.relPath !== item.oldPath ? 'R' : item.deletions > 0 && item.insertions === 0 ? 'D' : 'M')
       const entry = admission.filesByPath.get(item.relPath)
       const expectedStats = entry !== undefined && entry.kind === 'file' ? entry.identity : undefined
@@ -808,53 +1121,159 @@ const plugin: GitStoragePlugin = {
         }
         if (!item.binary && contentType) {
           if (fileExists && !item.importAll && status === 'R') {
-            wiki.logger.info(`(STORAGE/GIT) Page marked as renamed: from ${item.oldPath} to ${item.relPath}`)
-            const contentPath = importedGitPageIdentity(
-              this,
-              item.oldPath,
-              pageHelper.getContentType(item.oldPath) || contentType,
-              previousPageSources.get(item)
-            )
-            if (source === undefined) throw new Error('Git page source is unavailable')
-            const contentDestinationPath = importedGitPageIdentity(this, item.relPath, contentType, await source.readBounded(OKF_MAX_DOCUMENT_BYTES))
-            if (contentPath.path === contentDestinationPath.path && contentPath.locale === contentDestinationPath.locale) {
-              const pageResult = await commonDisk.processPage({
-                user,
-                relPath: item.relPath,
-                root,
-                contentType,
-                moduleName: 'GIT',
-                source,
-                ingestion: this.config ?? {}
-              })
-              results.push({ kind: 'page', ...pageResult })
-              continue
-            }
-            await wiki.models.pages.movePage({
-              user,
-              path: contentPath.path,
-              destinationPath: contentDestinationPath.path,
-              locale: contentPath.locale,
-              destinationLocale: contentDestinationPath.locale,
-              okfProducer: 'import:git',
-              skipStorage: true
+            const previous = identities.previous.get(item.oldPath)
+            const destination = identities.pages.get(item.relPath)
+            if (previous == null || destination === undefined) throw new Error('Git rename has no admitted source ownership')
+            const contentPath = previous.identity
+            const contentDestinationPath = destination.identity
+            const owned = await wiki.models.pages.getPageFromDb({
+              path: contentPath.path, locale: contentPath.locale, visibility: 'public', ownerId: null
             })
-            results.push({ kind: 'page', relPath: item.relPath, ok: true })
+            const [association] = await loadStoragePageImportOwners(wiki.models.knex, {
+              pageIds: previous.existingPageId === null ? [] : [previous.existingPageId], limit: 1
+            })
+            if (owned?.id !== previous.existingPageId || String(owned.sourceRevision) !== previous.expectedSourceRevision ||
+                association === undefined || !storagePageImportOwnerMatches(association, owned) ||
+                association.sourceKey !== previous.sourceKey || association.sourceKey !== destination.sourceKey ||
+                association.locationKey !== previous.locationKey || association.locationKey !== destination.locationKey ||
+                association.locationKey !== importLocationKey) {
+              throw new Error(`Git rename owner changed after preflight: ${item.oldPath}. Preserve this page and preview its current native revision.`)
+            }
+            if (source === undefined || await source.sha256Bounded(OKF_MAX_DOCUMENT_BYTES) !== destination.sourceSha256) {
+              throw new Error(`Git rename source changed after preflight: ${item.relPath}`)
+            }
+            await guardStorageImportReview()
+            const oldGit = previousGitSources.get(item.oldPath)
+            const command = mutationGit(this)
+            if (oldGit === undefined || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(oldGit.revision) ||
+                await resolveCommit(command, oldGit.revision) !== oldGit.revision ||
+                createHash('sha256').update(oldGit.bytes).digest('hex') !== previous.sourceSha256) {
+              throw new Error('The exact old Git commit and raw page source are unavailable for native move proof')
+            }
+            importHead ??= (await resolveCommit(command, 'HEAD')) ?? undefined
+            if (importHead === undefined) throw new Error('The exact new Git commit is unavailable for native page move proof')
+            const oldBlob = await command.run(['show', `${oldGit.revision}:${item.oldPath}`], { maxStdoutBytes: OKF_MAX_DOCUMENT_BYTES })
+            const newBlob = await command.run(['show', `${importHead}:${item.relPath}`], { maxStdoutBytes: OKF_MAX_DOCUMENT_BYTES })
+            if (createHash('sha256').update(oldBlob.stdout).digest('hex') !== previous.sourceSha256 ||
+                createHash('sha256').update(newBlob.stdout).digest('hex') !== destination.sourceSha256) {
+              throw new Error('Pinned Git rename paths or raw source hashes changed')
+            }
+            const scope = {
+              fromGitRevision: oldGit.revision, toGitRevision: importHead,
+              oldSourcePath: item.oldPath, newSourcePath: item.relPath,
+              oldSourceSha256: previous.sourceSha256, newSourceSha256: destination.sourceSha256
+            }
+            const recorded = association.moveBinding
+            const replay = recorded !== null && Object.entries(scope).every(([key, value]) => Reflect.get(recorded, key) === value)
+            let acceptedMoveBinding: StoragePageImportMoveBinding | undefined
+            let completedReplay = false
+            if (replay && recorded !== null) {
+              if (association.nativePath !== contentDestinationPath.path || association.nativeLocaleCode !== contentDestinationPath.locale ||
+                  association.mapped !== destination.mapped || BigInt(recorded.moveNativeRevision) <= BigInt(recorded.previousNativeRevision)) {
+                throw new Error('Recorded native Git move identities changed; preserve the page and review its current owner')
+              }
+              if (recorded.phase === 'moved') {
+                if (association.nativeRevision !== recorded.moveNativeRevision || association.operationId !== recorded.moveOperationId ||
+                    association.sourcePath !== item.oldPath || association.sourceSha256 !== previous.sourceSha256) {
+                  throw new Error('Pending native Git move no longer has its exact accepted source revision')
+                }
+                acceptedMoveBinding = recorded
+              } else {
+                if (association.sourcePath !== item.relPath || association.sourceSha256 !== destination.sourceSha256 ||
+                    BigInt(association.nativeRevision) <= BigInt(recorded.moveNativeRevision) || association.operationId === recorded.moveOperationId) {
+                  throw new Error('Completed native Git move no longer has its exact accepted result')
+                }
+                completedReplay = true
+              }
+            } else {
+              if (recorded?.phase === 'moved' || association.sourcePath !== item.oldPath || association.sourceSha256 !== previous.sourceSha256) {
+                throw new Error('Git rename has no exact accepted old-source association; preserve and review the native page')
+              }
+              const sameDestination = contentPath.path === contentDestinationPath.path && contentPath.locale === contentDestinationPath.locale
+              if (sameDestination) {
+                if (destination.reviewedReplacement !== true) {
+                  throw new Error('A Git filename rename at the same native location requires a fresh explicit destination review; no-op cannot adopt the new source.')
+                }
+              } else {
+                const canonicalTransactionHook: CanonicalTransactionHook = async (transaction, committed) => {
+                  await guardStorageImportReview(transaction)
+                  const [persisted] = await loadStoragePageImportOwners(transaction, { pageIds: [owned.id], limit: 1 })
+                  if (committed.id !== owned.id || BigInt(committed.sourceRevision) <= BigInt(association.nativeRevision) ||
+                      !sameGitPageAcceptance(persisted, association)) {
+                    throw new Error('Native Git move accepted source changed inside its canonical transaction')
+                  }
+                  const binding: StoragePageImportMoveBinding = {
+                    ...scope, phase: 'moved', previousNativeRevision: association.nativeRevision,
+                    previousNativePath: association.nativePath, previousNativeLocaleCode: association.nativeLocaleCode,
+                    moveOperationId: committed.outboxId, moveNativeRevision: committed.sourceRevision
+                  }
+                  await assertGitPageMoveEffect(transaction, binding, committed.id, contentDestinationPath, owned.content)
+                  const accepted = await recordStoragePageImportOwner(transaction, {
+                    owner: { sourceKey: association.sourceKey, sourcePath: association.sourcePath, sourceSha256: association.sourceSha256,
+                      locationKey: association.locationKey, mapped: destination.mapped },
+                    pageId: committed.id, sourceRevision: committed.sourceRevision, outboxId: committed.outboxId, moveBinding: binding
+                  })
+                  acceptedMoveBinding = accepted.moveBinding ?? undefined
+                  await currentGitMutationTurn().assertHeld(transaction)
+                }
+                await wiki.models.pages.movePage({
+                  user, id: owned.id, path: contentPath.path, destinationPath: contentDestinationPath.path,
+                  locale: contentPath.locale, destinationLocale: contentDestinationPath.locale,
+                  okfProducer: 'import:git', expectedSourceRevision: association.nativeRevision, skipStorage: true,
+                  canonicalTransactionHook
+                })
+                if (acceptedMoveBinding === undefined) throw new Error('Native Git move did not expose its actual accepted result')
+              }
+            }
+            const pageResult = await commonDisk.processPage({
+              user, relPath: item.relPath, root, contentType, moduleName: 'GIT', source, ingestion: this.config ?? {},
+              noOpOnly: completedReplay,
+              ...(acceptedMoveBinding === undefined ? {} : { acceptedMoveBinding }),
+              identity: { ...destination, existingPageId: owned.id,
+                expectedSourceRevision: acceptedMoveBinding?.moveNativeRevision ?? association.nativeRevision }
+            })
+            results.push({ kind: 'page', ...pageResult })
             continue
           }
           if (!fileExists && !item.importAll && status === 'D') {
             wiki.logger.info(`(STORAGE/GIT) Page marked as deleted: ${item.relPath}`)
-            const contentPath = importedGitPageIdentity(this, item.relPath, contentType, previousPageSources.get(item))
+            const previous = identities.previous.get(item.oldPath)
+            if (previous === undefined) throw new Error(`Git delete has no admitted source ownership: ${item.oldPath}`)
+            if (previous === null) {
+              results.push({ kind: 'page', relPath: item.relPath, ok: true })
+              continue
+            }
+            const contentPath = previous.identity
+            const owned = await wiki.models.pages.getPageFromDb({
+              path: contentPath.path, locale: contentPath.locale, visibility: 'public', ownerId: null
+            })
+            if (owned?.id !== previous.existingPageId || String(owned.sourceRevision) !== previous.expectedSourceRevision) {
+              throw new Error(`Git delete owner changed after preflight: ${item.oldPath}`)
+            }
+            const [association] = await loadStoragePageImportOwners(wiki.models.knex, {
+              pageIds: previous.existingPageId === null ? [] : [previous.existingPageId], limit: 1
+            })
+            if (association === undefined || !storagePageImportOwnerMatches(association, owned) ||
+                association.sourceKey !== previous.sourceKey || association.sourcePath !== item.oldPath ||
+                association.sourceSha256 !== previous.sourceSha256 || association.locationKey !== previous.locationKey ||
+                association.locationKey !== importLocationKey) {
+              throw new Error(`Git delete has no exact accepted native source revision: ${item.oldPath}`)
+            }
+            await guardStorageImportReview()
             await wiki.models.pages.deletePage({
               user,
+              id: previous.existingPageId,
+              expectedSourceRevision: previous.expectedSourceRevision,
               path: contentPath.path,
               locale: contentPath.locale,
-              skipStorage: true
+              skipStorage: true,
+              canonicalTransactionHook: gitPageDeleteHook(association, user)
             })
             results.push({ kind: 'page', relPath: item.relPath, ok: true })
             continue
           }
           if (!source) throw new Error(`Import source does not exist: ${item.relPath}`)
+          const identity = identities.pages.get(item.relPath)
           const pageResult = await commonDisk.processPage({
             user,
             relPath: item.relPath,
@@ -862,7 +1281,8 @@ const plugin: GitStoragePlugin = {
             contentType,
             moduleName: 'GIT',
             source,
-            ingestion: this.config ?? {}
+            ingestion: this.config ?? {},
+            ...(identity === undefined ? {} : { identity })
           })
           results.push({ kind: 'page', ...pageResult })
           if (!pageResult.ok) {
@@ -870,91 +1290,32 @@ const plugin: GitStoragePlugin = {
             wiki.logger.warn(pageResult.error ?? 'Page document was rejected')
           }
         } else {
-          if (fileExists && !item.importAll && status === 'R') {
-            await withAssetLocationLocks(
-              ['assets'],
-              async assertHeld => {
-                await assertHeld?.()
-                wiki.logger.info(`(STORAGE/GIT) Asset marked as renamed: from ${item.oldPath} to ${item.relPath}`)
-                const sourceHash = assetHelper.generateHash(item.oldPath)
-                const destinationHash = assetHelper.generateHash(item.relPath)
-                const assetToRename = await withGitAssetTransaction(async transaction => {
-                  const asset = await findGitAssetForMutation(transaction, sourceHash)
-                  if (!asset) return undefined
-                  if (transaction) {
-                    await assertNoPublicStoragePageAtPath(transaction, item.relPath)
-                    for (const assetPath of [item.oldPath, item.relPath].sort()) await lockAssetLocation(transaction, assetPath)
-                  }
-                  await assertAssetLocationAssetSettled(transaction as Knex.Transaction, asset.id)
-                  await assertAssetLocationReservations(transaction as Knex.Transaction, [item.oldPath, item.relPath])
-                  const folderId = await commonDisk.resolveAssetFolder(item.relPath)
-                  const writableAssets = queryGitAssets(transaction)
-                  await writableAssets
-                    .patch({
-                      filename: path.posix.basename(item.relPath.replace(/\\/g, '/')),
-                      folderId,
-                      hash: destinationHash
-                    })
-                    .findById(asset.id)
-                  return asset
-                })
-                if (assetToRename) {
-                  await assertHeld?.()
-                  await requireAssetCache(assetToRename).deleteAssetCache()
-                  await assertHeld?.()
-                  results.push({ kind: 'asset', relPath: item.relPath, ok: true })
-                } else {
-                  wiki.logger.info(`(STORAGE/GIT) Asset was not found in the DB, nothing to rename: ${item.relPath}`)
-                  results.push({ kind: 'asset', relPath: item.relPath, ok: false, outcome: 'conflict', error: 'Asset was not found in the database' })
-                }
-              },
-              wiki.models.knex as unknown as Knex
-            )
+          if (!item.importAll && status === 'D') {
+            const old = contentEntries.get(item.oldPath)
+            if (old?.owner?.kind !== 'asset' || !old.owner.sourceOwned) throw new Error('Git asset deletion requires its exact native source owner; preserve and review the canonical record')
+            await reconcileGitContent(admission, old, { sourcePath: old.sourcePath, sourceSha256: old.sourceSha256,
+              sourceRevision: old.sourceRevision, sourceAvailable: old.sourceAvailable, owner: old.owner, action: 'remove' }, user, importLocationKey)
+            results.push({ kind: 'asset', relPath: item.relPath, ok: true })
             continue
           }
-          if (!fileExists && !item.importAll && status === 'D') {
-            await withAssetLocationLocks(
-              ['assets'],
-              async assertHeld => {
-                await assertHeld?.()
-                wiki.logger.info(`(STORAGE/GIT) Asset marked as deleted: ${item.relPath}`)
-                const fileHash = assetHelper.generateHash(item.relPath)
-                const assetToDelete = await withGitAssetTransaction(async transaction => {
-                  const asset = await findGitAssetForMutation(transaction, fileHash)
-                  if (!asset) return undefined
-                  if (transaction) await lockAssetLocation(transaction, item.relPath)
-                  await assertAssetLocationAssetSettled(transaction as Knex.Transaction, asset.id)
-                  await assertAssetLocationReservations(transaction as Knex.Transaction, [item.relPath])
-                  const assetData = (transaction === undefined
-                    ? wiki.models.knex('assetData')
-                    : transaction('assetData')) as unknown as QueryBuilder<UnknownRecord>
-                  await assetData.where('id', asset.id).delete()
-                  const writableAssets = queryGitAssets(transaction)
-                  await writableAssets.delete().where('id', asset.id)
-                  return asset
-                })
-                if (assetToDelete) {
-                  await assertHeld?.()
-                  await requireAssetCache(assetToDelete).deleteAssetCache()
-                  await assertHeld?.()
-                  results.push({ kind: 'asset', relPath: item.relPath, ok: true })
-                } else {
-                  wiki.logger.info(`(STORAGE/GIT) Asset was not found in the DB, nothing to delete: ${item.relPath}`)
-                  results.push({ kind: 'asset', relPath: item.relPath, ok: false, outcome: 'conflict', error: 'Asset was not found in the database' })
-                }
-              },
-              wiki.models.knex as unknown as Knex
-            )
-            continue
+          const nativeEntry = contentEntries.get(item.relPath)
+          if (nativeEntry === undefined) throw new Error('Git asset import has no complete source ownership inventory')
+          const previousAsset = !item.importAll && status === 'R' ? contentEntries.get(item.oldPath) : undefined
+          if (!item.importAll && status === 'R' && previousAsset?.owner?.kind !== 'asset') {
+            throw new Error('Git asset rename requires its exact old native source owner; preserve and review the canonical record')
           }
           if (!source) throw new Error(`Import source does not exist: ${item.relPath}`)
           const assetSource = source
+          const expectedSha256 = sourceHashes.get(item.relPath)
           await commonDisk.processAsset({
             user,
             relPath: item.relPath,
             root,
             file: { relPath: item.relPath, stats: expectedStats ?? { size: 0 } },
             moduleName: 'GIT',
+            ...(expectedSha256 == null ? {} : { expectedSha256 }),
+            importReview: gitAssetImportReview(nativeEntry, user, importLocationKey, admission.budget.maxBytes,
+              previousAsset, choices.get(item.relPath)?.action === 'include'),
             source: assetSource
           })
           results.push({ kind: 'asset', relPath: item.relPath, ok: true })
@@ -967,6 +1328,7 @@ const plugin: GitStoragePlugin = {
           kind: !item.binary && pageHelper.getContentType(item.relPath) ? 'page' : 'asset',
           relPath: item.relPath,
           ok: false,
+          ...(contentEntries.has(item.relPath) ? { outcome: 'conflict' as const } : {}),
           error: message
         })
       } finally {
@@ -1006,7 +1368,7 @@ const plugin: GitStoragePlugin = {
    *
    * @param {Object} page Page to update
    */
-  async updated(page) {
+  async updated(page, onWritten) {
     const changeReason = PageChangeReasonSchema.parse(page.changeReason)
     const root = requireRoot(this)
     const command = mutationGit(this)
@@ -1015,7 +1377,8 @@ const plugin: GitStoragePlugin = {
     wiki.logger.info(`(STORAGE/GIT) Committing updated file ${logIdentity}...`)
     await collectStorageEntries(root)
     await currentGitMutationTurn().assertHeld()
-    await root.writeAtomic(fileName, serializePage(page))
+    const content = serializePage(page)
+    await root.writeAtomic(fileName, content)
 
     const gitFilePath = `./${fileName}`
     if (!(await isGitIgnored(command, gitFilePath))) {
@@ -1026,6 +1389,16 @@ const plugin: GitStoragePlugin = {
         [fileName],
         `${page.authorName} <${page.authorEmail}>`
       )
+    } else if (onWritten) {
+      throw new Error(`Git publication of ${fileName} was skipped because the untracked path is ignored; review the ignore rule and retry without forcing or discarding local work`)
+    }
+    if (onWritten) {
+      await onWritten({
+        sourceKey: storageImportSourceKey(root.sourceIdentity, 'GIT', this.config),
+        locationKey: storageImportLocationKey('GIT', this.config),
+        sourcePath: fileName,
+        sourceSha256: createHash('sha256').update(content, 'utf8').digest('hex')
+      })
     }
   },
   /**
@@ -1213,14 +1586,17 @@ const plugin: GitStoragePlugin = {
   async importAll() {
     const root = requireRoot(this)
     wiki.logger.info('(STORAGE/GIT) Importing all content from local Git repo to the DB...')
-    const admission = await collectStorageEntries(root, { maxAssetBytes: wiki.config.uploads.maxFileSize })
-    const results = await commonDisk.importFromDisk({
-      root,
-      moduleName: 'GIT',
-      maxAssetBytes: wiki.config.uploads.maxFileSize,
-      admission,
-      ingestion: this.config
-    })
+    const admission = await collectGitContentEntries(root, wiki.config.uploads.maxFileSize)
+    await inspectGitPreviousContent(admission, this.config, mutationGit(this))
+    const files: GitStorageFile[] = admission.files.map(item => ({
+      file: { stats: item.file.stats }, oldPath: item.file.relPath, relPath: item.file.relPath,
+      binary: !item.contentType, status: 'A', insertions: 1, deletions: 0, before: 0, after: 1, importAll: true
+    }))
+    const results = await this.processFiles({ admission, files }, await wiki.models.users.getRootUser())
+    if (results.every(result => result.ok)) {
+      await guardStorageImportReview()
+      await mutationGit(this).run(['update-ref', '-d', `refs/wiki/pending-import/${this.config.branch}`])
+    }
     wiki.logger.info('(STORAGE/GIT) Import completed.')
     return results
   },
@@ -1317,13 +1693,13 @@ const removeGitPath = plugin.assetDeleted!
 
 plugin.withMutationTurn = async function (work, signal) {
   return withGitMutationLock(
-    wiki.models.knex as unknown as Knex,
+    wiki.models.knex,
     this.targetKey ?? 'git',
     async turn => {
       try {
         await turn.assertHeld()
         await work({
-          writePage: page => updateGitPage.call(this, page),
+          writePage: (page, onWritten) => updateGitPage.call(this, page, onWritten),
           writeAsset: asset => uploadGitAsset.call(this, asset),
           removePath: asset => removeGitPath.call(this, asset)
         })

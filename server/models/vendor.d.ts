@@ -112,8 +112,10 @@ declare module 'turndown' {
 
   interface TurndownNode {
     readonly nodeName: string
+    readonly textContent: string | null
     readonly classList: TurndownClassList
     getAttribute(name: string): string | null
+    hasAttribute(name: string): boolean
   }
 
   type FilterFunction = (node: TurndownNode, options: TurndownOptions) => boolean

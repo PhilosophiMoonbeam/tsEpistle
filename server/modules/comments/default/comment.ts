@@ -30,6 +30,8 @@ interface CreateCommentInput {
   requester: PagePrincipal
   sessionId: string
   annotations?: unknown
+  transaction?: Knex.Transaction
+  rootTransitionEventId?: string
 }
 
 interface UpdateCommentInput {
@@ -243,7 +245,7 @@ const plugin = {
   getAntiSpamStatus() {
     return { state: antiSpamState, checkedAt: antiSpamCheckedAt }
   },
-  async create({ page, replyTo, content, user, requester, sessionId, annotations }: CreateCommentInput) {
+  async create({ page, replyTo, content, user, requester, sessionId, annotations, transaction, rootTransitionEventId }: CreateCommentInput) {
     const context = WIKI as unknown as {
       models: { knex: Knex }
       config: { features: Record<string, unknown> }
@@ -257,7 +259,7 @@ const plugin = {
         loadPageRuleAuthority(requester: PagePrincipal, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
       }
     }
-    return createDiscussionPostingStore({
+    const posts = createDiscussionPostingStore({
       db: context.models.knex,
       fallbackFeatures: () => context.config.features,
       loadPageRuleAuthority: (principal, transaction) => context.auth.loadPageRuleAuthority(principal, transaction),
@@ -293,7 +295,9 @@ const plugin = {
         }
         if (isSpam) throw new Error('Comment was rejected because it is marked as spam.')
       }
-    }).post({ pageId: page.id, replyTo: replyTo ?? 0, content, render: renderCommentMarkdown(content), user, requester, sessionId, annotations })
+    })
+    const input = { pageId: page.id, replyTo: replyTo ?? 0, content, render: renderCommentMarkdown(content), user, requester, sessionId, annotations }
+    return transaction ? posts.postInTransaction(transaction, input, rootTransitionEventId === undefined ? {} : { rootTransitionEventId }) : posts.post(input)
   },
   /**
    * Update an existing comment

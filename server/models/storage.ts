@@ -7,6 +7,7 @@ import { nativeStorageMutationConfigurationKey, storageConfigurationKey } from '
 import { storageTargetPausedOffline } from '../helpers/storage-offline-policy.ts'
 import type { StorageRuntimeTarget } from '../operations/storage-actions.ts'
 import type { StorageMutationDispatch, StorageMutationPayload } from '../jobs/storage-mutations.ts'
+import type { StoragePageExportHook } from '../helpers/storage-page-import-owner.ts'
 import fs from 'fs-extra'
 import _ from 'lodash'
 import * as yaml from 'js-yaml'
@@ -120,7 +121,7 @@ interface AssetRelocationRequest extends StorageAssetRelocation {
 interface StoragePlugin extends Record<string, unknown> {
   init(): Promise<unknown>
   created(page: WrittenStoragePage): Promise<unknown>
-  updated(page: WrittenStoragePage): Promise<unknown>
+  updated(page: WrittenStoragePage, onWritten?: StoragePageExportHook): Promise<unknown>
   deleted(page: DeletedStoragePage): Promise<unknown>
   renamed(page: RenamedStoragePage): Promise<unknown>
   assetUploaded(asset: UploadedStorageAsset): Promise<unknown>
@@ -633,7 +634,7 @@ export default class Storage extends Model {
             await target.fn.withMutationTurn(work, signal)
           } else {
             await work({
-              writePage: page => target!.fn.updated(page),
+              writePage: (page, onWritten) => target!.fn.updated(page, onWritten),
               writeAsset: asset => target!.fn.assetUploaded(asset),
               removePath: asset => target!.fn.assetDeleted(asset)
             })

@@ -23,6 +23,9 @@ import { up as installRevisionTrigger } from '../../db/migrations/tsepistle-0000
 import { up as createNotes } from '../../db/migrations/tsepistle-000067-live-notes.ts'
 import { up as createReceipts } from '../../db/migrations/tsepistle-000068-page-creation-receipts.ts'
 import { up as addRevisionReasons } from '../../db/migrations/tsepistle-000069-page-history-reasons.ts'
+import { up as createReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
 import type PageModel from '../../models/pages.ts'
 import type pageOperations from '../../operations/pages.ts'
 import type { LiveNotesOperations } from '../../operations/live-notes.ts'
@@ -168,7 +171,10 @@ suite('native page creation receipts and authorized recovery', () => {
       installRevisionTrigger,
       createNotes,
       createReceipts,
-      addRevisionReasons
+      addRevisionReasons,
+      createReviewRouting,
+      createLifecycle,
+      createStoragePageImportOwners
     ])
       await migrate(db)
     const wiki = {
@@ -243,7 +249,7 @@ suite('native page creation receipts and authorized recovery', () => {
   beforeEach(async () => {
     await db.raw('DROP TRIGGER IF EXISTS receipt_fixture_failure ON "pageCreationReceipts"; DROP FUNCTION IF EXISTS receipt_fixture_abort();')
     await db.raw(
-      'TRUNCATE "pageCreationReceipts", "liveNotes", "agentSessions", pages, users, groups, "durableJobs", "outboxEvents", "pageMutationOutbox", tags, "pageTags", "pageLinks", "pageTree" RESTART IDENTITY CASCADE'
+      'TRUNCATE "storagePageImportOwners", "pageCreationReceipts", "liveNotes", "agentSessions", pages, users, groups, "durableJobs", "outboxEvents", "pageMutationOutbox", tags, "pageTags", "pageLinks", "pageTree" RESTART IDENTITY CASCADE'
     )
     await db('users').insert([owner, peer].map(({ id, name, email }) => ({ id, name, email })))
     await db('groups').insert({ id: 3, permissions: JSON.stringify(grants), pageRules: JSON.stringify(rules) })

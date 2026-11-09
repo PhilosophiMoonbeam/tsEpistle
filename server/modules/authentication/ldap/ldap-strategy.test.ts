@@ -149,4 +149,28 @@ describe('LDAP strategy', () => {
     expect(await failed.promise).toEqual({ challenge: { message: 'Missing credentials' }, status: 400 })
     expect(clientFactory).not.toHaveBeenCalled()
   })
+
+  it.each([
+    { bindDn: ' \t ', bindCredentials: '', message: 'only whitespace' },
+    { bindDn: '', bindCredentials: 'orphan', message: 'anonymous search requires empty' },
+    { bindCredentials: 'orphan', message: 'anonymous search requires empty' },
+    { bindDn: '', bindCredentials: ' ', message: 'anonymous search requires empty' },
+    { bindDn: 'cn=reader', message: 'requires nonempty credentials' },
+    { bindDn: 'cn=reader', bindCredentials: '', message: 'requires nonempty credentials' }
+  ])('refuses ambiguous search identity before opening a connection: %j', ({ message, ...searchBind }) => {
+    const clientFactory = vi.fn()
+    expect(() => new LdapStrategy({
+      server: {
+        url: 'ldap://ldap.example.com:389',
+        searchBase: 'dc=example,dc=com',
+        searchFilter: '(uid={{username}})',
+        ...searchBind
+      },
+      usernameField: 'email',
+      passwordField: 'password',
+      passReqToCallback: true,
+      clientFactory
+    }, vi.fn())).toThrow(message)
+    expect(clientFactory).not.toHaveBeenCalled()
+  })
 })

@@ -1,9 +1,12 @@
 import fs from 'node:fs'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import * as ts from 'typescript'
-import { reactive, toRaw } from 'vue'
+import { computed, reactive, toRaw } from 'vue'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import type { UtilitiesWorkspace } from '../../../shared/utilities-workspace.ts'
+import { StorageImportPreviewSchema, StorageImportReviewSchema, type StorageImportPreview } from '../../../shared/utility-content-import.ts'
+import { sameOriginJsonFetch } from '../../helpers/json-transport.ts'
+import { helpers, applyUserPresentation } from '../../helpers/index.ts'
 
 import { translateEnglish } from '../../test/english-translate.mts'
 
@@ -118,6 +121,7 @@ function arrange(overrides: Record<string, unknown> = {}) {
   }
   const bindings = {
     AsyncState,
+    helpers,
     Cookies: { set: vi.fn() },
     defineAsyncComponent: (value: unknown) => value,
     defineComponent: (value: unknown) => value,
@@ -145,18 +149,39 @@ function arrange(overrides: Record<string, unknown> = {}) {
   return { state, component, transport, window, values }
 }
 
+const importPreview: StorageImportPreview = {
+  scope: { actorId: 1, apiKeyId: null, targetKey: 'git', configurationRevision: 'review-fixture' },
+  snapshot: 'a'.repeat(64),
+  locales: ['en'],
+  entries: [{ sourcePath: 'guide.md', kind: 'file', sourceSha256: 'b'.repeat(64) }],
+  pages: [{
+    sourcePath: 'guide.md', sourceSha256: 'b'.repeat(64), contentType: 'markdown', locale: 'en', path: 'guide',
+    format: 'plain_markdown', owned: false, existingPageId: null, expectedSourceRevision: null, diagnostics: []
+  }],
+  destinations: [{ id: 41, locale: 'en', path: 'legacy-guide', sourceRevision: '7' }]
+}
+
 function arrangeImport(initialWorkspace: UtilitiesWorkspace = workspace) {
-  const component = new Function('defineComponent', 'utilityOperationConfirmation', 'UtilityReview', importCompiled + ';return component')(
-    (value: unknown) => value,
-    (kind: string) => `CONFIRM ${kind}`,
-    {}
-  )
+  const fetch = vi.fn(async (_url: string, init: RequestInit) => {
+    const payload = JSON.parse(String(init.body))
+    return Response.json({ ...structuredClone(importPreview), scope: { ...importPreview.scope, targetKey: payload.mode } })
+  })
+  const bindings = {
+    defineComponent: (value: unknown) => value,
+    utilityOperationConfirmation: (kind: string) => `CONFIRM ${kind}`,
+    UtilityReview: {},
+    StorageImportPreviewSchema,
+    StorageImportReviewSchema,
+    sameOriginJsonFetch,
+    window: { fetch }
+  }
+  const component = new Function(...Object.keys(bindings), importCompiled + ';return component')(...Object.values(bindings))
   const props = { workspace: structuredClone(initialWorkspace), busy: false, $t: translateEnglish }
   const emit = vi.fn()
   const state = reactive({ ...component.data(props), ...props, $emit: emit })
   for (const [key, method] of Object.entries(component.methods)) state[key] = (method as (...args: unknown[]) => unknown).bind(state)
   for (const [key, getter] of Object.entries(component.computed)) Object.defineProperty(state, key, { get: () => (getter as () => unknown).call(state) })
-  return { state, emit }
+  return { state, emit, component, fetch }
 }
 
 describe('Utilities reviewed operation recovery', () => {
@@ -285,6 +310,24 @@ describe('Utilities reviewed operation recovery', () => {
   })
 })
 
+describe('Utilities receipt timestamp presentation', () => {
+  it('reacts to account instant formatting while retaining the receipt ISO value and invalid fallback', () => {
+    const { state } = arrange()
+    const original = receipt.createdAt
+    const label = computed(() => state.receiptTimestamp(original))
+    try {
+      applyUserPresentation({ dateFormat: 'DD/MM/YYYY', timeFormat: '24h', timezone: 'UTC' })
+      expect(label.value).toBe('07/09/2026 00:00')
+      applyUserPresentation({ dateFormat: 'MM/DD/YYYY', timeFormat: '12h', timezone: 'America/Los_Angeles' })
+      expect(label.value).toBe('09/06/2026 5:00 PM')
+      expect(receipt.createdAt).toBe(original)
+      expect(state.receiptTimestamp('invalid receipt instant')).toBe('Invalid Date')
+    } finally {
+      applyUserPresentation({ dateFormat: '', timezone: '' })
+    }
+  })
+})
+
 describe('Utilities content-import review boundaries', () => {
   it('starts clean on an available disk target and preserves later source choices across workspace refreshes', () => {
     const { state } = arrangeImport({
@@ -308,7 +351,7 @@ describe('Utilities content-import review boundaries', () => {
     expect(state.formDirty).toBe(false)
   })
 
-  it('shows required Git feedback only after interaction and blocks incomplete inputs from opening a review', () => {
+  it('shows required Git feedback only after interaction and requires preview before final review', async () => {
     const { state, emit } = arrangeImport()
     Object.assign(state.git, { repoUrl: 'https://example.test/wiki.git', authType: 'basic', username: 'reader', password: 'fixture-token' })
     expect(state.canImportContent).toBe(true)
@@ -323,7 +366,8 @@ describe('Utilities content-import review boundaries', () => {
       state.git[field] = ''
       expect(state[error]).toBe('')
       expect(state.canImportContent).toBe(false)
-      state.openContentReview()
+      await state.inspectContent()
+      await state.openContentReview()
       state.submit({ reason: 'Import reviewed content' })
       expect(state.review.open).toBe(false)
       expect(emit).not.toHaveBeenCalled()
@@ -333,19 +377,23 @@ describe('Utilities content-import review boundaries', () => {
       expect(state[error]).toBe('')
       expect(state.canImportContent).toBe(true)
     }
-    state.openContentReview()
+    await state.openContentReview()
+    expect(state.review.open).toBe(false)
+    await state.inspectContent()
+    expect(state.review.open).toBe(false)
+    expect(emit).not.toHaveBeenCalled()
+    await state.openContentReview()
     expect(state.review.open).toBe(true)
   })
 
-  it('rechecks the reviewed source availability without substituting the current draft or clearing secrets', () => {
+  it('rechecks the reviewed source availability without substituting a different target or clearing secrets', async () => {
     const { state, emit } = arrangeImport()
     Object.assign(state.git, { repoUrl: 'https://example.test/wiki.git', authType: 'basic', username: 'reader', password: 'fixture-token' })
-    state.openContentReview()
+    await state.inspectContent()
+    await state.openContentReview()
     const reviewed = state.review.payload
-    state.contentMode = 'disk'
-    state.diskPath = '/data/content'
     state.workspace.importTargets.git = { available: false, reason: 'Reviewed Git target was removed' }
-    expect(state.canImportContent).toBe(true)
+    expect(state.canImportContent).toBe(false)
     state.submit({ reason: 'Import reviewed content' })
     expect(emit).not.toHaveBeenCalled()
     expect(state.review.open).toBe(true)
@@ -354,7 +402,7 @@ describe('Utilities content-import review boundaries', () => {
     expect(state.git.password).toBe('fixture-token')
   })
 
-  it('keeps reviewed parameters immutable and redacted, retains rejected secrets, and clears them only once recorded', () => {
+  it('keeps reviewed parameters immutable and redacted, retains rejected secrets, and clears them only once recorded', async () => {
     const { state, emit } = arrangeImport()
     Object.assign(state.git, {
       repoUrl: 'https://embedded-user:embedded-token@example.test/wiki.git',
@@ -363,19 +411,16 @@ describe('Utilities content-import review boundaries', () => {
       password: 'fixture-password',
       privateKey: 'fixture-private-key'
     })
-    state.openContentReview()
+    await state.inspectContent()
+    state.mappingFor('guide.md').path = 'reviewed-guide'
+    await state.openContentReview()
     const reviewed = state.review.payload
     const parameters = JSON.stringify(state.review.parameters)
     expect(parameters).toContain('https://example.test/wiki.git')
     for (const secret of ['embedded-user', 'embedded-token', 'fixture-password', 'fixture-private-key']) {
       expect(parameters).not.toContain(secret)
     }
-    state.git.repoUrl = 'https://changed.example.test/other.git'
-    state.git.branch = 'changed'
-    state.git.password = 'changed-password'
-    state.git.privateKey = 'changed-private-key'
-    state.contentMode = 'disk'
-    state.diskPath = '/data/other'
+    state.mappingFor('guide.md').path = 'changed-after-review'
     state.submit({ reason: 'Import reviewed content' })
     const request = emit.mock.calls.find(([event]) => event === 'request')?.[1] as {
       payload: Record<string, unknown>
@@ -387,13 +432,16 @@ describe('Utilities content-import review boundaries', () => {
       mode: 'git',
       repoUrl: 'https://embedded-user:embedded-token@example.test/wiki.git',
       branch: 'master',
-      password: 'fixture-password',
-      privateKey: 'fixture-private-key'
+      password: 'fixture-password'
     })
+    expect(request.payload).not.toHaveProperty('privateKey')
+    expect(request.payload).not.toHaveProperty('defaultEmail')
+    expect(request.payload).not.toHaveProperty('defaultName')
+    expect(request.payload.review).toMatchObject({ mappings: [{ sourcePath: 'guide.md', path: 'reviewed-guide' }] })
     request.onRejected('Settings changed; review again')
     expect(state.review.open).toBe(true)
-    expect(state.git.password).toBe('changed-password')
-    expect(state.git.privateKey).toBe('changed-private-key')
+    expect(state.git.password).toBe('fixture-password')
+    expect(state.git.privateKey).toBe('fixture-private-key')
     expect(state.reviewError).toBe('Settings changed; review again')
     state.setReviewDirty(true)
     request.onRecorded()
@@ -402,6 +450,164 @@ describe('Utilities content-import review boundaries', () => {
     expect(state.review.open).toBe(false)
     expect(state.reviewError).toBe('')
     expect(state.reviewDirty).toBe(false)
+  })
+
+  it('submits only the explicitly chosen destination association and current reviewed source hashes', async () => {
+    const { state, emit, fetch } = arrangeImport()
+    state.contentMode = 'disk'
+    state.diskPath = '/data/reviewed'
+    const dottedPreview = {
+      ...structuredClone(importPreview),
+      scope: { ...importPreview.scope, targetKey: 'disk' },
+      entries: [{ ...importPreview.entries[0], sourcePath: 'a.b.md' }],
+      pages: [{ ...importPreview.pages[0], sourcePath: 'a.b.md', path: 'a.b', diagnostics: ['Unsupported native identity; choose a reviewed mapping.'] }]
+    }
+    fetch.mockResolvedValueOnce(Response.json(dottedPreview))
+    fetch.mockResolvedValueOnce(Response.json(dottedPreview))
+    await state.inspectContent()
+    expect(state.preview.pages[0].diagnostics).toEqual(['Unsupported native identity; choose a reviewed mapping.'])
+    expect(state.mappingFor('a.b.md').existingPageId).toBeNull()
+    expect(emit).not.toHaveBeenCalled()
+    state.mappingFor('a.b.md').path = 'a-b'
+    state.associateDestination('a.b.md', 41)
+    await state.openContentReview()
+    expect(state.review.open).toBe(true)
+    const validated = JSON.parse(String(fetch.mock.calls[1]![1].body))
+    expect(validated.review).toMatchObject({
+      snapshot: importPreview.snapshot,
+      mappings: [{ sourcePath: 'a.b.md', sourceSha256: 'b'.repeat(64), locale: 'en', path: 'legacy-guide', existingPageId: 41, expectedSourceRevision: '7' }]
+    })
+    expect(emit.mock.calls.filter(([event]) => event === 'request')).toEqual([])
+    state.submit({ reason: 'Associate the reviewed legacy page' })
+    const request = emit.mock.calls.find(([event]) => event === 'request')?.[1]
+    expect(request).toMatchObject({ kind: 'import-v1-content', payload: validated })
+  })
+
+  it('keeps invalid and stale review responses actionable without opening final confirmation or submitting mutations', async () => {
+    for (const message of ['Unsupported native destination for guide.md', 'Storage import review is stale; preview again']) {
+      const { state, emit, fetch } = arrangeImport()
+      state.contentMode = 'disk'
+      state.diskPath = '/data/reviewed'
+      await state.inspectContent()
+      state.mappingFor('guide.md').path = 'invalid.name'
+      fetch.mockResolvedValueOnce(Response.json({ error: message }, { status: 409 }))
+      await state.openContentReview()
+      expect(state.previewError).toBe(message)
+      expect(state.previewLoading).toBe(false)
+      expect(state.review.open).toBe(false)
+      expect(state.preview).not.toBeNull()
+      state.submit({ reason: 'Do not submit an invalid review' })
+      expect(emit).not.toHaveBeenCalled()
+    }
+  })
+
+  it('discards an in-flight preview on cancel and ignores its later response without starting an import', async () => {
+    const { state, emit, fetch } = arrangeImport()
+    state.contentMode = 'disk'
+    state.diskPath = '/data/reviewed'
+    const response = Promise.withResolvers<Response>()
+    fetch.mockImplementationOnce(() => response.promise)
+    const pending = state.inspectContent()
+    expect(state.previewLoading).toBe(true)
+    state.cancelPreview()
+    response.resolve(Response.json({ ...structuredClone(importPreview), scope: { ...importPreview.scope, targetKey: 'disk' } }))
+    await pending
+    expect(state.preview).toBeNull()
+    expect(state.previewPayload).toBeNull()
+    expect(state.previewLoading).toBe(false)
+    expect(state.review.open).toBe(false)
+    expect(state.mappings).toEqual([])
+    expect(emit).not.toHaveBeenCalled()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch.mock.calls[0]![0]).toBe('/_api/utilities/content-import/preview')
+  })
+
+  it('invalidates both inventory and final review when the source settings change', async () => {
+    const { state, component, emit } = arrangeImport()
+    state.contentMode = 'disk'
+    state.diskPath = '/data/reviewed'
+    await state.inspectContent()
+    await state.openContentReview()
+    expect(state.review.open).toBe(true)
+    state.diskPath = '/data/replacement'
+    component.watch.diskPath.call(state)
+    expect(state.preview).toBeNull()
+    expect(state.review.open).toBe(false)
+    state.submit({ reason: 'A different source needs a new review' })
+    expect(emit.mock.calls.filter(([event]) => event === 'request')).toEqual([])
+  })
+
+  it('keeps credentials editable after a preview failure and never substitutes a mutation request', async () => {
+    const { state, emit, fetch } = arrangeImport()
+    Object.assign(state.git, { repoUrl: 'https://example.test/wiki.git', authType: 'basic', username: 'reader', password: 'fixture-token' })
+    fetch.mockResolvedValueOnce(Response.json({ error: 'Local working copy is unavailable; no clone or fetch was performed.' }, { status: 409 }))
+    await state.inspectContent()
+    expect(state.previewError).toContain('Local working copy is unavailable')
+    expect(state.git.password).toBe('fixture-token')
+    expect(state.previewLoading).toBe(false)
+    expect(state.preview).toBeNull()
+    expect(emit).not.toHaveBeenCalled()
+  })
+
+  it('keeps dot exclusion implicit, requires explicit per-source choices, and snapshots exact native removal proof', async () => {
+    const { state, emit, fetch } = arrangeImport()
+    Object.assign(state.git, { repoUrl: 'https://example.test/wiki.git', authType: 'basic', username: 'reader', password: 'fixture-token' })
+    const owner = { kind: 'asset' as const, id: 42, path: '.owned.bin', locale: '', revision: 'e'.repeat(64), sha256: 'c'.repeat(64), sourceOwned: true }
+    const dotPreview: StorageImportPreview = {
+      ...structuredClone(importPreview),
+      entries: [{ sourcePath: '.guide.md', kind: 'file', sourceSha256: 'b'.repeat(64) }],
+      pages: [{ ...importPreview.pages[0]!, sourcePath: '.guide.md', path: '.guide' }],
+      gitContent: [
+        { sourcePath: '.guide.md', sourceSha256: 'b'.repeat(64), sourceKey: 'd'.repeat(64), hidden: true, previous: false, sourceAvailable: true, automatic: false, kind: 'page', owner: null, diagnostics: [] },
+        { sourcePath: '.owned.bin', sourceSha256: 'c'.repeat(64), sourceKey: 'd'.repeat(64), hidden: true, previous: false, sourceAvailable: true, automatic: false, kind: 'asset', owner, diagnostics: [] },
+        { sourcePath: '.legacy.bin', sourceSha256: 'c'.repeat(64), sourceKey: 'd'.repeat(64), hidden: true, previous: false, sourceAvailable: true, automatic: false, kind: 'asset',
+          owner: { ...owner, id: 43, path: '.legacy.bin', sourceOwned: false }, diagnostics: ['Explicit association is required.'] }
+      ]
+    }
+    fetch.mockImplementation(async () => Response.json(dotPreview))
+    await state.inspectContent()
+    expect(state.dotActions).toEqual({ '.guide.md': '', '.owned.bin': '', '.legacy.bin': '' })
+    expect(state.dotChoiceOptions(dotPreview.gitContent![2]).map((choice: { value: string }) => choice.value)).not.toContain('remove')
+    expect(state.dotChoiceOptions(dotPreview.gitContent![1]).map((choice: { value: string }) => choice.value)).toContain('remove')
+    state.dotActions['.guide.md'] = 'include'
+    state.mappingFor('.guide.md').path = 'guide'
+    state.dotActions['.owned.bin'] = 'remove'
+    state.dotActions['.legacy.bin'] = 'retain'
+    await state.openContentReview()
+    expect(state.review.open).toBe(true)
+    const reviewed = structuredClone(state.review.payload.review)
+    expect(reviewed).toMatchObject({
+      mappings: [{ sourcePath: '.guide.md', path: 'guide' }],
+      gitContent: [
+        { sourcePath: '.guide.md', action: 'include', sourceSha256: 'b'.repeat(64), owner: null },
+        { sourcePath: '.owned.bin', action: 'remove', owner },
+        { sourcePath: '.legacy.bin', action: 'retain', owner: { id: 43, sourceOwned: false } }
+      ]
+    })
+    expect(JSON.stringify(state.review.parameters)).toContain('native asset 42 at revision')
+    expect(JSON.stringify(state.review.parameters)).not.toContain('fixture-token')
+    state.dotActions['.owned.bin'] = 'retain'
+    state.submit({ reason: 'Remove only the exact reviewed source-owned asset' })
+    expect(emit.mock.calls.find(([event]) => event === 'request')?.[1].payload.review).toEqual(reviewed)
+    state.cancelPreview()
+    expect(state.dotActions).toEqual({})
+    expect(state.dotDestinations).toEqual({})
+  })
+  it('requires a smaller exact-choice batch before requesting a review that exceeds the managed 2 MiB quota', async () => {
+    const suffix = Array.from({ length: 9 }, () => 'a'.repeat(200)).join('/')
+    const gitContent = Array.from({ length: 1200 }, (_, index) => ({
+      sourcePath: `.batch-${index}/${suffix}.bin`, sourceSha256: 'c'.repeat(64), sourceKey: 'd'.repeat(64),
+      hidden: true, previous: false, sourceAvailable: true, automatic: false, kind: 'asset' as const, owner: null, diagnostics: []
+    }))
+    const inventory: StorageImportPreview = { ...importPreview, pages: [], gitContent,
+      entries: gitContent.map(entry => ({ sourcePath: entry.sourcePath, sourceSha256: entry.sourceSha256, kind: 'file' as const })) }
+    const { state, fetch } = arrangeImport()
+    fetch.mockImplementation(async () => Response.json(inventory))
+    Object.assign(state.git, { repoUrl: 'https://example.test/wiki.git', branch: 'main', localRepoPath: '/srv/wiki' })
+    await state.inspectContent()
+    for (const entry of gitContent) state.dotActions[entry.sourcePath] = 'include'
+    await state.openContentReview()
+    expect(state.review.open).toBe(false)
   })
 })
 

@@ -1,6 +1,7 @@
 import MarkdownIt from 'markdown-it'
 import type { StateInline, Token } from 'markdown-it'
 import { parseWikiLinkAt, resolveWikiLinkHref, type WikiLink } from '../../shared/wikilinks.ts'
+import { linksGridSourceTargets } from '../content-extensions/links-grid.ts'
 
 export interface PageMoveLinkRewriteInput {
   readonly source: string
@@ -13,6 +14,7 @@ export interface PageMoveLinkRewriteInput {
   readonly absoluteLinks: boolean
   readonly markdownAllowHTML: boolean
   readonly wikiLinksEnabled: boolean
+  readonly linksGridEnabled?: boolean
 }
 
 export interface PageMoveLinkRewriteResult {
@@ -448,7 +450,7 @@ const withDestinationCaptureMarker = (destination: string, marker: string): stri
 
 const markdownRewrite = (input: PageMoveLinkRewriteInput): PageMoveLinkRewriteResult => {
   const source = input.source
-  if (!source.includes('[')) return unchanged(source)
+  if (!source.includes('[') && !source.includes('wiki-extension')) return unchanged(source)
 
   const markdown = new MarkdownIt({ html: input.markdownAllowHTML, linkify: false, typographer: false })
   const env: Record<string, unknown> = {}
@@ -524,6 +526,34 @@ const markdownRewrite = (input: PageMoveLinkRewriteInput): PageMoveLinkRewriteRe
 
   for (let tokenIndex = 0; tokenIndex < blockTokens.length; tokenIndex += 1) {
     const blockToken = blockTokens[tokenIndex]
+    if (blockToken?.type === 'fence' && blockToken.info.trim() === 'wiki-extension') {
+      const targets = linksGridSourceTargets(blockToken.content)
+      if (targets?.length === 0) continue
+      if (targets === null || !input.linksGridEnabled) {
+        // Never infer source authority from rendered HTML or malformed extension data.
+        unsupported += 1
+        continue
+      }
+      const map = blockToken.map
+      const bodyStart = map === null ? undefined : sourceLines.starts[map[0] + 1]
+      const exactBody = bodyStart !== undefined && source.slice(bodyStart, bodyStart + blockToken.content.length) === blockToken.content
+      for (const target of targets) {
+        const status = classifyHref(target.url, input.sourcePage, input.oldTarget, input.namespaced, input.absoluteLinks)
+        if (status === 'other') continue
+        const route = canonicalTargetRoute(input.newTarget, input.defaultLocale, input.namespaced)
+        if (status !== 'match' || !exactBody || bodyStart === undefined || route === null) {
+          unsupported += 1
+          continue
+        }
+        edits.push({
+          start: bodyStart + target.start,
+          end: bodyStart + target.end,
+          before: source.slice(bodyStart + target.start, bodyStart + target.end),
+          after: JSON.stringify(`${route}${splitSuffix(target.url).suffix}`)
+        })
+      }
+      continue
+    }
     if (blockToken?.type === 'html_block') {
       const htmlCandidates = htmlRewrite({ ...input, source: blockToken.content })
       unsupported += htmlCandidates.changes.length + htmlCandidates.unsupported

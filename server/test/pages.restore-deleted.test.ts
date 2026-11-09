@@ -5,6 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from './bun-test.mts'
 import type PageModel from '../models/pages.ts'
 import type PageHistoryModel from '../models/pageHistory.ts'
 import { PageProjectionLifecycle } from '../core/page-mutation-outbox.ts'
+import { up as createDurableJobs } from '../db/migrations/2.5.130.ts'
+import { up as addDurableJobLeaseTokens } from '../db/migrations/2.5.158.ts'
+import { up as createPageReviewRouting } from '../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createPageLifecycle } from '../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createStoragePageImportOwners } from '../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
 
 const writeOutboxEvent = vi.fn(async (_knex: unknown, _event: unknown) => undefined)
 const redactProtectedPageForSearch = vi.fn((page: unknown) => page)
@@ -201,6 +206,12 @@ const installSchema = async (): Promise<void> => {
     table.text('sourcePath').nullable()
     table.text('destinationPath').nullable()
   })
+  await db.schema.createTable('groups', table => table.integer('id').primary())
+  await createDurableJobs(db)
+  await addDurableJobLeaseTokens(db)
+  await createPageReviewRouting(db)
+  await createPageLifecycle(db)
+  await createStoragePageImportOwners(db)
 }
 
 const insertDeletedSnapshot = async (
@@ -330,6 +341,9 @@ const snapshot = async (): Promise<Record<string, unknown[]>> => ({
   pageAccessPasswords: await db('pageAccessPasswords').orderBy('pageId'),
   pageUnlockGrants: await db('pageUnlockGrants').orderBy('id'),
   pageMutationOutbox: await db('pageMutationOutbox').orderBy('id'),
+  pageLifecycleClocks: await db('pageLifecycleClocks').orderBy('pageId'),
+  pageReviewRouting: await db('pageReviewRouting').orderBy('pageId'),
+  durableJobs: await db('durableJobs').orderBy('id'),
   deletedPageRecovery: await db('deletedPageRecovery').orderBy('pageId')
 })
 
@@ -540,6 +554,13 @@ describe('deleted page restore writer', () => {
         })
       ])
     )
+    expect(await db('pageLifecycleClocks').where({ pageId: 41 }).first()).toMatchObject({
+      bodyObservedSourceRevision: 9,
+      bodyAnchorKind: 'unknown',
+      commentAnchorKind: 'unknown'
+    })
+    expect(await db('pageReviewRouting')).toEqual([])
+    expect(await db('durableJobs')).toEqual([])
     expect(pageChanged).toHaveBeenCalledWith(41, true)
   })
 

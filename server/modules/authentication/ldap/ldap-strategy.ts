@@ -91,6 +91,17 @@ class LdapStrategy extends PassportStrategy {
     if (!options.server.searchFilter.includes('{{username}}')) {
       throw new TypeError('LDAP search filter must contain {{username}}.')
     }
+    const { bindDn, bindCredentials } = options.server
+    if (bindDn != null && bindDn !== '' && bindDn.trim() === '') {
+      throw new TypeError('LDAP search bind DN must not contain only whitespace.')
+    }
+    if (bindDn == null || bindDn === '') {
+      if (bindCredentials != null && bindCredentials !== '') {
+        throw new TypeError('LDAP anonymous search requires empty search bind credentials.')
+      }
+    } else if (bindCredentials == null || bindCredentials === '') {
+      throw new TypeError('LDAP configured search bind requires nonempty credentials.')
+    }
     this.options = options
     this.verify = verify
     this.createClient = options.clientFactory ?? (clientOptions => new Client(clientOptions))
@@ -128,7 +139,7 @@ class LdapStrategy extends PassportStrategy {
     }
     const adminClient = this.createClient(clientOptions)
     try {
-      if (server.bindDn !== undefined && server.bindDn !== null) {
+      if (server.bindDn != null && server.bindDn !== '') {
         await adminClient.bind(server.bindDn, server.bindCredentials ?? '')
       }
       const userSearch = await adminClient.search(server.searchBase, {

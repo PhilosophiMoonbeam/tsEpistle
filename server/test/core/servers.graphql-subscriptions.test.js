@@ -154,6 +154,23 @@ describe('core/servers GraphQL transports', () => {
     }
   })
 
+  it.each(['EACCES', 'EADDRINUSE'])('retains synchronous %s listener failures without announcing readiness', async code => {
+    const { servers } = await setupModule()
+    const error = Object.assign(new Error('listener refused'), { code, syscall: 'listen' })
+    const listen = vi.spyOn(http.Server.prototype, 'listen').mockImplementation(() => { throw error })
+    await servers.startGraphQL()
+    try {
+      await expect(servers.startHTTP()).rejects.toBe(error)
+      expect(global.WIKI.logger.error).toHaveBeenCalledWith(
+        code === 'EACCES' ? 'Listening on port 0 requires elevated privileges!' : 'Port 0 is already in use!'
+      )
+      expect(global.WIKI.logger.info).not.toHaveBeenCalledWith('HTTP Server: [ RUNNING ]')
+    } finally {
+      listen.mockRestore()
+      await servers.stopServers()
+    }
+  })
+
   it('executes GraphQL over HTTP at the existing endpoint', async () => {
     const { servers } = await setupModule({ realHttp: true })
     try {

@@ -16,7 +16,7 @@ export class AssetLocationBusyError extends Error {
 }
 
 type AssertHeld = () => Promise<void>
-type AssetLocationWork<T> = (assertHeld?: AssertHeld) => Promise<T>
+type AssetLocationWork<T> = (assertHeld?: AssertHeld, connection?: unknown) => Promise<T>
 
 const databaseType = (): string | undefined => {
   const runtime = (globalThis as typeof globalThis & { WIKI?: unknown }).WIKI
@@ -41,7 +41,7 @@ export const lockAssetMutationFence = async (transaction: Knex.Transaction, shar
  * session. Remote storage calls intentionally happen outside a transaction,
  * so this must not use a transaction-scoped advisory lock.
  */
-export const withAssetLocationFence = async <T>(db: Knex, work: (assertHeld: AssertHeld) => Promise<T>): Promise<T> => {
+export const withAssetLocationFence = async <T>(db: Knex, work: (assertHeld: AssertHeld, connection?: unknown) => Promise<T>): Promise<T> => {
   if (databaseType() !== 'postgres' || typeof db.client?.acquireConnection !== 'function') return work(noOpAssertHeld)
 
   const connection = await db.client.acquireConnection()
@@ -62,7 +62,7 @@ export const withAssetLocationFence = async <T>(db: Knex, work: (assertHeld: Ass
         .connection(connection)
       if (held.rows?.[0]?.held !== true) throw new AssetLocationBusyError()
     }
-    return await work(assertHeld)
+    return await work(assertHeld, connection)
   } finally {
     if (locked) {
       try {
@@ -86,9 +86,9 @@ export const withAssetLocationFence = async <T>(db: Knex, work: (assertHeld: Ass
 /** Serialize location-changing asset writes in one process and across PostgreSQL workers. */
 export const withAssetLocationLocks = async <T>(keys: readonly string[], work: AssetLocationWork<T>, db?: Knex): Promise<T> => {
   const ordered = [...new Set(keys.filter(key => typeof key === 'string' && key.length > 0))].sort()
-  const acquire = async (index: number, assertHeld?: AssertHeld): Promise<T> => {
+  const acquire = async (index: number, assertHeld?: AssertHeld, connection?: unknown): Promise<T> => {
     const key = ordered[index]
-    if (key === undefined) return work(assertHeld)
+    if (key === undefined) return work(assertHeld, connection)
     const previous = localLocks.get(key) ?? Promise.resolve()
     let release!: () => void
     const held = previous
@@ -102,14 +102,14 @@ export const withAssetLocationLocks = async <T>(keys: readonly string[], work: A
     localLocks.set(key, held)
     await previous.catch(() => undefined)
     try {
-      return await acquire(index + 1, assertHeld)
+      return await acquire(index + 1, assertHeld, connection)
     } finally {
       release()
       if (localLocks.get(key) === held) localLocks.delete(key)
     }
   }
-  const run = (assertHeld?: AssertHeld): Promise<T> => acquire(0, assertHeld)
-  return db ? withAssetLocationFence(db, assertHeld => run(assertHeld)) : run()
+  const run = (assertHeld?: AssertHeld, connection?: unknown): Promise<T> => acquire(0, assertHeld, connection)
+  return db ? withAssetLocationFence(db, (assertHeld, connection) => run(assertHeld, connection)) : run()
 }
 
 const relocationEffectTable = 'assetRelocationEffects'

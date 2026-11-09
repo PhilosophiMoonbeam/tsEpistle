@@ -1,6 +1,7 @@
 import type { MarkdownIt } from 'markdown-it'
 
 import {
+  contentExtensionSourceVersionSupported,
   parseContentExtensionFence,
   serializeContentExtensionFence,
   type ContentExtensionEnvelope
@@ -42,7 +43,7 @@ export const prepareContentExtensionFences = async (tokens: readonly ContentExte
     const extensionStatus = statusByKey.get(envelope.key)
     const registration = getContentExtensionRegistration(envelope.key)
     if (!extensionStatus?.isEnabled || !extensionStatus.compatible || !registration) continue
-    if (registration.definition.version !== envelope.version) continue
+    if (!contentExtensionSourceVersionSupported(registration.definition, envelope.version)) continue
     try {
       prepared.set(body, `${await registration.render(envelope)}\n`)
     } catch {

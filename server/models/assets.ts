@@ -6,6 +6,7 @@ import type { Response } from 'express'
 import type { Knex } from 'knex'
 import moment from 'moment'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { chmod, mkdtemp, mkdir, open, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { pipeline } from 'node:stream/promises'
@@ -29,6 +30,7 @@ import { openStorageRoot, type StorageFileHandle, type StorageRootHandle } from 
 import { assertAssetLocationAssetSettled, assertAssetLocationReservations, lockAssetLocation, withAssetLocationLocks } from '../helpers/asset-location-lock.ts'
 import { enqueueAssetStorageMutation } from '../jobs/storage-mutations.ts'
 import { assertNoPublicStoragePageAtPath, assertStorageAssetDestinationAllowed } from '../helpers/storage-path-admission.ts'
+import type { StorageAssetImportReview } from '../modules/storage/import-identity.ts'
 import errors from '../operations/errors.ts'
 
 const { ApplicationError } = errors
@@ -64,6 +66,9 @@ interface UploadOptions {
   user: AssetUser
   maxBytes?: number
   skipStorage?: boolean | undefined
+  /** Trusted native storage seam; never populated from a transport payload. */
+  importReview?: StorageAssetImportReview
+  expectedImportSha256?: string
 }
 
 const assertUploadDestination = async (opts: UploadOptions, transaction?: Knex.Transaction): Promise<void> => {
@@ -80,7 +85,7 @@ const assertUploadDestination = async (opts: UploadOptions, transaction?: Knex.T
 }
 
 interface AssetDataRow {
-  data: Buffer
+  data: Buffer | Uint8Array
 }
 
 interface SourceHandle {
@@ -189,10 +194,64 @@ function parseByteRange(value: unknown, size: number): ByteRange | null | undefi
   return { start, end: Math.min(end, size - 1) }
 }
 
-async function sendAssetBuffer(data: Buffer, res: Response): Promise<void> {
+
+// An additional enforced policy: never replace or relax the site's own CSP.
+const ASSET_DOCUMENT_CSP = "sandbox; default-src 'none'; script-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+const PDF_DOCUMENT_CSP = "default-src 'none'; script-src 'none'; base-uri 'none'; form-action 'none'"
+
+interface AssetDelivery {
+  readonly pdf: boolean
+  readonly filename: string
+  readonly sitePolicies: string[]
+}
+
+const assetPolicies = (res: Response): string[] => {
+  const existing = res.getHeader('Content-Security-Policy')
+  return existing === undefined ? [] : Array.isArray(existing) ? existing.map(String) : [String(existing)]
+}
+
+const containAssetResponse = (res: Response, sitePolicies: string[]): void => {
+  res.set('Content-Security-Policy', [...sitePolicies, ASSET_DOCUMENT_CSP])
+  res.set('X-Content-Type-Options', 'nosniff')
+  res.removeHeader('X-Wiki-Asset-Type')
+}
+
+const hasPdfSignature = (header: Buffer, tail: Buffer): boolean =>
+  /^%PDF-(?:1\.[0-7]|2\.0)[\r\n]/.test(header.toString('latin1')) &&
+  /%%EOF[\t\n\f\r ]*$/.test(tail.toString('latin1'))
+
+async function prepareAssetDelivery(data: Buffer | StorageFileHandle, res: Response, delivery: AssetDelivery): Promise<void> {
+  if (!delivery.pdf) return
+  let verified: boolean
+  if (Buffer.isBuffer(data)) {
+    verified = hasPdfSignature(data.subarray(0, 9), data.subarray(Math.max(0, data.length - 1024)))
+  } else {
+    // Inspect the descriptor actually selected for delivery, not uploaded MIME or
+    // a scanned DB/cache copy that may differ from the original storage file.
+    const header = Buffer.alloc(9)
+    const tail = Buffer.alloc(Math.min(1024, data.stats.size))
+    const first = await data.handle.read(header, 0, header.length, 0)
+    const last = await data.handle.read(tail, 0, tail.length, Math.max(0, data.stats.size - tail.length))
+    verified = first.bytesRead === header.length && last.bytesRead === tail.length && hasPdfSignature(header, tail)
+  }
+  if (verified) {
+    res.set('Content-Type', 'application/pdf')
+    res.set('Content-Security-Policy', [...delivery.sitePolicies, PDF_DOCUMENT_CSP])
+    res.set('X-Wiki-Asset-Type', 'pdf')
+  } else {
+    // Ambiguous legacy .pdf assets remain intact, but never become active inline
+    // documents or qualify as a native PDF frame/open target.
+    res.set('Content-Type', 'application/octet-stream')
+    res.set('Content-Disposition', `attachment; filename=${encodeURIComponent(delivery.filename)}`)
+  }
+}
+
+async function sendAssetBuffer(data: Buffer, res: Response, delivery: AssetDelivery): Promise<void> {
+  await prepareAssetDelivery(data, res, delivery)
   const request = res.req
   const range = parseByteRange(request?.headers?.range, data.byteLength)
   if (range === null) {
+    containAssetResponse(res, delivery.sitePolicies)
     res.status(416).set('Content-Range', `bytes */${data.byteLength}`).end()
     return
   }
@@ -211,9 +270,11 @@ async function sendAssetBuffer(data: Buffer, res: Response): Promise<void> {
   res.send(range === undefined ? data : data.subarray(range.start, range.end + 1))
 }
 
-async function sendAssetFile(source: StorageFileHandle, res: Response): Promise<void> {
+async function sendAssetFile(source: StorageFileHandle, res: Response, delivery: AssetDelivery): Promise<void> {
+  await prepareAssetDelivery(source, res, delivery)
   const range = parseByteRange(res.req?.headers?.range, source.stats.size)
   if (range === null) {
+    containAssetResponse(res, delivery.sitePolicies)
     res.status(416).set('Content-Range', `bytes */${source.stats.size}`).end()
     return
   }
@@ -285,8 +346,8 @@ export default class Asset extends Model {
     }
   }
 
-  async getAssetPath(): Promise<string> {
-    const hierarchy = this.folderId ? await wiki.models.assetFolders.getHierarchy(this.folderId) : []
+  async getAssetPath(transaction?: Knex.Transaction): Promise<string> {
+    const hierarchy = this.folderId ? await wiki.models.assetFolders.getHierarchy(this.folderId, transaction) : []
     return this.folderId ? `${hierarchy.map(folder => folder.slug).join('/')}/${this.filename}` : this.filename
   }
 
@@ -315,6 +376,10 @@ export default class Asset extends Model {
 
   static async upload(opts: UploadOptions): Promise<void> {
     assertStorageAssetDestinationAllowed(opts.assetPath)
+    if (opts.importReview?.previousPath !== undefined) assertStorageAssetDestinationAllowed(opts.importReview.previousPath)
+    if (opts.importReview !== undefined && !/^[a-f0-9]{64}$/.test(opts.expectedImportSha256 ?? '')) {
+      throw new ApplicationError('A native import requires its exact reviewed raw source hash.', { status: 409 })
+    }
     const configuredLimit = validateUploadLimit(wiki.config?.uploads?.maxFileSize)
     const modeLimit = opts.mode === 'upload' ? configuredLimit : boundedImportAssetLimit(configuredLimit)
     if (opts.maxBytes !== undefined && (!Number.isSafeInteger(opts.maxBytes) || opts.maxBytes < 0)) {
@@ -334,17 +399,37 @@ export default class Asset extends Model {
     }
 
     await withAssetLocationLocks(
-      ['assets', opts.assetPath],
-      async assertHeld => {
+      ['assets', opts.assetPath, ...(opts.importReview?.previousPath === undefined ? [] : [opts.importReview.previousPath])],
+      async (assertHeld, connection) => {
+        const importTransaction = opts.importReview === undefined ? undefined
+          : await wiki.models.knex.transaction(connection === undefined ? undefined : { connection })
+        let importCommitted = false
+        try {
+        if (importTransaction !== undefined) {
+          await opts.importReview!.prepare(importTransaction)
+          const resolveFolder = opts.importReview!.resolveFolder
+          if (resolveFolder !== undefined) {
+            const folderId = await resolveFolder(importTransaction)
+            opts = { ...opts, folderId }
+            assetRow.folderId = folderId
+          }
+        }
         await assertHeld?.()
-        return enqueueAssetUpload(fileHash, async () => {
+        return await enqueueAssetUpload(fileHash, async () => {
           await assertHeld?.()
-          await assertUploadDestination(opts)
+          await assertUploadDestination(opts, importTransaction)
           const source = await openAssetSource(opts.path, opts.mode, opts.size)
           let stagedDirectory: string | undefined
           try {
             const staged = await stageAssetSource(source.file, maxBytes)
             stagedDirectory = staged.directory
+            if (opts.expectedImportSha256 !== undefined) {
+              const rawSha256 = await withStorageRoot(staged.directory, async root => {
+                const stagedFile = await root.openFile('asset')
+                try { return await stagedFile.sha256Bounded(maxBytes) } finally { await stagedFile.close() }
+              })
+              if (rawSha256 !== opts.expectedImportSha256) throw new ApplicationError('The reviewed raw asset source changed before native upload.', { status: 409 })
+            }
             if (wiki.config.uploads.scanSVG && (opts.mimetype.toLowerCase().startsWith('image/svg') || fileInfo.ext.toLowerCase() === '.svg')) {
               const svgSanitizeJob = await wiki.scheduler.registerJob({ name: 'sanitize-svg', immediate: true, worker: true }, { path: staged.path })
               await svgSanitizeJob.finished
@@ -363,27 +448,34 @@ export default class Asset extends Model {
             const updatedRow = { ...(opts.mode === 'upload' ? insertedRow : assetRow), updatedAt: moment.utc().toISOString() }
             let reservation: AssetBrandingAnalysisReservation | undefined
             try {
-              await wiki.models.knex.transaction(async transaction => {
+              const persist = async (transaction: Knex.Transaction): Promise<void> => {
                 await assertUploadDestination(opts, transaction)
                 await assertNoPublicStoragePageAtPath(transaction, opts.assetPath)
-                await lockAssetLocation(transaction, opts.assetPath)
-                await assertAssetLocationReservations(transaction, [opts.assetPath])
-                const current = (await transaction('assets').where({ hash: fileHash }).forUpdate().first('id', 'metadata')) as
+                const previousPath = opts.importReview?.previousPath
+                const paths = previousPath === undefined || previousPath === opts.assetPath ? [opts.assetPath] : [opts.assetPath, previousPath].sort()
+                for (const assetPath of paths) await lockAssetLocation(transaction, assetPath)
+                await assertAssetLocationReservations(transaction, paths)
+                const currentHash = previousPath === undefined ? fileHash : assetHelper.generateHash(previousPath)
+                const current = (await transaction('assets').where({ hash: currentHash }).forUpdate().first('id', 'metadata')) as
                   | { id: number; metadata?: unknown }
                   | undefined
                 if (current) await assertAssetLocationAssetSettled(transaction, current.id)
+                const importOwner = await opts.importReview?.check(transaction)
+                if (importOwner !== undefined && importOwner.sourceSha256 !== opts.expectedImportSha256) throw new ApplicationError('The native import owner does not match its raw source.', { status: 409 })
                 let branding: AssetBrandingMetadata | undefined
                 if (current && hasAssetBrandingMetadata(current.metadata)) {
                   reservation = reserveAssetBrandingAnalysis(current.id)
                   branding = await analyzeAssetBranding(fileBuffer)
                 }
-                const persistedAsset = (await wiki.models.assets
-                  .query(transaction)
-                  .insert(insertedRow)
-                  .onConflict('hash')
-                  .merge(updatedRow)
-                  .returning('id')) as Asset
+                if (opts.importReview?.previousPath !== undefined && current === undefined) throw new ApplicationError('The native asset rename owner is unavailable.', { status: 409 })
+                const persistedAsset = opts.importReview?.previousPath === undefined
+                  ? (await wiki.models.assets.query(transaction).insert(insertedRow).onConflict('hash').merge(updatedRow).returning('id')) as Asset
+                  : await wiki.models.assets.query(transaction).patchAndFetchById(current!.id, updatedRow)
                 const metadata = stripAssetBrandingMetadataRecord(current?.metadata)
+                delete metadata.storage_import
+                if (importOwner !== undefined) metadata.storage_import = {
+                  ...importOwner, assetId: persistedAsset.id, assetSha256: createHash('sha256').update(fileBuffer).digest('hex')
+                }
                 if (branding) metadata.branding = branding
                 await transaction('assets')
                   .where({ id: persistedAsset.id })
@@ -395,8 +487,18 @@ export default class Asset extends Model {
                   author: opts.user,
                   skipStorage: opts.skipStorage
                 })
-              })
+              }
+              if (importTransaction === undefined) await wiki.models.knex.transaction(persist)
+              else {
+                await persist(importTransaction)
+                const review = opts.importReview
+                if (review === undefined) throw new Error('Native asset import transaction lost its review')
+                await review.beforeCommit(importTransaction)
+                await importTransaction.commit()
+                importCommitted = true
+              }
               await assertHeld?.()
+              if (opts.importReview?.previousPath !== undefined) await this.deleteAssetCaches([assetHelper.generateHash(opts.importReview.previousPath)])
 
               await withStorageRoot(storageRootPath('cache'), async root => {
                 await root.writeAtomic(`${fileHash}.dat`, fileBuffer)
@@ -413,6 +515,9 @@ export default class Asset extends Model {
             await source.root.close()
           }
         })
+        } finally {
+          if (importTransaction !== undefined && !importCommitted) await importTransaction.rollback()
+        }
       },
       wiki.models.knex
     )
@@ -461,6 +566,8 @@ export default class Asset extends Model {
   }
 
   static async getAsset(assetPath: string, res: Response): Promise<void> {
+    const sitePolicies = assetPolicies(res)
+    containAssetResponse(res, sitePolicies)
     try {
       const identity = await this.resolveAssetIdentity(assetPath)
       if (!identity) {
@@ -473,17 +580,21 @@ export default class Asset extends Model {
       }
       res.type(fileInfo.ext)
       res.set('Accept-Ranges', 'bytes')
-      if (await this.getAssetFromCache(identity, res)) return
-      if (await this.getAssetFromStorage(identity, res)) return
-      await this.getAssetFromDb(identity, res)
+      const delivery: AssetDelivery = { pdf: fileInfo.ext.toLowerCase() === '.pdf', filename: fileInfo.base, sitePolicies }
+      if (await this.getAssetFromCache(identity, res, delivery)) return
+      if (await this.getAssetFromStorage(identity, res, delivery)) return
+      await this.getAssetFromDb(identity, res, delivery)
     } catch (err) {
       if (err && typeof err === 'object' && 'code' in err && (err.code === 'ECONNABORTED' || err.code === 'EPIPE')) return
       wiki.logger.error(err)
-      if (!res.headersSent) res.sendStatus(500)
+      if (!res.headersSent) {
+        containAssetResponse(res, sitePolicies)
+        res.type('text/plain').sendStatus(500)
+      }
     }
   }
 
-  static async getAssetFromCache(identity: StorageAssetIdentity, res: Response): Promise<boolean> {
+  private static async getAssetFromCache(identity: StorageAssetIdentity, res: Response, delivery: AssetDelivery): Promise<boolean> {
     if (isDeniedAssetPath(identity.path)) return false
     return await withStorageRoot(storageRootPath('cache'), async root => {
       let source: StorageFileHandle
@@ -494,7 +605,7 @@ export default class Asset extends Model {
         throw error
       }
       try {
-        await sendAssetFile(source, res)
+        await sendAssetFile(source, res, delivery)
         return true
       } finally {
         await source.close()
@@ -502,7 +613,7 @@ export default class Asset extends Model {
     })
   }
 
-  static async getAssetFromStorage(identity: StorageAssetIdentity, res: Response): Promise<boolean> {
+  private static async getAssetFromStorage(identity: StorageAssetIdentity, res: Response, delivery: AssetDelivery): Promise<boolean> {
     if (isDeniedAssetPath(identity.path)) return false
     const localLocations = await wiki.models.storage.getLocalLocations({ asset: identity })
     for (const location of _.filter(localLocations, candidate => Boolean(candidate.location))) {
@@ -514,7 +625,7 @@ export default class Asset extends Model {
         throw error
       }
       try {
-        await sendAssetFile(source, res)
+        await sendAssetFile(source, res, delivery)
         return true
       } finally {
         await source.close()
@@ -523,7 +634,7 @@ export default class Asset extends Model {
     return false
   }
 
-  static async getAssetFromDb(identity: StorageAssetIdentity, res: Response): Promise<void> {
+  private static async getAssetFromDb(identity: StorageAssetIdentity, res: Response, delivery: AssetDelivery): Promise<void> {
     if (isDeniedAssetPath(identity.path)) {
       res.sendStatus(404)
       return
@@ -533,10 +644,15 @@ export default class Asset extends Model {
       res.sendStatus(404)
       return
     }
+    // SQLite BLOBs can be Uint8Array views; normalize before PDF inspection and
+    // Express delivery without copying or exposing bytes outside that view.
+    const data = Buffer.isBuffer(assetData.data)
+      ? assetData.data
+      : Buffer.from(assetData.data.buffer, assetData.data.byteOffset, assetData.data.byteLength)
     await withStorageRoot(storageRootPath('cache'), async root => {
-      await root.writeAtomic(`${identity.hash}.dat`, assetData.data)
+      await root.writeAtomic(`${identity.hash}.dat`, data)
     })
-    await sendAssetBuffer(assetData.data, res)
+    await sendAssetBuffer(data, res, delivery)
   }
 
   static async flushTempUploads(): Promise<void> {

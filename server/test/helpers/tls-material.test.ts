@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { X509Certificate } from 'node:crypto'
 import { createSecureContext } from 'node:tls'
 import { describeTlsCertificate, loadTlsMaterial, tlsCertificateAt } from '../../repositories/tls-material.ts'
-import { tlsFixture } from './tls-fixture.ts'
+import { tlsFixture } from './tls-fixture.mts'
 
 let fixture: ReturnType<typeof tlsFixture>
 beforeAll(() => {

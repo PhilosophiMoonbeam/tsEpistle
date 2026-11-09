@@ -25,6 +25,7 @@ import {
   type AssetImageAspectPolicy,
   type AssetImageFormat,
   type AssetImageTransformOptions,
+  type AssetImageOperation,
   type AssetImageTransformResult
 } from '../helpers/asset-image-transform.ts'
 import brandingErrors from './errors.ts'
@@ -393,6 +394,9 @@ type AssetImageResizeInput = {
   format: AssetImageFormat
   quality: number
   animationPolicy: AssetImageAnimationPolicy
+  operations?: AssetImageOperation[]
+  expectedSourceSha256?: string
+  expectedSourceRevision?: string
 }
 
 type AssetImageResizeReceipt = {
@@ -407,7 +411,20 @@ type AssetImageResizeReceipt = {
   sourceSha256: string
 }
 
-const resizeImage = async ({
+type AssetImagePreview = {
+  status: 'previewed'
+  dataUrl: string
+  sourceSha256: string
+  sourceRevision: string
+  width: number
+  height: number
+  editWidth: number
+  editHeight: number
+  frames: number
+  format: AssetImageFormat
+}
+
+const processImage = async ({
   requester,
   id,
   destination,
@@ -416,8 +433,11 @@ const resizeImage = async ({
   aspectPolicy,
   format,
   quality,
-  animationPolicy
-}: AssetImageResizeInput): Promise<AssetImageResizeReceipt> => {
+  animationPolicy,
+  operations,
+  expectedSourceSha256,
+  expectedSourceRevision
+}: AssetImageResizeInput, previewOnly = false): Promise<AssetImageResizeReceipt | AssetImagePreview> => {
   if (!Number.isSafeInteger(id) || id < 1) throw imageResizeUnavailable()
   if (
     !destination ||
@@ -477,6 +497,13 @@ const resizeImage = async ({
       sourceSha256: createHash('sha256').update(bytes).digest('hex')
     }
   })
+  const sourceRevision = createHash('sha256').update(JSON.stringify([snapshot.asset, snapshot.sourcePath, snapshot.sourceSha256])).digest('hex')
+  if (expectedSourceRevision !== undefined && expectedSourceRevision !== sourceRevision) throw imageResizeStale()
+  if (expectedSourceSha256 !== undefined && expectedSourceSha256 !== snapshot.sourceSha256) throw imageResizeStale()
+  if (!previewOnly && operations !== undefined && (!Array.isArray(operations) || operations.length > 0) &&
+    (!/^[0-9a-f]{64}$/.test(expectedSourceSha256 ?? '') || !/^[0-9a-f]{64}$/.test(expectedSourceRevision ?? ''))) {
+    throw imageResizeInputError('Review a current server preview before saving image edits.')
+  }
 
   let transformed: AssetImageTransformResult
   try {
@@ -486,7 +513,8 @@ const resizeImage = async ({
       aspectPolicy,
       format,
       quality,
-      animationPolicy
+      animationPolicy,
+      ...(operations === undefined ? {} : { operations })
     } satisfies AssetImageTransformOptions)
   } catch (error: unknown) {
     if (!(error instanceof AssetImageTransformError)) throw error
@@ -499,6 +527,38 @@ const resizeImage = async ({
             ? 422
             : 400
     throw new ApplicationError(error.message, { status, code: error.code })
+  }
+  if (previewOnly) {
+    // A preview exposes source-derived bytes, so retire it if the source or
+    // authority changed while the native codec was working.
+    await models.knex.transaction(async transaction => {
+      const current = await models.assets.query(transaction).where({ id }).forUpdate().first()
+      if (!current) throw imageResizeStale()
+      const folderPath = await assetFolderPath(current.folderId || null, transaction)
+      const path = folderPath ? `${folderPath}/${current.filename}` : current.filename
+      const authority = await getAuth().loadPageRuleAuthority(requester, transaction)
+      if (!getAuth().checkPageAccess(requester, ['read:assets'], { path }, authority)) throw imageResizeUnavailable()
+      const targetPath = await assetFolderPath(folderId, transaction)
+      const destinationPath = targetPath ? `${targetPath}/${filename}` : filename
+      if (!getAuth().checkPageAccess(requester, ['write:assets'], { path: destinationPath }, authority)) throw imageResizeDestinationForbidden()
+      const data = await transaction<AssetDataRow>('assetData').where('id', id).first('data')
+      if (!data || path !== snapshot.sourcePath || current.filename !== snapshot.asset.filename ||
+        current.hash !== snapshot.asset.hash || (current.folderId || null) !== snapshot.asset.folderId ||
+        assetVersionTime(current.updatedAt) !== snapshot.asset.updatedAt ||
+        createHash('sha256').update(assetRowBytes(data.data)).digest('hex') !== snapshot.sourceSha256) throw imageResizeStale()
+    })
+    return {
+      status: 'previewed',
+      dataUrl: `data:${imageResizeMime[format]};base64,${transformed.data.toString('base64')}`,
+      sourceSha256: snapshot.sourceSha256,
+      sourceRevision,
+      width: transformed.width,
+      height: transformed.height,
+      editWidth: transformed.editWidth,
+      editHeight: transformed.editHeight,
+      frames: transformed.frames,
+      format: transformed.format
+    }
   }
 
   const filenameExtension = filename.slice(filename.lastIndexOf('.')).toLowerCase()
@@ -618,6 +678,48 @@ const resizeImage = async ({
     models.knex
   )
   return published
+}
+
+const resizeImage = async (input: AssetImageResizeInput): Promise<AssetImageResizeReceipt> => {
+  const result = await processImage(input)
+  if (result.status !== 'succeeded') throw imageResizeInputError('Unexpected image save response.')
+  return result
+}
+
+const previewImage = async (input: AssetImageResizeInput): Promise<AssetImagePreview> => {
+  const result = await processImage(input, true)
+  if (result.status !== 'previewed') throw imageResizeInputError('Unexpected image preview response.')
+  return result
+}
+
+const previewMove = async ({ requester, id, folderId }: { requester: Requester; id: number; folderId: number }): Promise<{ sourcePath: string; destinationPath: string }> => {
+  if (!Number.isSafeInteger(id) || id < 1 || !Number.isSafeInteger(folderId) || folderId < 0) throw new errors.AssetInvalid()
+  return models.knex.transaction(async transaction => {
+    const asset = await models.assets.query(transaction).where({ id }).forUpdate().first()
+    if (!asset || (asset.folderId ?? 0) === folderId) throw new errors.AssetInvalid()
+    let sourceFolder: string
+    let destinationFolder: string
+    try {
+      sourceFolder = await assetFolderPath(asset.folderId || null, transaction)
+    } catch (error: unknown) {
+      if (error instanceof AssetFolderHierarchyError) throw new errors.AssetInvalid()
+      throw error
+    }
+    const sourcePath = sourceFolder ? `${sourceFolder}/${asset.filename}` : asset.filename
+    const auth = getAuth()
+    const authority = await auth.loadPageRuleAuthority(requester, transaction)
+    if (!auth.checkPageAccess(requester, ['manage:system', 'manage:assets'], { path: sourcePath }, authority)) throw new errors.AssetInvalid()
+    try {
+      destinationFolder = await assetFolderPath(folderId || null, transaction)
+    } catch (error: unknown) {
+      if (error instanceof AssetFolderHierarchyError) throw new errors.AssetRenameTargetForbidden()
+      throw error
+    }
+    const destinationPath = destinationFolder ? `${destinationFolder}/${asset.filename}` : asset.filename
+    if (!auth.checkPageAccess(requester, ['manage:system', 'write:assets'], { path: destinationPath }, authority)) throw new errors.AssetRenameTargetForbidden()
+    assertStorageAssetDestinationAllowed(destinationPath)
+    return { sourcePath, destinationPath }
+  })
 }
 
 const relocationNotFound = (): InstanceType<typeof ApplicationError> =>
@@ -860,4 +962,4 @@ const remove = async ({ requester, id }: { requester: Requester; id: number }): 
 
 const flushTemporaryUploads = (): unknown => models.assets.flushTempUploads()
 
-export default { createFolder, flushTemporaryUploads, getBranding, list, listFolders, relocate, relocationStatus, remove, resizeImage }
+export default { createFolder, flushTemporaryUploads, getBranding, list, listFolders, relocate, relocationStatus, remove, resizeImage, previewImage, previewMove }

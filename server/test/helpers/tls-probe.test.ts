@@ -2,7 +2,7 @@ import tls from 'node:tls'
 import net from 'node:net'
 import type { Socket } from 'node:net'
 import { inspectTlsEndpoint, publicTlsTarget } from '../../repositories/tls-probe.ts'
-import { tlsFixture } from './tls-fixture.ts'
+import { tlsFixture } from './tls-fixture.mts'
 
 let fixture: ReturnType<typeof tlsFixture>
 beforeAll(() => {

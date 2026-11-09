@@ -109,6 +109,7 @@ suite('PostgreSQL account administration', () => {
       t.text('key')
       t.boolean('isRevoked')
       t.string('expiration')
+      t.string('updatedAt')
     })
     await personalMcpUp(db)
     await db.schema.createTable('navigation', t => {
@@ -212,6 +213,56 @@ suite('PostgreSQL account administration', () => {
   const review = async (id = 3, requester = admin) => ({
     fingerprint: (await store.inspect(requester, id)).fingerprint,
     reason: 'Account lifecycle verification'
+  })
+  const personalKey = async (ownerId = 3) => {
+    const [row] = await db('apiKeys').insert({
+      key: `retained-personal-${ownerId}`, isRevoked: false, expiration: '2099-01-01T00:00:00Z',
+      personalOwnerId: ownerId, personalAccess: 'read-only', updatedAt: '2026-01-01T00:00:00Z'
+    }).returning('*')
+    return row
+  }
+  it.each(['deactivate', 'end-sessions', 'set-password', 'profile-password'] as const)(
+    'permanently retains personal revocation after %s while isolating other owners and service grants',
+    async event => {
+      const key = await personalKey()
+      const independent = await personalKey(6)
+      const [service] = await db('apiKeys').insert({ key: 'service-bytes', isRevoked: false }).returning('*')
+      if (event === 'set-password') {
+        await store.setPassword(admin, 3, { ...(await review()), password: 'replacement-password-12!', mustChangePassword: false })
+      } else if (event === 'profile-password') {
+        const workspace = await store.inspect(admin, 3)
+        await store.updateProfile(admin, 3, {
+          ...(await review()), profile: { ...workspace.profile, email: 'changed@example.invalid', groups: [3, 4] },
+          password: 'replacement-password-12!'
+        })
+      } else {
+        await store.act(admin, 3, { ...(await review()), action: event })
+      }
+      if (event === 'deactivate') await store.act(admin, 3, { ...(await review()), action: 'activate' })
+      expect(await db('apiKeys').where('id', key.id).first()).toMatchObject({
+        key: key.key, personalOwnerId: 3, personalAccess: 'read-only', expiration: key.expiration, isRevoked: true
+      })
+      expect(await db('apiKeys').where('id', independent.id).first()).toEqual(independent)
+      expect(await db('apiKeys').where('id', service.id).first()).toMatchObject({ key: 'service-bytes', personalAccess: null, isRevoked: false })
+      expect(JSON.stringify(await db('userAdministrationEvents'))).not.toContain(key.key)
+      expect(JSON.stringify(await db('userAdministrationEvents'))).not.toContain('replacement-password-12!')
+    }
+  )
+  it('does not turn ordinary groups, identity email, authenticator or activation changes into key termination', async () => {
+    const key = await personalKey()
+    const original = await store.inspect(admin, 3)
+    await store.updateProfile(admin, 3, {
+      ...(await review()), profile: { ...original.profile, groups: [], email: 'changed@example.invalid' }
+    })
+    await store.updateProfile(admin, 3, { ...(await review()), profile: original.profile })
+    for (const action of ['require-2fa', 'reset-2fa', 'disable-2fa', 'verify'] as const) {
+      if (action === 'reset-2fa') await db('users').where('id', 3).update({ tfaSecret: 'enrolled-secret' })
+      await store.act(admin, 3, { ...(await review()), action })
+    }
+    await db('users').where('id', 3).update({ isActive: false })
+    await store.act(admin, 3, { ...(await review()), action: 'activate' })
+    expect(await db('apiKeys').where('id', key.id).first()).toEqual(key)
+    expect((await db('users').where('id', 3).first()).authVersion).toBeGreaterThan(0)
   })
   it('checks the current persisted password minimum before account creation or replacement', async () => {
     await db('settings').insert({ key: 'auth', value: JSON.stringify({ passwordMinLength: 20 }) })
@@ -439,6 +490,7 @@ suite('PostgreSQL account administration', () => {
     })
   })
   it('rolls back account state, session revocation and history together on persistence failure', async () => {
+    const key = await personalKey()
     await db.raw(`ALTER TABLE "userAdministrationEvents" ADD CONSTRAINT account_test_failure CHECK (action <> 'deactivate')`)
     try {
       await expect(store.act(admin, 3, { ...(await review()), action: 'deactivate' })).rejects.toThrow()
@@ -447,6 +499,7 @@ suite('PostgreSQL account administration', () => {
     }
     expect(await db('users').where('id', 3).first()).toMatchObject({ isActive: true, authVersion: 0, adminRevision: '' })
     expect(await db('userAdministrationEvents')).toHaveLength(0)
+    expect(await db('apiKeys').where('id', key.id).first()).toEqual(key)
   })
   it('does not treat a workspace API principal as the primary human administrator', async () => {
     const api = { id: 1, ownershipUserId: null, groups: [1] } as never

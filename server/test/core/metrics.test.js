@@ -2,6 +2,11 @@ import createKnex from 'knex'
 import { afterAll, beforeAll } from '../bun-test.mts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { claimPageMutationEffects, enqueuePageMutationEffects, supersedeStalePageRenderEffects } from '../../core/page-mutation-outbox.ts'
+import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { up as addDurableJobLeaseTokens } from '../../db/migrations/2.5.158.ts'
+import { up as createPageReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createPageLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
 import { register } from 'prom-client'
 
 const connection = getPostgresTestConnection('_metrics_test', import.meta.path)
@@ -274,7 +279,8 @@ describe('core/metrics', () => {
           "isSearchable" boolean NOT NULL DEFAULT true,
           "publishStartDate" varchar(255),
           "publishEndDate" varchar(255),
-          content text NOT NULL DEFAULT '',
+          content text NOT NULL DEFAULT 'Metrics source that must never become a label',
+          "contentType" text NOT NULL DEFAULT 'markdown',
           render text NOT NULL DEFAULT '',
           "localeCode" text NOT NULL DEFAULT 'en',
           path text NOT NULL DEFAULT 'docs/metrics',
@@ -309,6 +315,13 @@ describe('core/metrics', () => {
           UNIQUE ("pageId", "sourceRevision", "effectKind")
         );
       `)
+      await db.schema.createTable('users', table => table.integer('id').primary())
+      await db.schema.createTable('groups', table => table.integer('id').primary())
+      await createDurableJobs(db)
+      await addDurableJobLeaseTokens(db)
+      await createPageReviewRouting(db)
+      await createPageLifecycle(db)
+      await createStoragePageImportOwners(db)
     })
 
     afterAll(async () => {
@@ -316,7 +329,7 @@ describe('core/metrics', () => {
     })
 
     beforeEach(async () => {
-      await db.raw('TRUNCATE "pageMutationOutbox", "pagesVector", "pageTags", tags, "pageAccessPasswords", pages')
+      await db.raw('TRUNCATE "storagePageImportOwners", "pageMutationOutbox", "durableJobs", "pagesVector", "pageTags", tags, "pageAccessPasswords", pages CASCADE')
       global.WIKI.models.knex = db
     })
 
@@ -480,13 +493,15 @@ describe('core/metrics', () => {
       ['malformed publication end', { sourceRevision: 8, publishEndDate: 'not-a-date' }, 'present', 'retry'],
       ['protected metadata', { sourceRevision: 8 }, 'protected', 'pending']
     ])('keeps %s search cleanup eligible despite failed render', async (_name, page, desiredState, status) => {
-      if (page) await db('pages').insert({ id: 1, ...page })
-      if (desiredState === 'protected') await db('pageAccessPasswords').insert({ pageId: 1 })
+      await db('pages').insert({ id: 1, sourceRevision: 8 })
       if (desiredState === 'absent') {
         await enqueuePageMutationEffects(db, { pageId: 1, sourceRevision: '8', desiredState: 'absent', action: 'delete', effects: ['search', 'render'] })
       } else {
         await enqueuePresent(1, '8', ['search', 'render'])
       }
+      if (page) await db('pages').where({ id: 1 }).update(page)
+      else await db('pages').where({ id: 1 }).delete()
+      if (desiredState === 'protected') await db('pageAccessPasswords').insert({ pageId: 1 })
       await db('pageMutationOutbox').where({ effectKind: 'render' }).update({ status: 'failed' })
       await db('pageMutationOutbox').where({ effectKind: 'search' }).update({
         status, availableAt: new Date(Date.now() - 3_600_000).toISOString()
@@ -501,8 +516,9 @@ describe('core/metrics', () => {
     })
 
     it('exports a retained superseded render receipt without exposing source or identity labels', async () => {
-      await db('pages').insert({ id: 1, sourceRevision: 9 })
+      await db('pages').insert({ id: 1, sourceRevision: 8 })
       const [olderId] = await enqueuePresent(1, '8', ['render'])
+      await db('pages').where({ id: 1 }).update({ sourceRevision: 9 })
       await enqueuePresent(1, '9', ['render'])
       const original = await db('pageMutationOutbox').where({ id: olderId }).first()
       await db.transaction(transaction => supersedeStalePageRenderEffects(transaction, { pageId: 1, sourceRevision: '9' }))

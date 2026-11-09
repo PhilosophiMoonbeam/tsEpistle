@@ -4,6 +4,7 @@ import type { NotificationCategory, PageNotificationCategory } from '../../share
 import { DurableJobStore } from '../core/durable-jobs.ts'
 import { loadNotificationComments } from './notification-access.ts'
 import { commentMentionHandles } from '../helpers/comment-markdown.ts'
+import { ceilingChannels, readNotificationCeilings } from './notification-ceilings.ts'
 
 export interface NotificationOutboxEvent {
   id: string
@@ -63,6 +64,16 @@ const selectRecipients = async (
 ): Promise<NotificationRecipient[]> => {
   if (userIds.length === 0) return []
   const payload = eventPayload(event)
+  const ceilingState = await readNotificationCeilings(database)
+  const emailStops = await database<{ userId: number; updatedAt: Date | string | number }>('userNotificationPreferences')
+    .whereIn('userId', userIds).where('category', 'allEmailStopped').select('userId', 'updatedAt')
+  const emailStoppedAt = new Map(emailStops.map(row => [Number(row.userId), row.updatedAt instanceof Date ? row.updatedAt.valueOf() : new Date(row.updatedAt).valueOf()]))
+  const eventTime = event.createdAt instanceof Date ? event.createdAt.valueOf() : new Date(event.createdAt).valueOf()
+  const applyCeiling = (userId: number, selectedCategory: PageNotificationCategory, enabled: { inAppEnabled: boolean; emailEnabled: boolean }) =>
+    ceilingChannels(ceilingState, selectedCategory, event.createdAt, {
+      ...enabled,
+      emailEnabled: enabled.emailEnabled && eventTime > (emailStoppedAt.get(userId) ?? -Infinity)
+    })
   const pageId = Number(payload.pageId)
   const watchers = await database<WatcherRow>('pageWatchers')
     .where('pageId', pageId)
@@ -86,10 +97,10 @@ const selectRecipients = async (
   }
   const channels = (userId: number, selectedCategory: NotificationCategory, watcher?: WatcherRow) => {
     const preference = preferencesByUser.get(userId)?.[selectedCategory]
-    return {
+    return applyCeiling(userId, selectedCategory, {
       inAppEnabled: dbBoolean(preference?.inAppEnabled) && (!watcher || dbBoolean(watcher.inAppEnabled)),
       emailEnabled: dbBoolean(preference?.emailEnabled) && (!watcher || dbBoolean(watcher.emailEnabled))
-    }
+    })
   }
   if (!isDiscussion) {
     if (!positiveId(payload.actorId)) throw new TypeError('Page notification actor is invalid')
@@ -106,7 +117,7 @@ const selectRecipients = async (
       const enabled = deletionEnabled
         ? channels(userId, 'pageDeleted')
         : watchEnabled
-          ? { inAppEnabled: dbBoolean(watcher.inAppEnabled), emailEnabled: dbBoolean(watcher.emailEnabled) }
+          ? applyCeiling(userId, 'pageWatch', { inAppEnabled: dbBoolean(watcher.inAppEnabled), emailEnabled: dbBoolean(watcher.emailEnabled) })
           : category
             ? channels(userId, category)
             : { inAppEnabled: false, emailEnabled: false }

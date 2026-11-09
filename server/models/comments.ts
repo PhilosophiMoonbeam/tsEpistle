@@ -36,6 +36,8 @@ interface PostCommentOptions extends CommentAction {
   guestName: string
   guestEmail: string
   annotations?: unknown
+  transaction?: Knex.Transaction
+  rootTransitionEventId?: string
 }
 
 interface UpdateCommentOptions extends CommentAction {
@@ -119,7 +121,9 @@ export default class Comment extends Model {
     user,
     ip,
     sessionId = '',
-    annotations
+    annotations,
+    transaction,
+    rootTransitionEventId
   }: PostCommentOptions): Promise<unknown> {
     rejectApiPrincipalMutation(user)
     if (user.id === 2) {
@@ -136,21 +140,29 @@ export default class Comment extends Model {
     content = _.trim(content)
     if (content.length > 50000) throw new wiki.Error.InputInvalid('Comments must be at most 50,000 characters.')
     if (content.length < 2) throw Object.assign(new wiki.Error.CommentContentMissing(), { status: 400 })
-    const page = await wiki.models.pages.getPageFromDb(pageId)
+    const page = transaction ? await loadDiscussionPageForMutation(transaction, pageId) : await wiki.models.pages.getPageFromDb(pageId)
     if (!page) throw Object.assign(new wiki.Error.PageNotFound(), { status: 404 })
-    const authority = await wiki.auth.loadPageRuleAuthority(user)
+    const authority = await wiki.auth.loadPageRuleAuthority(user, transaction)
     const pageContext = pageAuthorizationContext(page)
     if (page.visibility === 'private' && !canReadPage(user, page, authority)) throw Object.assign(new wiki.Error.PageNotFound(), { status: 404 })
     if (!canReadPage(user, page, authority) || pageContext === null || !wiki.auth.checkPageAccess(user, ['write:comments'], pageContext, authority)) {
       throw Object.assign(new wiki.Error.CommentPostForbidden(), { status: 403 })
     }
-    await assertPageUnlocked({ requester: user, pageId, sessionId, authority })
+    if (transaction) {
+      if (await pageRequiresUnlock({ requester: user, pageId, sessionId, transaction })) {
+        throw new ApplicationError('Access denied', { status: 403, code: 'PAGE_LOCKED' })
+      }
+      if (wiki.data.commentProvider.key !== 'default') throw new ApplicationError('Built-in discussions are not the active provider.', { status: 409 })
+    } else {
+      await assertPageUnlocked({ requester: user, pageId, sessionId, authority })
+    }
     if (typeof wiki.data.commentProvider.create !== 'function') throw new wiki.Error.InputInvalid('Built-in discussions are not the active provider.')
     if (annotations !== undefined && wiki.data.commentProvider.key !== 'default')
       throw new ApplicationError('Annotations require the built-in discussion provider.', { status: 409 })
     return wiki.data.commentProvider.create({
       requester: user,
       sessionId,
+      ...(transaction ? { transaction, rootTransitionEventId } : {}),
       page,
       replyTo,
       content,

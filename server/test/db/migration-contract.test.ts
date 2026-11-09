@@ -119,6 +119,27 @@ describe('database migration namespace contract', () => {
     expect(registry.migrations['tsepistle-000041-site-logo-transparent-icons.js']).toBeDefined()
     expect(registry.migrations['tsepistle-000042-agent-goal-budget-tiers.js']).toBeDefined()
     expect(registry.migrations['tsepistle-000042-agent-goal-budget-tiers.js']?.rollback).toBe('fix-forward-or-restore')
+    // Durable session retirement cannot coexist with the previous unconditional
+    // session-store writes, despite preserving the original session bodies.
+    expect(registry.migrations['tsepistle-000071-browser-session-retirement.js']).toMatchObject({
+      persistentState: 'stateful',
+      reversible: false,
+      writerCompatibility: 'breaking',
+      drain: 'required',
+      rehearsal: 'required',
+      recovery: 'paired',
+      rollback: 'fix-forward-or-restore'
+    })
+    // Old storage/native-delete writers bypass ownership admission and retirement.
+    expect(registry.migrations['tsepistle-000077-storage-page-import-owners.js']).toMatchObject({
+      persistentState: 'additive',
+      reversible: false,
+      writerCompatibility: 'breaking',
+      drain: 'required',
+      rehearsal: 'required',
+      recovery: 'paired',
+      rollback: 'fix-forward-or-restore'
+    })
     expect(migrationLedgerName('tsepistle-000042-agent-goal-budget-tiers')).toBe('tsepistle-000042-agent-goal-budget-tiers.js')
     const files = (await readdir(path.resolve('server/db/migrations'))).filter(file => /^tsepistle-\d{6}-.+\.ts$/u.test(file))
     expect(files).toContain('tsepistle-000042-agent-goal-budget-tiers.ts')

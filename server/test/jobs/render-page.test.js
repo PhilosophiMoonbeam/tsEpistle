@@ -2,6 +2,11 @@ import { createHash } from 'node:crypto'
 import createKnex from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { claimPageMutationEffects, enqueuePageMutationEffects } from '../../core/page-mutation-outbox.ts'
+import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { up as addDurableJobLeaseTokens } from '../../db/migrations/2.5.158.ts'
+import { up as createPageReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createPageLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
 
 const { databaseInit } = vi.hoisted(() => ({ databaseInit: vi.fn() }))
 vi.mockModule('../../core/db.ts', import.meta.url, () => ({ default: { init: databaseInit } }))
@@ -91,6 +96,13 @@ beforeEach(async () => {
   await db.schema.createTable('pageAccessPasswords', table => {
     table.integer('pageId').primary()
   })
+  await db.schema.createTable('users', table => table.integer('id').primary())
+  await db.schema.createTable('groups', table => table.integer('id').primary())
+  await createDurableJobs(db)
+  await addDurableJobLeaseTokens(db)
+  await createPageReviewRouting(db)
+  await createPageLifecycle(db)
+  await createStoragePageImportOwners(db)
   transactionActive = false
   db.on('query', query => {
     if (/^BEGIN\b/i.test(query.sql)) transactionActive = true

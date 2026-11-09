@@ -604,6 +604,95 @@ $$
     expect(await renderServerMarkdown(output)).toBe(await renderServerMarkdown(source))
   })
 
+  it('preserves unsupported table source through unrelated visual edits and reopening without disabling ordinary tables', async () => {
+    const preview = createWikiMarkdownRenderer()
+    const fixtures: Array<[string, boolean]> = [
+      ['| H1 | H2 | H3 |\n| --- | --- | --- |\n| A || B |', true],
+      ['| H1 | H2 | H3 |\n| --- | --- | --- |\n| A |||', true],
+      ['| H1 | H2 |\n| --- | --- |\n| A | B |\n| ^^ | C |', true],
+      ['| H1 | H2 | H3 |\n| --- | --- | --- |\n| A | B | C |', false],
+      ['| H1 | H2 | H3 |\n| --- | --- | --- |\n| A {.cell #a} || [B](/en/target){target=_blank} |', true],
+      ['| H1 | H2 | H3 |\n| --- | --- | --- |\n| A {colspan=2 rowspan=2} | B | C |', true],
+      ['| H1 | H2 |\n| --- | --- |\n| A | literal | `B|C` |', true],
+      ['| H1 | H2 |\n| - | not-a-separator |\n| A || B |', false],
+      ['A {.cell #a}\n\n[B](/en/target){target=_blank}\n\n`| A || B |`', false],
+      ['| H1 | H2 |\n| --- | --- |\n| A \\| literal | `B|C` |', true]
+    ]
+    const tables = (html: string) => cheerio.load(html)('table').toString()
+    for (const [original, opaque] of fixtures) {
+      const editor = createEditor('markdown', original)
+      const source = new VisualEditorSource(editor, 'markdown', original)
+      if (opaque) expect(editor.state.doc.firstChild?.type.name).toBe('wikiSourceBlock')
+      else if (original.includes('| --- |')) expect(editor.state.doc.firstChild?.type.name).toBe('table')
+      editor.commands.insertContentAt(editor.state.doc.content.size, { type: 'paragraph', content: [{ type: 'text', text: 'Unrelated edit' }] })
+      const edited = source.readText()
+      expect(edited).toContain('Unrelated edit')
+      if (opaque) expect(edited).toContain(original)
+      const reopened = createEditor('markdown', edited)
+      const saved = new VisualEditorSource(reopened, 'markdown', edited).readText()
+      for (const output of [edited, saved]) {
+        expect(tables(preview.render(output))).toBe(tables(preview.render(original)))
+        expect(tables(await renderServerMarkdown(output))).toBe(tables(await renderServerMarkdown(original)))
+      }
+    }
+  })
+
+  it('renders native preview spans and attrs before applying the existing sanitizer policy', () => {
+    const preview = createWikiMarkdownRenderer()
+    for (const [input, span] of [
+      ['| H1 | H2 | H3 |\n| --- | --- | --- |\n| A || B |', '2'],
+      ['| H1 | H2 | H3 |\n| --- | --- | --- |\n| A |||', '3'],
+      ['| H1 | H2 | H3 |\n| --- | --- | --- |\n| A {.cell #a} || [B](/en/target){target=_blank} |', '2']
+    ] as const) {
+      const raw = preview.render(input)
+      const $ = cheerio.load(raw)
+      expect($('tbody td').first().text()).toBe('A')
+      expect($('tbody td').first().attr('colspan')).toBe(span)
+      expect($('tbody td').toArray().map(cell => $(cell).text())).toEqual(span === '3' ? ['A'] : ['A', 'B'])
+      if (input.includes('#a')) {
+        expect($('td#a.cell')).toHaveLength(1)
+        expect($('a[href="/en/target"]').attr('target')).toBe('_blank')
+        const safe = cheerio.load(sanitizeWikiMarkdownHtml(raw))
+        expect(safe('td#a.cell').attr('colspan')).toBe('2')
+        expect(safe('a[href="/en/target"]').text()).toBe('B')
+        expect(safe('a').attr('target')).toBeUndefined()
+      }
+    }
+  })
+
+  it('preserves HTML table groups, spans and attrs as inert source through unrelated edits and reopening', async () => {
+    const rendered = await renderServerMarkdown('| H1 | H2 | H3 |\n| --- | --- | --- |\n| A {.cell #a} || [B](/en/target){target=_blank} |')
+    for (const original of [
+      rendered,
+      await renderServerMarkdown('| H1 | H2 | H3 |\n| --- | --- | --- |\n| A | B | C |'),
+      '<table data-layout="authored"><tbody><tr data-row="first"><td rowspan="2" headers="h1" class="cell" id="a">A<!--keep--></td><td>B</td></tr><tr><td>C</td></tr></tbody></table>'
+    ]) {
+      const editor = createEditor('html', original)
+      expect(editor.state.doc.firstChild?.type.name).toBe('wikiSourceBlock')
+      expect(editor.view.dom.querySelector('table')).toBeNull()
+      const source = new VisualEditorSource(editor, 'html', original)
+      editor.commands.insertContentAt(editor.state.doc.content.size, { type: 'paragraph', content: [{ type: 'text', text: 'Unrelated edit' }] })
+      const edited = source.readText()
+      const table = (html: string) => {
+        const element = new DOMParser().parseFromString(html, 'text/html').querySelector('table')
+        if (!element) return null
+        // Ignore only formatter indentation, not row groups, attrs or cell text.
+        for (const parent of [element, ...element.querySelectorAll('*')]) {
+          for (const child of [...parent.childNodes]) {
+            if (child.nodeType === 3 && !child.textContent?.trim()) child.remove()
+          }
+        }
+        return element.outerHTML
+      }
+      expect(table(edited)).toBe(table(original))
+      expect(edited).toContain('Unrelated edit')
+      const reopened = createEditor('html', edited)
+      expect(table(new VisualEditorSource(reopened, 'html', edited).readText())).toBe(table(original))
+    }
+    const editable = createEditor('html', '<table><tbody><tr><td><p>Editable</p></td></tr></tbody></table>')
+    expect(editable.state.doc.firstChild?.type.name).toBe('table')
+  })
+
   it('renders the complete Markdown editor dialect after a visual round trip', () => {
     const source = `# Dialect {#dialect .reference}
 
@@ -1139,6 +1228,7 @@ graph TD
     expect(output).toContain('<!--keep-->')
     expect(output).toContain('<colgroup>')
     expect(output).toContain('<td')
+    expect(output).toContain(source.slice(source.indexOf('<table')))
 
     const reopened = createEditor('html', output)
     expect(serializeVisualEditorData('html', reopened)).toBe(output)

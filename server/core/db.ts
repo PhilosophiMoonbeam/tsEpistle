@@ -124,16 +124,28 @@ export const createSystemConnectionApplicationName = (identity: string, role: Sy
 }
 const connectionRole = (): SystemConnectionRole => (wiki.CONNECTION_ROLE === 'worker' ? 'worker' : 'pool')
 const connectionSettingsWithApplicationName = (settings: unknown, applicationName: string): Record<string, unknown> => {
-  if (typeof settings === 'string') return { connectionString: settings, application_name: applicationName }
+  const cloned: Record<string, unknown> = isRecord(settings) ? { ...settings, application_name: applicationName } : { application_name: applicationName }
+  const connectionString = typeof settings === 'string' ? settings : cloned.connectionString
+  let options = typeof cloned.options === 'string' ? cloned.options : process.env.PGOPTIONS || ''
+  if (typeof connectionString === 'string') {
+    // pg gives URL parameters precedence over object fields. Compose the startup
+    // policy into the URL too so every pg-pubsub reconnect receives it.
+    const url = new URL(connectionString)
+    options = url.searchParams.get('options') || options
+    url.searchParams.set('options', `${options ? `${options} ` : ''}-c timezone=UTC`)
+    url.searchParams.set('application_name', applicationName)
+    cloned.connectionString = url.href
+    cloned.options = url.searchParams.get('options')
+  } else {
+    cloned.options = `${options ? `${options} ` : ''}-c timezone=UTC`
+  }
   if (isRecord(settings)) {
-    const cloned = { ...settings, application_name: applicationName }
     const passwordDescriptor = Object.getOwnPropertyDescriptor(settings, 'password')
     if (passwordDescriptor) Object.defineProperty(cloned, 'password', passwordDescriptor)
     else if (Reflect.has(settings, 'password'))
       Object.defineProperty(cloned, 'password', { configurable: true, enumerable: false, value: Reflect.get(settings, 'password') })
-    return cloned
   }
-  return { application_name: applicationName }
+  return cloned
 }
 function isNetworkConnection(config: DatabaseConnectionConfig): config is NetworkConnectionConfig {
   return typeof config !== 'string' && 'host' in config
@@ -245,7 +257,7 @@ const database: DatabaseService = {
         ...wiki.config.pool,
         afterCreate(conn: PoolConnection, done: (error?: Error) => void) {
           let query = conn.query({
-            text: "SELECT set_config('application_name', $1, false)",
+            text: "SELECT set_config('application_name', $1, false), set_config('TimeZone', 'UTC', false)",
             values: [poolApplicationName]
           })
           if (wiki.config.db.schema && wiki.config.db.schema !== 'public') {

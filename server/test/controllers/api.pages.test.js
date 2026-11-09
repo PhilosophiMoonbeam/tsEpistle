@@ -1493,7 +1493,7 @@ describe('controllers/api pages endpoints', () => {
     expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
     expect(res.vary).toHaveBeenCalledWith('Cookie')
   })
-  it('accepts reader-shaped list rows without restricted publication metadata', async () => {
+  it('projects live reader list rows without restricted publication metadata', async () => {
     const row = {
       id: 42,
       locale: 'en',
@@ -1502,13 +1502,15 @@ describe('controllers/api pages endpoints', () => {
       description: 'Visible description',
       visibility: 'public',
       ownerId: null,
+      isPublished: true,
       isSearchable: true,
       contentType: 'markdown',
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-02T00:00:00.000Z',
       tags: [{ tag: 'docs' }]
     }
-    const expected = { ...row, tags: ['docs'] }
+    const { isPublished: _isPublished, ...readerRow } = row
+    const expected = { ...readerRow, tags: ['docs'] }
     const queryBuilder = { where: vi.fn(), orderBy: vi.fn() }
     const modify = vi.fn(applyQueryModifier => {
       applyQueryModifier(queryBuilder)

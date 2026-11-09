@@ -255,6 +255,29 @@ describe('content extension Markdown rendering', () => {
     }
   })
 
+  it('admits canonical YouTube v2 through the existing v1 registry without bypassing disabled or unknown source recovery', async () => {
+    const source = serializeContentExtensionFence({
+      key: 'youtube',
+      version: 2,
+      props: { source: { kind: 'playlist', playlistId: 'PL_native_123' }, title: 'Reading playlist', start: 12, controls: false }
+    })
+    const active = new DOMParser().parseFromString(await renderMarkdown(source), 'text/html')
+    expect(active.querySelector('figure')?.getAttribute('data-youtube-playlist-id')).toBe('PL_native_123')
+    expect(active.querySelector('iframe, img')).toBeNull()
+    expect(active.querySelector('a')?.getAttribute('href')).toBe('https://www.youtube.com/playlist?list=PL_native_123&t=12s')
+    for (const registry of [{ isEnabled: false, version: 1 }, { isEnabled: true, version: 2 }]) {
+      await db('contentExtensions').where({ key: 'youtube' }).update(registry)
+      const passive = new DOMParser().parseFromString(await renderMarkdown(source), 'text/html')
+      expect(passive.querySelector('figure, iframe, a')).toBeNull()
+      expect(passive.querySelector('pre code')?.textContent).toBe(`${source.split('\n')[1]}\n`)
+    }
+    await db('contentExtensions').where({ key: 'youtube' }).update({ isEnabled: true, version: 1 })
+    const unknown = source.replace('"version":2', '"version":3')
+    const recovery = new DOMParser().parseFromString(await renderMarkdown(unknown), 'text/html')
+    expect(recovery.querySelector('figure, iframe, a')).toBeNull()
+    expect(recovery.querySelector('pre code')?.textContent).toBe(`${unknown.split('\n')[1]}\n`)
+  })
+
   it('leaves ordinary fenced code rendering unchanged', async () => {
     const rendered = await renderMarkdown('```js\nif (a < b) return "x"\n```')
     const document = new DOMParser().parseFromString(rendered, 'text/html')

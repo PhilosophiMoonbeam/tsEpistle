@@ -774,21 +774,48 @@ test.describe('critical post-install workflows', () => {
     test.setTimeout(60_000)
     await openAuthenticatedHome(page)
 
-    const convert = async (path: string, editor: string) => {
-      const result = await page.evaluate(
+    const convert = async (path: string, editor: string, acceptReview?: (review: {
+      originalSource: string
+      candidate: string
+      report: { previewHtml: string; warnings: string[] }
+    }) => void) => {
+      const prepared = await page.evaluate(
         async ({ path, editor }) => {
           const pages = await fetch('/_api/pages', { credentials: 'same-origin' }).then(response => response.json())
           const row = pages.find((candidate: { path: string }) => candidate.path === path)
           const details = await fetch(`/_api/pages/${row.id}`, { credentials: 'same-origin' }).then(response => response.json())
-          const response = await fetch(`/_api/pages/${row.id}/convert`, {
+          const expectedSourceRevision = String(details.sourceRevision)
+          if (details.contentType !== 'html' || !['markdown', 'visual-markdown'].includes(editor)) {
+            return { id: row.id, expectedSourceRevision, review: null, originalSource: details.content }
+          }
+          const response = await fetch(`/_api/pages/${row.id}/convert/review`, {
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ editor, expectedSourceRevision: String(details.sourceRevision) })
+            body: JSON.stringify({ editor, expectedSourceRevision })
+          })
+          const review = await response.json()
+          if (!response.ok) throw new Error(`Conversion review refused: ${JSON.stringify(review)}`)
+          return { id: row.id, expectedSourceRevision, review, originalSource: details.content }
+        },
+        { path, editor }
+      )
+      if (prepared.review) {
+        if (!acceptReview) throw new Error('HTML conversion requires explicit acceptance of the native review.')
+        expect(prepared.review.originalSource).toBe(prepared.originalSource)
+        acceptReview(prepared.review)
+      }
+      const result = await page.evaluate(
+        async ({ id, editor, expectedSourceRevision, reviewToken }) => {
+          const response = await fetch(`/_api/pages/${id}/convert`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ editor, expectedSourceRevision, ...(reviewToken === undefined ? {} : { reviewToken }) })
           })
           return { ok: response.ok, body: await response.json() }
         },
-        { path, editor }
+        { id: prepared.id, editor, expectedSourceRevision: prepared.expectedSourceRevision, reviewToken: prepared.review?.reviewToken }
       )
       expect(result.ok || result.body?.error === 'Page is already using this editor. Nothing to convert.', JSON.stringify(result.body)).toBe(true)
     }
@@ -813,7 +840,12 @@ test.describe('critical post-install workflows', () => {
     expect(await getMarkdownSourceData(page)).toBe(markdownBefore)
 
     await convert('visual-markdown-browser', 'visual-markdown')
-    await convert('visual-html-browser', 'visual-markdown')
+    await convert('visual-html-browser', 'visual-markdown', review => {
+      expect(review.originalSource).toContain('Visual HTML heading')
+      expect(review.candidate).toContain('## Visual HTML heading')
+      expect(review.report.previewHtml).toContain('Visual HTML heading')
+      expect(review.report.warnings.length).toBeGreaterThan(0)
+    })
     await page.goto('/e/en/visual-html-browser')
     await expect(page.locator('.editor-tiptap .ProseMirror')).toContainText('Visual HTML heading', { timeout: 30_000 })
     await expect(page.locator('.editor-tiptap-sysbar')).toContainText('Visual Markdown')

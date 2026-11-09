@@ -6,6 +6,11 @@ import { claimPageMutationEffects, enqueuePageMutationEffects } from '../core/pa
 import { up as createProjectionStore } from '../db/migrations/2.5.152.ts'
 import { up as createMaintenanceStore } from '../db/migrations/tsfranki-000006-knowledge-maintenance.ts'
 import { up as createKnowledgeSearchStore } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
+import { up as createDurableJobs } from '../db/migrations/2.5.130.ts'
+import { up as addDurableJobLeaseTokens } from '../db/migrations/2.5.158.ts'
+import { up as createPageReviewRouting } from '../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createPageLifecycle } from '../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createStoragePageImportOwners } from '../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
 import { PageKnowledgeLifecycle, PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
 import type { PageRuleAuthority } from '../helpers/group-access.ts'
 
@@ -107,6 +112,13 @@ const createSchema = async (): Promise<void> => {
   await createProjectionStore(db)
   await createKnowledgeSearchStore(db)
   await createMaintenanceStore(db)
+  await db.schema.createTable('users', table => table.integer('id').primary())
+  await db.schema.createTable('groups', table => table.integer('id').primary())
+  await createDurableJobs(db)
+  await addDurableJobLeaseTokens(db)
+  await createPageReviewRouting(db)
+  await createPageLifecycle(db)
+  await createStoragePageImportOwners(db)
 }
 
 const page = (overrides: Record<string, unknown> = {}) => ({

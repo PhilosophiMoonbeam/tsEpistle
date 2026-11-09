@@ -12,6 +12,8 @@ import { createPageWatchNotificationHandler, type PageWatchWikiContext } from '.
 import type * as notificationOperations from '../../operations/page-watching.ts'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
+import { defaultNotificationCeilings } from '../../../shared/site-notifications.ts'
+import { getNotificationSettings, updateNotificationSettings } from '../../operations/notification-settings.ts'
 
 const connection = getPostgresTestConnection('_notification_audience_test', import.meta.path)
 const suite = connection ? describe : describe.skip
@@ -28,6 +30,7 @@ suite('PostgreSQL notification audience delivery and read projection', () => {
   const originalWiki = Reflect.get(globalThis, 'WIKI')
   const messages: Message[] = []
   const tables = [
+    'settings',
     'userNotificationPreferences',
     'pageWatchNotifications',
     'pageWatchDeliveries',
@@ -64,6 +67,7 @@ suite('PostgreSQL notification audience delivery and read projection', () => {
       CREATE TABLE "pageHistory" (id integer PRIMARY KEY, title text NOT NULL);
       CREATE TABLE "deletedPageRecovery" ("pageId" integer PRIMARY KEY, "deletionVersionId" integer REFERENCES "pageHistory"(id),
         "securityContext" jsonb NOT NULL);
+      CREATE TABLE settings (key text PRIMARY KEY, value jsonb NOT NULL, "updatedAt" timestamptz);
     `)
     await addDurableJobs(db)
     await addLeaseToken(db)
@@ -85,7 +89,7 @@ suite('PostgreSQL notification audience delivery and read projection', () => {
       },
       models: {
         knex: db,
-        pages: { getPageFromDb: (id: number) => db('pages').where({ id }).first() },
+        pages: { getPageFromDb: (id: number, transaction?: Knex.Transaction) => (transaction ?? db)('pages').where({ id }).first() },
         users: undefined as unknown
       }
     }
@@ -140,21 +144,24 @@ suite('PostgreSQL notification audience delivery and read projection', () => {
     await db('deletedPageRecovery').insert({ pageId: 42, deletionVersionId: 501, securityContext: JSON.stringify({ version: 1, former, protection: null }) })
     await db('pages').where({ id: 42 }).delete()
   }
-  const deliver = async (type = 'page.deleted'): Promise<string> => {
+  const createEvent = async (type = 'page.deleted', createdAt = new Date('2026-01-01T12:00:00.000Z')): Promise<string> => {
     const eventId = randomUUID()
     await db('outboxEvents').insert({
       id: eventId,
       type,
       aggregateType: 'page',
       aggregateId: '42',
-      createdAt: new Date('2026-01-01T12:00:00.000Z'),
+      createdAt,
       payload: JSON.stringify({ ...former, pageId: 42, actorId: 9, actorName: 'Editor', title: 'Stale event title' })
     })
+    return eventId
+  }
+  const deliverEvent = async (eventId: string, audienceAt = new Date('2026-01-01T12:00:00.000Z')): Promise<void> => {
     const store = new DurableJobStore(db)
     const audience = await store.enqueue({
       type: 'notify-page-watcher',
       version: 1,
-      payload: { mode: 'audience', eventId, afterUserId: 0, audienceAt: '2026-01-01T12:00:00.000Z' },
+      payload: { mode: 'audience', eventId, afterUserId: 0, audienceAt: audienceAt.toISOString() },
       deduplicationKey: `notification-audience:${eventId}:0`
     })
     const context = { knex: db, signal: new AbortController().signal }
@@ -167,8 +174,138 @@ suite('PostgreSQL notification audience delivery and read projection', () => {
       await handler(job, context)
       await handler(job, context)
     }
+  }
+  const deliver = async (type = 'page.deleted'): Promise<string> => {
+    const eventId = await createEvent(type)
+    await deliverEvent(eventId)
     return eventId
   }
+  it('serializes sparse preference saves while preserving hidden channels under ceilings', async () => {
+    await preference(7, 'mention', { inAppEnabled: false, emailEnabled: true })
+    await db('settings').insert({ key: 'notificationCeilings', value: JSON.stringify({ ceilings: { ...defaultNotificationCeilings(), mention: 'in-app-only' }, suppressedBefore: {} }) })
+    await Promise.all([
+      operations.updateNotificationPreferences(recipient, { preferences: { mention: { inApp: true } } }),
+      operations.updateNotificationPreferences(recipient, { preferences: { pageDeleted: { email: true } } })
+    ])
+    const current = await operations.getNotificationPreferences(recipient)
+    expect(current.preferences.mention).toEqual({ inApp: true, email: true })
+    await Promise.all([
+      operations.updateNotificationPreferences(recipient, { preferences: { commentReply: { inApp: true } } }),
+      operations.updateNotificationPreferences(recipient, { preferences: { commentReply: { email: true } } })
+    ])
+    const merged = await operations.getNotificationPreferences(recipient)
+    expect(merged.preferences.commentReply).toEqual({ inApp: true, email: true })
+    expect(current.preferences.pageDeleted).toEqual({ inApp: false, email: true })
+  })
+
+  it('rechecks administrator authority and prevents stale settings overwrites or suppressed-work resurrection', async () => {
+    await expect(getNotificationSettings(db, recipient)).rejects.toMatchObject({ status: 403 })
+    await db('groups').where('id', 3).update({ permissions: JSON.stringify(['manage:system', 'read:pages']) })
+    const initial = await getNotificationSettings(db, recipient)
+    const off = await updateNotificationSettings(db, recipient, { ceilings: { ...initial.ceilings, pageWatch: 'off' }, fingerprint: initial.fingerprint })
+    await expect(updateNotificationSettings(db, recipient, { ceilings: initial.ceilings, fingerprint: initial.fingerprint })).rejects.toMatchObject({ status: 409 })
+    await watch(7, { inAppEnabled: true, emailEnabled: true })
+    await updateNotificationSettings(db, recipient, { ceilings: initial.ceilings, fingerprint: off.fingerprint })
+    // The event predates the off/on transition even though audience selection runs afterward.
+    await deliver('page.updated')
+    expect(messages).toEqual([])
+    expect(await db('pageWatchNotifications')).toEqual([])
+    expect((await db('pageWatchers').where('userId', 7).first()).emailEnabled).toBe(true)
+    await db('users').where('id', 7).update({ authVersion: 1 })
+    await expect(getNotificationSettings(db, recipient)).rejects.toMatchObject({ status: 403 })
+  })
+
+  it.each([
+    ['pageWatch', 'page.updated', 'off', 0],
+    ['pageWatch', 'page.updated', 'in-app-only', 1],
+    ['pageCreated', 'page.created', 'off', 0],
+    ['pageCreated', 'page.created', 'in-app-only', 1]
+  ] as const)('does not resurrect %s work created during %s/%s before audience processing', async (category, type, mode, retainedInApp) => {
+    await db('groups').where('id', 3).update({ permissions: JSON.stringify(['manage:system', 'read:pages']) })
+    if (category === 'pageWatch') await watch(7, { inAppEnabled: true, emailEnabled: true })
+    else await preference(7, category, { inAppEnabled: true, emailEnabled: true })
+    const initial = await getNotificationSettings(db, recipient)
+    const disabled = await updateNotificationSettings(db, recipient, { ceilings: { ...initial.ceilings, [category]: mode }, fingerprint: initial.fingerprint })
+    const saved = await db('settings').where('key', 'notificationCeilings').first('updatedAt')
+    // Cross the persisted millisecond boundary before creating the real disabled-period root.
+    await db.raw('SELECT pg_sleep(0.002)')
+    const createdAt = new Date()
+    expect(createdAt.valueOf()).toBeGreaterThan(new Date(saved.updatedAt).valueOf())
+    const eventId = await createEvent(type, createdAt)
+    await updateNotificationSettings(db, recipient, { ceilings: initial.ceilings, fingerprint: disabled.fingerprint })
+    const reenabled = await db('settings').where('key', 'notificationCeilings').first('updatedAt')
+    await deliverEvent(eventId, new Date())
+    expect(messages).toEqual([])
+    expect(await db('pageWatchNotifications').where({ eventId })).toHaveLength(retainedInApp)
+    const stored = category === 'pageWatch'
+      ? await db('pageWatchers').where({ userId: 7, pageId: 42 }).first()
+      : await db('userNotificationPreferences').where({ userId: 7, category }).first()
+    expect(stored).toMatchObject({ inAppEnabled: true, emailEnabled: true })
+    // New work after re-enable still uses the unchanged consented channels.
+    await db.raw('SELECT pg_sleep(0.002)')
+    const freshCreatedAt = new Date()
+    expect(freshCreatedAt.valueOf()).toBeGreaterThan(new Date(reenabled.updatedAt).valueOf())
+    const freshId = await createEvent(type, freshCreatedAt)
+    const previousJob = await db<{ nextRunAt: Date }>('durableJobs')
+      .join('pageWatchDeliveries', 'pageWatchDeliveries.jobId', 'durableJobs.id')
+      .where('pageWatchDeliveries.eventId', eventId).first('durableJobs.nextRunAt')
+    // This helper directly dispatches jobs. Model the next audience after the
+    // first native scheduled delivery, not another delivery in its debounce bucket.
+    const freshAudienceAt = new Date(Math.max(Date.now(), previousJob?.nextRunAt.valueOf() ?? 0))
+    await deliverEvent(freshId, freshAudienceAt)
+    expect(messages).toHaveLength(1)
+    expect(await db('pageWatchNotifications').where({ eventId: freshId })).toHaveLength(1)
+  })
+
+  it('explicit all-email opt-out includes concurrent hidden-category changes and legacy watches', async () => {
+    await watch(7, { inAppEnabled: true, emailEnabled: true })
+    await preference(7, 'futureCategory', { inAppEnabled: true, emailEnabled: true })
+    await Promise.all([
+      operations.updateNotificationPreferences(recipient, { preferences: { mention: { inApp: true } } }),
+      operations.updateNotificationPreferences(recipient, { preferences: {}, stopAllEmail: true })
+    ])
+    const current = await operations.getNotificationPreferences(recipient)
+    expect(current.preferences.mention).toEqual({ inApp: true, email: false })
+    expect(await db('userNotificationPreferences').where('userId', 7).where('emailEnabled', true)).toEqual([])
+    expect((await db('pageWatchers').where('userId', 7).first()).emailEnabled).toBe(false)
+  })
+
+  it('holds the shared ceiling lock through dispatch so an administrator save cannot complete ahead of an authorized email', async () => {
+    await db('groups').where('id', 3).update({ permissions: JSON.stringify(['manage:system', 'read:pages']) })
+    await watch(7, { inAppEnabled: true, emailEnabled: true })
+    const settings = await getNotificationSettings(db, recipient)
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const wiki = Reflect.get(globalThis, 'WIKI') as unknown as PageWatchWikiContext
+    const originalSend = wiki.mail.send
+    wiki.mail.send = async message => {
+      entered.resolve()
+      await release.promise
+      messages.push(message)
+    }
+    let dispatch: Promise<string> | undefined
+    let saved: Promise<unknown> | undefined
+    try {
+      dispatch = deliver('page.updated')
+      await entered.promise
+      saved = updateNotificationSettings(db, recipient, { ceilings: { ...settings.ceilings, pageWatch: 'off' }, fingerprint: settings.fingerprint })
+      const locked = await db.transaction(async tx => {
+        const result = await tx.raw('SELECT pg_try_advisory_xact_lock(?) AS acquired', [771020])
+        return result.rows[0].acquired as boolean
+      })
+      expect(locked).toBe(false)
+      expect(messages).toHaveLength(0)
+      release.resolve()
+      await Promise.all([dispatch, saved])
+      expect(messages).toHaveLength(1)
+      expect((await getNotificationSettings(db, recipient)).ceilings.pageWatch).toBe('off')
+      expect(await db('pageWatchNotifications')).toHaveLength(1)
+    } finally {
+      release.resolve()
+      await Promise.allSettled([dispatch, saved].filter((promise): promise is Promise<string> | Promise<unknown> => promise !== undefined))
+      wiki.mail.send = originalSend
+    }
+  })
 
   it.each([
     ['in-app', { inAppEnabled: true, emailEnabled: false }, { inAppEnabled: false, emailEnabled: true }],

@@ -136,6 +136,7 @@
 </template>
 
 <script lang="ts">
+import { helpers } from '../../helpers/index.ts'
 import { defineComponent } from 'vue'
 import {
   PAGE_INTEGRITY_BATCH_DEFAULT,
@@ -260,7 +261,7 @@ export default defineComponent({
     },
     formatDate(value: string): string {
       const date = new Date(value)
-      return Number.isFinite(date.valueOf()) ? date.toLocaleString() : this.$t('admin:pageIntegrity.notRecorded')
+      return Number.isFinite(date.valueOf()) ? String(helpers.formatMoment(date, 'L LT')) : this.$t('admin:pageIntegrity.notRecorded')
     }
   }
 })

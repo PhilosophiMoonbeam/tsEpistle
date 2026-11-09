@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { canReadPage, managesSystem, pageAuthorizationContext, principalId, type PagePrincipal, type PageVisibilityRecord } from '../helpers/page-access.ts'
 import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
@@ -9,6 +10,7 @@ import { isCommentWebhookPageEligible } from '../core/webhooks.ts'
 import type { CommentWebhookAction } from '../../shared/webhook-events.ts'
 import { writeOutboxEvent } from '../core/outbox.ts'
 import { validateDiscussionAnnotations } from './discussion-annotations.ts'
+import { recordPageLifecycleComment } from '../helpers/page-lifecycle-clocks.ts'
 const { ApplicationError } = errors
 const POST_IDENTITY_LOCK = 72401642
 export interface DiscussionPostInput {
@@ -66,8 +68,12 @@ const anonymousCanReadDiscussion = async (
     getCommentPageAccessRuntime().auth.checkPageAccess(anonymousCommentReader, ['read:comments'], context, authority)
   )
 }
-export const createDiscussionPostingStore = (deps: Dependencies) => ({
-  async post(input: DiscussionPostInput): Promise<number> {
+export const createDiscussionPostingStore = (deps: Dependencies) => {
+  const postInTransaction = async (
+    tx: Knex.Transaction,
+    input: DiscussionPostInput,
+    options: { rootTransitionEventId?: string } = {}
+  ): Promise<number> => {
     rejectApiPrincipalMutation(input.requester)
     if (
       !Number.isSafeInteger(input.pageId) ||
@@ -82,7 +88,6 @@ export const createDiscussionPostingStore = (deps: Dependencies) => ({
     )
       throw new ApplicationError('Choose a page and enter a comment of 2 to 50,000 characters.', { status: 400 })
     const annotations = validateDiscussionAnnotations(input.annotations, input.replyTo)
-    return deps.db.transaction(async tx => {
       const page = await tx('pages').where('id', input.pageId).forShare().first()
       if (!page) throw new ApplicationError('Page not found.', { status: 404 })
       const tags = await tx('pageTags').join('tags', 'tags.id', 'pageTags.tagId').where('pageTags.pageId', page.id).select('tags.tag')
@@ -143,6 +148,7 @@ export const createDiscussionPostingStore = (deps: Dependencies) => ({
       if (page.visibility === 'public' && !protection) await deps.checkSpam({ page, comment: input, providerConfig: enabled[0].config })
       const createdAt = new Date()
       const timestamp = createdAt.toISOString()
+      const eventId = randomUUID()
       const [row] = await tx('comments')
         .insert({
           content: input.content.trim(),
@@ -176,14 +182,21 @@ export const createDiscussionPostingStore = (deps: Dependencies) => ({
       }
       if (row.isHidden === false || row.isHidden === 0) {
         await writeOutboxEvent(tx, {
+          id: eventId,
           type: 'discussion.comment-created',
           version: 1,
           aggregateType: 'comment',
           aggregateId: commentId,
           createdAt,
-          payload: { pageId: Number(page.id), commentId, actorId: input.user.id }
+          payload: {
+            pageId: Number(page.id),
+            commentId,
+            actorId: input.user.id,
+            ...(options.rootTransitionEventId ? { rootTransitionEventId: options.rootTransitionEventId } : {})
+          }
         })
       }
+      await recordPageLifecycleComment(tx, { pageId: Number(page.id), eventId })
       const eligibilityProtection = await tx('pageAccessPasswords').where('pageId', page.id).first('pageId')
       if (
         (row.isHidden === false || row.isHidden === 0) &&
@@ -197,10 +210,18 @@ export const createDiscussionPostingStore = (deps: Dependencies) => ({
           aggregateType: 'comment',
           aggregateId: commentId,
           createdAt,
-          payload: { pageId: Number(page.id), commentId, action }
+          payload: {
+            pageId: Number(page.id),
+            commentId,
+            action,
+            ...(options.rootTransitionEventId ? { rootTransitionEventId: options.rootTransitionEventId } : {})
+          }
         })
       }
       return commentId
-    })
   }
-})
+  return {
+    postInTransaction,
+    post: (input: DiscussionPostInput): Promise<number> => deps.db.transaction(tx => postInTransaction(tx, input))
+  }
+}

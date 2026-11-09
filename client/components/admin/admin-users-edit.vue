@@ -40,6 +40,7 @@
   </v-container>
 </template>
 <script lang="ts">
+import { helpers } from '../../helpers/index.ts'
 import { confirmDiscard } from '../common/confirm-dialog.ts'
 import { passwordPolicyMixin } from '../../helpers/password-policy.ts'
 import { newPasswordIssue } from '../../../shared/security-policy.ts'
@@ -87,7 +88,7 @@ export default {
     setSection(key: string) { this.section = key; void this.$router.replace({ query: this.$route.query, hash: '#' + key }) },
     tabKey(event: KeyboardEvent, key: string) { if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return; event.preventDefault(); const index = event.key === 'Home' ? 0 : event.key === 'End' ? this.tabs.length - 1 : (this.tabs.findIndex(tab => tab.key === key) + (event.key === 'ArrowRight' ? 1 : -1) + this.tabs.length) % this.tabs.length; const next = this.tabs[index]!.key; this.setSection(next); this.$nextTick(() => document.getElementById('account-tab-' + next)?.focus()) },
     initials(value: string) { return value.trim().split(/\s+/).slice(0,2).map(part => part[0]).join('').toUpperCase() },
-    date(value: string) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? this.$t('admin:usersEdit.notRecorded') : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) },
+    date(value: string) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? this.$t('admin:usersEdit.notRecorded') : String(helpers.formatMoment(date, 'L LT')) },
     eventTitle(action: string): string { return (action in accountActionTitle ? this.$t(`admin:usersEdit.actionTitles.${action}`) : undefined) ?? ({ 'profile-updated': this.$t('admin:usersEdit.profileUpdated'), 'membership-updated': this.$t('admin:usersEdit.groupMembershipChanged'), 'group-policy-updated': this.$t('admin:usersEdit.groupAccessPolicyChanged'), 'sign-in-policy-updated': this.$t('admin:usersEdit.signProviderPolicyChanged'), 'directory-groups-synchronized': this.$t('admin:usersEdit.directoryGroupMembershipSynchronized'), 'group-deleted': this.$t('admin:usersEdit.groupMembershipEndedAfter'), 'account-created': this.$t('admin:usersEdit.accountCreated'), 'account-deleted': this.$t('admin:usersEdit.accountDeleted'), 'password-replaced': this.$t('admin:usersEdit.passwordReplaced'), 'welcome-email-requested': this.$t('admin:usersEdit.welcomeEmailRequestedOutcome'), 'welcome-email-accepted': this.$t('admin:usersEdit.welcomeEmailAcceptedMail2'), 'welcome-email-failed': this.$t('admin:usersEdit.welcomeEmailFailed') } as Record<string,string>)[action] ?? action },
     eventFields(details: Record<string,unknown>): string[] { const fields = Array.isArray(details.fields) ? details.fields.filter((value): value is string => typeof value === 'string').map(value => (value in fieldTitles ? this.$t(fieldTitles[value as keyof AccountProfileDraft]) : value)) : []; return [...fields, ...(typeof details.groupId === 'number' ? [this.$t('admin:usersEdit.group', { groupId: details.groupId, interpolation: { escapeValue: false } })] : []), ...(details.sessionsEnded === true ? [this.$t('admin:usersEdit.existingSignSessionsEnded')] : [])] },
     async canLeave(): Promise<boolean> { return !this.busy && ((!this.dirty && !(this.dialog && (this.password || this.reason))) || await confirmDiscard(this.$t('admin:usersEdit.discardUnsavedAccountChanges'))) },

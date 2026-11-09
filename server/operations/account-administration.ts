@@ -1,4 +1,5 @@
 import { assertSavedPassword } from '../helpers/password-policy.ts'
+import { reloadPersonalMcpKeys, revokeOwnerPersonalMcpKeys } from '../helpers/personal-mcp.ts'
 import { resolveUserPresentation } from '../helpers/user-presentation.ts'
 import { isUserDateFormat, isUserTimeFormat, type UserTimeFormat } from '../../shared/user-presentation.ts'
 import { newPasswordIssue } from '../../shared/security-policy.ts'
@@ -66,7 +67,7 @@ interface Dependencies {
   definitions: () => Array<{ key: string; useForm?: boolean }>
   enforceTwoFactor: () => boolean
   snapshotPage(input: Parameters<typeof PageHistory.addVersion>[0]): Promise<unknown>
-  onCommitted?: (id: number) => void
+  onCommitted?: (id: number, personalKeysChanged: boolean) => void | Promise<void>
 }
 interface Authority {
   actorId: number | null
@@ -308,11 +309,12 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
       row: AccountRow,
       workspace: AccountWorkspace,
       actor: Authority
-    ) => Promise<{ action: string; details: Record<string, unknown>; deleted?: true }>
+    ) => Promise<{ action: string; details: Record<string, unknown>; deleted?: true; personalKeysChanged?: boolean }>
   ): Promise<AccountWorkspace> => {
     validId(id)
     const reason = reasonValue(input.reason)
     if (typeof input.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(input.fingerprint)) return fail('Load the current account before reviewing changes.')
+    let personalKeysChanged = false
     const result = await db.transaction(async tx => {
       // Group policy is stable before taking account locks; membership writers
       // follow the same group → account order. Lock actor/subject by id so two
@@ -329,6 +331,7 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
       if (input.fingerprint !== workspace.fingerprint) return fail('This account or its access policy changed. Reload it before saving.', 409)
       const event = await operation(tx, row, workspace, actor),
         now = new Date()
+      personalKeysChanged = event.personalKeysChanged === true
       await tx('users').where('id', id).update({ adminRevision: randomUUID(), updatedAt: now.toISOString() })
       await tx('userAdministrationEvents').insert({
         userId: id,
@@ -340,7 +343,7 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
       })
       return event.deleted ? workspace : inspect(tx, requester, id, allGroups, allProviders, actor)
     })
-    onCommitted?.(id)
+    await onCommitted?.(id, personalKeysChanged)
     return result
   }
   const endSessions = async (tx: Knex.Transaction, row: AccountRow) => {
@@ -572,7 +575,7 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
         for (const table of ['assets', 'comments', 'pageHistory']) await tx(table).where('authorId', id).update({ authorId: replaceId })
         await tx('userKeys').where('userId', id).delete()
         await tx('users').where('id', id).delete()
-        return { action: 'account-deleted', details: { replacementId: replaceId }, deleted: true }
+        return { action: 'account-deleted', details: { replacementId: replaceId }, deleted: true, personalKeysChanged: true }
       })
       return { id, deleted: true }
     },
@@ -633,8 +636,10 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
         }
         const sessionsEnded = changed.some(key => ['groups', 'email', 'password'].includes(key))
         if (sessionsEnded) await endSessions(tx, row)
+        if (password) await revokeOwnerPersonalMcpKeys(tx, [id])
         return {
           action: 'profile-updated',
+          personalKeysChanged: Boolean(password),
           details: { fields: changed, ...(changed.includes('groups') ? { previousGroups: workspace.profile.groups, groups: next.groups } : {}), sessionsEnded }
         }
       })
@@ -661,7 +666,8 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
         }
         if (Object.keys(patch).length) await tx('users').where('id', id).update(patch)
         if (action !== 'verify' && action !== 'activate') await endSessions(tx, row)
-        return { action, details: { sessionsEnded: action !== 'verify' && action !== 'activate' } }
+        if (action === 'deactivate' || action === 'end-sessions') await revokeOwnerPersonalMcpKeys(tx, [id])
+        return { action, personalKeysChanged: action === 'deactivate' || action === 'end-sessions', details: { sessionsEnded: action !== 'verify' && action !== 'activate' } }
       })
     },
     async setPassword(requester: PagePrincipal, id: number, input: Record<string, unknown>) {
@@ -673,7 +679,8 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
         await assertSavedPassword(tx, input.password)
         await tx('users').where('id', id).update({ password, mustChangePwd: input.mustChangePassword })
         await endSessions(tx, row)
-        return { action: 'password-replaced', details: { mustChangePassword: input.mustChangePassword, sessionsEnded: true } }
+        await revokeOwnerPersonalMcpKeys(tx, [id])
+        return { action: 'password-replaced', personalKeysChanged: true, details: { mustChangePassword: input.mustChangePassword, sessionsEnded: true } }
       })
     }
   }
@@ -684,8 +691,8 @@ export const accountAdministration = () => {
     models: { knex: Knex; pageHistory: typeof PageHistory }
     data: { authentication: Array<{ key: string; useForm?: boolean }> }
     config: { auth: { enforce2FA?: boolean } }
-    auth: { revokeUserTokens(input: { id: number; kind: 'u' }): void }
-    events: { outbound: { emit(event: string, input: unknown): void } }
+    auth: { revokeUserTokens(input: { id: number; kind: 'u' }): void; reloadApiKeys(): Promise<void> }
+    events: { outbound: { emit(event: string, input?: unknown): void } }
     logger: { warn(message: string): void }
   }
   return createAccountAdministrationStore({
@@ -693,13 +700,14 @@ export const accountAdministration = () => {
     definitions: () => wiki.data.authentication,
     enforceTwoFactor: () => wiki.config.auth.enforce2FA === true,
     snapshotPage: input => wiki.models.pageHistory.addVersion(input),
-    onCommitted(id) {
+    async onCommitted(id, personalKeysChanged) {
       try {
         wiki.auth.revokeUserTokens({ id, kind: 'u' })
         wiki.events.outbound.emit('addAuthRevoke', { id, kind: 'u' })
       } catch {
         wiki.logger.warn('Account change committed; live session recheck notification could not be published.')
       }
+      if (personalKeysChanged) await reloadPersonalMcpKeys(wiki)
     }
   })
 }

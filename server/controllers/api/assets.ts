@@ -1,6 +1,7 @@
 import express from 'express'
 import { objectValue, type Request, type Response, getWikiAuth } from '../_types.ts'
 import assetOperations from '../../operations/assets.ts'
+import type { AssetImageOperation } from '../../helpers/asset-image-transform.ts'
 
 const router = express.Router()
 const imageResizeRequestFields: Readonly<Record<string, true>> = {
@@ -10,7 +11,10 @@ const imageResizeRequestFields: Readonly<Record<string, true>> = {
   aspectPolicy: true,
   format: true,
   quality: true,
-  animationPolicy: true
+  animationPolicy: true,
+  operations: true,
+  expectedSourceSha256: true,
+  expectedSourceRevision: true
 }
 const imageResizeDestinationFields: Readonly<Record<string, true>> = { filename: true, folderId: true }
 const imageResizeFormatFields: Readonly<Record<string, true>> = { png: true, jpeg: true, webp: true, gif: true }
@@ -18,6 +22,47 @@ const imageResizeFormatFields: Readonly<Record<string, true>> = { png: true, jpe
 const imageResizeInteger = (value: unknown, name: string, minimum: number, maximum = Number.MAX_SAFE_INTEGER): number | null => {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum || value > maximum) return null
   return value
+}
+
+const imageOperationFields = {
+  crop: { type: true, left: true, top: true, width: true, height: true },
+  rotate: { type: true, turns: true },
+  mirror: { type: true, axis: true },
+  fill: { type: true, left: true, top: true, width: true, height: true, color: true }
+}
+
+const imageOperations = (value: unknown): AssetImageOperation[] | null => {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.length > 16) return null
+  const operations: AssetImageOperation[] = []
+  for (const operation of value) {
+    if (!operation || typeof operation !== 'object' || Array.isArray(operation)) return null
+    const type = objectValue(operation, 'type')
+    if (type !== 'crop' && type !== 'rotate' && type !== 'mirror' && type !== 'fill') return null
+    if (Object.keys(operation).some(key => !Object.hasOwn(imageOperationFields[type], key))) return null
+    if (type === 'rotate') {
+      const turns = objectValue(operation, 'turns')
+      if (turns !== 1 && turns !== 2 && turns !== 3) return null
+      operations.push({ type, turns })
+    } else if (type === 'mirror') {
+      const axis = objectValue(operation, 'axis')
+      if (axis !== 'horizontal' && axis !== 'vertical') return null
+      operations.push({ type, axis })
+    } else {
+      const left = imageResizeInteger(objectValue(operation, 'left'), 'left', 0)
+      const top = imageResizeInteger(objectValue(operation, 'top'), 'top', 0)
+      const width = imageResizeInteger(objectValue(operation, 'width'), 'width', 1)
+      const height = imageResizeInteger(objectValue(operation, 'height'), 'height', 1)
+      if (left === null || top === null || width === null || height === null) return null
+      if (type === 'crop') operations.push({ type, left, top, width, height })
+      else {
+        const color = objectValue(operation, 'color')
+        if (typeof color !== 'string' || !/^#[0-9a-f]{6}$/i.test(color)) return null
+        operations.push({ type, left, top, width, height, color })
+      }
+    }
+  }
+  return operations
 }
 
 interface AssetRequester extends Record<string, unknown> {
@@ -72,7 +117,7 @@ router.get('/:id/branding', async (req, res, next) => {
   }
 })
 
-router.post('/:id/resize', async (req, res, next) => {
+const imageResizeHandler = (preview: boolean): express.RequestHandler => async (req, res, next) => {
   res.set('Cache-Control', 'private, no-store')
   if (!requireAccess(req, res, ['read:assets'])) return
   const id = positiveInteger(req.params.id, res, 'id')
@@ -124,8 +169,27 @@ router.post('/:id/resize', async (req, res, next) => {
   if (animationPolicy !== 'preserve' && animationPolicy !== 'first-frame') {
     return res.status(400).json({ error: 'animationPolicy must be preserve or first-frame.' })
   }
+  const operations = imageOperations(objectValue(body, 'operations'))
+  if (operations === null) {
+    return res.status(400).json({ error: 'operations must contain at most 16 valid ordered image edits.' })
+  }
+  const expectedSourceSha256 = objectValue(body, 'expectedSourceSha256')
+  if (
+    (expectedSourceSha256 !== undefined && (typeof expectedSourceSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(expectedSourceSha256))) ||
+    (!preview && operations.length > 0 && expectedSourceSha256 === undefined)
+  ) {
+    return res.status(400).json({ error: 'A valid preview source SHA-256 digest is required for image edits.' })
+  }
+  const expectedSourceRevision = objectValue(body, 'expectedSourceRevision')
+  if (
+    (expectedSourceRevision !== undefined && (typeof expectedSourceRevision !== 'string' || !/^[0-9a-f]{64}$/.test(expectedSourceRevision))) ||
+    (!preview && operations.length > 0 && expectedSourceRevision === undefined)
+  ) {
+    return res.status(400).json({ error: 'A valid preview source revision is required for image edits.' })
+  }
   try {
-    const receipt = await assetOperations.resizeImage({
+    const operation = preview ? assetOperations.previewImage : assetOperations.resizeImage
+    const receipt = await operation({
       requester: req.user,
       id,
       destination: { filename, folderId },
@@ -134,11 +198,35 @@ router.post('/:id/resize', async (req, res, next) => {
       aspectPolicy,
       format: format as 'png' | 'jpeg' | 'webp' | 'gif',
       quality,
-      animationPolicy
+      animationPolicy,
+      operations,
+      ...(typeof expectedSourceSha256 === 'string' ? { expectedSourceSha256 } : {}),
+      ...(typeof expectedSourceRevision === 'string' ? { expectedSourceRevision } : {})
     })
-    res.status(201).json(receipt)
+    res.status(preview ? 200 : 201).json(receipt)
   } catch (err) {
     next(mapRelocationError(err))
+  }
+}
+
+router.post('/:id/resize', imageResizeHandler(false))
+router.post('/:id/resize-preview', imageResizeHandler(true))
+
+router.post('/:id/move-preview', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  if (!requireAccess(req, res, ['manage:assets'])) return
+  const id = positiveInteger(req.params.id, res, 'id')
+  if (id === null) return
+  const body = req.body
+  if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => key !== 'folderId')) {
+    return res.status(400).json({ error: 'A destination folderId is required.' })
+  }
+  const folderId = imageResizeInteger(objectValue(body, 'folderId'), 'folderId', 0)
+  if (folderId === null) return res.status(400).json({ error: 'folderId must be a non-negative integer.' })
+  try {
+    res.json(await assetOperations.previewMove({ requester: req.user, id, folderId }))
+  } catch (error) {
+    next(mapRelocationError(error))
   }
 })
 

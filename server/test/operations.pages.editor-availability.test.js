@@ -8,6 +8,9 @@ import { load } from 'js-yaml'
 import { up as createDurableJobs } from '../db/migrations/2.5.130.ts'
 import { up as addLeaseToken } from '../db/migrations/2.5.158.ts'
 import { up as createAssetRelocation } from '../db/migrations/tsepistle-000037-asset-relocation.ts'
+import { up as createReviewRouting } from '../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createLifecycle } from '../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createStoragePageImportOwners } from '../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
 
 const originalWiki = global.WIKI
 
@@ -138,6 +141,10 @@ describe('page creation editor availability', () => {
       table.dateTime('createdAt').notNullable()
       table.dateTime('publishedAt').nullable()
     })
+    await db.schema.createTable('groups', table => table.integer('id').primary())
+    await createReviewRouting(db)
+    await createLifecycle(db)
+    await createStoragePageImportOwners(db)
     const checkAccess = vi.fn().mockReturnValue(true)
     const loadPageRuleAuthority = vi.fn(async requester => ({ requester, permissions: ['write:pages'], groups: [], tagAliases: {} }))
     global.WIKI = {
