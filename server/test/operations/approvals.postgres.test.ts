@@ -16,6 +16,7 @@ import { up as createLifecycle } from '../../db/migrations/tsepistle-000075-page
 import { up as bindApprovalRevisions, down as retireApprovalRevisions } from '../../db/migrations/tsepistle-000078-approval-source-revisions.ts'
 import { up as createEditLocks } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 import type * as approvalOperations from '../../operations/approvals.ts'
+import { enqueuePageMutationEffects } from '../../core/page-mutation-outbox.ts'
 
 const connection = getPostgresTestConnection('_approval_revisions_test', import.meta.path)
 const suite = connection ? describe : describe.skip
@@ -193,6 +194,12 @@ suite('PostgreSQL approval canonical revision boundary', () => {
 
   it('reports the actual unchanged publication revision when publication changes no canonical authored fields', async () => {
     await writer('pages').where({ id: 42 }).update({ isPublished: true, authorId: 8 })
+    await enqueuePageMutationEffects(db, {
+      pageId: 42, sourceRevision: nextRevision, desiredState: 'present', action: 'create',
+      source: '# Exact review', contentType: 'markdown',
+      location: { locale: 'en', path: 'approval/exact-review', visibility: 'public', ownerId: null }
+    })
+    const existingEffects = await db('pageMutationOutbox').orderBy('effectKind')
     const request = await operations.submitPageApproval({
       requester: submitter, pageId: 42, sessionId: 'submitter-session', expectedSourceRevision: nextRevision, assigneeId: 8
     })
@@ -201,6 +208,7 @@ suite('PostgreSQL approval canonical revision boundary', () => {
     const publication = await db('outboxEvents').where({ aggregateId: request.id, type: 'approval.publish' }).first()
     expect(JSON.parse(publication.payload)).toMatchObject({ reviewedSourceRevision: nextRevision, publishedSourceRevision: nextRevision })
     expect(await db('pages').where({ id: 42 }).first('sourceRevision')).toEqual({ sourceRevision: nextRevision })
+    expect(await db('pageMutationOutbox').orderBy('effectKind')).toEqual(existingEffects)
   })
 
   it('does not replace canonical review identity with a changed timestamp', async () => {

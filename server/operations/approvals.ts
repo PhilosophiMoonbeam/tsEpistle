@@ -339,19 +339,22 @@ const publishPage = async (transaction: Knex.Transaction, page: ApprovalPage, ac
   if (!publishedPage) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
   const publishedSourceRevision = canonicalSourceRevision(publishedPage.sourceRevision)
   if (publishedSourceRevision === null) throw new ApplicationError('The published revision is invalid', { status: 409, code: 'APPROVAL_STALE' })
-  await enqueuePageMutationEffects(transaction, {
-    pageId: publishedPage.id,
-    sourceRevision: publishedPage.sourceRevision,
-    desiredState: 'present',
-    action: 'update',
-    source: publishedPage.content,
-    location: {
-      locale: publishedPage.localeCode,
-      path: publishedPage.path,
-      visibility: publishedPage.visibility,
-      ownerId: publishedPage.ownerId
-    }
-  })
+  // A no-op publication keeps the existing revision's immutable projection effects.
+  if (publishedSourceRevision !== canonicalSourceRevision(page.sourceRevision)) {
+    await enqueuePageMutationEffects(transaction, {
+      pageId: publishedPage.id,
+      sourceRevision: publishedPage.sourceRevision,
+      desiredState: 'present',
+      action: 'update',
+      source: publishedPage.content,
+      location: {
+        locale: publishedPage.localeCode,
+        path: publishedPage.path,
+        visibility: publishedPage.visibility,
+        ownerId: publishedPage.ownerId
+      }
+    })
+  }
   return publishedSourceRevision
 }
 
