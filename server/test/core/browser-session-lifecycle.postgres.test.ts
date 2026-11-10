@@ -7,6 +7,7 @@ import createKnex, { type Knex } from 'knex'
 import { Passport } from 'passport'
 import { up as migrate } from '../../db/migrations/tsepistle-000071-browser-session-retirement.ts'
 import { BrowserSessionStore } from '../../helpers/browser-session-store.ts'
+import { persistFederatedLoginSession } from '../../helpers/federated-login.ts'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 
@@ -217,6 +218,41 @@ suite('PostgreSQL browser-session retirement across instances', () => {
     }
     await save(fresh)
     expect(await load(secondStore, fresh.id)).toBeDefined()
+  })
+
+  it('binds a fresh federated redirect to the same durable browser session across instances', async () => {
+    const urls: string[] = []
+    let issuedSessionId: string | undefined
+    for (const store of [firstStore, secondStore]) {
+      const app = express()
+      app.use(store.middleware({ secret, resave: false, saveUninitialized: false }))
+      app.get('/start', async (request, response) => {
+        issuedSessionId = await persistFederatedLoginSession(request)
+        response.redirect(303, '/callback')
+      })
+      app.get('/callback', (request, response) => response.json({ sid: request.sessionID }))
+      const listening = Promise.withResolvers<void>()
+      const server = app.listen(0, '127.0.0.1', listening.resolve)
+      servers.push(server)
+      server.once('error', listening.reject)
+      await bounded(listening.promise)
+      const address = server.address()
+      if (!address || typeof address === 'string') throw new Error('Fixture did not bind loopback')
+      urls.push(`http://127.0.0.1:${address.port}`)
+    }
+    const untouched = await fetch(`${urls[1]}/callback`, { signal: AbortSignal.timeout(10_000) })
+    await untouched.json()
+    expect(untouched.headers.getSetCookie()).toEqual([])
+    expect(await db('sessions').select('sid')).toEqual([])
+
+    const started = await fetch(`${urls[0]}/start`, { redirect: 'manual', signal: AbortSignal.timeout(10_000) })
+    expect(started.status).toBe(303)
+    const cookie = started.headers.getSetCookie().find(value => value.startsWith('connect.sid='))?.split(';', 1)[0]
+    if (!cookie) throw new Error('Federated redirect did not initialize its browser session cookie')
+    const callback = await fetch(`${urls[1]}/callback`, { headers: { Cookie: cookie }, signal: AbortSignal.timeout(10_000) })
+    expect(callback.status).toBe(200)
+    expect(await callback.json()).toEqual({ sid: issuedSessionId })
+    expect(await db('sessions').select('sid')).toEqual([{ sid: issuedSessionId }])
   })
 
   it('makes real Passport logout and cookie regeneration fence a held Express save on the other instance', async () => {

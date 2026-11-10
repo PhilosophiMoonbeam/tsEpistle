@@ -22,6 +22,7 @@ export const FEDERATED_LOGIN_COOKIE_PREFIX = '__Host-federated-'
 export interface FederatedLoginRequest {
   readonly sessionID?: string | undefined
   readonly session?: {
+    federatedLoginInitialized?: true
     save(callback: (error?: unknown) => void): void
   } | undefined
   readonly cookies?: Record<string, unknown> | undefined
@@ -98,10 +99,13 @@ const requestIsHttps = (request: FederatedLoginRequest): boolean => {
 }
 export const persistFederatedLoginSession = async (request: FederatedLoginRequest): Promise<string> => {
   const sessionId = request.sessionID
-  const save = request.session?.save
-  if (!nonEmptyString(sessionId) || typeof save !== 'function') throw new Error('Federated login requires a durable browser session.')
+  const browserSession = request.session
+  if (!nonEmptyString(sessionId) || !browserSession || typeof browserSession.save !== 'function') throw new Error('Federated login requires a durable browser session.')
+  // Saving an untouched session does not emit its cookie with
+  // saveUninitialized:false. This marker initializes transport, not authority.
+  browserSession.federatedLoginInitialized = true
   await new Promise<void>((resolve, reject) => {
-    save.call(request.session, error => {
+    browserSession.save(error => {
       if (error) reject(error)
       else resolve()
     })
