@@ -33,6 +33,8 @@ const approvalItem = (id: string, title: string): PageApprovalInboxItem => ({
   status: 'submitted',
   revisionId: 8,
   revisionUpdatedAt: '2026-09-11T09:00:00.000Z',
+  reviewedSourceRevision: '8',
+  publishedSourceRevision: null,
   createdAt: '2026-09-11T09:00:00.000Z',
   updatedAt: '2026-09-11T09:30:00.000Z',
   closedAt: null,

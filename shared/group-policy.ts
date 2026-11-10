@@ -14,6 +14,7 @@ export interface GroupPolicyDraft {
   name: string
   description: string
   redirectOnLogin: string
+  formMfaRequired: boolean
   permissions: string[]
   pageRules: GroupPageRule[]
 }

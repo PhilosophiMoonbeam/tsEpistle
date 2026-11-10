@@ -26,5 +26,12 @@ export type CommentWebhookEventName = `comment.${CommentWebhookAction}`
 export const isCommentWebhookEventName = (value: string): value is CommentWebhookEventName =>
   COMMENT_WEBHOOK_ACTIONS.some(action => value === `comment.${action}`)
 
+export type ApprovalWebhookEventName = Extract<typeof WEBHOOK_EVENTS[number], { group: 'Reviews' }>['name']
+export type ApprovalWebhookStatus = 'submitted' | 'approved' | 'changes-requested' | 'rejected' | 'cancelled' | 'published'
+export const APPROVAL_WEBHOOK_VERSION = 2
+
+export const isApprovalWebhookEventName = (value: string): value is ApprovalWebhookEventName =>
+  WEBHOOK_EVENTS.some(event => event.group === 'Reviews' && event.name === value)
+
 export const isWebhookEventName = (value: string): boolean =>
   value.length <= 128 && /^(\*|[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)*)$/.test(value)

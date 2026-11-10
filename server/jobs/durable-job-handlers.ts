@@ -9,11 +9,12 @@ import {
   decryptWebhookSecret,
   isCommentWebhookPageEligible,
   projectCommentWebhookPayload,
+  projectApprovalWebhookPayload,
   resolveWebhookUrl,
   sendSignedWebhook,
   WebhookDeliveryError
 } from '../core/webhooks.ts'
-import { isCommentWebhookEventName, type CommentWebhookEventName } from '../../shared/webhook-events.ts'
+import { isApprovalWebhookEventName, isCommentWebhookEventName, type ApprovalWebhookEventName, type CommentWebhookEventName } from '../../shared/webhook-events.ts'
 import { pageAuthorizationContext, type PagePrincipal } from '../helpers/page-access.ts'
 import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import type { WikiAuth } from '../controllers/_types.ts'
@@ -93,7 +94,7 @@ const cleanupGovernanceAndDurableJobs: DurableJobHandler = async (job, context) 
   await cleanupDurableJobs(job, context)
 }
 
-const hasLiteralCommentSubscription = (value: unknown, eventType: string): boolean => {
+const hasLiteralSubscription = (value: unknown, eventType: string): boolean => {
   if (typeof value !== 'string') return false
   let parsed: unknown
   try {
@@ -104,11 +105,11 @@ const hasLiteralCommentSubscription = (value: unknown, eventType: string): boole
   return Array.isArray(parsed) && parsed.every(subscription => typeof subscription === 'string') && parsed.includes(eventType)
 }
 
-const suppressedWebhookDelivery = async (knex: Knex, deliveryId: string, signal: AbortSignal): Promise<void> => {
+const suppressedWebhookDelivery = async (knex: Knex, deliveryId: string, signal: AbortSignal, reason = 'Comment is no longer anonymously visible', statusCode: number | null = 204): Promise<void> => {
   signal.throwIfAborted()
   await knex('webhookDeliveries').where('id', deliveryId).update({
-    statusCode: 204,
-    responseSnippet: 'Comment is no longer anonymously visible',
+    statusCode,
+    responseSnippet: reason,
     deliveredAt: new Date()
   })
 }
@@ -118,6 +119,46 @@ interface CommentWebhookWikiContext {
   config: { features: { featurePageComments: boolean } }
   data: { commentProvider?: { key?: unknown } }
   models: { users: { getGuestUser(): Promise<PagePrincipal> } }
+}
+
+const isPublicWebhookEligible = async (
+  knex: Knex,
+  wiki: CommentWebhookWikiContext | undefined,
+  webhookId: string,
+  eventType: ApprovalWebhookEventName | CommentWebhookEventName,
+  pageId: number,
+  permissions: ['read:pages'] | ['read:pages', 'read:comments'],
+  signal: AbortSignal
+): Promise<boolean> => {
+  signal.throwIfAborted()
+  if (!wiki) return false
+  const currentWebhook = await knex('webhooks').where('id', webhookId).first('events', 'isEnabled')
+  if (
+    !currentWebhook ||
+    !(currentWebhook.isEnabled === true || currentWebhook.isEnabled === 1) ||
+    !hasLiteralSubscription(currentWebhook.events, eventType)
+  ) return false
+  const page = await knex('pages')
+    .select('id', 'visibility', 'isPublished', 'isSearchable', 'publishStartDate', 'publishEndDate', 'path', 'localeCode', 'ownerId')
+    .where('id', pageId)
+    .first()
+  if (!page) return false
+  const protection = await knex('pageAccessPasswords').where('pageId', pageId).first('pageId')
+  if (!isCommentWebhookPageEligible(page, Boolean(protection))) return false
+  const tagRows = await knex<{ tag: string }>('pageTags')
+    .innerJoin('tags', 'tags.id', 'pageTags.tagId')
+    .where('pageTags.pageId', pageId)
+    .orderBy('tags.tag', 'asc')
+    .select('tags.tag')
+  const pageContext = pageAuthorizationContext({ ...page, tags: tagRows })
+  if (!pageContext) return false
+  const guest = await wiki.models.users.getGuestUser()
+  if (!guest || Reflect.get(guest, 'id') !== 2 || !(Reflect.get(guest, 'isActive') === true || Reflect.get(guest, 'isActive') === 1)) return false
+  Reflect.set(guest, 'ownershipUserId', null)
+  const authority: PageRuleAuthority = await wiki.auth.loadPageRuleAuthority(guest)
+  if (!permissions.every(permission => wiki.auth.checkPageAccess(guest, [permission], pageContext, authority))) return false
+  signal.throwIfAborted()
+  return true
 }
 
 const isCommentWebhookEligible = async (
@@ -144,42 +185,14 @@ const isCommentWebhookEligible = async (
   )
     return false
 
-  const currentWebhook = await knex('webhooks').where('id', webhookId).first('events', 'isEnabled')
-  if (
-    !currentWebhook ||
-    !(currentWebhook.isEnabled === true || currentWebhook.isEnabled === 1) ||
-    !hasLiteralCommentSubscription(currentWebhook.events, eventType)
-  )
-    return false
-
   const activeProviders = await knex<{ key: string }>('commentProviders').where('isEnabled', true).select('key')
   if (activeProviders.length !== 1 || activeProviders[0]?.key !== 'default') return false
 
-  const page = await knex('pages')
-    .select('id', 'visibility', 'isPublished', 'isSearchable', 'publishStartDate', 'publishEndDate', 'path', 'localeCode', 'ownerId')
-    .where('id', pageId)
-    .first()
-  if (!page) return false
-  const protection = await knex('pageAccessPasswords').where('pageId', pageId).first('pageId')
-  if (!isCommentWebhookPageEligible(page, Boolean(protection))) return false
-  const tagRows = await knex<{ tag: string }>('pageTags')
-    .innerJoin('tags', 'tags.id', 'pageTags.tagId')
-    .where('pageTags.pageId', pageId)
-    .orderBy('tags.tag', 'asc')
-    .select('tags.tag')
-  const pageContext = pageAuthorizationContext({ ...page, tags: tagRows })
-  if (!pageContext) return false
-
-  const guest = await wiki.models.users.getGuestUser()
-  if (!guest || Reflect.get(guest, 'id') !== 2 || !(Reflect.get(guest, 'isActive') === true || Reflect.get(guest, 'isActive') === 1)) return false
-  Reflect.set(guest, 'ownershipUserId', null)
-  const authority: PageRuleAuthority = await wiki.auth.loadPageRuleAuthority(guest)
-  if (!wiki.auth.checkPageAccess(guest, ['read:pages'], pageContext, authority) || !wiki.auth.checkPageAccess(guest, ['read:comments'], pageContext, authority))
-    return false
   if (eventType !== 'comment.deleted') {
     const visibleComment = await knex('comments').where({ id: commentId, pageId }).where('isHidden', false).first('id')
     if (!visibleComment) return false
   }
+  if (!await isPublicWebhookEligible(knex, wiki, webhookId, eventType, pageId, ['read:pages', 'read:comments'], signal)) return false
   signal.throwIfAborted()
   return true
 }
@@ -199,31 +212,52 @@ export const createWebhookDeliveryHandler =
     if (!delivery || delivery.deliveredAt) return
     const webhook = await knex('webhooks').where('id', webhookId).first()
     if (!webhook) return
-    if (!webhook.isEnabled) {
-      signal.throwIfAborted()
-      const now = new Date()
-      await knex('webhookDeliveries').where('id', deliveryId).update({
-        statusCode: 204,
-        responseSnippet: 'Webhook disabled before delivery',
-        deliveredAt: now
-      })
-      return
-    }
     const event = await knex('outboxEvents').where('id', eventId).first()
     if (!event) return
     const eventType = String(event.type)
     const commentEventType = isCommentWebhookEventName(eventType) ? eventType : undefined
-    if (commentEventType !== undefined && !hasLiteralCommentSubscription(webhook.events, commentEventType)) {
-      await suppressedWebhookDelivery(knex, deliveryId, signal)
+    const approvalEventType = isApprovalWebhookEventName(eventType) ? eventType : undefined
+    if (!webhook.isEnabled) {
+      signal.throwIfAborted()
+      const now = new Date()
+      await knex('webhookDeliveries').where('id', deliveryId).update({
+        statusCode: approvalEventType !== undefined ? null : 204,
+        responseSnippet: approvalEventType !== undefined
+          ? 'Approval endpoint disabled; suppressed without delivery'
+          : 'Webhook disabled before delivery',
+        deliveredAt: now
+      })
       return
     }
-    const payload: unknown = JSON.parse(String(event.payload))
+    if ((commentEventType !== undefined || approvalEventType !== undefined) && !hasLiteralSubscription(webhook.events, eventType)) {
+      await suppressedWebhookDelivery(knex, deliveryId, signal, approvalEventType !== undefined
+        ? 'Approval literal subscription revoked; suppressed without delivery'
+        : undefined, approvalEventType !== undefined ? null : 204)
+      return
+    }
+    let payload: unknown
+    try {
+      payload = JSON.parse(String(event.payload))
+    } catch (error) {
+      if (approvalEventType === undefined) throw error
+      await suppressedWebhookDelivery(knex, deliveryId, signal, 'Approval event payload is invalid; suppressed without delivery', null)
+      return
+    }
     if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+      if (approvalEventType !== undefined) {
+        await suppressedWebhookDelivery(knex, deliveryId, signal, 'Approval event payload is invalid; suppressed without delivery', null)
+        return
+      }
       throw new TypeError(`Outbox event ${eventId} payload must be an object`)
     }
     const eventPayload = payload as Record<string, unknown>
-    const deliveryPayload: Record<string, unknown> =
-      commentEventType !== undefined ? projectCommentWebhookPayload(commentEventType, eventPayload) : eventPayload
+    const deliveryPayload = commentEventType !== undefined
+      ? projectCommentWebhookPayload(commentEventType, eventPayload)
+      : approvalEventType !== undefined ? projectApprovalWebhookPayload(approvalEventType, eventPayload) : eventPayload
+    if (!deliveryPayload) {
+      await suppressedWebhookDelivery(knex, deliveryId, signal, 'Approval event lacks unambiguous revision provenance; suppressed without delivery', null)
+      return
+    }
 
     try {
       const target = await resolveWebhookUrl(String(webhook.url))
@@ -238,6 +272,11 @@ export const createWebhookDeliveryHandler =
         ...(commentEventType !== undefined
           ? {
               commentEligibility: () => isCommentWebhookEligible(knex, wiki, webhookId, commentEventType, deliveryPayload, signal)
+            }
+          : {}),
+        ...(approvalEventType !== undefined
+          ? {
+              approvalEligibility: () => isPublicWebhookEligible(knex, wiki, webhookId, approvalEventType, Number(deliveryPayload.pageId), ['read:pages'], signal)
             }
           : {}),
         secret: decryptWebhookSecret(String(webhook.secretCiphertext), sessionSecret),

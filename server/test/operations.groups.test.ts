@@ -17,7 +17,7 @@ beforeEach(() => {
   for (const fn of Object.values(store)) fn.mockReset()
   store.creationOptions.mockResolvedValue({ fingerprint: 'creation-review' })
   store.create.mockResolvedValue({ id: 9 })
-  store.inspect.mockResolvedValue({ fingerprint: 'saved-review', description: 'Retained purpose' })
+  store.inspect.mockResolvedValue({ fingerprint: 'saved-review', description: 'Retained purpose', formMfaRequired: true })
   store.inspectForMembership.mockResolvedValue({ fingerprint: 'membership-review' })
   findById.mockResolvedValue({ id: 9, name: 'Research' })
   globalThis.WIKI = {
@@ -36,7 +36,7 @@ describe('legacy group operation adapters', () => {
       requester,
       expect.objectContaining({
         fingerprint: 'creation-review',
-        policy: { name: 'Research', description: '', redirectOnLogin: '/', permissions: ['read:pages'], pageRules: [] }
+        policy: { name: 'Research', description: '', redirectOnLogin: '/', formMfaRequired: false, permissions: ['read:pages'], pageRules: [] }
       })
     )
     expect(result.id).toBe(9)
@@ -50,7 +50,7 @@ describe('legacy group operation adapters', () => {
       9,
       expect.objectContaining({
         fingerprint: 'saved-review',
-        policy: { name: 'Research', description: 'Retained purpose', redirectOnLogin: '/docs', permissions: ['read:pages'], pageRules }
+        policy: { name: 'Research', description: 'Retained purpose', redirectOnLogin: '/docs', formMfaRequired: true, permissions: ['read:pages'], pageRules }
       })
     )
   })

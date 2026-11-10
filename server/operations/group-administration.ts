@@ -49,6 +49,7 @@ export const normalizeGroupPolicy = (value: unknown, existingPermissions: string
     description = textValue(v.description ?? '', 'Group description', 0, 1000),
     redirectOnLogin = textValue(v.redirectOnLogin || '/', 'Sign-in destination', 1, 255),
     permissions = strings(v.permissions).sort()
+  if (typeof v.formMfaRequired !== 'boolean') return fail('Choose whether form sign-ins require an authenticator.')
   if (permissions.some(p => !groupPermissions.some(item => item.key === p) && !existingPermissions.includes(p))) return fail('Choose a recognized permission.')
   if (permissions.includes('use:agent-browser') && !permissions.includes('use:agents')) return fail('Agent browsing also requires Use the Wiki Agent.')
   try {
@@ -89,7 +90,7 @@ export const normalizeGroupPolicy = (value: unknown, existingPermissions: string
     return { id, path, match, deny: r.deny, roles: roles.sort(), locales: locales.sort() }
   })
   if (new Set(pageRules.map(r => r.id)).size !== pageRules.length) return fail('Page-rule identifiers must be unique.')
-  return { name, description, redirectOnLogin, permissions, pageRules }
+  return { name, description, redirectOnLogin, formMfaRequired: v.formMfaRequired, permissions, pageRules }
 }
 type Database = Knex | Knex.Transaction
 interface Row extends GroupPolicyDraft {
@@ -183,6 +184,7 @@ export const createGroupAdministrationStore = ({ db, onCommitted }: Dependencies
     name: row.name,
     description: row.description,
     redirectOnLogin: row.redirectOnLogin || '/',
+    formMfaRequired: row.formMfaRequired,
     permissions: row.permissions,
     pageRules: row.pageRules,
     isSystem: row.isSystem,
@@ -348,7 +350,7 @@ export const createGroupAdministrationStore = ({ db, onCommitted }: Dependencies
           actorId: actor.id,
           action: 'group-created',
           reason,
-          details: JSON.stringify({ permissions: policy.permissions, ruleCount: policy.pageRules.length }),
+          details: JSON.stringify({ permissions: policy.permissions, ruleCount: policy.pageRules.length, formMfaRequired: policy.formMfaRequired }),
           createdAt: now
         })
         return Number(created.id)
@@ -387,9 +389,10 @@ export const createGroupAdministrationStore = ({ db, onCommitted }: Dependencies
             fields,
             permissionsAdded: policy.permissions.filter(p => !row.permissions.includes(p)),
             permissionsRemoved: row.permissions.filter(p => !policy.permissions.includes(p)),
-            ruleCount: policy.pageRules.length
+            ruleCount: policy.pageRules.length,
+            ...(fields.includes('formMfaRequired') ? { formMfaRequired: policy.formMfaRequired } : {})
           },
-          ended: fields.some(f => f === 'permissions' || f === 'pageRules') ? members : []
+          ended: fields.some(f => f === 'permissions' || f === 'pageRules' || f === 'formMfaRequired') ? members : []
         }
       })
     },

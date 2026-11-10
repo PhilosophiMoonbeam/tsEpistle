@@ -12,6 +12,7 @@ export default class Group extends Model {
   declare adminRevision: string
   declare isSystem: boolean
   declare redirectOnLogin: string
+  declare formMfaRequired: boolean
   declare createdAt: string
   declare updatedAt: string
   declare permissions: string[]
@@ -29,6 +30,7 @@ export default class Group extends Model {
         name: { type: 'string' },
         isSystem: { type: 'boolean' },
         redirectOnLogin: { type: 'string' },
+        formMfaRequired: { type: 'boolean' },
         createdAt: { type: 'string' },
         updatedAt: { type: 'string' }
       }

@@ -64,6 +64,7 @@ const baseState = (overrides: Record<string, unknown> = {}): Record<string, unkn
   pageOnlineActionUnavailableReason: '',
   readerPageActionsState: { ready: true },
   hasWritePagesPermission: true,
+  hasDuplicatePagePermission: false,
   showEditFab: false,
   showHeaderEditButton: true,
   commentsEnabled: false,
@@ -265,6 +266,7 @@ const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(
 const wikiStore = {
   user: { authenticated: true, id: 7, permissions: [] as string[] },
   site: { logoUrl: '/_site-logo/abc/logo.png' },
+  page: { effectivePermissions: { pages: { duplicate: false } } },
   authRefreshOutcome: 'authenticated' as string | null
 }
 type Rules = {
@@ -337,6 +339,28 @@ const call = (name: string, vm: Record<string, unknown>) => page.computed[name]!
 
 describe('page reader chrome rules', () => {
   const display = (smAndDown: boolean) => ({ $vuetify: { display: { smAndDown } } })
+
+  it('keeps the reader FAB discoverable for Duplicate-only eligibility without granting source editing', async () => {
+    for (const duplicate of [false, true]) {
+      wikiStore.page.effectivePermissions.pages.duplicate = duplicate
+      const permissions = {
+        hasWritePagesPermission: false, hasManagePagesPermission: false, hasDeletePagesPermission: false,
+        hasReadSourcePermission: false, hasReadHistoryPermission: false,
+        hasDuplicatePagePermission: call('hasDuplicatePagePermission', {})
+      }
+      const showEditFab = call('showEditFab', {
+        hasAnyPagePermissions: call('hasAnyPagePermissions', permissions),
+        editShortcutsObj: { editFab: true }, ...display(true)
+      })
+      expect(showEditFab).toBe(duplicate)
+      const { document } = await renderTemplate(PAGE, baseState({ ...permissions, showEditFab, showHeaderEditButton: false }))
+      const fab = document.querySelector('.page-edit-fab')
+      expect(fab !== null).toBe(duplicate)
+      const actions = document.querySelectorAll('[data-stub="v-list-item-title"]')
+      expect([...actions].some(action => action.textContent === 'common:header.duplicate')).toBe(duplicate)
+      expect([...actions].some(action => action.textContent === 'common:header.convert')).toBe(false)
+    }
+  })
 
   it('opens and closes navigation in Links and Discussion while keeping focused Article navigation suppressed', () => {
     const navigation = page.computed.navigationOpen as unknown as {

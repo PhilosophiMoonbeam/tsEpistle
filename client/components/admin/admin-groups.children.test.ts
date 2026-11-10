@@ -214,7 +214,7 @@ describe('group directory and creation', () => {
     state.reason = ' Organize research '
     await state.create()
     expect(createReviewedGroup).toHaveBeenCalledWith(
-      { name: 'Research', description: 'A purpose', redirectOnLogin: '/', permissions: [], pageRules: [] },
+      { name: 'Research', description: 'A purpose', redirectOnLogin: '/', formMfaRequired: false, permissions: [], pageRules: [] },
       'Organize research',
       'current'
     )

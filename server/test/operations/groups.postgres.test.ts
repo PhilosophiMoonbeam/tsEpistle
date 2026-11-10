@@ -2,6 +2,7 @@ import knexModule, { type Knex } from 'knex'
 import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from '../bun-test.mts'
 import { createGroupAdministrationStore, getGroupAdministrationStore, normalizeGroupPolicy } from '../../operations/group-administration.ts'
 import { up, down } from '../../db/migrations/tsepistle-000018-group-administration.ts'
+import { up as mfaUp, down as mfaDown } from '../../db/migrations/tsepistle-000079-group-form-mfa.ts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 const connection = getPostgresTestConnection('_group_test', import.meta.path)
 const suite = connection ? describe : describe.skip
@@ -12,6 +13,7 @@ const policy = (name = 'Readers') => ({
   name,
   description: '',
   redirectOnLogin: '/',
+  formMfaRequired: false,
   permissions: ['read:pages'],
   pageRules: [{ id: 'all', match: 'START', path: '', deny: false, roles: ['read:pages'], locales: [] }]
 })
@@ -80,6 +82,7 @@ suite('PostgreSQL reviewed group administration', () => {
       t.boolean('isArchived')
     })
     await up(db)
+    await mfaUp(db)
     store = createGroupAdministrationStore({ db })
   })
   afterAll(async () => {
@@ -150,6 +153,39 @@ suite('PostgreSQL reviewed group administration', () => {
   const review = async (id = 3, actor = admin) => ({
     fingerprint: (await store.inspect(actor, id)).fingerprint,
     reason: 'Reviewed group administration verification'
+  })
+  it('retires sessions on both MFA policy transitions, audits the requirement and retains independent keys', async () => {
+    await db('apiKeys').insert([
+      { key: 'service-key', isRevoked: false, expiration: '2099-01-01T00:00:00Z' },
+      { key: 'personal-key', personalOwnerId: 3, personalAccess: 'read-only', isRevoked: false, expiration: '2099-01-01T00:00:00Z' }
+    ])
+    const beforeKeys = await db('apiKeys').orderBy('id'), stale = await review()
+    expect((await store.inspect(admin, 3)).formMfaRequired).toBe(false)
+    for (const [index, required] of [true, false].entries()) {
+      const result = await store.savePolicy(steward, 3, {
+        ...(await review(3, steward)), policy: { ...policy(), formMfaRequired: required }
+      })
+      expect(result.sessionsEnded).toBe(1)
+      expect((await db('users').where('id', 3).first()).authVersion).toBe(index + 1)
+      const saved = await store.inspect(admin, 3)
+      expect(saved.formMfaRequired).toBe(required)
+      expect(saved.history[0]?.details).toMatchObject({ fields: ['formMfaRequired'], formMfaRequired: required, sessionsEnded: 1 })
+    }
+    await expect(store.savePolicy(admin, 3, { ...stale, policy: { ...policy(), formMfaRequired: true } })).rejects.toMatchObject({ status: 409 })
+    expect(await db('apiKeys').orderBy('id')).toEqual(beforeKeys)
+    await expect(store.savePolicy(manager, 1, {
+      ...(await review(1, manager)), policy: { ...policy('Administrators'), permissions: ['manage:system'], formMfaRequired: true }
+    })).rejects.toMatchObject({ status: 403 })
+  })
+  it('preserves existing policy and memberships through the default-false migration and guards active rollback', async () => {
+    const groups = await db('groups').orderBy('id'), membership = await db('userGroups').orderBy('userId')
+    await mfaDown(db)
+    await mfaUp(db)
+    expect(await db('groups').orderBy('id')).toEqual(groups)
+    expect(await db('userGroups').orderBy('userId')).toEqual(membership)
+    await db('groups').where('id', 3).update({ formMfaRequired: true })
+    await expect(mfaDown(db)).rejects.toThrow('Cannot discard an active group form-MFA requirement')
+    expect((await db('groups').where('id', 3).first()).formMfaRequired).toBe(true)
   })
   it('creates a deliberately reviewed policy and records its purpose', async () => {
     const options = await store.creationOptions(steward),
@@ -402,5 +438,7 @@ describe('Group policy input boundaries', () => {
     expect(() => normalizeGroupPolicy({ ...policy(), redirectOnLogin: 'javascript:alert(1)' })).toThrow()
     expect(() => normalizeGroupPolicy({ ...policy(), permissions: ['invented:permission'] })).toThrow()
     expect(() => normalizeGroupPolicy({ ...policy(), permissions: ['use:agent-browser'] })).toThrow()
+    expect(() => normalizeGroupPolicy({ ...policy(), formMfaRequired: 'true' })).toThrow()
+    expect(normalizeGroupPolicy(policy()).formMfaRequired).toBe(false)
   })
 })

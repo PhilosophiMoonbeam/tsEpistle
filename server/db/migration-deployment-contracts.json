@@ -515,6 +515,39 @@
       "rollback": "fix-forward-or-restore",
       "rehearsalPostconditions": ["native-storage-page-import-owners-schema"],
       "runtimePostconditions": ["native-storage-page-import-owners-schema"]
+    },
+    "tsepistle-000078-approval-source-revisions.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": ["native-approval-source-revisions-schema"],
+      "runtimePostconditions": ["native-approval-source-revisions-schema"]
+    },
+    "tsepistle-000079-group-form-mfa.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": ["native-group-form-mfa-schema"],
+      "runtimePostconditions": ["native-group-form-mfa-schema"]
+    },
+    "tsepistle-000080-page-edit-locks.js": {
+      "persistentState": "additive",
+      "reversible": false,
+      "writerCompatibility": "breaking",
+      "drain": "required",
+      "rehearsal": "required",
+      "recovery": "paired",
+      "rollback": "fix-forward-or-restore",
+      "rehearsalPostconditions": ["native-page-edit-locks-schema"],
+      "runtimePostconditions": ["native-page-edit-locks-schema"]
     }
   }
 }

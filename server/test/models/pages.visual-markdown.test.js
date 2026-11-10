@@ -38,6 +38,7 @@ describe('Visual Markdown page contracts', () => {
     let insertedProjection
     let lifecycleClock
     const knex = vi.fn(table => {
+      if (table === 'pageEditLocks') return { whereIn: () => ({ orderBy: () => ({ select: async () => [] }) }) }
       if (table === 'pages') {
         return {
           select: vi.fn().mockReturnThis(),
@@ -297,6 +298,8 @@ describe('Visual Markdown page contracts', () => {
     arrangeUpdate(page)
     const lockedTables = []
     global.WIKI.models.knex.mockImplementation(table => {
+      // Policy inspection is a read under the page fence, not another row-lock acquisition.
+      if (table === 'pageEditLocks') return { whereIn: () => ({ orderBy: () => ({ select: async () => [] }) }) }
       lockedTables.push(table)
       if (table === 'pages') {
         return {

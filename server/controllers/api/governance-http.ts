@@ -12,7 +12,7 @@ export const governancePrivacyHeaders: RequestHandler = (_req, res, next) => {
   next()
 }
 
-const governanceSourcePath = /^\/_api\/(?:page-feedback|page-lifecycle|hedgedoc-import|governed-notifications)(?:\/|\?|$)|^\/_api\/pages\/[1-9][0-9]*\/review-routing(?:\/|\?|$)|^\/_api\/pages\/?(?:\?|$)|^\/_api\/pages\/[1-9][0-9]*\/move(?:\/review)?\/?(?:\?|$)/u
+const governanceSourcePath = /^\/_api\/(?:page-feedback|page-lifecycle|hedgedoc-import|governed-notifications)(?:\/|\?|$)|^\/_api\/pages\/[1-9][0-9]*\/(?:review-routing|edit-lock)(?:\/|\?|$)|^\/_api\/pages\/?(?:\?|$)|^\/_api\/pages\/[1-9][0-9]*\/move(?:\/review)?\/?(?:\?|$)/u
 export const governancePreBodyPrivacy: RequestHandler = (req, res, next) => {
   if (governanceSourcePath.test(req.originalUrl)) governancePrivacyHeaders(req, res, next)
   else next()

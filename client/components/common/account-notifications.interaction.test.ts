@@ -163,6 +163,8 @@ const makeApproval = (overrides: Partial<PageApprovalInboxItem> = {}): PageAppro
   status: 'submitted',
   revisionId: 4,
   revisionUpdatedAt: '2026-09-11T10:00:00.000Z',
+  reviewedSourceRevision: '4',
+  publishedSourceRevision: null,
   createdAt: '2026-09-11T10:00:00.000Z',
   updatedAt: '2026-09-11T10:00:00.000Z',
   closedAt: null,

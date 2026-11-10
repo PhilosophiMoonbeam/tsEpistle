@@ -9,6 +9,8 @@ import type { MailOptions } from '../core/mail.ts'
 
 import { randomUUID } from 'node:crypto'
 import { sessionVersion } from '../helpers/account-session.ts'
+import { assertPagesEditUnlocked } from '../helpers/page-edit-lock.ts'
+import { lockSearchIndex, lockSearchPage } from '../helpers/search-contract.ts'
 import bcrypt from 'bcryptjs-then'
 import _ from 'lodash'
 import tfa from 'node-2fa'
@@ -742,7 +744,7 @@ export default class User extends Model {
     { skipTFA = false, skipChangePwd = false }: LoginChecks = {}
   ): Promise<AfterLoginResult> {
     // Get redirect target
-    user.groups = await user.$relatedQuery<Group>('groups').select('groups.id', 'permissions', 'redirectOnLogin')
+    user.groups = await user.$relatedQuery<Group>('groups').select('groups.id', 'permissions', 'redirectOnLogin', 'formMfaRequired')
     let redirect = '/'
     if (user.groups && user.groups.length > 0) {
       for (const grp of user.groups) {
@@ -771,7 +773,7 @@ export default class User extends Model {
           wiki.logger.warn(errc)
           throw new wiki.Error.AuthGenericError()
         }
-      } else if (wiki.config.auth.enforce2FA || (user.tfaIsActive && !user.tfaSecret)) {
+      } else if (wiki.config.auth.enforce2FA || user.groups.some(group => group.formMfaRequired) || (user.tfaIsActive && !user.tfaSecret)) {
         try {
           const { qrImage: tfaQRImage, secret: tfaSecret } = await user.generateTFA()
           const tfaToken = await wiki.models.userKeys.generateToken({
@@ -986,8 +988,14 @@ export default class User extends Model {
         if (err) {
           return reject(err)
         }
-        const jwtToken = await wiki.models.users.refreshToken(usr.id)
-        resolve({ jwt: jwtToken.token, userId: usr.id })
+        try {
+          const expectedAuthVersion = sessionVersion(usr.authVersion)
+          if (expectedAuthVersion === null) throw new wiki.Error.AuthLoginFailed()
+          const jwtToken = await wiki.models.users.refreshToken(usr.id, { expectedAuthVersion: expectedAuthVersion + 1 })
+          resolve({ jwt: jwtToken.token, userId: usr.id })
+        } catch (error) {
+          reject(error)
+        }
       })
     })
   }
@@ -1383,6 +1391,13 @@ export default class User extends Model {
       if (ownedPage || ownedPageHistory) {
         throw new wiki.Error.InputInvalid('Cannot delete a user who owns private pages.')
       }
+      const historyPages = await trx<{ pageId: number }>('pageHistory').where('authorId', id).distinct('pageId')
+      const attributedPages = await trx<{ id: number }>('pages').where(builder => builder.where('authorId', id).orWhere('creatorId', id)).select('id')
+      const affectedIds = [...new Set([...attributedPages.map(page => page.id), ...historyPages.map(page => page.pageId)])].sort((a, b) => a - b)
+      await lockSearchIndex(trx, false)
+      for (const pageId of affectedIds) await lockSearchPage(trx, pageId)
+      await trx('pages').whereIn('id', affectedIds).orderBy('id').forUpdate().select('id')
+      await assertPagesEditUnlocked(trx, affectedIds)
 
       await wiki.models.assets.query(trx).patch({ authorId: replaceId }).where('authorId', id)
       await wiki.models.comments.query(trx).patch({ authorId: replaceId }).where('authorId', id)

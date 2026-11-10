@@ -12,6 +12,8 @@ import type UserModel from '../../models/users.ts'
 import type UserKeyModel from '../../models/userKeys.ts'
 import { up as personalKeysUp } from '../../db/migrations/tsepistle-000062-personal-mcp-keys.ts'
 import { up as glossaryUp } from '../../db/migrations/tsepistle-000056-glossary.ts'
+import { up as addGroupFormMfa } from '../../db/migrations/tsepistle-000079-group-form-mfa.ts'
+import { up as addPageEditLocks } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 import { issuePersonalMcpKey, listPersonalMcpKeys, revokePersonalMcpKey } from '../../operations/personal-mcp.ts'
 import { loadMcpApiPrincipal } from '../../helpers/personal-mcp.ts'
 import { accountAdministration } from '../../operations/account-administration.ts'
@@ -156,7 +158,7 @@ suite('mounted native personal MCP security lifecycle on PostgreSQL', () => {
     return async () => {
       await store.savePolicy(admin, 3, {
         fingerprint: workspace.fingerprint, reason: 'Review concurrent group policy suspension',
-        policy: { name: workspace.name, description: workspace.description, redirectOnLogin: workspace.redirectOnLogin, pageRules: workspace.pageRules, permissions: permissions.filter(permission => permission !== 'use:mcp') }
+        policy: { name: workspace.name, description: workspace.description, redirectOnLogin: workspace.redirectOnLogin, formMfaRequired: workspace.formMfaRequired, pageRules: workspace.pageRules, permissions: permissions.filter(permission => permission !== 'use:mcp') }
       })
     }
   }
@@ -180,6 +182,7 @@ suite('mounted native personal MCP security lifecycle on PostgreSQL', () => {
       table.string('description').notNullable().defaultTo(''); table.string('redirectOnLogin').notNullable().defaultTo('/')
       table.string('updatedAt').notNullable().defaultTo('2026-01-01T00:00:00Z')
     })
+    await addGroupFormMfa(db)
     await db.schema.createTable('userGroups', table => {
       table.integer('userId').references('users.id').onDelete('CASCADE'); table.integer('groupId').references('groups.id').onDelete('CASCADE')
       table.primary(['userId', 'groupId'])
@@ -213,11 +216,12 @@ suite('mounted native personal MCP security lifecycle on PostgreSQL', () => {
       table.integer('id').primary(); table.integer('ownerId'); table.string('visibility'); table.integer('creatorId'); table.integer('authorId')
     })
     await db.schema.createTable('pageHistory', table => {
-      table.integer('id').primary(); table.integer('ownerId'); table.string('visibility'); table.integer('authorId')
+      table.integer('id').primary(); table.integer('pageId'); table.integer('ownerId'); table.string('visibility'); table.integer('authorId')
     })
     for (const name of ['comments', 'assets']) await db.schema.createTable(name, table => { table.integer('id').primary(); table.integer('authorId') })
     await db.schema.createTable('tags', table => { table.integer('id').primary(); table.string('tag'); table.integer('redirectToId'); table.boolean('isArchived') })
     await glossaryUp(db)
+    await addPageEditLocks(db)
     Reflect.set(globalThis, 'WIKI', runtime)
     // These models capture WIKI at evaluation; install the complete isolated runtime before loading them.
     users = (await import('../../models/users.ts')).default.bindKnex(db)
@@ -261,7 +265,7 @@ suite('mounted native personal MCP security lifecycle on PostgreSQL', () => {
   }
   beforeEach(async () => {
     Reflect.set(globalThis, 'WIKI', runtime)
-    for (const table of ['glossaryTermRelations', 'glossaryNames', 'glossaryTerms', 'apiKeys', 'userKeys', 'userAdministrationEvents', 'authenticationAdministrationEvents', 'groupAdministrationEvents', 'navigation', 'agentProviderGrants', 'agentSkillGrants', 'userGroups', 'users', 'groups', 'authentication', 'settings', 'pageHistory', 'pages', 'comments', 'assets', 'tags']) await db(table).delete()
+    for (const table of ['pageEditLockAudit', 'pageEditLocks', 'glossaryTermRelations', 'glossaryNames', 'glossaryTerms', 'apiKeys', 'userKeys', 'userAdministrationEvents', 'authenticationAdministrationEvents', 'groupAdministrationEvents', 'navigation', 'agentProviderGrants', 'agentSkillGrants', 'userGroups', 'users', 'groups', 'authentication', 'settings', 'pageHistory', 'pages', 'comments', 'assets', 'tags']) await db(table).delete()
     const now = new Date().toISOString()
     await db('users').insert([
       { id: 1, name: 'Administrator', email: 'admin@example.test', providerKey: 'local', isSystem: true, timezone: 'UTC', localeCode: 'en', createdAt: now, updatedAt: now },
@@ -300,7 +304,7 @@ suite('mounted native personal MCP security lifecycle on PostgreSQL', () => {
   })
   afterAll(async () => {
     if (db) {
-      for (const table of ['glossaryTermRelations', 'glossaryNames', 'glossaryTerms', 'apiKeys', 'userKeys', 'userAdministrationEvents', 'authenticationAdministrationEvents', 'groupAdministrationEvents', 'navigation', 'agentProviderGrants', 'agentSkillGrants', 'userGroups', 'users', 'groups', 'authentication', 'settings', 'pageHistory', 'pages', 'tags', 'comments', 'assets']) await db.schema.dropTableIfExists(table)
+      for (const table of ['pageEditLockAudit', 'pageEditLocks', 'glossaryTermRelations', 'glossaryNames', 'glossaryTerms', 'apiKeys', 'userKeys', 'userAdministrationEvents', 'authenticationAdministrationEvents', 'groupAdministrationEvents', 'navigation', 'agentProviderGrants', 'agentSkillGrants', 'userGroups', 'users', 'groups', 'authentication', 'settings', 'pageHistory', 'pages', 'tags', 'comments', 'assets']) await db.schema.dropTableIfExists(table)
       await db.destroy()
     }
     if (previousWiki === undefined) Reflect.deleteProperty(globalThis, 'WIKI'); else Reflect.set(globalThis, 'WIKI', previousWiki)
@@ -443,7 +447,7 @@ suite('mounted native personal MCP security lifecycle on PostgreSQL', () => {
   it('retains immutable personal kind after native account deletion and preserves the private-history deletion guard', async () => {
     const issued = await issuePersonalMcpKey(owner, '42', keyInput)
     const independent = await issuePersonalMcpKey({ id: 43, authVersion: 0 }, '43', keyInput)
-    await db('pageHistory').insert({ id: 1, ownerId: 42, authorId: 42, visibility: 'private' })
+    await db('pageHistory').insert({ id: 1, pageId: 1, ownerId: 42, authorId: 42, visibility: 'private' })
     await expect(accountAdministration().remove(admin, 42, { ...(await review()), replaceId: 43 })).rejects.toMatchObject({ status: 403 })
     expect(await db('apiKeys').where('id', issued.item.id).first()).toMatchObject({ personalOwnerId: 42, personalAccess: 'read-only', isRevoked: false })
     await db('pageHistory').where('id', 1).update({ visibility: 'public' })

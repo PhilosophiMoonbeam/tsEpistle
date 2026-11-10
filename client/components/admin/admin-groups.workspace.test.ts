@@ -1,4 +1,6 @@
 import fs from 'node:fs'
+import { compileTemplate } from '@vue/compiler-sfc'
+import type { VNode } from 'vue'
 import { groupPermissions } from '../../../shared/group-policy.ts'
 import { groupPolicyCopy, groupPolicySignature, emptyGroupPolicy } from '../../helpers/group-workspace-api.ts'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
@@ -16,6 +18,7 @@ const snapshot = {
   name: 'Researchers',
   description: 'Before',
   redirectOnLogin: '/',
+  formMfaRequired: false,
   permissions: ['read:pages'],
   pageRules: [{ id: 'all', match: 'START', path: '', deny: false, roles: ['read:pages'], locales: [] }],
   isSystem: false,
@@ -70,6 +73,22 @@ function arrange(overrides: Record<string, unknown> = {}) {
   return { state, component, transport, window }
 }
 describe('group workspace review, recovery and navigation', () => {
+  it('reviews a fixed form-MFA transition and warns of session retirement before saving', async () => {
+    const { state, transport } = arrange()
+    await state.load()
+    expect(state.draft.formMfaRequired).toBe(false)
+    state.draft.formMfaRequired = true
+    expect(state.dirty).toBe(true)
+    state.reviewPolicy()
+    expect(state.endsSessions).toBe(true)
+    expect(state.reviewedChanges).toContainEqual(expect.objectContaining({ key: 'formMfaRequired' }))
+    state.draft.formMfaRequired = false
+    state.reason = 'Require an authenticator for researchers'
+    await state.confirm()
+    expect(transport.saveGroupPolicy.mock.calls[0]?.[1]).toMatchObject({ formMfaRequired: true })
+    expect(state.saved.formMfaRequired).toBe(true)
+    expect(state.dirty).toBe(false)
+  })
   it('isolates policy drafts and blocks membership changes until policy is saved or reset', async () => {
     const { state } = arrange()
     await state.load()
@@ -236,5 +255,64 @@ describe('group workspace review, recovery and navigation', () => {
     state.reviewPolicy()
     expect(state.dialog).toBe(false)
     expect(state.policyIssue).toContain('HTTP(S)')
+  })
+})
+
+describe('mounted group MFA control boundary', () => {
+  it('ignores nullable updates without clearing a saved requirement and accepts explicit boolean changes', async () => {
+    // Install the DOM before loading Vue/Vuetify, which capture the platform at evaluation.
+    const { document } = await import('../../test/browser-dom.mts')
+    const Vue = await import('vue')
+    const { createVuetify } = await import('vuetify')
+    const { VSwitch } = await import('vuetify/components')
+    const invocation = source.match(/<v-switch\b[^>]*draft\.formMfaRequired[^>]*\/>/)?.[0]
+    if (!invocation) throw new Error('Missing production group MFA control')
+    const compiled = compileTemplate({
+      source: invocation, filename: 'admin-groups-edit.vue', id: 'group-mfa-control',
+      compilerOptions: { mode: 'function' }
+    })
+    if (compiled.errors.length) throw new Error(String(compiled.errors))
+    const render = new Function('Vue', compiled.code)(Vue)
+    const state = Vue.reactive({ draft: { ...emptyGroupPolicy(), formMfaRequired: true }, policyLocked: false, $t: translateEnglish })
+    let modelUpdate: unknown
+    const app = Vue.createApp({
+      components: { VSwitch },
+      setup: () => () => {
+        const vnode: VNode = render(state, [])
+        modelUpdate = Reflect.get(vnode.props ?? {}, 'onUpdate:modelValue')
+        return vnode
+      }
+    })
+    const update = (value: boolean | null) => {
+      if (typeof modelUpdate !== 'function') throw new Error('Mounted MFA switch has no model update listener')
+      modelUpdate(value)
+    }
+    app.use(createVuetify())
+    const host = document.createElement('div')
+    document.body.append(host)
+    app.mount(host)
+    try {
+      const checkbox = host.querySelector<HTMLInputElement>('input[type="checkbox"]')
+      if (!checkbox) throw new Error('MFA switch did not mount')
+      expect(checkbox.checked).toBe(true)
+      update(null)
+      await Vue.nextTick()
+      expect(state.draft.formMfaRequired).toBe(true)
+      expect(checkbox.checked).toBe(true)
+      update(false)
+      await Vue.nextTick()
+      expect(state.draft.formMfaRequired).toBe(false)
+      expect(checkbox.checked).toBe(false)
+      update(null)
+      await Vue.nextTick()
+      expect(state.draft.formMfaRequired).toBe(false)
+      update(true)
+      await Vue.nextTick()
+      expect(state.draft.formMfaRequired).toBe(true)
+      expect(checkbox.checked).toBe(true)
+    } finally {
+      app.unmount()
+      host.remove()
+    }
   })
 })

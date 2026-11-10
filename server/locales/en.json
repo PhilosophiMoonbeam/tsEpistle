@@ -130,6 +130,21 @@
       "requestFailed": "The glossary request failed. Please retry."
     },
     "page": {
+      "editLockTitle": "Administrative edit lock",
+      "editLockReconnect": "Reconnect and reload the current account and page before inspecting the edit lock.",
+      "editLockLoading": "Loading current edit-lock policy…",
+      "editLockLocked": "Administratively edit-locked",
+      "editLockUnlocked": "Editing is not administratively locked",
+      "editLockExplanation": "This page is edit-locked. Source, metadata, tags, publication, privacy, ownership, moves, deletion and restore require a system manager to unlock it first. Discussions and review workflow records remain available.",
+      "editLockManage": "Manage administrative edit lock",
+      "editLockOverride": "To deliberately override the lock, record an unlock reason, perform the authorized operation, then optionally lock the page again. Unlocking grants no additional page access.",
+      "editLockLastReason": "Last audited reason:",
+      "editLockAuditIdentity": "Recorded by account {{actor}}, lock version {{version}}.",
+      "editLockReason": "Required audit reason (1–500 characters)",
+      "editLockUnlockAction": "Record reason and unlock editing",
+      "editLockLockAction": "Record reason and lock editing",
+      "editLockReload": "Reload edit-lock policy",
+      "editLockDiscardReason": "Discard the unsaved edit-lock audit reason?",
       "articlePosition": "Article position",
       "exitFocusEscape": "Exit focus · Esc",
       "personalReadingProgress": "Personal reading progress",
@@ -7998,6 +8013,11 @@
       "tryAnotherCategoryDifferent": "Try another category or a different search."
     },
     "groupsEditRules": {
+      "literalSemantics": "Literal page and asset identities are case-sensitive and Unicode-sensitive: Guide and guide, or composed and decomposed accents, are different. Enter the settled path without a URL, locale prefix or leading slash. Percent escapes are literal text, not decoded. Existing authoring trims surrounding whitespace; SUBTREE also removes trailing slashes and matches only the path itself or slash-delimited descendants. START is a text prefix, END a text suffix, and EXACT compares the whole path. TAG resolves tag aliases; REGEX applies its own expression semantics. Use Access check with an identity you supply; it does not search for private content or prove that content exists.",
+      "savedIdentity": "Identity after applying this rule (JSON-quoted; escapes show invisible characters):",
+      "leadingSlashWarning": "A leading slash is kept literally, not removed. Stored page and asset identities normally have no leading slash. Correct it explicitly if you intended that identity.",
+      "encodedWarning": "Percent escapes are kept literally, not URL-decoded. Supply the actual stored identity, not a copied encoded URL.",
+      "whitespaceWarning": "Existing rule authoring removes surrounding whitespace. The quoted identity shows the value that will be applied.",
       "pathStarts": "Path starts with",
       "pathDescendants": "Path and descendants",
       "pathExactly": "Path is exactly",
@@ -8080,6 +8100,13 @@
       "tryAgain": "Try again"
     },
     "groupsEdit": {
+      "formMfaTitle": "Form sign-in authenticator policy",
+      "formMfaLabel": "Require an authenticator for form sign-ins",
+      "formMfaScope": "Applies to password/form identities only. Workspace, account and all current group requirements combine: any requirement keeps MFA required. Redirect identities remain provider-managed; this setting does not verify their MFA. Anonymous access and personal MCP, service and API credentials are unchanged.",
+      "formMfaRecovery": "Arrange scoped administrator recovery access before enabling this for your own group. A reviewed account authenticator reset clears a lost secret and requires password sign-in followed by enrollment again. Disabling is unavailable while the workspace or any current group requires MFA. Removing this group requirement does not remove existing account enrollment.",
+      "formMfaTransition": "Enabling or disabling this requirement immediately ends every current member’s existing sign-ins and pending sign-in/recovery continuations, including your own if you are a member. They must sign in again. Existing account enrollment stays intact; personal MCP, service and API keys are not revoked.",
+      "formMfaRequired": "Required for form identities",
+      "formMfaNotRequired": "No additional group requirement",
       "membersCount_one": "{{count}} member",
       "membersCount_other": "{{count}} members",
       "sessionsEndedSentence_one": "Existing sign-ins ended for {{count}} account.",
@@ -9979,6 +10006,11 @@
       "uploadCount": "Upload {{count}}"
     },
     "markup": {
+      "discoverPageLinks": "Find page links",
+      "noMatchingPages": "No matching pages",
+      "loadingPages": "Loading pages…",
+      "pageDiscoveryFailed": "Page suggestions could not be loaded. Your text is unchanged.",
+      "discoveryHint": "Type [[ for pages, / on an empty line for commands, or Ctrl+Space for contextual commands. Toolbar actions remain available if your input method uses this shortcut.",
       "toolsShort": "Tools",
       "imageProperties": "Image properties",
       "noMatchingCommands": "No matching commands",

@@ -20,6 +20,8 @@ import {
 import { principalId, type PagePrincipal } from '../helpers/page-access.ts'
 import { accountSessionIsCurrent } from '../helpers/account-session.ts'
 import errors from './errors.ts'
+import { assertPagesEditUnlocked } from '../helpers/page-edit-lock.ts'
+import { lockSearchIndex, lockSearchPage } from '../helpers/search-contract.ts'
 
 const { ApplicationError } = errors
 type Database = Knex | Knex.Transaction
@@ -50,6 +52,7 @@ interface GroupRow {
   name: string
   permissions: string[]
   isSystem: boolean
+  formMfaRequired: boolean
 }
 interface ProviderRow {
   key: string
@@ -126,7 +129,7 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
     })
   }
   const groups = async (tx: Database, lock = false): Promise<GroupRow[]> => {
-    const query = tx<GroupRow>('groups').select('id', 'name', 'permissions', 'isSystem').orderBy('id')
+    const query = tx<GroupRow>('groups').select('id', 'name', 'permissions', 'isSystem', 'formMfaRequired').orderBy('id')
     return (await (lock ? query.forShare() : query)).map(row => ({ ...row, permissions: strings(row.permissions) }))
   }
   const memberships = async (tx: Database, id: number, available: GroupRow[]) => {
@@ -176,7 +179,7 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
       ? 'provider-managed'
       : row.tfaIsActive && row.tfaSecret
         ? 'enrolled'
-        : row.tfaIsActive || enforceTwoFactor()
+        : row.tfaIsActive || enforceTwoFactor() || membership.some(group => group.formMfaRequired)
           ? 'enrollment-required'
           : 'off',
     createdAt: date(row.createdAt),
@@ -223,7 +226,7 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
       if (provider?.supportsTwoFactor) {
         if (!row.tfaIsActive) actions.push('require-2fa')
         if (row.tfaIsActive && row.tfaSecret) actions.push('reset-2fa')
-        if (row.tfaIsActive && !enforceTwoFactor()) actions.push('disable-2fa')
+        if (row.tfaIsActive && !enforceTwoFactor() && !membership.some(group => group.formMfaRequired)) actions.push('disable-2fa')
       }
     }
     return {
@@ -559,11 +562,17 @@ export const createAccountAdministrationStore = ({ db, definitions, enforceTwoFa
           return fail('The replacement account is outside your administrative scope.', 403)
         // The subject lock excludes new FK-referenced contributions. Private
         // ownership/history is checked while that same lock is held.
-        const pages = await tx<AttributionPage>('pages')
+        const attributedPages = await tx<{ id: number }>('pages')
           .where(builder => builder.where('authorId', id).orWhere('creatorId', id))
-          .orderBy('id')
-          .forUpdate()
+          .select('id')
+        const historyPages = await tx<{ pageId: number }>('pageHistory').where('authorId', id).distinct('pageId')
+        const affectedIds = [...new Set([...attributedPages.map(page => page.id), ...historyPages.map(page => page.pageId)])].sort((a, b) => a - b)
+        await lockSearchIndex(tx, false)
+        for (const pageId of affectedIds) await lockSearchPage(tx, pageId)
+        const pages = await tx<AttributionPage>('pages').whereIn('id', affectedIds).orderBy('id').forUpdate()
+        await assertPagesEditUnlocked(tx, affectedIds)
         for (const page of pages) {
+          if (page.authorId !== id && page.creatorId !== id) continue
           await snapshotPage({ ...page, action: 'updated', versionDate: date(page.updatedAt), transaction: tx })
           const changed = await tx('pages').where({ id: page.id, sourceRevision: page.sourceRevision }).update({
             ...(page.authorId === id ? { authorId: replaceId } : {}),

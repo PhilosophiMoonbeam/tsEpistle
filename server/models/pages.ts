@@ -59,6 +59,7 @@ import { authorizeAgentAnswerCreationOrigin, lockPageCreationOwner } from '../he
 import { consumePageConversionReview } from '../helpers/page-conversion-review.ts'
 import { markStoragePageImportOwnerDeleted } from '../helpers/storage-page-import-owner.ts'
 import { admitPageLifecycleHumanMove } from '../operations/page-lifecycle.ts'
+import { assertPageEditUnlocked, assertPagesEditUnlocked } from '../helpers/page-edit-lock.ts'
 
 type UnknownRecord = Record<string, unknown>
 const isRecord = (value: unknown): value is UnknownRecord => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -613,6 +614,10 @@ const lockPageForMutation = async (transaction: Knex.Transaction, page: Page): P
   }
   return loadPageTags(page, transaction, true)
 }
+// A private-page system bypass must use the committing authority snapshot, not
+// manager permissions captured on the requester before waiting for the row fence.
+const hasCurrentPrivateAuthority = (user: PageUser, page: Pick<Page, 'visibility' | 'ownerId'>, authority: PageRuleAuthority): boolean =>
+  page.visibility !== 'private' || principalId(user) === page.ownerId || authority.permissions.includes('manage:system')
 
 const hasPagePermission = (user: PageUser, permissions: readonly string[], context: PageAuthorizationContext | null, authority: PageRuleAuthority): boolean =>
   context !== null && wiki.auth.checkPageAccess(user, [...permissions], context, authority)
@@ -788,6 +793,7 @@ const mutatePageOkfMetadata = (
 }
 
 const saveCanonicalPageRevision = async (input: CanonicalPageCommitInput): Promise<CanonicalPageCommitResult> => {
+  await assertPageEditUnlocked(input.transaction, input.page.id)
   await assertNoStorageAssetAtPagePaths(input.transaction, {
     path: input.patch.path ?? input.page.path,
     localeCode: input.patch.localeCode ?? input.page.localeCode,
@@ -1572,12 +1578,19 @@ export default class Page extends Model {
     const pageEventType = opts.action === 'restored' ? 'page.restored' : willMove ? 'page.moved' : 'page.updated'
     const restoredIdentity = await canonicalPageTransaction(opts.transaction, async transaction => {
       const authorizationTags = await lockPageForMutation(transaction, ogPage)
-      if (opts.unattendedLifecycle && await transaction('pageAccessPasswords').where({ pageId: ogPage.id }).forShare().first('pageId')) {
-        throw new errors.ApplicationError('Protected pages require an interactive native edit.', { code: 'LIFECYCLE_NEEDS_INTERACTIVE', status: 403 })
-      }
       if (authorizationTags === undefined) {
         if (ogPage.visibility === 'private') throw new wiki.Error.PageNotFound()
         throw new wiki.Error.PageUpdateForbidden()
+      }
+      const authority = await wiki.auth.loadPageRuleAuthority(opts.user, transaction)
+      const currentContext = pageAccessContext({ ...ogPage, tags: authorizationTags })
+      if (currentContext === null || !hasCurrentPrivateAuthority(opts.user, ogPage, authority) || !canWritePage(opts.user, currentContext, authority)) {
+        if (ogPage.visibility === 'private') throw new wiki.Error.PageNotFound()
+        throw new wiki.Error.PageUpdateForbidden()
+      }
+      await assertPageEditUnlocked(transaction, ogPage.id)
+      if (opts.unattendedLifecycle && await transaction('pageAccessPasswords').where({ pageId: ogPage.id }).forShare().first('pageId')) {
+        throw new errors.ApplicationError('Protected pages require an interactive native edit.', { code: 'LIFECYCLE_NEEDS_INTERACTIVE', status: 403 })
       }
       const originalTags = [...authorizationTags]
       const historyTagIds = originalTags.map(tag => tag.id)
@@ -1587,17 +1600,11 @@ export default class Page extends Model {
       } else {
         ogPage.tags = originalTags
       }
-      const authority = await wiki.auth.loadPageRuleAuthority(opts.user, transaction)
-      const currentContext = pageAccessContext({ ...ogPage, tags: authorizationTags })
       const proposedContext = pageAccessContext(ogPage, {
         path: destinationPath,
         localeCode: destinationLocale,
         tags: ogPage.tags
       })
-      if (currentContext === null || !canWritePage(opts.user, currentContext, authority)) {
-        if (ogPage.visibility === 'private') throw new wiki.Error.PageNotFound()
-        throw new wiki.Error.PageUpdateForbidden()
-      }
       if (proposedContext === null || !canWritePage(opts.user, proposedContext, authority)) {
         if (willMove) throw new wiki.Error.PageMoveForbidden()
         throw new wiki.Error.PageUpdateForbidden()
@@ -1829,11 +1836,15 @@ export default class Page extends Model {
         ownerId,
         tags: authorizationTags
       })
-      if (currentContext === null || !canWritePage(opts.user, currentContext, authority)) throw new wiki.Error.PageUpdateForbidden()
+      if (currentContext === null || !hasCurrentPrivateAuthority(opts.user, page, authority) || !canWritePage(opts.user, currentContext, authority)) {
+        if (page.visibility === 'private') throw new wiki.Error.PageNotFound()
+        throw new wiki.Error.PageUpdateForbidden()
+      }
       if (proposedContext === null || !canWritePage(opts.user, proposedContext, authority)) throw new wiki.Error.PageUpdateForbidden()
       if (opts.visibility === 'public' && (!opts.confirmPublication || !hasPagePermission(opts.user, ['write:pages'], proposedContext, authority))) {
         throw new wiki.Error.PageUpdateForbidden()
       }
+      await assertPageEditUnlocked(transaction, page.id)
       const collision = await wiki.models.pages.query(transaction).findOne({
         visibility: opts.visibility,
         ownerId,
@@ -1922,9 +1933,10 @@ export default class Page extends Model {
     if (collision) throw new wiki.Error.PagePathCollision()
 
     await wiki.models.knex.transaction(async transaction => {
-      await lockAssetMutationFence(transaction, true)
-      await lockSearchIndex(transaction, false)
-      await lockSearchPage(transaction, page.id)
+      await lockPageForMutation(transaction, page)
+      const authority = await wiki.auth.loadPageRuleAuthority(opts.user, transaction)
+      if (!authority.permissions.includes('manage:system')) throw new wiki.Error.PageNotFound()
+      await assertPageEditUnlocked(transaction, page.id)
       await wiki.models.pageHistory.addVersion({
         ...page,
         action: 'ownership-transferred',
@@ -2082,7 +2094,7 @@ export default class Page extends Model {
       }
       const authority = await wiki.auth.loadPageRuleAuthority(opts.user, transaction)
       const context = pageAccessContext({ ...ogPage, tags: authorizationTags })
-      if (context === null || !canWritePage(opts.user, context, authority)) {
+      if (context === null || !hasCurrentPrivateAuthority(opts.user, ogPage, authority) || !canWritePage(opts.user, context, authority)) {
         if (ogPage.visibility === 'private') throw new wiki.Error.PageNotFound()
         throw new wiki.Error.PageUpdateForbidden()
       }
@@ -2091,6 +2103,7 @@ export default class Page extends Model {
       })) {
         throw new errors.ApplicationError('Unlock the current page before confirming conversion.', { code: 'PAGE_LOCKED', status: 403 })
       }
+      await assertPageEditUnlocked(transaction, ogPage.id)
       await assertNoStorageAssetAtPagePaths(transaction, {
         path: ogPage.path,
         localeCode: ogPage.localeCode,
@@ -2232,7 +2245,7 @@ export default class Page extends Model {
         localeCode: opts.destinationLocale,
         tags: authorizationTags
       })
-      if (currentContext === null || !canWritePage(opts.user, currentContext, authority)) {
+      if (currentContext === null || !hasCurrentPrivateAuthority(opts.user, page, authority) || !canWritePage(opts.user, currentContext, authority)) {
         if (page.visibility === 'private') throw new wiki.Error.PageNotFound()
         throw new wiki.Error.PageMoveForbidden()
       }
@@ -2240,6 +2253,7 @@ export default class Page extends Model {
       if (page.visibility === 'public' && !hasPagePermission(opts.user, ['write:pages'], proposedContext, authority)) {
         throw new wiki.Error.PageMoveForbidden()
       }
+      await assertPageEditUnlocked(transaction, page.id)
       const destinationPage = await wiki.models.pages.query(transaction).findOne({
         path: opts.destinationPath,
         localeCode: opts.destinationLocale,
@@ -2353,7 +2367,11 @@ export default class Page extends Model {
       const authorizationTags = await lockPageForMutation(transaction, page)
       if (authorizationTags === undefined) throw new wiki.Error.PageNotFound()
       const authority = await wiki.auth.loadPageRuleAuthority(user, transaction)
-      if (!canDeletePage(user, { ...page, tags: authorizationTags }, authority)) throw new wiki.Error.PageDeleteForbidden()
+      if (!hasCurrentPrivateAuthority(user, page, authority) || !canDeletePage(user, { ...page, tags: authorizationTags }, authority)) {
+        if (page.visibility === 'private') throw new wiki.Error.PageNotFound()
+        throw new wiki.Error.PageDeleteForbidden()
+      }
+      await assertPageEditUnlocked(transaction, page.id)
       const deletionVersion = await wiki.models.pageHistory.addVersion({
         ...page,
         action: 'deleted',
@@ -2484,6 +2502,7 @@ export default class Page extends Model {
 
         const existingPage = (await transaction('pages').where({ id: opts.pageId }).forUpdate().first('id')) as { id: number } | undefined
         if (existingPage) throw pageRecoveryConflict()
+        await assertPageEditUnlocked(transaction, opts.pageId)
         const latestVersion = (await transaction('pageHistory')
           .select('id', 'action')
           .where('pageId', opts.pageId)
@@ -3016,9 +3035,11 @@ export default class Page extends Model {
         .whereNotExists(builder => {
           builder.select('id').from('pages AS pagesm').where('pagesm.localeCode', targetLocale).andWhereRaw('pagesm.path = pages.path')
         })
+        .orderBy('id', 'asc')
         .forUpdate()
         .withGraphFetched('tags')
       if (pages.length === 0) return { pages: [] as MigratedPageIdentity[], cacheHashes: [] as string[] }
+      await assertPagesEditUnlocked(transaction, pages.map(page => page.id))
 
       const migratedPages: MigratedPageIdentity[] = []
       const cacheHashes = new Set<string>()
@@ -3386,6 +3407,7 @@ const commitReviewedMovePage = async (opts: MovePageOptions): Promise<PageMoveRe
         source: rewritten.source
       })
     }
+    await assertPagesEditUnlocked(transaction, pageIds)
 
     if (targetSource !== currentTarget.content && (await pageHasActiveApproval(transaction, currentTarget.id))) {
       throw pageMoveReviewStale()

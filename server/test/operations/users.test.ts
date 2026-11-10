@@ -16,7 +16,7 @@ class AuthProviderInvalid extends Error {}
 class AuthPasswordInvalid extends Error {}
 class InputInvalid extends Error {}
 
-const requester = { id: 10, ownershipUserId: 10 } as Express.User
+const requester = { id: 10, ownershipUserId: 10, authVersion: 0 } as Express.User
 
 const installWiki = (overrides: Record<string, unknown> = {}) => {
   const lifecycle: string[] = []
@@ -236,7 +236,7 @@ describe('self-service profile identity', () => {
   )
 
   it('allows an ordinary human principal to update only that principal and refresh its cookie', async () => {
-    const { findById, refreshToken, updateUser } = installWiki()
+    const { findById, updateUser } = installWiki()
     const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
     const response = { cookie: vi.fn(), set: vi.fn() }
 
@@ -259,7 +259,6 @@ describe('self-service profile identity', () => {
       dateFormat: '',
       appearance: 'light'
     })
-    expect(refreshToken).toHaveBeenCalledWith(10)
     expect(response.cookie).toHaveBeenCalledWith('jwt', 'replacement-jwt', expect.any(Object))
   })
 })
@@ -295,7 +294,6 @@ describe('profile preferences operation', () => {
     }
     await expect(pending).resolves.toBeUndefined()
     expect(lifecycle).toEqual(['commit', 'refresh'])
-    expect(refreshToken).toHaveBeenCalledWith(10)
     expect(response.cookie).toHaveBeenCalledWith('jwt', 'replacement-jwt', expect.any(Object))
     expect(response.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
   })
@@ -363,5 +361,20 @@ describe('account credential operation revocation', () => {
     await expect(operations.default.resetPassword({ token: 'token', newPassword: 'new-password' })).rejects.toThrow('forced mutation failure')
 
     expect(revokeUserTokens).not.toHaveBeenCalled()
+  })
+})
+
+describe('replacement-cookie generation authority', () => {
+  it.each([undefined, null, -1, '0'])('refuses a missing or invalid authenticated generation instead of reloading current authority: %s', async authVersion => {
+    const { findById, refreshToken, updateUser } = installWiki()
+    const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
+    const response = { cookie: vi.fn(), set: vi.fn() }
+    await expect(operations.default.updateProfilePreferences({
+      requester: { ...requester, authVersion } as Express.User, expectedAccountId: 10, input: { appearance: 'dark' }, response: response as never
+    })).rejects.toBeInstanceOf(AuthRequired)
+    expect(findById).not.toHaveBeenCalled()
+    expect(updateUser).not.toHaveBeenCalled()
+    expect(refreshToken).not.toHaveBeenCalled()
+    expect(response.cookie).not.toHaveBeenCalled()
   })
 })

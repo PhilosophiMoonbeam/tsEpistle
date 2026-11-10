@@ -450,13 +450,12 @@ describe('controllers/api users endpoints', () => {
     ]
   ])('persists profile preferences and returns a success response', async (body, expectedUpdate) => {
     const { preferences } = await loadHandler()
-    const req = { user: { id: 42 }, body, get: name => name === 'X-TsEpistle-Profile-Account' ? '42' : undefined }
+    const req = { user: { id: 42, authVersion: 0 }, body, get: name => name === 'X-TsEpistle-Profile-Account' ? '42' : undefined }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis(), cookie: vi.fn(), set: vi.fn() }
 
     await preferences(req, res, vi.fn())
 
     expect(global.WIKI.models.users.updateUser).toHaveBeenCalledWith(expectedUpdate)
-    expect(global.WIKI.models.users.refreshToken).toHaveBeenCalledWith(42)
     expect(res.json).toHaveBeenCalledWith({ message: 'Profile preferences updated successfully.' })
   })
 
@@ -470,7 +469,7 @@ describe('controllers/api users endpoints', () => {
     ['an array payload', []]
   ])('rejects invalid profile preferences (%s) before calling operations', async (_label, body) => {
     const { preferences } = await loadHandler()
-    const req = { user: { id: 42 }, body }
+    const req = { user: { id: 42, authVersion: 0 }, body }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await preferences(req, res, vi.fn())

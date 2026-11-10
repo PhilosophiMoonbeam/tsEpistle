@@ -11,6 +11,7 @@ import { lockPageReviewRecipientAccounts, resolvePageReviewRecipients, type Revi
 import { lifecycleDefinition, lifecycleDestinationPermitted, lifecycleFingerprint, lifecycleNativeCommentsAvailable, lifecyclePagePermitted, lifecycleSelectPages, lifecycleStoredJson, lifecycleTargetSnapshot, lockLifecycleActor, lockLifecycleNativePage, lockPageLifecycleRule, pageLifecycleDatabaseNow } from '../operations/page-lifecycle.ts'
 import type { LifecycleActor, LifecycleCycle, LifecyclePage, LifecycleProposal, LifecycleReceipt, LifecycleRule, LifecycleRulePage } from '../operations/page-lifecycle.ts'
 import errors from '../operations/errors.ts'
+import { pageEditLocked, type PageEditLockRow } from '../helpers/page-edit-lock.ts'
 
 const NO_EXECUTION = '00000000-0000-4000-8000-000000000000'
 const payloadSchema = z.strictObject({ cycleId: z.uuid(), ruleId: z.uuid(), ruleRevision: z.number().int().positive(), pageId: z.number().int().positive(), selectedSourceRevision: z.string().regex(/^[1-9]\d*$/) })
@@ -223,6 +224,10 @@ const executeEffect = async (context: EffectContext, effect: PageLifecycleEffect
   const { transaction, cycle, rule, page, actor, now, signal } = context
   signal.throwIfAborted()
   if (effect.kind === 'add-tags') {
+    if (pageEditLocked(await transaction<PageEditLockRow>('pageEditLocks').where({ pageId: page.id }).first())) {
+      await stopCycle(transaction, rule, cycle, now, 'suspended', 'page-edit-locked', context.receipts)
+      return
+    }
     const tags = await transaction<{ id: number; tag: string; isArchived: boolean; redirectToId: number | null }>('tags').whereIn('id', effect.tagIds).orderBy('id').forShare()
     if (effect.tagIds.some(id => !tags.some(tag => tag.id === id && !tag.isArchived && tag.redirectToId === null))) { await stopCycle(transaction, rule, cycle, now, 'failed', 'invalid-action', context.receipts); return }
     const proposed = { ...page, tags: [...page.tags, ...tags.filter(tag => !page.tagIds.includes(tag.id))] }

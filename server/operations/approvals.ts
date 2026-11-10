@@ -15,6 +15,7 @@ import { writeOutboxEvent } from '../core/outbox.ts'
 import { enqueuePageMutationEffects } from '../core/page-mutation-outbox.ts'
 import errors from './errors.ts'
 import { pageRequiresUnlock } from './page-protection.ts'
+import { assertPageEditUnlocked } from '../helpers/page-edit-lock.ts'
 
 const { ApplicationError } = errors
 const MAX_VISIBLE_APPROVALS = 100
@@ -52,6 +53,8 @@ interface ApprovalRequestRow extends Record<string, unknown> {
   status: ApprovalStatus
   revisionId: number
   revisionUpdatedAt: ApprovalTimestamp
+  reviewedSourceRevision: string | null
+  publishedSourceRevision: string | null
   createdAt: ApprovalTimestamp
   updatedAt: ApprovalTimestamp
   closedAt: ApprovalTimestamp | null
@@ -71,6 +74,7 @@ interface ApprovalPageProjection extends PageVisibilityRecord, Record<string, un
   id: number
   title: string
   updatedAt: ApprovalTimestamp
+  sourceRevision: string | null
   localeCode: string
   tags: Array<{ tag: string }>
 }
@@ -121,7 +125,7 @@ const loadApprovalPageProjections = async (transaction: Knex, pageIds: readonly 
 
   const pageRows = (await transaction('pages')
     .whereIn('pages.id', uniquePageIds)
-    .select('pages.id', 'pages.title', 'pages.path', 'pages.localeCode', 'pages.visibility', 'pages.ownerId', 'pages.updatedAt')) as Array<
+    .select('pages.id', 'pages.title', 'pages.path', 'pages.localeCode', 'pages.visibility', 'pages.ownerId', 'pages.updatedAt', 'pages.sourceRevision')) as Array<
     Record<string, unknown>
   >
   const tagRows = (await transaction('pageTags')
@@ -180,6 +184,7 @@ const loadApprovalPageProjections = async (transaction: Knex, pageIds: readonly 
       visibility: normalizedVisibility,
       ownerId: normalizedOwnerId,
       updatedAt: normalizedUpdatedAt,
+      sourceRevision: canonicalSourceRevision(row.sourceRevision),
       tags
     })
   }
@@ -258,14 +263,23 @@ const requiredSourceRevision = (value: unknown): string => {
   return value
 }
 
+const canonicalSourceRevision = (value: unknown): string | null => {
+  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') return null
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
+  const revision = String(value)
+  return /^[1-9][0-9]*$/.test(revision) ? revision : null
+}
+
 const reviewerEligible = (requester: PagePrincipal, page: ApprovalPage | ApprovalPageProjection, authority: PageRuleAuthority): boolean => {
   if (managesSystem(requester)) return true
   const context = pageAuthorizationContext(page)
   return context !== null && wiki.auth.checkPageAccess(requester, ['manage:pages'], context, authority)
 }
 
-const staleRevision = (request: ApprovalRequestRow, page: Pick<ApprovalPage, 'updatedAt'>): boolean =>
-  !['published', 'rejected', 'cancelled'].includes(request.status) && new Date(request.revisionUpdatedAt).valueOf() !== new Date(page.updatedAt).valueOf()
+const staleRevision = (request: ApprovalRequestRow, page: { sourceRevision: unknown }): boolean =>
+  !['published', 'rejected', 'cancelled'].includes(request.status) &&
+  (request.reviewedSourceRevision === null || canonicalSourceRevision(request.reviewedSourceRevision) === null ||
+    request.reviewedSourceRevision !== canonicalSourceRevision(page.sourceRevision))
 
 const approvalEvent = async (
   transaction: Knex.Transaction,
@@ -284,6 +298,8 @@ const approvalEvent = async (
       requestId: request.id,
       pageId: request.pageId,
       revisionId: request.revisionId,
+      reviewedSourceRevision: request.reviewedSourceRevision,
+      publishedSourceRevision: request.publishedSourceRevision,
       status: request.status,
       actorId: actor,
       submitterId: request.submitterId,
@@ -307,7 +323,7 @@ const snapshotRevision = async (transaction: Knex.Transaction, page: ApprovalPag
   return revision.id
 }
 
-const publishPage = async (transaction: Knex.Transaction, page: ApprovalPage, actor: number): Promise<void> => {
+const publishPage = async (transaction: Knex.Transaction, page: ApprovalPage, actor: number): Promise<string> => {
   await snapshotRevision(transaction, page, 'approval-published')
   const changedRows = await wiki.models.pages
     .query(transaction)
@@ -321,6 +337,8 @@ const publishPage = async (transaction: Knex.Transaction, page: ApprovalPage, ac
     .forUpdate()
     .first()
   if (!publishedPage) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
+  const publishedSourceRevision = canonicalSourceRevision(publishedPage.sourceRevision)
+  if (publishedSourceRevision === null) throw new ApplicationError('The published revision is invalid', { status: 409, code: 'APPROVAL_STALE' })
   await enqueuePageMutationEffects(transaction, {
     pageId: publishedPage.id,
     sourceRevision: publishedPage.sourceRevision,
@@ -334,6 +352,7 @@ const publishPage = async (transaction: Knex.Transaction, page: ApprovalPage, ac
       ownerId: publishedPage.ownerId
     }
   })
+  return publishedSourceRevision
 }
 
 const canViewRequest = (
@@ -406,7 +425,7 @@ export const submitPageApproval = async (input: {
     if (await pageRequiresUnlock({ requester: input.requester, pageId: page.id, sessionId: input.sessionId, transaction })) {
       throw new ApplicationError('Access denied', { status: 403, code: 'PAGE_LOCKED' })
     }
-    if (String(currentPage.sourceRevision) !== expectedSourceRevision) {
+    if (canonicalSourceRevision(currentPage.sourceRevision) !== expectedSourceRevision) {
       throw new ApplicationError('The page changed before approval submission', { status: 409, code: 'APPROVAL_STALE' })
     }
     const active = await transaction<ApprovalRequestRow>('pageApprovalRequests')
@@ -424,6 +443,8 @@ export const submitPageApproval = async (input: {
       status: 'submitted',
       revisionId,
       revisionUpdatedAt: page.updatedAt,
+      reviewedSourceRevision: expectedSourceRevision,
+      publishedSourceRevision: null,
       createdAt: now,
       updatedAt: now,
       closedAt: null
@@ -436,6 +457,8 @@ export const submitPageApproval = async (input: {
       toStatus: 'submitted',
       actorId: submitterId,
       revisionId,
+      reviewedSourceRevision: request.reviewedSourceRevision,
+      publishedSourceRevision: null,
       comment: input.comment?.trim() || null,
       createdAt: now
     })
@@ -566,6 +589,8 @@ export const transitionApproval = async (input: {
     let nextStatus = request.status
     let revisionId = request.revisionId
     let revisionUpdatedAt = request.revisionUpdatedAt
+    let reviewedSourceRevision = request.reviewedSourceRevision
+    let publishedSourceRevision = request.publishedSourceRevision
     let assigneeId = request.assigneeId
 
     switch (input.action) {
@@ -593,16 +618,19 @@ export const transitionApproval = async (input: {
           throw new ApplicationError('Resubmission is not allowed', { status: 403, code: 'APPROVAL_FORBIDDEN' })
         if (!canWritePage(input.requester, page, authority))
           throw new ApplicationError('Resubmission is not allowed', { status: 403, code: 'APPROVAL_FORBIDDEN' })
-        if (String(currentPage.sourceRevision) !== expectedSourceRevision)
+        if (canonicalSourceRevision(currentPage.sourceRevision) !== expectedSourceRevision)
           throw new ApplicationError('The page changed before approval resubmission', { status: 409, code: 'APPROVAL_STALE' })
         revisionId = await snapshotRevision(transaction, page, 'approval-resubmitted')
         revisionUpdatedAt = page.updatedAt
+        reviewedSourceRevision = expectedSourceRevision!
+        publishedSourceRevision = null
         nextStatus = 'submitted'
         break
       case 'publish':
         if (request.status !== 'approved' || !reviewer) throw new ApplicationError('Publication is not allowed', { status: 403, code: 'APPROVAL_FORBIDDEN' })
         if (staleRevision(request, page)) throw new ApplicationError('The approved revision is stale', { status: 409, code: 'APPROVAL_STALE' })
-        await publishPage(transaction, page, actor)
+        await assertPageEditUnlocked(transaction, page.id)
+        publishedSourceRevision = await publishPage(transaction, page, actor)
         nextStatus = 'published'
         published = true
         break
@@ -621,6 +649,8 @@ export const transitionApproval = async (input: {
       status: nextStatus,
       revisionId,
       revisionUpdatedAt,
+      reviewedSourceRevision,
+      publishedSourceRevision,
       assigneeId,
       updatedAt: now,
       closedAt: terminal ? now : null
@@ -629,6 +659,8 @@ export const transitionApproval = async (input: {
       status: updated.status,
       revisionId: updated.revisionId,
       revisionUpdatedAt: updated.revisionUpdatedAt,
+      reviewedSourceRevision: updated.reviewedSourceRevision,
+      publishedSourceRevision: updated.publishedSourceRevision,
       assigneeId: updated.assigneeId,
       updatedAt: updated.updatedAt,
       closedAt: updated.closedAt
@@ -640,6 +672,8 @@ export const transitionApproval = async (input: {
       toStatus: nextStatus,
       actorId: actor,
       revisionId,
+      reviewedSourceRevision,
+      publishedSourceRevision,
       comment: comment || null,
       createdAt: now
     })
@@ -652,6 +686,8 @@ export const transitionApproval = async (input: {
         aggregateId: page.id,
         payload: {
           pageId: page.id,
+          reviewedSourceRevision,
+          publishedSourceRevision,
           actorId: actor,
           actorName: input.requester && typeof input.requester === 'object' ? Reflect.get(input.requester, 'name') : 'Reviewer',
           title: page.title,

@@ -8,6 +8,7 @@ import { up as createAssetRelocation } from '../../db/migrations/tsepistle-00003
 import { up as createReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
 import { up as createLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
 import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
+import { up as createEditLocks } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 
 
 const originalWIKI = global.WIKI
@@ -155,6 +156,7 @@ const createMutationSchema = async db => {
   await createReviewRouting(db)
   await createLifecycle(db)
   await createStoragePageImportOwners(db)
+  await createEditLocks(db)
 }
 describe('private page mutation existence isolation', () => {
   let Page
@@ -178,6 +180,7 @@ describe('private page mutation existence isolation', () => {
     const mutationOutboxRows = []
     let lifecycleClock
     const knex = vi.fn(table => {
+      if (table === 'pageEditLocks') return { whereIn: () => ({ orderBy: () => ({ select: async () => [] }) }) }
       if (table === 'storage') return { where: () => ({ orderBy: () => ({ forShare: () => ({ select: async () => [] }) }) }) }
       if (table === 'pages') {
         return {

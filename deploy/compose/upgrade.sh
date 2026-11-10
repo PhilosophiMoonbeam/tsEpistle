@@ -295,6 +295,7 @@ make_plan() {
         native-page-accuracy-attestations-schema|native-page-history-reasons-schema) ;;
         native-browser-session-retirement-schema|native-hedgedoc-import-schema|native-page-feedback-schema|native-page-review-routing-schema|native-page-lifecycle-schema|native-governed-notifications-schema) ;;
         native-storage-page-import-owners-schema) ;;
+        native-approval-source-revisions-schema|native-group-form-mfa-schema|native-page-edit-locks-schema) ;;
         personal-mcp-credential-kind-and-owner-schema) ;;
         external-mcp-oauth-grants-and-pending-schema|external-mcp-generic-oauth-schema|external-mcp-retired-oauth-configuration-schema) ;;
         *) die "Unsupported named migration postcondition: $probe" ;;
@@ -2078,6 +2079,55 @@ verify_postconditions() {
               OR status NOT IN ('sending','sent','suppressed','unknown','retry-before-handoff','failed'));
         ")"
         [[ "$result" == 0 ]] || die "Postcondition failed: $probe (invalid durable rows or destructive canonical-page foreign keys)"
+        ;;
+      native-approval-source-revisions-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM information_schema.columns
+          WHERE table_schema=current_schema() AND table_name IN ('pageApprovalRequests','pageApprovalTransitions')
+            AND column_name IN ('reviewedSourceRevision','publishedSourceRevision') AND data_type='text' AND is_nullable='YES';
+        ")"
+        [[ "$result" == 4 ]] || die "Postcondition failed: $probe (exact nullable canonical revision bindings)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM (
+            SELECT \"reviewedSourceRevision\", \"publishedSourceRevision\" FROM \"pageApprovalRequests\"
+            UNION ALL SELECT \"reviewedSourceRevision\", \"publishedSourceRevision\" FROM \"pageApprovalTransitions\"
+          ) bindings WHERE (\"reviewedSourceRevision\" IS NOT NULL AND \"reviewedSourceRevision\" !~ '^[1-9][0-9]*\$')
+            OR (\"publishedSourceRevision\" IS NOT NULL AND \"publishedSourceRevision\" !~ '^[1-9][0-9]*\$');
+        ")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe (invalid persisted revision identities)"
+        ;;
+      native-group-form-mfa-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM information_schema.columns WHERE table_schema=current_schema()
+            AND table_name='groups' AND column_name='formMfaRequired' AND data_type='boolean'
+            AND is_nullable='NO' AND column_default='false';
+        ")"
+        [[ "$result" == 1 ]] || die "Postcondition failed: $probe (default-false native form MFA policy)"
+        ;;
+      native-page-edit-locks-schema)
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          WITH expected(table_name,column_name,data_type,nullable) AS (VALUES
+            ('pageEditLocks','pageId','integer','NO'),('pageEditLocks','isEditLocked','boolean','NO'),
+            ('pageEditLocks','lockVersion','bigint','NO'),('pageEditLocks','updatedBy','integer','NO'),
+            ('pageEditLocks','reason','text','NO'),('pageEditLocks','updatedAt','timestamp with time zone','NO'),
+            ('pageEditLockAudit','id','uuid','NO'),('pageEditLockAudit','pageId','integer','NO'),
+            ('pageEditLockAudit','lockVersion','bigint','NO'),('pageEditLockAudit','wasEditLocked','boolean','NO'),
+            ('pageEditLockAudit','isEditLocked','boolean','NO'),('pageEditLockAudit','actorId','integer','NO'),
+            ('pageEditLockAudit','reason','text','NO'),('pageEditLockAudit','createdAt','timestamp with time zone','NO')
+          ) SELECT count(*) FROM expected e JOIN information_schema.columns c USING(table_name,column_name)
+          WHERE c.table_schema=current_schema() AND c.data_type=e.data_type AND c.is_nullable=e.nullable;
+        ")"
+        [[ "$result" == 14 ]] || die "Postcondition failed: $probe (native persistent lock and retained audit columns)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+          WHERE t.relnamespace=current_schema()::regnamespace AND t.relname IN ('pageEditLocks','pageEditLockAudit') AND c.contype='f';
+        ")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe (policy must survive page/account deletion)"
+        result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "
+          SELECT (SELECT count(*) FROM \"pageEditLocks\" WHERE \"pageId\"<=0 OR \"lockVersion\"<0 OR \"updatedBy\"<=0 OR length(reason) NOT BETWEEN 1 AND 500)
+          + (SELECT count(*) FROM \"pageEditLockAudit\" WHERE \"pageId\"<=0 OR \"lockVersion\"<=0 OR \"actorId\"<=0 OR length(reason) NOT BETWEEN 1 AND 500);
+        ")"
+        [[ "$result" == 0 ]] || die "Postcondition failed: $probe (invalid retained policy or audit identities)"
         ;;
       native-storage-page-import-owners-schema)
         result="$(docker exec "$container" psql -X -U "$user" -d "$database" -Atc "

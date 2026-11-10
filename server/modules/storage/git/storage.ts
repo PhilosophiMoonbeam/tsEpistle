@@ -1110,6 +1110,7 @@ const plugin: GitStoragePlugin = {
         throw new BoundedProcessError('parser', `Git import plan has no admitted destination: ${item.relPath}`)
       }
       let source: StorageFileHandle | undefined
+      let committedPageMove: { pageId: number; sourceRevision: string; outboxId: string } | undefined
       try {
         const contentType = pageHelper.getContentType(item.relPath)
         let fileExists = false
@@ -1178,6 +1179,7 @@ const plugin: GitStoragePlugin = {
                   throw new Error('Pending native Git move no longer has its exact accepted source revision')
                 }
                 acceptedMoveBinding = recorded
+                committedPageMove = { pageId: owned.id, sourceRevision: recorded.moveNativeRevision, outboxId: recorded.moveOperationId }
               } else {
                 if (association.sourcePath !== item.relPath || association.sourceSha256 !== destination.sourceSha256 ||
                     BigInt(association.nativeRevision) <= BigInt(recorded.moveNativeRevision) || association.operationId === recorded.moveOperationId) {
@@ -1223,6 +1225,7 @@ const plugin: GitStoragePlugin = {
                   canonicalTransactionHook
                 })
                 if (acceptedMoveBinding === undefined) throw new Error('Native Git move did not expose its actual accepted result')
+                committedPageMove = { pageId: owned.id, sourceRevision: acceptedMoveBinding.moveNativeRevision, outboxId: acceptedMoveBinding.moveOperationId }
               }
             }
             const pageResult = await commonDisk.processPage({
@@ -1321,7 +1324,10 @@ const plugin: GitStoragePlugin = {
           results.push({ kind: 'asset', relPath: item.relPath, ok: true })
         }
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error)
+        const failure = error instanceof Error ? error.message : String(error)
+        const message = committedPageMove
+          ? `Native page move already committed (page ${committedPageMove.pageId}, revision ${committedPageMove.sourceRevision}, outbox ${committedPageMove.outboxId}); remaining page import failed: ${failure}`
+          : failure
         wiki.logger.warn(`(STORAGE/GIT) Failed to process ${item.relPath}`)
         wiki.logger.warn(message)
         results.push({

@@ -1,5 +1,6 @@
 
 import createKnex from 'knex'
+import { EventEmitter } from 'node:events'
 
 const { decryptMock, resolveMock, sendMock, DeliveryError } = vi.hoisted(() => {
   class DeliveryError extends Error {
@@ -26,6 +27,7 @@ vi.mockModule('../../core/webhooks.ts', import.meta.url, () => ({
   sendSignedWebhook: sendMock,
   isCommentWebhookPageEligible: () => { throw new Error('Unexpected comment eligibility check for a page event.') },
   projectCommentWebhookPayload: () => { throw new Error('Unexpected comment payload for a page event.') },
+  projectApprovalWebhookPayload: () => { throw new Error('Unexpected approval payload for a page event.') },
   WebhookDeliveryError: DeliveryError
 }))
 
@@ -33,11 +35,34 @@ const { up: upDurableJobs } = await import('../../db/migrations/2.5.130.ts')
 const { up: addDurableJobLeaseToken } = await import('../../db/migrations/2.5.158.ts')
 const { up: upOutbox } = await import('../../db/migrations/2.5.131.ts')
 const { DurableJobStore } = await import('../../core/durable-jobs.ts')
-const { createWebhookDeliveryHandler } = await import('../../jobs/durable-job-handlers.ts')
 
 let knex
 let job
 let handler
+let createWebhookDeliveryHandler
+
+beforeAll(async () => {
+  knex = createKnex({
+    client: 'better-sqlite3',
+    connection: { filename: ':memory:' },
+    pool: { min: 1, max: 1 },
+    useNullAsDefault: true
+  })
+  await upDurableJobs(knex)
+  await addDurableJobLeaseToken(knex)
+  await upOutbox(knex)
+  vi.stubGlobal('WIKI', {
+    config: {
+      host: 'https://wiki.example.test', sessionSecret: 'session-secret',
+      db: { type: 'sqlite' }, lang: { code: 'en', namespacing: false },
+      features: { featurePageComments: false }
+    },
+    configSvc: {}, lang: {}, startedAt: {}, data: {}, logger: console,
+    events: { inbound: new EventEmitter(), outbound: new EventEmitter() },
+    models: { knex }
+  })
+  ;({ createWebhookDeliveryHandler } = await import('../../jobs/durable-job-handlers.ts'))
+})
 
 beforeEach(async () => {
   vi.clearAllMocks()
@@ -48,15 +73,10 @@ beforeEach(async () => {
     family: 4
   })
   sendMock.mockResolvedValue({ statusCode: 204, responseSnippet: '' })
-  knex = createKnex({
-    client: 'better-sqlite3',
-    connection: { filename: ':memory:' },
-    pool: { min: 1, max: 1 },
-    useNullAsDefault: true
-  })
-  await upDurableJobs(knex)
-  await addDurableJobLeaseToken(knex)
-  await upOutbox(knex)
+  await knex('webhookDeliveries').delete()
+  await knex('durableJobs').delete()
+  await knex('outboxEvents').delete()
+  await knex('webhooks').delete()
   const now = new Date('2026-08-14T12:00:00.000Z')
   await knex('webhooks').insert({
     id: 'hook-1', name: 'Hook', url: 'https://hooks.example.test/wiki',
@@ -80,8 +100,8 @@ beforeEach(async () => {
   handler = createWebhookDeliveryHandler('session-secret')
 })
 
-afterEach(async () => {
-  await knex.destroy()
+afterAll(async () => {
+  try { await knex?.destroy() } finally { vi.unstubAllGlobals() }
 })
 
 describe('webhook delivery durable handler', () => {

@@ -24,6 +24,8 @@ import { up as outboxUp } from '../../db/migrations/2.5.131.ts'
 import { up as pageWatchersUp } from '../../db/migrations/2.5.132.ts'
 import { up as leaseUp } from '../../db/migrations/2.5.158.ts'
 import { up as notificationPreferencesUp } from '../../db/migrations/tsepistle-000058-discussion-notifications.ts'
+import { up as groupMfaUp } from '../../db/migrations/tsepistle-000079-group-form-mfa.ts'
+import { up as editLocksUp } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 import type { FeedbackBoard, FeedbackList, FeedbackTransitionResult } from '../../../shared/page-feedback.ts'
 import type { PageReviewView } from '../../../shared/page-review-routing.ts'
 import type { PageLifecyclePreview } from '../../../shared/page-lifecycle.ts'
@@ -77,6 +79,7 @@ suite('mounted governance API with native PostgreSQL operations', () => {
     `)
     await commentProvidersUp(db); await jobsUp(db); await outboxUp(db); await pageWatchersUp(db); await leaseUp(db); await notificationPreferencesUp(db)
     await notesUp(db); await importUp(db); await feedbackUp(db); await reviewUp(db); await lifecycleUp(db); await governedNotificationsUp(db)
+    await groupMfaUp(db); await editLocksUp(db)
     const runtime = { models: { knex: db }, config: { host: '', db: { type: 'postgres' }, lang: { code: 'en', namespacing: false }, sessionSecret: 'owned-governance-http-only-secret', uploads: { maxFileSize: 1024 * 1024, maxFiles: 20 } }, configSvc: {}, lang: {}, startedAt: {}, events: { inbound: new EventEmitter(), outbound: new EventEmitter() }, auth: { loadPageRuleAuthority, checkPageAccess: auth.checkPageAccess, checkAccess: auth.checkAccess }, logger }
     Reflect.set(globalThis, 'WIKI', runtime); configureTransportRuntime(runtime)
     const Page = (await import('../../models/pages.ts')).default
@@ -109,7 +112,7 @@ suite('mounted governance API with native PostgreSQL operations', () => {
     cookie = await login(7); peerCookie = await login(8); guestCookie = await login(2)
   })
   beforeEach(async () => {
-    await db.raw('TRUNCATE users, groups, pages, "userGroups", "pageTags", "pageAccessPasswords", "pageUnlockGrants", "outboxEvents", "userNotificationPreferences", settings, "commentProviders", "pageAccuracyAttestations", "durableJobs", "feedbackBoards" RESTART IDENTITY CASCADE')
+    await db.raw('TRUNCATE "pageEditLocks", "pageEditLockAudit", users, groups, pages, "userGroups", "pageTags", "pageAccessPasswords", "pageUnlockGrants", "outboxEvents", "userNotificationPreferences", settings, "commentProviders", "pageAccuracyAttestations", "durableJobs", "feedbackBoards" RESTART IDENTITY CASCADE')
     await db('users').insert([2, 7, 8].map(id => ({ id, name: `Native account ${id}`, email: `native${id}@example.invalid` })))
     await db('groups').insert([{ id: 3, name: 'Current native writers', permissions: JSON.stringify(permissions), pageRules: JSON.stringify([{ match: 'START', path: '', deny: false, roles: permissions }]) }, { id: 4, name: 'Native readers', permissions: JSON.stringify(['read:pages']), pageRules: JSON.stringify([{ match: 'START', path: '', deny: false, roles: ['read:pages'] }]) }])
     await db('userGroups').insert([{ userId: 7, groupId: 3 }, { userId: 8, groupId: 3 }, { userId: 2, groupId: 4 }])
@@ -126,6 +129,34 @@ suite('mounted governance API with native PostgreSQL operations', () => {
     restorePageBinding?.()
     if (db) await db.destroy()
     Reflect.set(globalThis, 'WIKI', previousWiki); configureTransportRuntime(previousRuntime)
+  })
+
+  it('admits only current browser managers to audited edit-lock changes and redacts policy details from readers', async () => {
+    await db('groups').where({ id: 3 }).update({ permissions: JSON.stringify([...permissions, 'manage:system']) })
+    const command = { isEditLocked: true, expectedLockVersion: '0', reason: 'Reviewed native HTTP lock' }
+    const baseline = await db('pages').where({ id: 11 }).first()
+    for (const options of [{ cookie: guestCookie }, { cookie: 'fixture-api' }, { owner: '7:1' }, { csrf: 'wrong' }, { sourceOrigin: 'https://foreign.example' }, { site: 'cross-site' }]) {
+      const response = await request('/pages/11/edit-lock', command, { method: 'PUT', ...options })
+      expect([401, 403, 409]).toContain(response.status)
+      expect(response.headers.get('cache-control')).toBe('private, no-store')
+    }
+    await json(await request('/pages/11/edit-lock', { ...command, pageId: 12 }, { method: 'PUT' }), 400)
+    await json(await request('/pages/11/edit-lock', undefined, { method: 'PUT', raw: '{invalid' }), 400)
+    for (const expectedLockVersion of ['invalid', '-1', '01', '9223372036854775808', '9'.repeat(100)]) {
+      expect(await json(await request('/pages/11/edit-lock', { ...command, expectedLockVersion }, { method: 'PUT' }), 400)).toMatchObject({ code: 'INVALID_INPUT' })
+    }
+    expect(await db('pageEditLockAudit')).toEqual([])
+    await json(await request('/pages/11/edit-lock', command, { method: 'PUT', owner: '7:0' }))
+    expect(await db('pages').where({ id: 11 }).first()).toEqual(baseline)
+    expect(await db('pageEditLockAudit').where({ pageId: 11 }).select('lockVersion', 'actorId', 'reason')).toEqual([{ lockVersion: '1', actorId: 7, reason: command.reason }])
+    await json(await request('/pages/11/edit-lock', command, { method: 'PUT' }), 409)
+    await db('groups').where({ id: 3 }).update({ permissions: JSON.stringify(permissions) })
+    expect(await json(await request('/pages/11/edit-lock', undefined, { cookie: peerCookie }))).toMatchObject({ isEditLocked: true, canManage: false, updatedBy: null, reason: null, updatedAt: null })
+    await json(await request('/pages/11/edit-lock', { ...command, expectedLockVersion: '1', isEditLocked: false }, { method: 'PUT', cookie: peerCookie }), 403)
+    await json(await request('/pages/12/edit-lock', undefined, { cookie: peerCookie }), 404)
+    await db('groups').where({ id: 3 }).update({ permissions: JSON.stringify([...permissions, 'manage:system']) })
+    expect(await json(await request('/pages/11/edit-lock', { ...command, expectedLockVersion: '1', isEditLocked: false }, { method: 'PUT' }))).toMatchObject({ isEditLocked: false, lockVersion: '2' })
+    expect(await db('pageEditLockAudit').where({ pageId: 11 }).orderBy('lockVersion').pluck('isEditLocked')).toEqual([true, false])
   })
 
   it('rejects supplied old-account and anonymous intent before reads or writes under a replaced browser session', async () => {

@@ -122,7 +122,7 @@ interface EditorPage {
 
 interface EffectivePermissions {
   comments: { read: boolean; write: boolean; manage: boolean }
-  pages: { read: boolean; write: boolean; manage: boolean; delete: boolean; script: boolean; style: boolean }
+  pages: { read: boolean; write: boolean; manage: boolean; delete: boolean; script: boolean; style: boolean; duplicate?: boolean }
   history: { read: boolean }
   source: { read: boolean }
   system: { manage: boolean }
@@ -335,6 +335,19 @@ export default function createCommonController(wiki: CommonWiki): express.Router
     return true
   }
 
+  const projectDuplicateEligibility = async (req: Request, page: PageRecord, permissions: EffectivePermissions, authority: PageRuleAuthority): Promise<void> => {
+    // Discovery only: native source retrieval and every destination write still
+    // reauthorize independently. read:source is not the live template policy.
+    const sourceEligible = page.visibility !== 'public' || (page.isPublished && publicationWindowOpen(page))
+      ? canReadPage(req.user, page, authority)
+      : canWritePage(req.user, page, authority)
+    permissions.pages.duplicate = Boolean(
+      req.user && sourceEligible &&
+      authority.permissions.some(permission => permission === 'write:pages' || permission === 'manage:system') &&
+      !(await pageRequiresUnlock({ requester: req.user, pageId: page.id, sessionId: req.sessionID, readOnly: true }))
+    )
+  }
+
   /**
    * Editor link for a 404 about a page that does not exist, only when the requester may
    * create it. Mirrors the view route, which already sends such writers to the new-page
@@ -416,6 +429,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       body: wiki.config.theming.injectBody
     }
     const protectedPage = await isPageProtected(page.id)
+    await projectDuplicateEligibility(req, page, effectivePermissions, authority)
     let publicSharingEligible = false
     if (wiki.config.features.publicSocialSharing === true && page.visibility === 'public' && pageIsPublished && !protectedPage) {
       const guest = { id: 2, ownershipUserId: null } as unknown as PagePrincipal
@@ -884,7 +898,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
             page.editorKey = typeof pageVersion.editor === 'string' ? pageVersion.editor : null
             page.title = typeof pageVersion.title === 'string' ? pageVersion.title : null
             page.description = typeof pageVersion.description === 'string' ? pageVersion.description : null
-            page.isPublished = normalizeDbBoolean(pageVersion.isPublished)
+            page.isPublished = pageVersion.visibility === 'private' ? false : normalizeDbBoolean(pageVersion.isPublished)
             page.isSearchable = normalizeDbBoolean(pageVersion.isSearchable, true)
             page.publishStartDate = typeof pageVersion.publishStartDate === 'string' ? pageVersion.publishStartDate : ''
             page.publishEndDate = typeof pageVersion.publishEndDate === 'string' ? pageVersion.publishEndDate : ''
@@ -904,6 +918,9 @@ export default function createCommonController(wiki: CommonWiki): express.Router
             page.title = typeof pageOriginal.title === 'string' ? pageOriginal.title : null
             page.description = typeof pageOriginal.description === 'string' ? pageOriginal.description : null
             page.isSearchable = normalizeDbBoolean(pageOriginal.isSearchable, true)
+            // A private source never implicitly publishes into the selected
+            // public destination; the editor exposes publication explicitly.
+            if (pageOriginal.visibility === 'private') page.isPublished = false
           }
         } catch (err) {
           const errorName = err instanceof Error ? err.name : ''
@@ -917,6 +934,10 @@ export default function createCommonController(wiki: CommonWiki): express.Router
               returnTo: req.originalUrl,
               error: null
             })
+          }
+          if (errorName === 'PageHistoryForbidden') {
+            _.set(res.locals, 'pageMeta.title', 'Unauthorized')
+            return res.status(403).render('unauthorized', { action: 'template' })
           }
           if (errorName === 'PageNotFound' || errorName === 'PAGE_NOT_FOUND' || errorStatus === 404) {
             _.set(res.locals, 'pageMeta.title', 'Page Not Found')
@@ -987,6 +1008,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       return res.render('unauthorized', { action: 'history' })
     }
     if (!(await enforcePageUnlock(req, res, page))) return
+    await projectDuplicateEligibility(req, page, effectivePermissions, authority)
 
     if (page) {
       _.set(res.locals, 'pageMeta.title', page.title)
@@ -1106,6 +1128,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       }
     }
     if (!(await enforcePageUnlock(req, res, page))) return
+    await projectDuplicateEligibility(req, page, effectivePermissions, authority)
 
     if (page) {
       if (versionId > 0) {

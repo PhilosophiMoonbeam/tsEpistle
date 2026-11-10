@@ -155,6 +155,7 @@
           ) {{ $t('common:actions.done') }}
     v-main
       .editor-main-surface
+        page-edit-lock(v-if='mode !== `create` && pageId > 0', :page-id='pageId', :source-revision='sourceRevision', :ready='!offlineMutationBlocked && !serverSaveDisabled', @change='pageEditLocked = $event')
         section.editor-feedback-intent.pa-4(v-if='feedbackRequested && mode === `create`', aria-label='Explicit feedback board submission')
           p(v-if='feedbackBoardName') Creating a full canonical proposal for {{ feedbackBoardName }}. Source, history, private access, publication and approval remain native.
           p(v-else) Feedback submission is not yet admitted. No page will be created as an orphaned board submission.
@@ -444,6 +445,7 @@ import { normalizePageFeatures, type PageFeatures } from '../../shared/page-feat
 import { MAX_PAGE_CHANGE_REASON_LENGTH, PageChangeReasonSchema } from '../../shared/page-change-reason.ts'
 import type { WikiLinkOptions } from '../../shared/wikilinks.ts'
 import { onEditorImageProperties, type EditorImagePropertiesRequest, type EditorImagePropertyPatch } from '../helpers/editor-image-properties'
+import PageEditLock from './page-edit-lock.vue'
 
 
 const OFFLINE_CREATE_IDENTITY_KEY = 'tsepistle-offline-create-identity'
@@ -610,6 +612,7 @@ const freezePageInput = (input: PageWriteInput): PageWriteInput => {
 
 export default defineComponent({
   components: {
+    PageEditLock,
     StatusIndicator,
     editorImageProperties: createAsyncComponent(() => import('./editor/editor-image-properties.vue')),
     editorCode: createAsyncComponent(() => import('./editor/editor-code.vue')),
@@ -760,6 +763,7 @@ export default defineComponent({
   },
   data() {
     return {
+      pageEditLocked: null as boolean | null,
       imagePropertiesRequest: null as EditorImagePropertiesRequest | null,
       feedbackRequested: false,
       feedbackIntent: null as FeedbackCreateAdmissionInput | null,
@@ -2289,6 +2293,12 @@ export default defineComponent({
       // Saving no longer blocks the editor with an overlay, so a second Save,
       // Ctrl+S or Save and close must not start a parallel write.
       if (this.isSaving) return false
+      if (this.pageEditLocked) {
+        const error = new Error(this.$t('common:page.editLockExplanation'))
+        wikiStore.showNotification({ message: error.message, style: 'warning', icon: 'lock' })
+        if (rethrow) throw error
+        return false
+      }
       ++this.offlineMetadataOperation
       if (this.discardPending) return false
       if (this.collaborationDiscarded) {

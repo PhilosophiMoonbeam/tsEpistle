@@ -75,6 +75,7 @@ const create = async (name: unknown, requester?: Express.User) => {
       name: nameValue(name),
       description: '',
       redirectOnLogin: '/',
+      formMfaRequired: false,
       permissions: wiki().data.groups.defaultPermissions,
       pageRules: wiki().data.groups.defaultPageRules
     },
@@ -101,6 +102,7 @@ const update = async (input: {
       name: input.name,
       description: row.description,
       redirectOnLogin: input.redirectOnLogin || '/',
+      formMfaRequired: row.formMfaRequired,
       permissions: input.permissions,
       pageRules: input.pageRules
     },

@@ -9,6 +9,7 @@ import { up as addDurableJobLeaseTokens } from '../../db/migrations/2.5.158.ts'
 import { up as createPageReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
 import { up as createPageLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
 import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
+import { up as createEditLocks } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 
 let knex: Knex
 let page: Record<string, unknown>
@@ -108,6 +109,7 @@ beforeEach(async () => {
   await createPageReviewRouting(knex)
   await createPageLifecycle(knex)
   await createStoragePageImportOwners(knex)
+  await createEditLocks(knex)
   await knex('users').insert([{ id: 7 }, { id: 8 }, { id: 9 }])
   await knex('pages').insert({
     id: 42,

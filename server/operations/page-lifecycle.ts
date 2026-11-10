@@ -1,3 +1,4 @@
+import { pageEditLocked, type PageEditLockRow } from '../helpers/page-edit-lock.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { z } from 'zod'
@@ -169,12 +170,14 @@ const previewWithinTransaction = async (transaction: Knex.Transaction, request: 
   for (const page of pages) {
     const clock = await transaction<PageLifecycleClock>('pageLifecycleClocks').where('pageId', page.id).first()
     const protection = await transaction('pageAccessPasswords').where('pageId', page.id).first('pageId')
+    const editLock = await transaction<PageEditLockRow>('pageEditLocks').where({ pageId: page.id }).first()
     const identity = rule ? await transaction<LifecycleRulePage>('pageLifecycleRulePages').where({ ruleId: rule.id, pageId: page.id }).first() : undefined
     const original = identity?.originalRelativePath ?? pageLifecycleOriginalRelativePath(request.definition.selector, page.path)
     const effects: PageLifecyclePreviewPage['effects'] = []
     for (const effect of request.definition.effects) {
       let reason = protection ? 'needs-interactive' : undefined
       if (effect.kind === 'add-tags' && !lifecyclePagePermitted(actor.principal, actor.authority, { ...page, tags: [...page.tags, ...validTags.filter(tag => !page.tagIds.includes(tag.id))] })) reason = 'forbidden-after-tags'
+      if (effect.kind === 'add-tags' && pageEditLocked(editLock)) reason = 'page-edit-locked'
       if (effect.kind === 'propose-move') {
         const destinationPath = pageLifecycleMoveDestination(effect, page.id, original)
         if (page.visibility !== 'public' || page.ownerId !== null) reason = 'needs-manual-native-flow'

@@ -278,6 +278,23 @@ describe('Browse page selector presentation', () => {
     expect(submissions).toEqual([])
   })
 
+  test('lets Duplicate choose a different locale and path without inheriting the source identity or ownership', async () => {
+    const selections: unknown[] = []
+    const { host, instance } = await mountSelector([], {
+      mode: 'create', mustExist: false, locale: 'en', path: 'reference/new-page',
+      openHandler: (selection: unknown) => { selections.push(selection); return false }
+    })
+    instance.currentLocale = 'fr'
+    instance.currentPath = 'workspace/copy'
+    await settle()
+    expect(actionStatus(host).textContent).toBe(translateEnglish('common:pageSelector.readyToCreate', { path: '/fr/workspace/copy' }))
+    const select = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'Select')!
+    expect(select.disabled).toBe(false)
+    select.click()
+    await settle()
+    expect(selections).toEqual([{ locale: 'fr', path: 'workspace/copy', id: 0 }])
+  })
+
   test('must-exist selection never advertises creation authority even when invoked in create mode', async () => {
     let selected: unknown
     const { host } = await mountSelector([{ ...page(12, 'docs/existing', 'Existing page'), pageId: 412 }], {

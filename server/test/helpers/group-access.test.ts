@@ -72,6 +72,7 @@ describe('Group access explanation and enforcement', () => {
       name: 'Readers',
       description: '',
       redirectOnLogin: '/',
+      formMfaRequired: false,
       permissions: ['read:pages'],
       pageRules: [
         { id: 'subtree', match: 'SUBTREE', path: 'foo/bar///', deny: false, roles: ['read:pages'], locales: [] },

@@ -173,6 +173,8 @@ const approvalItem = (id: string): PageApprovalInboxItem => ({
   status: 'submitted',
   revisionId: 8,
   revisionUpdatedAt: '2026-09-11T09:00:00.000Z',
+  reviewedSourceRevision: '8',
+  publishedSourceRevision: null,
   createdAt: '2026-09-11T09:00:00.000Z',
   updatedAt: '2026-09-11T09:30:00.000Z',
   closedAt: null,
@@ -205,7 +207,7 @@ const wikiStore = VueRuntime.reactive({
     id: 1,
     sourceRevision: '',
     effectivePermissions: {
-      pages: { write: false, manage: false, delete: false },
+      pages: { write: false, manage: false, delete: false, duplicate: false },
       source: { read: false },
       history: { read: false },
       system: { manage: false }
@@ -461,6 +463,8 @@ interface HeaderVm {
   mobilePageActionsAreOpen: boolean
   newPageModal: boolean
   newPageSeed: { path: string; locale: string }
+  duplicateOpts: { path: string; locale: string; modal: boolean }
+  pageDuplicate: () => void
   searchIsFocused: boolean
   searchMode: 'search' | 'ask'
   openAgent: () => Promise<void>
@@ -534,7 +538,7 @@ afterEach(() => {
   globals.siteLangs = []
   wikiStore.user = user(1)
   Object.assign(wikiStore.page, { path: 'home', mode: 'view', locale: 'en', visibility: 'public', id: 1, sourceRevision: '' })
-  Object.assign(wikiStore.page.effectivePermissions.pages, { write: false, manage: false, delete: false })
+  Object.assign(wikiStore.page.effectivePermissions.pages, { write: false, manage: false, delete: false, duplicate: false })
   wikiStore.page.effectivePermissions.source.read = false
   wikiStore.page.effectivePermissions.history.read = false
   wikiStore.authRefreshPending = false
@@ -1019,6 +1023,37 @@ describe('reader-owned header page actions', () => {
       approval: { visible: true, enabled: true },
       protection: { visible: true, enabled: true }
     }
+  })
+
+  it.each([false, true])('offers Duplicate independently of source Write/Source and opens the existing destination selector (mobile: %s)', async mobile => {
+    Object.assign(wikiStore.page, { path: 'reference/source', locale: 'en' })
+    wikiStore.page.effectivePermissions.pages.duplicate = true
+    const { host, vm } = await mountHeader({ smAndDown: mobile })
+    const menuRef = mobile ? 'mobilePageActions' : 'pageActions'
+    const action = () => [...host.querySelectorAll<HTMLElement>('.page-actions-menu [role="button"]')]
+      .find(candidate => candidate.querySelector('v-list-item-title, .v-list-item-title')?.textContent?.trim() === 'Duplicate')
+    expect(action()).toBeDefined()
+    expect(host.querySelector('.page-actions-menu')?.textContent).not.toContain('Convert')
+    expect(wikiStore.page.effectivePermissions.pages.write).toBe(false)
+    expect(wikiStore.page.effectivePermissions.source.read).toBe(false)
+    await vm.pageActionsVisibilityChanged(true, menuRef)
+    action()!.click()
+    await settle()
+    expect(vm.duplicateOpts).toEqual({ locale: 'en', path: 'reference/new-page', modal: true })
+    expect(vm.pageActionsAreOpen).toBe(false)
+    expect(vm.mobilePageActionsAreOpen).toBe(false)
+    vm.duplicateOpts.modal = false
+    wikiStore.page.effectivePermissions.pages.duplicate = false
+    await settle()
+    expect(action()).toBeUndefined()
+    pageActionEvents.emitPageDuplicate()
+    expect(vm.duplicateOpts.modal).toBe(false)
+    wikiStore.page.effectivePermissions.pages.duplicate = true
+    Object.assign(connection, { serverHealthy: false })
+    await settle()
+    expect(action()?.getAttribute('aria-disabled')).toBe('true')
+    pageActionEvents.emitPageDuplicate()
+    expect(vm.duplicateOpts.modal).toBe(false)
   })
 
   it('seeds quick create from the current reader only, snapshots the selector context and falls back to the supported UI locale', async () => {

@@ -529,7 +529,7 @@ const PAGE_MENU_ACTIONS = [
   { handler: 'pageHistory', label: 'history', icon: 'mdi-history', mode: 'history', permission: 'hasReadHistoryPermission', group: 'read' },
   { handler: 'pageEdit', label: 'edit', icon: 'mdi-file-document-edit-outline', mode: 'edit', permission: 'hasWritePagesPermission', group: 'mutation' },
   { handler: 'pageConvert', label: 'convert', icon: 'mdi-lightning-bolt', mode: null, permission: 'hasWritePagesPermission', group: 'mutation' },
-  { handler: 'pageDuplicate', label: 'duplicate', icon: 'mdi-content-duplicate', mode: null, permission: 'hasWritePagesPermission', group: 'mutation' },
+  { handler: 'pageDuplicate', label: 'duplicate', icon: 'mdi-content-duplicate', mode: null, permission: 'hasDuplicatePagePermission', group: 'mutation' },
   { handler: 'pageMove', label: 'move', icon: 'mdi-content-save-move-outline', mode: null, permission: 'hasManagePagesPermission', group: 'mutation' },
   { handler: 'pageDelete', label: 'delete', icon: 'mdi-trash-can-outline', mode: null, permission: 'hasDeletePagesPermission', group: 'destructive' }
 ] as const
@@ -880,6 +880,7 @@ export default defineComponent({
     },
     hasAdminPermission(): boolean { return wikiStore.page.effectivePermissions.system.manage },
     hasWritePagesPermission(): boolean { return wikiStore.page.effectivePermissions.pages.write },
+    hasDuplicatePagePermission(): boolean { return wikiStore.page.effectivePermissions.pages.duplicate === true },
     hasManagePagesPermission(): boolean { return wikiStore.page.effectivePermissions.pages.manage },
     hasDeletePagesPermission(): boolean { return wikiStore.page.effectivePermissions.pages.delete },
     hasReadSourcePermission(): boolean { return wikiStore.page.effectivePermissions.source.read },
@@ -1459,7 +1460,7 @@ export default defineComponent({
       window.location.assign(`/s${scope}/${this.locale}/${this.path}`)
     },
     pageDuplicate () {
-      if (!this.onlineActionReady || !this.pageResourceReady) return
+      if (!this.onlineActionReady || !this.pageResourceReady || !this.hasDuplicatePagePermission) return
       const pathParts = this.path.split('/')
       this.duplicateOpts = {
         locale: this.locale,
@@ -1468,7 +1469,7 @@ export default defineComponent({
       }
     },
     pageDuplicateHandle ({ locale, path }: PageLocation): void {
-      if (!this.onlineActionReady || !this.pageResourceReady) return
+      if (!this.onlineActionReady || !this.pageResourceReady || !this.hasDuplicatePagePermission) return
       window.location.assign(`/e/${locale}/${path}?from=${wikiStore.page.id}`)
     },
     pageConvert () {

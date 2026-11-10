@@ -7,6 +7,8 @@ import { up, down } from '../../db/migrations/tsepistle-000017-account-administr
 import { up as groupUp } from '../../db/migrations/tsepistle-000018-group-administration.ts'
 import { up as presentationUp } from '../../db/migrations/tsepistle-000036-user-presentation-defaults.ts'
 import { up as personalMcpUp } from '../../db/migrations/tsepistle-000062-personal-mcp-keys.ts'
+import { up as mfaUp } from '../../db/migrations/tsepistle-000079-group-form-mfa.ts'
+import { up as createEditLocks } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 const connection = getPostgresTestConnection('_account_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const admin = { id: 1, authVersion: 0 } as never,
@@ -103,6 +105,8 @@ suite('PostgreSQL account administration', () => {
     await down(db)
     await up(db)
     await groupUp(db)
+    await mfaUp(db)
+    await createEditLocks(db)
     await presentationUp(db)
     await db.schema.createTable('apiKeys', t => {
       t.increments('id')
@@ -136,6 +140,8 @@ suite('PostgreSQL account administration', () => {
     })
   })
   beforeEach(async () => {
+    await db('pageEditLockAudit').delete()
+    await db('pageEditLocks').delete()
     for (const table of [
       'settings',
       'groupAdministrationEvents',
@@ -469,6 +475,36 @@ suite('PostgreSQL account administration', () => {
     enforce = true
     expect((await store.inspect(admin, 3)).capabilities.actions).not.toContain('disable-2fa')
   })
+  it('ORs current group requirements and prevents disable while retaining scoped reset and provider independence', async () => {
+    await db('groups').whereIn('id', [3, 5]).update({ formMfaRequired: true })
+    await db('userGroups').insert({ userId: 3, groupId: 5 })
+    await db('userGroups').insert({ userId: 5, groupId: 5 })
+    const key = await personalKey()
+    expect((await store.inspect(admin, 3)).twoFactor).toBe('enrollment-required')
+    await db('users').where('id', 3).update({ tfaIsActive: true, tfaSecret: 'ENROLLED-SECRET' })
+    let saved = await store.inspect(admin, 3)
+    expect(saved.twoFactor).toBe('enrolled')
+    expect(saved.capabilities.actions).toContain('reset-2fa')
+    expect(saved.capabilities.actions).not.toContain('disable-2fa')
+    await expect(store.act(admin, 3, { ...(await review()), action: 'disable-2fa' })).rejects.toMatchObject({ status: 403 })
+    await db('groups').where('id', 3).update({ formMfaRequired: false })
+    expect((await store.inspect(admin, 3)).capabilities.actions).not.toContain('disable-2fa')
+    const external = await store.inspect(admin, 5)
+    expect(external.twoFactor).toBe('provider-managed')
+    expect(external.capabilities.actions).not.toContain('reset-2fa')
+    await store.act(admin, 3, { ...(await review()), action: 'reset-2fa' })
+    expect(await db('users').where('id', 3).first()).toMatchObject({ tfaIsActive: true, tfaSecret: null, authVersion: 1 })
+    expect(await db('apiKeys').where('id', key.id).first()).toMatchObject({ key: key.key, isRevoked: false })
+    await db('groups').where('id', 5).update({ formMfaRequired: false })
+    saved = await store.inspect(admin, 3)
+    expect(saved.twoFactor).toBe('enrollment-required')
+    expect(saved.capabilities.actions).toContain('disable-2fa')
+    enforce = true
+    expect((await store.inspect(admin, 3)).capabilities.actions).not.toContain('disable-2fa')
+    enforce = false
+    await store.act(admin, 3, { ...(await review()), action: 'disable-2fa' })
+    expect((await store.inspect(admin, 3)).twoFactor).toBe('off')
+  })
   it('resets an enrolled authenticator into required enrollment and ends sessions', async () => {
     await db('users').where('id', 3).update({ tfaIsActive: true, tfaSecret: 'ENROLLED-SECRET' })
     const next = await store.act(admin, 3, { ...(await review()), action: 'reset-2fa' })
@@ -595,6 +631,20 @@ suite('PostgreSQL account administration', () => {
     await db('groups').where('id', 3).update({ name: 'Renamed authors' })
     await expect(store.create(admin, { ...input, profile: { ...input.profile, email: 'different@example.invalid' } })).rejects.toMatchObject({ status: 409 })
   })
+  it('atomically refuses account deletion attribution rewrites for locked live or history-only page identities', async () => {
+    await db('pages').insert({ id: 20, ownerId: null, creatorId: 3, authorId: 3, visibility: 'public' })
+    await db('pageHistory').insert({ id: 21, pageId: 22, authorId: 3, ownerId: null, visibility: 'public' })
+    for (const pageId of [20, 22]) {
+      await db('pageEditLocks').delete()
+      await db('pageEditLocks').insert({ pageId, isEditLocked: true, lockVersion: '1', updatedBy: 1, reason: 'Retain attribution' })
+      const before = await db('pages').orderBy('id'), history = await db('pageHistory').orderBy('id')
+      await expect(store.remove(admin, 3, { ...(await review()), replaceId: 5 })).rejects.toMatchObject({ name: 'PAGE_EDIT_LOCKED', status: 409 })
+      expect(await db('users').where({ id: 3 }).first()).toBeDefined()
+      expect(await db('pages').orderBy('id')).toEqual(before)
+      expect(await db('pageHistory').orderBy('id')).toEqual(history)
+    }
+  })
+
   it('preserves private ownership/history and reassigns public contributions only after reviewed deletion', async () => {
     await db('pageHistory').insert({ id: 1, ownerId: 3, authorId: 3, visibility: 'private' })
     await expect(store.remove(admin, 3, { ...(await review()), replaceId: 5 })).rejects.toMatchObject({ status: 403 })

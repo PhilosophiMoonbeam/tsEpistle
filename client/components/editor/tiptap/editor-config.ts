@@ -1,4 +1,4 @@
-import { Extension, mergeAttributes, Node, type Editor, type Extensions } from '@tiptap/core'
+import { Extension, mergeAttributes, Node, type Editor, type Extensions, type JSONContent } from '@tiptap/core'
 import CharacterCount from '@tiptap/extension-character-count'
 import Highlight from '@tiptap/extension-highlight'
 import Image from '@tiptap/extension-image'
@@ -35,6 +35,7 @@ import {
 } from './dialect.ts'
 import { parseWikiLinkAt, resolveWikiLinkHref, serializeWikiLink, WIKI_LINKS_DISABLED, type WikiLinkOptions } from '../../../../shared/wikilinks.ts'
 import { extendAttributedBlockquote } from './blockquote.ts'
+import type { DiscoveredPageLink } from './slash-menu.ts'
 
 export type VisualEditorFormat = 'html' | 'markdown'
 
@@ -194,6 +195,23 @@ const WikiLinkNode = Node.create({
     return `[${renderedContent}](${href})`
   }
 })
+
+/** Use the existing source-preserving node only when its local-target grammar owns this route. */
+export function discoveredPageLinkContent(page: DiscoveredPageLink, format: VisualEditorFormat, wikiLinks: WikiLinkOptions): JSONContent {
+  if (format === 'markdown' && wikiLinks.enabled && page.visibility === 'public' && page.locale === wikiLinks.context?.locale) {
+    const source = `[[/${page.path}|${page.title}]]`
+    const parsed = parseWikiLinkAt(source)
+    const href = parsed && resolveWikiLinkHref(parsed, wikiLinks.context)
+    if (parsed?.raw === source && href) {
+      return {
+        type: 'wikiLink',
+        attrs: { href, wikiLinkSource: source, wikiLinkHref: href },
+        content: [{ type: 'text', text: page.title }]
+      }
+    }
+  }
+  return { type: 'text', text: page.title, marks: [{ type: 'link', attrs: { href: page.href } }] }
+}
 
 const createWikiLinkSourceParser = (wikiLinks: WikiLinkOptions) =>
   Extension.create({

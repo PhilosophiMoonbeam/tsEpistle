@@ -13,6 +13,7 @@ import { up as addDurableJobLeaseTokens } from '../../db/migrations/2.5.158.ts'
 import { up as createPageReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
 import { up as createPageLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
 import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
+import { up as createEditLocks } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 import { enqueuePageMutationEffects, PageProjectionLifecycle } from '../../core/page-mutation-outbox.ts'
 import type PageModel from '../../models/pages.ts'
 import type pageOperations from '../../operations/pages.ts'
@@ -101,6 +102,7 @@ suite('PostgreSQL protection search withdrawal', () => {
     await createPageReviewRouting(db)
     await createPageLifecycle(db)
     await createStoragePageImportOwners(db)
+    await createEditLocks(db)
     await db('users').insert({ id: 7, name: 'Editor', email: requester.email })
     await db('assets').insert({ id: 101, hash: createHash('sha1').update(assetPath).digest('hex') })
     await db('pages').insert({
@@ -157,6 +159,8 @@ suite('PostgreSQL protection search withdrawal', () => {
   })
 
   it('withdraws the body before a delayed failing callback and preserves repair across an older active claim', async () => {
+    // The administrative edit lock must not block password withdrawal or derived repair.
+    await db('pageEditLocks').insert({ pageId: 42, isEditLocked: true, lockVersion: '1', updatedBy: 7, reason: 'Preserve authored source while security and projections repair' })
     expect((await operations.search({ query: bodyToken, pageIds: [42] })).results.map(page => page.id)).toEqual([42])
     const canonical = await observer('pages').where({ id: 42 }).first('content', 'render', 'sourceRevision', 'renderedSourceRevision')
     await enqueuePageMutationEffects(db, {

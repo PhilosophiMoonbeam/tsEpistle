@@ -53,7 +53,7 @@ const defaultPermissions = () => ({
   comments: { read: false, write: false, manage: false },
   history: { read: false },
   source: { read: false },
-  pages: { write: false, manage: false, delete: false, script: false, style: false },
+  pages: { write: false, manage: false, delete: false, script: false, style: false, duplicate: false },
   system: { manage: false }
 })
 const defaultPageOkf = (): PageOkfView => ({

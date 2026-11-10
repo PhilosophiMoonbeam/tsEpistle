@@ -2,6 +2,7 @@ import { Editor, type ChainedCommands } from '@tiptap/core'
 import { closeHistory } from '@tiptap/pm/history'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { setImmediate as nextEventLoopTurn } from 'node:timers/promises'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import * as cheerio from 'cheerio'
 import pug from 'pug'
@@ -9,9 +10,9 @@ import * as ts from 'typescript'
 import { afterEach, describe, expect, it } from '../../../../server/test/bun-test.mts'
 import markdownRenderer from '../../../../server/modules/rendering/markdown-core/renderer.ts'
 import { createWikiMarkdownRenderer, sanitizeWikiMarkdownHtml } from '../markdown/preview.ts'
-import { createTiptapExtensions, getVisualEditorDefinition, serializeVisualEditorData, VisualEditorSource, type VisualEditorFormat } from './editor-config.ts'
+import { createTiptapExtensions, discoveredPageLinkContent, getVisualEditorDefinition, getVisualEditorStats, serializeVisualEditorData, VisualEditorSource, type VisualEditorFormat } from './editor-config.ts'
 import { prepareTiptapHtml, prepareTiptapMarkdown } from './dialect.ts'
-import { installTiptapSlashMenu } from './slash-menu.ts'
+import { installTiptapSlashMenu, type DiscoveredPageLink } from './slash-menu.ts'
 import { EditorAdapterController } from '../common/editor-adapter.ts'
 import {
   ADMONITION_KINDS,
@@ -25,6 +26,8 @@ import { parseWikiLinkAt, resolveWikiLinkHref, type WikiLinkOptions } from '../.
 import '../../../test/browser-dom.mts'
 import { translateEnglish } from '../../../test/english-translate.mts'
 import { FORMATTING_TOOLS } from '../common/formatting-tools.ts'
+import * as editorConflictEvents from '../../../helpers/editor-conflict-events.ts'
+import * as editorInsertEvents from '../../../helpers/editor-insert-events.ts'
 
 // Static Vuetify imports capture DOM globals before the shared harness installs them.
 const Vue = await import('vue')
@@ -32,6 +35,8 @@ const { createVuetify } = await import('vuetify')
 const vuetifyComponents = await import('vuetify/components')
 const vuetifyDirectives = await import('vuetify/directives')
 const menuUnmounts: Array<() => void> = []
+// Vue's editor integration must capture the browser globals installed by the harness.
+const { Editor: VueEditor, EditorContent } = await import('@tiptap/vue-3')
 
 // Execute the owner template and Options behavior without starting its unrelated
 // collaboration/network lifecycle. Insertion still uses a real Tiptap editor.
@@ -271,6 +276,109 @@ afterEach(() => {
 })
 
 describe('Tiptap visual formats', () => {
+  it('admits all native discovery menus after the mounted cold whoami settles, without rebinding retired identities', async () => {
+    installRangeGeometry()
+    const fetchDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'fetch')!
+    Object.defineProperty(globalThis, 'fetch', {
+      configurable: true,
+      value: async () => Response.json({ items: [{ id: 7, title: 'Target', path: 'target', locale: 'en', visibility: 'public', href: '/en/target' }] })
+    })
+    try {
+      for (const boundary of ['account', 'epoch', 'authVersion', 'document'] as const) {
+        const store = Vue.reactive({
+          user: { id: 0, authVersion: 0, authenticated: false, permissions: [] as string[] },
+          page: { id: 42, locale: 'en', path: 'guide' },
+          editor: { editorKey: '', content: 'Unsaved draft', activeModal: '' },
+          offlineIdentityEpoch: 0, authRefreshPending: true, authRefreshSettled: false,
+          authRefreshOutcome: null as string | null
+        })
+        const dependencies = {
+          Editor: VueEditor, markRaw: Vue.markRaw, wikiStore: store, siteLangs: ['en'],
+          FORMATTING_TOOLS, ADMONITION_KINDS, VISUAL_MARKDOWN_GLYPHS,
+          insertVisualMarkdownDefinitionList, insertVisualMarkdownGlyph, insertVisualMarkdownAdmonition, searchVisualMarkdownGlyphs,
+          createTiptapExtensions, discoveredPageLinkContent, getVisualEditorDefinition, getVisualEditorStats,
+          prepareTiptapMarkdown, prepareTiptapHtml, VisualEditorSource, installTiptapSlashMenu, EditorAdapterController,
+          ...editorConflictEvents, ...editorInsertEvents
+        }
+        // Execute the owner's real mounted/unmount lifecycle and options against
+        // the reactive session boundary; no copied discovery-owner implementation.
+        const mountedCode = new Bun.Transpiler({ loader: 'ts' }).transformSync(
+          `${visualConstants}\nreturn { ${['data', 'methods', 'computed', 'watch', 'mounted', 'beforeUnmount'].map(visualOption).join(',')} }`
+        )
+        const behavior = new Function(...Object.keys(dependencies), mountedCode)(...Object.values(dependencies))
+        const host = document.createElement('div')
+        document.body.append(host)
+        const app = Vue.createApp({
+          ...behavior,
+          emits: ['editor-adapter', 'editor-adapter-clear'],
+          data() { return { ...behavior.data.call(this), format: 'markdown', wikiLinkOptions: enabledWikiLinks, save: () => {} } },
+          render() {
+            return Vue.h('div', { class: 'editor-tiptap', ref: 'root' }, [Vue.h(EditorContent, { editor: this.editor })])
+          }
+        })
+        app.config.globalProperties.$t = translateEnglish
+        app.mount(host)
+        try {
+          await Vue.nextTick()
+          const editor = host.querySelector<HTMLElement & { __wikiEditor?: Editor }>('.editor-tiptap')!.__wikiEditor!
+          expect(editor.getText()).toBe('Unsaved draft')
+          const shortcut = () => {
+            const event = new KeyboardEvent('keydown', { key: ' ', code: 'Space', ctrlKey: true, bubbles: true, cancelable: true })
+            editor.view.dom.dispatchEvent(event)
+            return event.defaultPrevented
+          }
+          expect(shortcut()).toBe(false)
+          expect(editor.view.dom.hasAttribute('aria-controls')).toBe(false)
+          const whoami = Promise.withResolvers<void>()
+          const settled = whoami.promise.then(() => {
+            // A cold refresh may establish a new epoch before publishing its
+            // verified profile and settled outcome.
+            store.offlineIdentityEpoch = 1
+            store.user = { id: 12, authVersion: 3, authenticated: true, permissions: ['write:pages'] }
+            store.authRefreshPending = false
+            store.authRefreshSettled = true
+            store.authRefreshOutcome = 'authenticated'
+          })
+          whoami.resolve()
+          await settled
+          await Vue.nextTick()
+          expect(editor.getText()).toBe('Unsaved draft')
+          editor.commands.setContent('')
+          expect(shortcut()).toBe(true)
+          expect(document.getElementById(editor.view.dom.getAttribute('aria-controls')!)?.hidden).toBe(false)
+          editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+          typeVisualText(editor, '/')
+          expect(document.getElementById(editor.view.dom.getAttribute('aria-controls')!)?.hidden).toBe(false)
+          editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+          expect(editor.getText()).toBe('/')
+          editor.commands.setContent('')
+          typeVisualText(editor, '[[')
+          await nextEventLoopTurn()
+          const menu = document.getElementById(editor.view.dom.getAttribute('aria-controls')!)!
+          expect(menu.querySelector('button')?.getAttribute('aria-label')).toBe('Target')
+          const stale = menu.querySelector<HTMLButtonElement>('button')!
+          if (boundary === 'account') { store.user.id = 99; store.user.id = 12 }
+          if (boundary === 'epoch') { store.offlineIdentityEpoch = 2; store.offlineIdentityEpoch = 1 }
+          if (boundary === 'authVersion') { store.user.authVersion = 4; store.user.authVersion = 3 }
+          if (boundary === 'document') { store.page.id = 43; store.page.id = 42 }
+          stale.click()
+          expect(menu.hidden).toBe(true)
+          expect(editor.getText()).toBe('[[')
+          editor.commands.setContent('')
+          expect(shortcut()).toBe(false)
+          typeVisualText(editor, '/')
+          expect(editor.view.dom.hasAttribute('aria-controls')).toBe(false)
+          expect(editor.getText()).toBe('/')
+        } finally {
+          app.unmount()
+          host.remove()
+        }
+      }
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', fetchDescriptor)
+    }
+  })
+
   it('inserts a definition list from the formatting Insert menu without losing the document', async () => {
     const mounted = mountInsertMenu()
     mounted.editor.commands.insertContent('Keep this paragraph.')
@@ -772,6 +880,23 @@ graph TD
     expect(resolveWikiLinkHref('[[file.name]]', enabledWikiLinks.context)).toBe('/en/guide/file%2Ename')
   })
 
+  it('keeps discovered routes correct across enabled, disabled, private and cross-locale Markdown links', () => {
+    for (const fixture of [
+      { options: enabledWikiLinks, page: { visibility: 'public', locale: 'en', href: '/en/target' }, source: '[[/target|Target]]' },
+      { options: { enabled: false }, page: { visibility: 'public', locale: 'en', href: '/en/target' }, source: '[Target](/en/target)' },
+      { options: enabledWikiLinks, page: { visibility: 'private', locale: 'en', href: '/_private/en/target' }, source: '[Target](/_private/en/target)' },
+      { options: enabledWikiLinks, page: { visibility: 'public', locale: 'fr', href: '/fr/target' }, source: '[Target](/fr/target)' }
+    ] as const) {
+      const editor = createEditor('markdown', '', fixture.options)
+      editor.commands.insertContent(discoveredPageLinkContent({ id: 1, title: 'Target', path: 'target', ...fixture.page }, 'markdown', fixture.options))
+      expect(editor.getMarkdown()).toBe(fixture.source)
+      expect(editor.getHTML()).toContain(`href="${fixture.page.href}"`)
+      const reopened = createEditor('markdown', editor.getMarkdown(), fixture.options)
+      expect(reopened.getMarkdown()).toBe(fixture.source)
+      expect(reopened.getHTML()).toContain(`href="${fixture.page.href}"`)
+    }
+  })
+
   it('renders wikilink labels as escaped text', () => {
     const source = '[[target|<img src=x onerror=alert(1)> & text]]'
     const editor = createEditor('markdown', source, enabledWikiLinks)
@@ -1215,6 +1340,243 @@ graph TD
       typeVisualText(editor, '/')
       expect(editor.view.dom.hasAttribute('aria-controls')).toBe(false)
       expect(editor.getText()).toContain('/')
+    }
+  })
+
+  it('opens full Ctrl+Space commands only at an empty root and inline-safe commands mid-line', () => {
+    const editor = createEditor('markdown', '')
+    installTiptapSlashMenu(editor, [
+      { id: 'heading', label: 'Heading', icon: 'mdi-format-header-2', hint: 'H2', run: chain => chain.setHeading({ level: 2 }) },
+      { id: 'star', label: 'Star', icon: 'mdi-star', hint: '★', inlineSafe: true, run: chain => chain.insertContent('★') }
+    ], 'Insert')
+    const shortcut = () => {
+      const event = new KeyboardEvent('keydown', { key: ' ', code: 'Space', ctrlKey: true, bubbles: true, cancelable: true })
+      editor.view.dom.dispatchEvent(event)
+      return event
+    }
+    expect(shortcut().defaultPrevented).toBe(true)
+    const menu = editor.view.dom.parentElement!.querySelector<HTMLElement>('[role="menu"]')!
+    expect(menu.querySelectorAll('button')).toHaveLength(2)
+    typeVisualText(editor, 'heading')
+    expect(pressEnter(editor)).toBe(true)
+    expect(editor.state.doc.firstChild?.type.name).toBe('heading')
+    expect(editor.commands.undo()).toBe(true)
+    expect(editor.getText()).toBe('heading')
+
+    editor.commands.setContent('<p>Keep both sides</p>', { contentType: 'html' })
+    editor.commands.setTextSelection(6)
+    expect(shortcut().defaultPrevented).toBe(true)
+    expect([...menu.querySelectorAll('button')].map(button => button.textContent)).toEqual(['Star★'])
+    typeVisualText(editor, 'star')
+    menu.querySelector<HTMLButtonElement>('button')!.click()
+    expect(editor.getText()).toBe('Keep ★both sides')
+    expect(editor.state.doc.firstChild?.type.name).toBe('paragraph')
+    expect(editor.commands.undo()).toBe(true)
+    expect(editor.getText()).toBe('Keep starboth sides')
+  })
+
+  it('leaves prevented, IME-owned, code, opaque, selected and read-only Ctrl+Space unhandled', () => {
+    const fixtures = [
+      { content: '<p>text</p>', position: 2, event: { isComposing: true } },
+      { content: '<p>text</p>', position: 2, event: { keyCode: 229 } },
+      { content: '<pre><code>text</code></pre>', position: 2 },
+      { content: '<p><code>text</code></p>', position: 2 },
+      { content: '<p>text</p>', position: { from: 1, to: 3 } },
+      { content: '<custom-widget>opaque</custom-widget>', position: 0 },
+      { content: '<p>text</p>', position: 2, readonly: true },
+      { content: '<p>text</p>', position: 2, prevented: true }
+    ]
+    for (const fixture of fixtures) {
+      const editor = createEditor('html', fixture.content)
+      installTiptapSlashMenu(editor, [
+        { id: 'star', label: 'Star', icon: 'mdi-star', hint: '★', inlineSafe: true, run: chain => chain.insertContent('★') }
+      ], 'Insert')
+      if (fixture.position !== 0) editor.commands.setTextSelection(fixture.position)
+      else editor.commands.setNodeSelection(0)
+      if (fixture.readonly) editor.setEditable(false)
+      const event = new KeyboardEvent('keydown', { key: ' ', code: 'Space', ctrlKey: true, bubbles: true, cancelable: true, ...fixture.event })
+      if (fixture.prevented) event.preventDefault()
+      editor.view.dom.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(!!fixture.prevented)
+      expect(editor.view.dom.hasAttribute('aria-controls')).toBe(false)
+      editor.destroy()
+    }
+  })
+
+  it('discovers typed wikilinks through the existing path API and replaces a mapped range in one undo step', async () => {
+    const editor = createEditor('markdown', 'Keep both sides', enabledWikiLinks)
+    editor.commands.setTextSelection(6)
+    const page: DiscoveredPageLink = { id: 12, title: 'Target', locale: 'en', path: 'target', visibility: 'public', href: '/en/target' }
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    installTiptapSlashMenu(editor, [], 'Insert', 'No commands', {
+      authority: () => 'actor:document:permissions',
+      links: {
+        locale: () => 'en', localizedPaths: true,
+        content: result => discoveredPageLinkContent(result, 'markdown', enabledWikiLinks),
+        fetch: async (url, init) => {
+          requests.push({ url: String(url), init })
+          return Response.json({ items: [page] })
+        },
+        label: 'Pages', loadingLabel: 'Loading', emptyLabel: 'No pages', errorLabel: 'Failed'
+      }
+    })
+    typeVisualText(editor, '[')
+    expect(requests).toHaveLength(0)
+    typeVisualText(editor, '[')
+    typeVisualText(editor, '/tar')
+    await nextEventLoopTurn()
+    const menu = editor.view.dom.parentElement!.querySelector<HTMLElement>('[role="menu"]')!
+    expect(menu.hidden).toBe(false)
+    expect(requests.at(-1)!.url).toBe('/_api/pages/link-suggestions?locale=en&pathPrefix=%2Ftar&limit=20')
+    expect(requests.at(-1)!.init?.credentials).toBe('same-origin')
+    expect(requests.at(-1)!.init?.cache).toBe('no-store')
+    expect(requests[0]!.init?.signal?.aborted).toBe(true)
+    const stale = menu.querySelector<HTMLButtonElement>('button')!
+    const remote = editor.schema.nodes.paragraph!.create(null, editor.schema.text('Remote'))
+    editor.view.dispatch(editor.state.tr.insert(0, remote))
+    stale.click()
+    expect(editor.getText()).toContain('[[/tar')
+    await nextEventLoopTurn()
+    expect(pressEnter(editor)).toBe(true)
+    expect(editor.getMarkdown()).toBe('Remote\n\nKeep [[/target|Target]]both sides')
+    expect(editor.getHTML()).toContain('href="/en/target"')
+    expect(editor.commands.undo()).toBe(true)
+    expect(editor.getText()).toBe('Remote\n\nKeep [[/tarboth sides')
+    expect(menu.hidden).toBe(true)
+  })
+
+  it('uses title search without exposing superseded path results and keeps pointer labels inert', async () => {
+    const editor = createEditor('html', '<p>Link: suffix</p>')
+    editor.commands.setTextSelection(7)
+    const pending = Promise.withResolvers<Response>()
+    const title = '<img src=x onerror=alert(1)>'
+    const requests: string[] = []
+    installTiptapSlashMenu(editor, [], 'Insert', 'No commands', {
+      links: {
+        locale: () => 'en', localizedPaths: false,
+        content: result => discoveredPageLinkContent(result, 'html', { enabled: false }),
+        fetch: async url => {
+          requests.push(String(url))
+          if (requests.length === 1) return pending.promise
+          return Response.json({
+            results: [{ id: 2, title, path: 'target', locale: 'en', visibility: 'public', description: '', tags: [], score: 1, matchedFields: ['title'], excerpt: null, copySource: null }],
+            suggestions: [], totalHits: 1
+          })
+        },
+        label: 'Pages', loadingLabel: 'Loading', emptyLabel: 'No pages', errorLabel: 'Failed'
+      }
+    })
+    typeVisualText(editor, '[[')
+    typeVisualText(editor, 'Title')
+    await nextEventLoopTurn()
+    const menu = editor.view.dom.parentElement!.querySelector<HTMLElement>('[role="menu"]')!
+    expect(requests.at(-1)).toBe('/_api/pages/search?query=Title&locale=en')
+    expect(menu.querySelector<HTMLButtonElement>('button')!.getAttribute('aria-label')).toBe(title)
+    expect(menu.querySelector('img,script')).toBeNull()
+    pending.resolve(Response.json({ items: [{ id: 99, title: 'Stale', path: 'stale', locale: 'en', visibility: 'public', href: '/stale' }] }))
+    await nextEventLoopTurn()
+    expect(menu.textContent).not.toContain('Stale')
+    menu.querySelector<HTMLButtonElement>('button')!.click()
+    expect(editor.getText()).toBe(`Link: ${title}suffix`)
+    expect(editor.getHTML()).toContain('href="/target"')
+    expect(editor.commands.undo()).toBe(true)
+    expect(editor.getText()).toBe('Link: [[Titlesuffix')
+  })
+
+  it('retires displayed and pending links on every ownership fence without deleting literal input', async () => {
+    for (const fence of ['escape', 'selection', 'actor', 'permission', 'document', 'readonly', 'composition', 'remote', 'same-bytes', 'destroy'] as const) {
+      for (const delayed of [false, true]) {
+        const editor = createEditor('markdown', '', enabledWikiLinks)
+        let authority: string | null = 'actor:document:permission'
+        const pending = Promise.withResolvers<Response>()
+        const payload = { items: [{ id: 1, title: 'Target', path: 'target', locale: 'en', visibility: 'public', href: '/en/target' }] }
+        let requestSignal: AbortSignal | null | undefined
+        const dispose = installTiptapSlashMenu(editor, [], 'Insert', 'No commands', {
+          authority: () => authority,
+          links: {
+            locale: () => 'en', localizedPaths: true,
+            content: result => discoveredPageLinkContent(result, 'markdown', enabledWikiLinks),
+            fetch: async (_url, init) => { requestSignal = init?.signal; return delayed ? pending.promise : Response.json(payload) },
+            label: 'Pages', loadingLabel: 'Loading', emptyLabel: 'No pages', errorLabel: 'Failed'
+          }
+        })
+        typeVisualText(editor, '[[')
+        await nextEventLoopTurn()
+        const menu = editor.view.dom.parentElement!.querySelector<HTMLElement>('[role="menu"]')!
+        const staleButton = menu.querySelector<HTMLButtonElement>('button')
+        if (!delayed) expect(staleButton).not.toBeNull()
+        if (fence === 'escape') editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+        if (fence === 'selection') editor.commands.setTextSelection(1)
+        if (fence === 'actor' || fence === 'permission' || fence === 'document') { authority = fence; dispose.invalidate() }
+        if (fence === 'readonly') editor.setEditable(false)
+        if (fence === 'composition') editor.view.dom.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+        if (fence === 'remote') editor.view.dispatch(editor.state.tr.insertText('remote', 3))
+        if (fence === 'same-bytes') editor.view.dispatch(editor.state.tr.insertText('[[', 1, 3))
+        if (fence === 'destroy') editor.destroy()
+        staleButton?.click()
+        if (delayed) pending.resolve(Response.json(payload))
+        await nextEventLoopTurn()
+        expect(requestSignal?.aborted).toBe(true)
+        expect(menu.hidden || !menu.isConnected).toBe(true)
+        if (!editor.isDestroyed) {
+          expect(editor.getText()).toBe(fence === 'remote' ? '[[remote' : '[[')
+          expect(editor.getHTML()).not.toContain('<a')
+          editor.destroy()
+        }
+      }
+    }
+  })
+
+  it('preserves literal brackets on empty and failed discovery and ignores ineligible openers', async () => {
+    for (const failed of [false, true]) {
+      const editor = createEditor('markdown', '', enabledWikiLinks)
+      installTiptapSlashMenu(editor, [], 'Insert', 'No commands', {
+        links: {
+          locale: () => 'en', localizedPaths: true,
+          content: result => discoveredPageLinkContent(result, 'markdown', enabledWikiLinks),
+          fetch: async () => { if (failed) throw new Error('offline'); return Response.json({ items: [] }) },
+          label: 'Pages', loadingLabel: 'Loading', emptyLabel: 'No pages', errorLabel: 'Failed'
+        }
+      })
+      typeVisualText(editor, '[[')
+      await nextEventLoopTurn()
+      const menu = editor.view.dom.parentElement!.querySelector<HTMLElement>('[role="menu"]')!
+      expect(menu.querySelector('[role="status"]')?.textContent).toBe(failed ? 'Failed' : 'No pages')
+      editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      typeVisualText(editor, 'literal]]')
+      expect(editor.getText()).toBe('[[literal]]')
+      expect(menu.hidden).toBe(true)
+      editor.destroy()
+    }
+    for (const fixture of [
+      { content: '<pre><code>code</code></pre>', position: 2 },
+      { content: '<p><code>code</code></p>', position: 2 },
+      { content: '<p><a href="/target">link</a></p>', position: 2 },
+      { content: '<custom-widget>opaque</custom-widget>', position: 0 },
+      { content: '<p>text</p>', position: { from: 1, to: 3 } },
+      { content: '<p>text</p>', position: 2, composing: true },
+      { content: '<p>text</p>', position: 2, readonly: true },
+      { content: '<p>\\</p>', position: 2 },
+      { content: '<p>[</p>', position: 2 }
+    ]) {
+      const editor = createEditor('html', fixture.content)
+      let requests = 0
+      installTiptapSlashMenu(editor, [], 'Insert', 'No commands', {
+        links: {
+          locale: () => 'en', localizedPaths: true,
+          content: result => discoveredPageLinkContent(result, 'html', { enabled: false }),
+          fetch: async () => { requests++; return Response.json({ items: [] }) },
+          label: 'Pages', loadingLabel: 'Loading', emptyLabel: 'No pages', errorLabel: 'Failed'
+        }
+      })
+      if (fixture.position === 0) editor.commands.setNodeSelection(0)
+      else editor.commands.setTextSelection(fixture.position)
+      if (fixture.composing) editor.view.dom.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+      if (fixture.readonly) editor.setEditable(false)
+      typeVisualText(editor, '[[')
+      expect(requests).toBe(0)
+      expect(editor.view.dom.hasAttribute('aria-controls')).toBe(false)
+      editor.destroy()
     }
   })
 

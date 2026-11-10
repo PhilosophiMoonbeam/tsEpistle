@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-te
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 import { up } from '../../db/migrations/tsepistle-000073-page-feedback.ts'
 import { up as addLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createEditLocks } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 import { up as addDurableJobs } from '../../db/migrations/2.5.130.ts'
 import { up as addPageWatchers } from '../../db/migrations/2.5.132.ts'
 import { up as addNotificationPreferences } from '../../db/migrations/tsepistle-000058-discussion-notifications.ts'
@@ -67,11 +68,14 @@ suite('native PostgreSQL feedback authority, admissions and atomic decisions', (
     await addMentionClaims(db)
     await up(db)
     await addLifecycle(db)
+    await createEditLocks(db)
     expect((await db('pages').where('id', 99).first()).content).toBe('Canonical source survives.')
     expect((await db('pageHistory').where('pageId', 99).first()).content).toBe('Historical source survives.')
     expect(await db('feedbackIdeas')).toHaveLength(0); expect(await db('feedbackBoards')).toHaveLength(0); expect(await db('feedbackVotes')).toHaveLength(0); expect(await db('feedbackSubscriptions')).toHaveLength(0)
   })
   beforeEach(async () => {
+    await db('pageEditLockAudit').delete()
+    await db('pageEditLocks').delete()
     for (const table of tables) await db(table).delete()
     now = new Date('2026-11-08T12:00:00.000Z'); deniedRead = new Set(); deniedManage = new Set()
     await db('users').insert([7, 8, 9].map(id => ({ id, name: `Human ${id}`, email: `human${id}@example.invalid` })))
@@ -109,6 +113,22 @@ suite('native PostgreSQL feedback authority, admissions and atomic decisions', (
     globalThis.WIKI = priorWiki as never
     if (db) { for (const table of tables) await db.schema.dropTableIfExists(table); await db.destroy() }
   })
+  it('blocks attaching a locked source, but preserves votes, status records and unrelated submissions to a locked board', async () => {
+    await db('pageEditLocks').insert([1, 2, 3].map(pageId => ({ pageId, isEditLocked: true, lockVersion: '1', updatedBy: 8, reason: 'Hold canonical source, not feedback workflow' })))
+    const admission = { ...actor(), boardId, pageId: 3, expectedBoardRevision: '1', expectedSourceRevision: '1', acknowledged: true }
+    await expect(Promise.resolve(store.submitExistingFeedbackIdea(admission))).rejects.toMatchObject({ name: 'PAGE_EDIT_LOCKED', status: 409 })
+    expect(await db('feedbackIdeas')).toHaveLength(1)
+    await store.setFeedbackVote({ ...actor(reader), boardId, ideaId, voted: true, expectedIdeaRevision: '1' })
+    await store.setFeedbackSubscription({ ...actor(reader), boardId, ideaId, subscribed: true })
+    await store.transitionFeedbackIdea(transition())
+    await db('pages').insert({ id: 4, title: 'Unrelated idea', path: 'ideas/new-unlocked', localeCode: 'en', visibility: 'public' })
+    await store.submitExistingFeedbackIdea({ ...actor(), boardId, pageId: 4, expectedBoardRevision: '1', expectedSourceRevision: '1', acknowledged: true })
+    expect(await db('feedbackIdeas')).toHaveLength(2)
+    expect(await db('feedbackVotes')).toHaveLength(1)
+    expect(await db('feedbackSubscriptions')).toHaveLength(1)
+    expect(await db('feedbackIdeas').where({ id: ideaId }).first()).toMatchObject({ state: 'planned' })
+  })
+
   it('allows permitted guest discovery without mistaking the reserved guest identity for an enrolled human', async () => {
     for (const ownershipUserId of [undefined, null, 2]) {
       const guest = { id: 2, authVersion: 0, permissions: ['read:pages'], ...(ownershipUserId === undefined ? {} : { ownershipUserId }) } as Express.User

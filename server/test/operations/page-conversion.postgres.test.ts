@@ -18,6 +18,7 @@ import { up as createReviewRouting } from '../../db/migrations/tsepistle-000074-
 import { up as createLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
 import { up as createFeedback } from '../../db/migrations/tsepistle-000073-page-feedback.ts'
 import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
+import { up as createEditLocks } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 import type { writeOutboxEvent as WriteOutboxEvent } from '../../core/outbox.ts'
 import type PageOperations from '../../operations/pages.ts'
 import type PageModel from '../../models/pages.ts'
@@ -122,6 +123,7 @@ suite('PostgreSQL reviewed conversion canonical boundary', () => {
     await createLifecycle(db)
     await createFeedback(db)
     await createStoragePageImportOwners(db)
+    await createEditLocks(db)
     await db('users').insert([requester, otherRequester].map(actor => ({ id: actor.id, name: actor.name, email: actor.email })))
     await db('groups').insert({ id: 3, name: 'Authors', permissions: JSON.stringify(requester.permissions), pageRules: JSON.stringify([{ match: 'START', path: '', deny: false, roles: requester.permissions }]) })
     await db('userGroups').insert([requester, otherRequester].map(actor => ({ userId: actor.id, groupId: 3 })))
@@ -197,6 +199,8 @@ suite('PostgreSQL reviewed conversion canonical boundary', () => {
     origin = `http://127.0.0.1:${address.port}`
   })
   beforeEach(async () => {
+    await db('pageEditLockAudit').delete()
+    await db('pageEditLocks').delete()
     await db('feedbackBoards').delete()
     await db('pageLifecycleClocks').delete()
     await db('pageReviewRouting').delete()
@@ -226,6 +230,14 @@ suite('PostgreSQL reviewed conversion canonical boundary', () => {
   })
 
   const review = () => reviewPageConversion(42, { editor: 'markdown', expectedSourceRevision: '1' }, { requester })
+
+  it('refuses a genuine reviewed conversion when the page is locked after review without consuming canonical state', async () => {
+    const candidate = await review()
+    await db('pageEditLocks').insert({ pageId: 42, isEditLocked: true, lockVersion: '1', updatedBy: requester.id, reason: 'Retain current HTML until explicit unlock' })
+    const before = await snapshot()
+    await expect(Page.convertPage({ id: 42, editor: 'markdown', user: requester, expectedSourceRevision: '1', reviewToken: candidate.reviewToken })).rejects.toMatchObject({ name: 'PAGE_EDIT_LOCKED', status: 409 })
+    expect(await snapshot()).toEqual(before)
+  })
 
   it('refuses a direct unreviewed HTML-to-Markdown model mutation without touching native state', async () => {
     const before = await snapshot()
@@ -316,8 +328,38 @@ suite('PostgreSQL reviewed conversion canonical boundary', () => {
     expect(await snapshot()).toEqual(beforeRevoked)
   }, 15_000)
 
+  it('withholds a locked private-page policy after manager authority is revoked while an edit waits, before associating proposed tags', async () => {
+    const actor = { ...requester, permissions: ['read:pages', 'write:pages', 'manage:system'] }
+    await db('groups').where({ id: 3 }).update({ permissions: JSON.stringify(actor.permissions) })
+    await db('pages').where({ id: 42 }).update({ visibility: 'private', ownerId: otherRequester.id })
+    const page = await db('pages').where({ id: 42 }).first()
+    await db('pageEditLocks').insert({ pageId: 42, isEditLocked: true, lockVersion: '1', updatedBy: requester.id, reason: 'Current private authority must precede edit-lock disclosure' })
+    const before = await snapshot(), blocker = await db.transaction(), preflight = Promise.withResolvers<void>()
+    let mutation: Promise<unknown> | undefined
+    const authority = vi.spyOn(WIKI.auth, 'loadPageRuleAuthority').mockImplementation(async (user, transaction) => {
+      const current = await loadPageRuleAuthority(user, transaction)
+      if (!transaction && user === actor) preflight.resolve()
+      return current
+    })
+    try {
+      await blocker('pages').where({ id: 42 }).forUpdate().first()
+      mutation = Page.updatePage({ id: 42, user: actor, content: 'Must not replace private source', tags: ['must-not-associate'], expectedSourceRevision: String(page.sourceRevision) }).then(() => null, error => { preflight.reject(error); return error })
+      await preflight.promise
+      await db('groups').where({ id: 3 }).update({ permissions: JSON.stringify(requester.permissions) })
+      await blocker.commit()
+      expect(await mutation).toMatchObject({ name: 'PageNotFound' })
+      expect(await snapshot()).toEqual(before)
+      expect(await db('tags').where({ tag: 'must-not-associate' })).toEqual([])
+    } finally {
+      authority.mockRestore()
+      if (!blocker.isCompleted()) await blocker.rollback()
+      await mutation
+    }
+  })
+
   it('reauthorizes after waiting for the canonical page lock, not only before conversion', async () => {
     const candidate = await review()
+    await db('pageEditLocks').insert({ pageId: 42, isEditLocked: true, lockVersion: '1', updatedBy: requester.id, reason: 'The prior writer must not learn policy after current authority is revoked' })
     const before = await snapshot()
     const blocker = await db.transaction()
     let mutation: Promise<unknown> | undefined

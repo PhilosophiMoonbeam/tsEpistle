@@ -34,6 +34,7 @@ const record = (v: unknown) =>
   typeof v.name === 'string' &&
   typeof v.description === 'string' &&
   typeof v.isSystem === 'boolean' &&
+  typeof v.formMfaRequired === 'boolean' &&
   Array.isArray(v.permissions) &&
   typeof v.memberCount === 'number'
 const workspace = (v: unknown) =>
@@ -92,6 +93,7 @@ export const groupPolicyCopy = (value: GroupPolicyDraft): GroupPolicyDraft =>
       name: value.name,
       description: value.description,
       redirectOnLogin: value.redirectOnLogin,
+      formMfaRequired: value.formMfaRequired,
       permissions: value.permissions,
       pageRules: value.pageRules
     })
@@ -112,4 +114,4 @@ export const groupPolicySignature = (value: GroupPolicyDraft): string =>
       locales: [...rule.locales].sort()
     }))
   })
-export const emptyGroupPolicy = (): GroupPolicyDraft => ({ name: '', description: '', redirectOnLogin: '/', permissions: [], pageRules: [] })
+export const emptyGroupPolicy = (): GroupPolicyDraft => ({ name: '', description: '', redirectOnLogin: '/', formMfaRequired: false, permissions: [], pageRules: [] })

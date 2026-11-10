@@ -10,6 +10,7 @@ import { enqueuePageMutationEffects } from '../core/page-mutation-outbox.ts'
 import { mutateOkfMetadata } from '../okf/format.ts'
 import errors from './errors.ts'
 import type { WikiAuth } from '../controllers/_types.ts'
+import { assertPagesEditUnlocked } from '../helpers/page-edit-lock.ts'
 
 const { ApplicationError } = errors
 export interface TaxonomyActor { requester: PagePrincipal; sessionId: string }
@@ -85,11 +86,15 @@ export const createTaxonomyService = (deps: TaxonomyDependencies) => ({
     let committed: { tagId: number; pageCount: number; pages: { id: number; hash: string }[] }
     try {
       committed = await deps.db.transaction(async tx => {
-        const initial = planTaxonomy(await readTaxonomySnapshot(tx), input.change)
+        const initialSnapshot = await readTaxonomySnapshot(tx)
+        const initial = planTaxonomy(initialSnapshot, input.change)
+        const affectedIds = [...new Set([...initial.changedPageIds, ...initialSnapshot.assignments.filter(assignment =>
+          initial.preview.change.action === 'edit' && assignment.tagId === initial.preview.source.id
+        ).map(assignment => assignment.pageId)])].sort((a, b) => a - b)
         if (initial.preview.fingerprint !== input.fingerprint) return conflict()
         // Follow the same page → tag lock order as page editing. Shared tag locks in
         // associateTags prevent an assignment from slipping in after this review.
-        if (initial.changedPageIds.length) await tx('pages').whereIn('id', initial.changedPageIds).orderBy('id').select('id').forUpdate()
+        if (affectedIds.length) await tx('pages').whereIn('id', affectedIds).orderBy('id').select('id').forUpdate()
         await tx('tags').orderBy('id').select('id').forUpdate()
         await tx('groups').orderBy('id').select('id').forShare()
         const before = await readTaxonomySnapshot(tx)
@@ -97,6 +102,7 @@ export const createTaxonomyService = (deps: TaxonomyDependencies) => ({
         if (plan.preview.fingerprint !== input.fingerprint) return conflict()
         if (plan.preview.accessChanges && input.acknowledgeAccess !== true) throw new ApplicationError('Acknowledge the changes to tag-based access rule matches before continuing.', { status: 400 })
         for (const id of plan.changedPageIds) await deps.assertUnlocked(actor, id, tx)
+        await assertPagesEditUnlocked(tx, affectedIds)
         const now = new Date().toISOString()
         let tagId = plan.preview.source.id
         if (plan.preview.destination?.id === -1) {

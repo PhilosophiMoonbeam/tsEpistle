@@ -7,6 +7,7 @@ import { up as reviewSchema } from '../../db/migrations/tsepistle-000074-page-re
 import { up as accuracySchema } from '../../db/migrations/tsepistle-000070-page-accuracy-attestations.ts'
 import { up as durableSchema } from '../../db/migrations/2.5.130.ts'
 import { up as leaseSchema } from '../../db/migrations/2.5.158.ts'
+import { up as createEditLocks } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 import { DurableJobStore, runDurableJobBatch, type DurableJob } from '../../core/durable-jobs.ts'
 import { NOTIFICATION_SETTINGS_KEY, readNotificationCeilings } from '../../jobs/notification-ceilings.ts'
 import type * as Routing from '../../operations/page-review-routing.ts'
@@ -54,6 +55,7 @@ suite('native PostgreSQL review routing and durable effect fences', () => {
       CREATE TABLE settings (key text PRIMARY KEY, value text, "updatedAt" timestamptz);
     `)
     await durableSchema(db); await leaseSchema(db); await accuracySchema(db); await reviewSchema(db)
+    await createEditLocks(db)
     vi.stubGlobal('WIKI', {
       config: { db: { type: 'postgres' }, lang: { code: 'en', namespacing: false } },
       configSvc: {}, lang: {}, startedAt: {},
@@ -67,6 +69,8 @@ suite('native PostgreSQL review routing and durable effect fences', () => {
     reminders = await import('../../jobs/page-review-reminders.ts')
   })
   beforeEach(async () => {
+    await db('pageEditLockAudit').delete()
+    await db('pageEditLocks').delete()
     mailCalls = 0; ambiguousMail = false; preHandoffFailure = false
     await db.raw('TRUNCATE pages,users,groups,tags,settings,"durableJobs","testReviewInbox" CASCADE')
     await db('users').insert([{ id: 7, name: 'Writer', email: 'writer@example.test' }, { id: 8, name: 'Other writer', email: 'other@example.test' }, { id: 9, name: 'Reader', email: 'reader@example.test' }])
@@ -76,6 +80,18 @@ suite('native PostgreSQL review routing and durable effect fences', () => {
     await db('userNotificationPreferences').insert([7, 8, 9].map(userId => ({ userId, category: 'reviewReminder', emailEnabled: false, inAppEnabled: true })))
   })
   afterAll(async () => { try { await db?.destroy() } finally { vi.unstubAllGlobals() } })
+
+  it('continues current authorized routing and durable reminder delivery while the source is edit-locked', async () => {
+    await db('pageEditLocks').insert({ pageId: 42, isEditLocked: true, lockVersion: '1', updatedBy: 7, reason: 'Review routing is operational, not an authored rewrite' })
+    const before = await db('pages').first()
+    const route = await routing.updatePageReviewRouting({ ...context(), mutation: { command: 'route', expectedSourceRevision: '8', expectedRoutingRevision: '0', route: { mode: 'users', userIds: [8] } } })
+    await routing.updatePageReviewRouting({ ...context(), mutation: { command: 'enable', expectedSourceRevision: '8', expectedRoutingRevision: route.routingRevision, enabled: true } })
+    const job = await claim()
+    await invoke(job)
+    expect(await db('testReviewInbox')).toEqual([{ cycleId: job.payload.cycleId, userId: 8 }])
+    expect(await db('pages').first()).toEqual(before)
+    expect(await db('pageEditLocks').first()).toMatchObject({ isEditLocked: true, lockVersion: '1' })
+  })
 
   it('defaults off, previews without mutation, refuses readers/delegates, and reset preserves source/schedule/accuracy', async () => {
     expect(await routing.readPageReviewRouting(context())).toMatchObject({ enabled: false, mode: 'contacts', routingRevision: '0', diagnostic: 'disabled' })

@@ -10,6 +10,7 @@ import { up as addDurableJobLeaseTokens } from '../db/migrations/2.5.158.ts'
 import { up as createPageReviewRouting } from '../db/migrations/tsepistle-000074-page-review-routing.ts'
 import { up as createPageLifecycle } from '../db/migrations/tsepistle-000075-page-lifecycle.ts'
 import { up as createStoragePageImportOwners } from '../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
+import { up as createEditLocks } from '../db/migrations/tsepistle-000080-page-edit-locks.ts'
 
 const writeOutboxEvent = vi.fn(async (_knex: unknown, _event: unknown) => undefined)
 const redactProtectedPageForSearch = vi.fn((page: unknown) => page)
@@ -212,6 +213,7 @@ const installSchema = async (): Promise<void> => {
   await createPageReviewRouting(db)
   await createPageLifecycle(db)
   await createStoragePageImportOwners(db)
+  await createEditLocks(db)
 }
 
 const insertDeletedSnapshot = async (
@@ -405,6 +407,21 @@ afterEach(async () => {
   await db.destroy()
   if (originalWiki === undefined) delete wikiGlobal.WIKI
   else wikiGlobal.WIKI = originalWiki
+})
+
+it('preserves separate policy versions through native recovery and refuses an already-locked recovery identity', async () => {
+  await insertDeletedSnapshot()
+  await db('users').insert([{ id: admin.id, email: admin.email, isActive: true }, { id: formerOwner.id, email: 'former-owner@example.test', isActive: true }])
+  await db('locales').insert({ code: 'en' })
+  await db('pageEditLocks').insert({ pageId: 41, isEditLocked: true, lockVersion: '3', updatedBy: admin.id, reason: 'Separate retained policy' })
+  const before = await snapshot()
+  await expect(Page.restoreDeletedPage(restoreOptions() as never)).rejects.toMatchObject({ name: 'PAGE_EDIT_LOCKED', status: 409 })
+  expect(await snapshot()).toEqual(before)
+  await db('pageEditLocks').where({ pageId: 41 }).update({ isEditLocked: false, lockVersion: '4' })
+  const policy = await db('pageEditLocks').first()
+  await Page.restoreDeletedPage(restoreOptions() as never)
+  expect(await db('pageEditLocks').first()).toEqual(policy)
+  expect(await db('pages').where({ id: 41 }).first()).toMatchObject({ path: 'restored/identity' })
 })
 
 describe('deleted page restore writer', () => {

@@ -268,6 +268,7 @@
             .page-header-unpublished(v-if='!isPublished', role='note')
               v-chip.page-unpublished-chip(size='small', color='warning', variant='tonal', prepend-icon='mdi-eye-off-outline') {{$t('common:page.unpublished')}}
               span.page-header-unpublished-text.text-body-small {{$t('common:page.unpublishedWarning')}}
+            page-edit-lock(v-if='!printView', :page-id='pageId', :source-revision='sourceRevision', :ready='pageOnlineActionReady')
       v-container.page-body(fluid)
         v-row
           v-col.page-col-sd(
@@ -304,7 +305,7 @@
                   v-list-item-title {{$t('common:header.viewSource')}}
                 v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-lightning-bolt', @click='pageConvert')
                   v-list-item-title {{$t('common:header.convert')}}
-                v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-content-duplicate', @click='pageDuplicate')
+                v-list-item(v-if='hasDuplicatePagePermission', prepend-icon='mdi-content-duplicate', @click='pageDuplicate')
                   v-list-item-title {{$t('common:header.duplicate')}}
                 v-list-item(v-if='hasManagePagesPermission', prepend-icon='mdi-content-save-move-outline', @click='pageMove')
                   v-list-item-title {{$t('common:header.move')}}
@@ -793,6 +794,7 @@ import SiteBanner from '@/components/common/site-banner.vue'
 import GlossaryReader from '@/components/common/glossary-reader.vue'
 import DiscussionAnnotations from '@/components/common/discussion-annotations.vue'
 import PageGovernance from '@/components/page-governance.vue'
+import PageEditLock from '@/components/page-edit-lock.vue'
 import { composeDiscussionAnnotation, onJumpDiscussionAnnotation } from '@/helpers/discussion-annotation-events'
 import type { DiscussionAnnotationAnchor } from '../../../../shared/discussion-annotations.ts'
 import { fetchPage, verifyPageAccuracy } from '@/helpers/pages-api'
@@ -944,6 +946,8 @@ type PageApproval = {
   submitterId: number
   assigneeId: number | null
   revisionId: number
+  reviewedSourceRevision: string | null
+  publishedSourceRevision: string | null
   stale: boolean
   canReview: boolean
   canSubmitter: boolean
@@ -1464,6 +1468,7 @@ export default defineComponent({
     GlossaryReader,
     DiscussionAnnotations,
     PageGovernance,
+    PageEditLock,
     NavSidebar,
     SiteBanner,
     PageBrandingMark,
@@ -2301,6 +2306,9 @@ export default defineComponent({
     hasWritePagesPermission () {
       return wikiStore.page.effectivePermissions.pages.write
     },
+    hasDuplicatePagePermission () {
+      return wikiStore.page.effectivePermissions.pages.duplicate === true
+    },
     hasManagePagesPermission () {
       return wikiStore.page.effectivePermissions.pages.manage
     },
@@ -2315,7 +2323,7 @@ export default defineComponent({
     },
     hasAnyPagePermissions () {
       return this.hasWritePagesPermission || this.hasManagePagesPermission ||
-        this.hasDeletePagesPermission || this.hasReadSourcePermission || this.hasReadHistoryPermission
+        this.hasDeletePagesPermission || this.hasReadSourcePermission || this.hasReadHistoryPermission || this.hasDuplicatePagePermission
     },
     printView: {
       get () {

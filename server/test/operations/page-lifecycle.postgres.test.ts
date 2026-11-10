@@ -13,6 +13,7 @@ import { up as installRevisionTrigger } from '../../db/migrations/tsepistle-0000
 import { up as createReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
 import { up as createLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
 import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
+import { up as createEditLocks } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 import type { PageLifecycleEffect, PageLifecycleRuleDefinition } from '../../../shared/page-lifecycle.ts'
 import type * as LifecycleOperations from '../../operations/page-lifecycle.ts'
 import type * as LifecycleJobs from '../../jobs/page-lifecycle.ts'
@@ -92,6 +93,7 @@ suite('native PostgreSQL lifecycle authority, receipt and lease fences', () => {
     await createReviewRouting(db)
     await createLifecycle(db)
     await createStoragePageImportOwners(db)
+    await createEditLocks(db)
     migrationSnapshot = { before: beforeMigration, after: await db('pages').first(), clocks: await db('pageLifecycleClocks').first(), history: await db('pageHistory') }
     const runtime = { config: { db: { type: 'postgres' }, lang: { code: 'en', namespacing: false }, sessionSecret: 'lifecycle-owned-fixture-secret' }, configSvc: {}, lang: {}, startedAt: {}, data: { reservedPaths: [], editors: [{ key: 'markdown', contentType: 'markdown' }] }, events: { inbound: new EventEmitter(), outbound: new EventEmitter() }, logger: console, Error: pageErrors, auth: { loadPageRuleAuthority, checkPageAccess: auth.checkPageAccess, checkAccess: auth.checkAccess }, models: { knex: db, Objection, pages: {} as unknown, pageHistory: {} as unknown, renderers: { getRenderingPipeline: async () => [] } } }
     vi.stubGlobal('WIKI', runtime)
@@ -105,6 +107,8 @@ suite('native PostgreSQL lifecycle authority, receipt and lease fences', () => {
     operations = await import('../../operations/page-lifecycle.ts'); jobs = await import('../../jobs/page-lifecycle.ts')
   })
   beforeEach(async () => {
+    await db('pageEditLockAudit').delete()
+    await db('pageEditLocks').delete()
     await db.raw('TRUNCATE "storagePageImportOwners", "pageLifecycleRules", pages, "pageTags", "pageHistory", "pageHistoryTags", "pageMutationOutbox", "outboxEvents", "durableJobs", "pageAccessPasswords", "pageUnlockGrants", "pageWatchers", "userNotificationPreferences" RESTART IDENTITY CASCADE')
     await db('users').where('id', owner.id).update({ isActive: true, isSystem: false, authVersion: 0 })
     await db('users').where('id', manager.id).update({ isActive: true, isSystem: false, authVersion: 0 })
@@ -119,6 +123,30 @@ suite('native PostgreSQL lifecycle authority, receipt and lease fences', () => {
     await db('pageLifecycleClocks').insert({ pageId: 42, bodyEpoch: knownEpoch, bodyAnchorAt: new Date((await current()).valueOf() - 10 * 86_400_000), bodyAnchorKind: 'known-change', bodyDigest: digest, bodyObservedSourceRevision: '1', commentEpoch: commentsEpoch, commentAnchorAt: null, commentAnchorKind: 'unknown', lastCommentEvent: null }).onConflict('pageId').ignore()
   })
   afterAll(async () => { try { if (db) await db.destroy() } finally { vi.restoreAllMocks(); vi.unstubAllGlobals() } })
+
+  it('visibly suspends locked tag mutations without source, tag, history or outbox changes', async () => {
+    await db('pageEditLocks').insert({ pageId: 42, isEditLocked: true, lockVersion: '1', updatedBy: owner.id, reason: 'Retain reviewed taxonomy' })
+    const value = await definition([{ kind: 'add-tags', tagIds: [9] }])
+    const preview = await operations.previewPageLifecycle({ requester: owner, sessionId: 'native-lifecycle-human', input: { definition: value } })
+    expect(preview.pages[0]!.effects[0]).toMatchObject({ reason: 'page-edit-locked' })
+    await save(value); const job = await queued(); await run(job)
+    expect(await db('pageLifecycleCycles').first()).toMatchObject({ status: 'suspended', reason: 'page-edit-locked' })
+    expect(await db('pageLifecycleActionReceipts').first()).toMatchObject({ state: 'suspended', reason: 'page-edit-locked' })
+    expect(await db('pageHistory')).toEqual([])
+    expect(await db('pageTags').where({ pageId: 42 }).pluck('tagId')).toEqual([2])
+    expect(await db('pages').where({ id: 42 }).first()).toMatchObject({ content: source, sourceRevision: '1' })
+  })
+  it('continues operational notices and move proposals while locked, but fences human move fulfillment', async () => {
+    await db('pageEditLocks').insert({ pageId: 42, isEditLocked: true, lockVersion: '1', updatedBy: owner.id, reason: 'Keep source stable during review' })
+    await save(await definition([{ kind: 'set-notice', text: 'Source is awaiting explicit unlock.' }, { kind: 'propose-move', destinationRootPath: 'archive', destinationLocale: 'same', template: 'page-id' }]))
+    const job = await queued(); await run(job)
+    expect(await db('pageLifecycleNotices')).toHaveLength(1)
+    const proposal = await db('pageLifecycleMoveProposals').first()
+    expect(proposal).toMatchObject({ status: 'awaiting-human' })
+    await expect(Page.movePage({ id: 42, destinationPath: proposal.destinationPath, destinationLocale: 'en', expectedSourceRevision: '1', user: owner, sessionId: 'native-lifecycle-human', lifecycleProposalId: proposal.id, updateLinks: false, skipStorage: true })).rejects.toMatchObject({ name: 'PAGE_EDIT_LOCKED', status: 409 })
+    expect(await db('pageHistory')).toEqual([])
+    expect(await db('pageLifecycleMoveProposals').first()).toMatchObject({ status: 'awaiting-human' })
+  })
 
   it('adds unknown provenance without changing exact source, private owner or canonical history', () => {
     const snapshot = migrationSnapshot as { before: unknown; after: unknown; clocks: Record<string, unknown>; history: unknown[] }

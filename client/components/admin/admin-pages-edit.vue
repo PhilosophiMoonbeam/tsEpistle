@@ -3,6 +3,7 @@
     <template v-if="page">
       <admin-hero :title="page.title || $t('admin:pagesEdit.untitledPage')" :description="`${page.locale} / ${page.path}`" icon="mdi-file-document-outline"><template #actions><v-btn variant="text" prepend-icon="mdi-arrow-left" to="/pages">{{ $t('admin:pagesEdit.pages') }}</v-btn><v-btn variant="text" prepend-icon="mdi-refresh" :disabled="loading || publicationBusy || pageFeatureBusy" @click="refreshDetails">{{ $t('common:actions.refresh') }}</v-btn><v-btn variant="outlined" :href="pageUrl">{{ $t('admin:pagesEdit.viewPage') }}</v-btn><v-btn variant="flat" color="primary" prepend-icon="mdi-pencil-outline" :href="pageHref(page, '/e')">{{ $t('admin:pagesEdit.editContent') }}</v-btn></template></admin-hero>
       <div class="page-context-strip"><span>{{ $t('admin:pagesEdit.page', { id: page.id, interpolation: { escapeValue: false } }) }}</span><span>{{ publicationStatus }}</span><span>{{ page.visibility === 'private' ? $t('admin:pagesEdit.privateOwner', { ownerId: page.ownerId, interpolation: { escapeValue: false } }) : $t('admin:pagesEdit.workspacePageRulesApply') }}</span><span><span v-if="page.editor">{{ page.editor }} / </span>{{ page.contentType }}</span></div>
+      <page-edit-lock :page-id="page.id" :source-revision="page.sourceRevision" :ready="!loading && resolvedPageRouteId === page.id" @dirty="editLockDirty = $event" @busy="editLockBusy = $event" />
       <v-tabs :model-value="section" color="primary" show-arrows :aria-label="$t('admin:pagesEdit.pageAdministrationSections')"><v-tab id="page-tab-overview" value="overview" aria-controls="page-panel-overview" @click="setSection('overview')">{{ $t('admin:pagesEdit.overview') }}</v-tab><v-tab v-if="publicationAvailable" id="page-tab-publication" value="publication" aria-controls="page-panel-publication" @click="setSection('publication')">{{ $t('admin:pagesEdit.publication') }} <span v-if="publicationDirty" class="ms-2" :aria-label="$t('admin:pagesEdit.unsavedChanges2')">•</span></v-tab><v-tab id="page-tab-knowledge" value="knowledge" aria-controls="page-panel-knowledge" @click="setSection('knowledge')">{{ $t('admin:pagesEdit.knowledgeProvenance') }}</v-tab></v-tabs>
       <div class="page-detail-workspace">
         <section v-show="section === 'overview'" id="page-panel-overview" role="tabpanel" aria-labelledby="page-tab-overview" class="page-overview-grid">
@@ -50,6 +51,7 @@ import * as _ from 'lodash-es'
 import AdminPagePublicationSettings from './admin-page-publication-settings.vue'
 import AdminPageAccess from './admin-page-access.vue'
 import PageGovernance from '../page-governance.vue'
+import PageEditLock from '../page-edit-lock.vue'
 import { pageHref, publicationState } from '../../helpers/admin-pages'
 import { deletePage as deletePageById, fetchPage, type PageDetails } from '../../helpers/pages-api'
 import { updatePageFeatures } from '../../helpers/pages-api'
@@ -67,6 +69,7 @@ export default {
 
 
   components: {
+    PageEditLock,
     AsyncState,
     AdminPagePublicationSettings, AdminPageAccess, PageGovernance
   },
@@ -83,6 +86,8 @@ export default {
       publicationBusy: false,
       governanceDirty: false,
       governanceBusy: false,
+      editLockDirty: false,
+      editLockBusy: false,
       pageFeaturesDraft: null as PageFeatures | null,
       pageFeaturesBase: null as PageFeatures | null,
       pageFeatureDraftPageId: null as number | null,
@@ -176,16 +181,17 @@ export default {
       }
     },
     setSection(section: string) { if (section === 'publication' && !this.publicationAvailable) return; this.section = section; this.$router.replace({ hash: '#' + section }) },
-    protectUnload(event: BeforeUnloadEvent) { if (this.publicationDirty || this.publicationBusy || this.pageFeatureDirty || this.pageFeatureBusy || this.accessOpen || this.accessBusy || this.governanceDirty || this.governanceBusy) { event.preventDefault(); event.returnValue = '' } },
+    protectUnload(event: BeforeUnloadEvent) { if (this.publicationDirty || this.publicationBusy || this.pageFeatureDirty || this.pageFeatureBusy || this.accessOpen || this.accessBusy || this.governanceDirty || this.governanceBusy || this.editLockDirty || this.editLockBusy) { event.preventDefault(); event.returnValue = '' } },
     manageAccess(mode: string, event: Event) { this.accessActivator = event.currentTarget instanceof HTMLElement ? event.currentTarget : null; this.accessMode = mode; this.accessOpen = true },
     async accessChanged() { wikiStore.showNotification({ message: this.$t('admin:pagesEdit.pageAccessUpdated'), style: 'success', icon: 'check' }); await this.loadPage() },
     async canLeave(): Promise<boolean> {
-      if (this.pageFeatureBusy || this.publicationBusy || this.accessBusy || this.governanceBusy) return false
+      if (this.pageFeatureBusy || this.publicationBusy || this.accessBusy || this.governanceBusy || this.editLockBusy) return false
       if (this.accessOpen && !(await requestConfirmation({ title: this.$t('admin:pagesEdit.leaveAccessReview'), confirmLabel: this.$t('admin:pagesEdit.leaveReview'), cancelLabel: this.$t('admin:pagesEdit.stay') }))) return false
       if (this.publicationDirty && !(await confirmDiscard(this.$t('admin:pagesEdit.discardUnsavedPublicationChanges')))) return false
       if (this.pageFeatureDirty && !(await confirmDiscard(this.$t('admin:pagesEdit.discardUnsavedPageFeature')))) return false
       if (this.governanceDirty && !(await confirmDiscard('Discard unsaved review-routing or lifecycle governance changes?'))) return false
-      return !this.pageFeatureBusy && !this.publicationBusy && !this.accessBusy && !this.governanceBusy
+      if (this.editLockDirty && !(await confirmDiscard(this.$t('common:page.editLockDiscardReason')))) return false
+      return !this.pageFeatureBusy && !this.publicationBusy && !this.accessBusy && !this.governanceBusy && !this.editLockBusy
     },
     async refreshDetails() {
       if (this.governanceBusy) return

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { DurableJobStore } from './durable-jobs.ts'
-import { isCommentWebhookEventName } from '../../shared/webhook-events.ts'
+import { isApprovalWebhookEventName, isCommentWebhookEventName } from '../../shared/webhook-events.ts'
 import { enqueueNotificationAudience } from '../jobs/notification-audience.ts'
 import { enqueueGovernedNotificationAudience } from '../jobs/governed-notifications.ts'
 
@@ -90,7 +90,7 @@ export const publishOutboxEvents = async (knex: Knex, options: PublishOutboxOpti
       const durableJobs = new DurableJobStore(transaction)
       for (const hook of hooks) {
         const subscriptions = eventSubscriptions(hook.events)
-        if (isCommentWebhookEventName(event.type)) {
+        if (isCommentWebhookEventName(event.type) || isApprovalWebhookEventName(event.type)) {
           if (!subscriptions.includes(event.type)) continue
         } else if (!subscriptions.includes('*') && !subscriptions.includes(event.type)) {
           continue

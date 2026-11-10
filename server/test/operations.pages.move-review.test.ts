@@ -12,6 +12,7 @@ import { up as addLeaseToken } from '../db/migrations/2.5.158.ts'
 import { up as createReviewRouting } from '../db/migrations/tsepistle-000074-page-review-routing.ts'
 import { up as createLifecycle } from '../db/migrations/tsepistle-000075-page-lifecycle.ts'
 import { up as createStoragePageImportOwners } from '../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
+import { up as createEditLocks } from '../db/migrations/tsepistle-000080-page-edit-locks.ts'
 
 const connection = getPostgresTestConnection('_move_review_test', import.meta.path)
 const suite = connection ? describe : describe.skip
@@ -179,6 +180,7 @@ suite('PostgreSQL reviewed page move authorization', () => {
     await createReviewRouting(db)
     await createLifecycle(db)
     await createStoragePageImportOwners(db)
+    await createEditLocks(db)
     await db('users').insert({ id: 7, name: 'Reviewer', email: 'reviewer@example.test' })
     await db('locales').insert({ code: 'en' })
     const wiki = {
@@ -217,6 +219,8 @@ suite('PostgreSQL reviewed page move authorization', () => {
     operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default as MoveOperations
   })
   beforeEach(async () => {
+    await db('pageEditLockAudit').delete()
+    await db('pageEditLocks').delete()
     for (const table of ['storagePageImportOwners', 'durableJobs', 'testPageHistory', 'outboxEvents', 'pageCollaborationRooms', 'pageUnlockGrants', 'pageAccessPasswords', 'pageApprovalRequests', 'pageMutationOutbox', 'pageLinks', 'pageTags', 'pages']) {
       await db(table).delete()
     }
@@ -235,6 +239,18 @@ suite('PostgreSQL reviewed page move authorization', () => {
       await db.raw('DROP FUNCTION IF EXISTS test_increment_page_source_revision()')
       await db.destroy()
     }
+  })
+
+  it('refuses the entire reviewed move when a selected referrer is locked after review', async () => {
+    await seedPage(2, 'docs/editable')
+    const selected = await review([2])
+    await db('pageEditLocks').insert({ pageId: 2, isEditLocked: true, lockVersion: '1', updatedBy: 7, reason: 'Freeze referrer after review' })
+    const before = await db('pages').orderBy('id')
+    await expect(PageModel.movePage({ id: 1, user: reviewer as Parameters<typeof PageModel.movePage>[0]['user'], destinationLocale: 'en', destinationPath: 'docs/new', expectedSourceRevision: '1', updateLinks: true, reviewToken: selected.reviewToken, sessionId: 'reviewer-session', skipStorage: true })).rejects.toMatchObject({ name: 'PAGE_EDIT_LOCKED', status: 409 })
+    expect(await db('pages').orderBy('id')).toEqual(before)
+    expect(await db('testPageHistory')).toEqual([])
+    expect(await db('outboxEvents')).toEqual([])
+    expect((await review()).items.find(item => item.id === 2)).toMatchObject({ eligible: false })
   })
 
   it('requires an interactive reviewer allowed to edit both the original and destination', async () => {
@@ -385,15 +401,20 @@ suite('PostgreSQL reviewed page move authorization', () => {
     })
   }
 
-  for (const unavailable of ['malformed', 'disabled', 'query', 'fragment'] as const) {
+  for (const suffix of ['?tab=1', '#part', '?tab=1#part']) {
+    it(`repairs selected grid URLs while preserving the supported ${suffix} suffix`, async () => {
+      const content = gridSource.replace('"/docs/old"', `"/docs/old${suffix}"`)
+      await seedPage(2, 'docs/editable', { content })
+      const selected = await review([2])
+      expect(selected.items.find(item => item.id === 2)).toMatchObject({ eligible: true })
+      await PageModel.movePage({ id: 1, user: reviewer as Parameters<typeof PageModel.movePage>[0]['user'], destinationLocale: 'en', destinationPath: 'docs/new', expectedSourceRevision: '1', updateLinks: true, reviewToken: selected.reviewToken, sessionId: 'reviewer-session', skipStorage: true })
+      expect(await db('pages').where({ id: 2 }).first('content')).toEqual({ content: gridSource.replace('"/docs/old"', `"/docs/new${suffix}"`) })
+    })
+  }
+
+  for (const unavailable of ['malformed', 'disabled'] as const) {
     it(`does not offer automatic repair for ${unavailable} grid source`, async () => {
-      const content = unavailable === 'malformed'
-        ? gridSource.replace('"version":1', '"version":2')
-        : unavailable === 'query'
-          ? gridSource.replace('"/docs/old"', '"/docs/old?tab=1"')
-          : unavailable === 'fragment'
-            ? gridSource.replace('"/docs/old"', '"/docs/old#part"')
-            : gridSource
+      const content = unavailable === 'malformed' ? gridSource.replace('"version":1', '"version":2') : gridSource
       await seedPage(2, 'docs/editable', { content })
       if (unavailable === 'disabled') await db('contentExtensions').where({ key: 'links-grid' }).update({ isEnabled: false })
       const result = await review()

@@ -11,6 +11,7 @@ import { up as createAssetRelocation } from '../db/migrations/tsepistle-000037-a
 import { up as createReviewRouting } from '../db/migrations/tsepistle-000074-page-review-routing.ts'
 import { up as createLifecycle } from '../db/migrations/tsepistle-000075-page-lifecycle.ts'
 import { up as createStoragePageImportOwners } from '../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
+import { up as createEditLocks } from '../db/migrations/tsepistle-000080-page-edit-locks.ts'
 
 const originalWiki = global.WIKI
 
@@ -145,6 +146,7 @@ describe('page creation editor availability', () => {
     await createReviewRouting(db)
     await createLifecycle(db)
     await createStoragePageImportOwners(db)
+    await createEditLocks(db)
     const checkAccess = vi.fn().mockReturnValue(true)
     const loadPageRuleAuthority = vi.fn(async requester => ({ requester, permissions: ['write:pages'], groups: [], tagAliases: {} }))
     global.WIKI = {

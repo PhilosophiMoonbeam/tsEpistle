@@ -26,6 +26,7 @@ import { up as addRevisionReasons } from '../../db/migrations/tsepistle-000069-p
 import { up as createReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
 import { up as createLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
 import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
+import { up as createEditLocks } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 import type PageModel from '../../models/pages.ts'
 import type pageOperations from '../../operations/pages.ts'
 import type { LiveNotesOperations } from '../../operations/live-notes.ts'
@@ -174,7 +175,8 @@ suite('native page creation receipts and authorized recovery', () => {
       addRevisionReasons,
       createReviewRouting,
       createLifecycle,
-      createStoragePageImportOwners
+      createStoragePageImportOwners,
+      createEditLocks
     ])
       await migrate(db)
     const wiki = {
@@ -292,6 +294,42 @@ suite('native page creation receipts and authorized recovery', () => {
       sourceRevision: '1',
       destination: { id: page.id, sourceRevision: '2', title: 'Later title', path: 'later-destination' }
     })
+  })
+
+  it('duplicates a readable non-writable source only into a currently authorized destination, never from stale membership hints', async () => {
+    const source = await create(randomUUID(), { path: 'reference/source', visibility: 'public', isPublished: true, content: '# Readable source' })
+    const destinationRules = [
+      { match: 'START', path: '', deny: false, roles: ['read:pages'], locales: [] },
+      { match: 'SUBTREE', path: 'workspace', deny: false, roles: ['write:pages'], locales: ['en'] },
+      { match: 'TAG', path: 'restricted', deny: true, roles: ['write:pages'], locales: [] }
+    ]
+    await db('groups').where({ id: 3 }).update({ pageRules: JSON.stringify(destinationRules) })
+    await db('locales').insert({ code: 'fr' }).onConflict('code').ignore()
+    const staleAuthority = await authorityFor(owner)
+    expect(evaluateGroupAccess(staleAuthority.permissions, ['write:pages'], staleAuthority.groups, { locale: 'en', path: source.path, tags: [] }).allowed).toBe(false)
+    const retrieved = await operations.getSource({ requester: owner, sessionId, id: source.id })
+    expect(retrieved).toMatchObject({ content: '# Readable source', visibility: 'public' })
+    const copy = await create(randomUUID(), { path: 'workspace/copy', visibility: 'public', content: retrieved.content, isPublished: false })
+    expect(await db('pages').where({ id: copy.id }).first()).toMatchObject({
+      content: retrieved.content, path: 'workspace/copy', localeCode: 'en', visibility: 'public', ownerId: null, creatorId: owner.id, isPublished: false
+    })
+    const committed = await persisted()
+    for (const destination of [
+      { path: 'reference/denied', locale: 'en' },
+      { path: 'workspace/denied-language', locale: 'fr' },
+      { path: 'workspace/denied-tag', locale: 'en', tags: ['restricted'] }
+    ]) {
+      await expect(create(randomUUID(), { ...destination, visibility: 'public', content: retrieved.content })).rejects.toMatchObject({ name: 'PAGE_CREATE_FORBIDDEN', status: 403 })
+      expect(await persisted()).toEqual(committed)
+    }
+    // The editor may still hold its admitted source and an old any-write hint.
+    // The model must reload group membership inside the committing transaction.
+    await db('userGroups').where({ userId: owner.id }).delete()
+    await expect(operations.create({
+      requester: owner, sessionId, authority: staleAuthority,
+      input: input(randomUUID(), { path: 'workspace/revoked', visibility: 'public', content: retrieved.content })
+    })).rejects.toMatchObject({ name: 'PAGE_CREATE_FORBIDDEN', status: 403 })
+    expect(await persisted()).toEqual(committed)
   })
 
   it('serializes concurrent same-owner/request creates even when the second request chooses a different path', async () => {

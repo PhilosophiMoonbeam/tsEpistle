@@ -5,6 +5,10 @@ import auth, { loadPageRuleAuthority, type PageRuleAuthority } from '../../core/
 import { createTaxonomyService, type TaxonomyActor } from '../../operations/taxonomy.ts'
 import { createApiPrincipal } from '../../helpers/api-principal.ts'
 import { up as migrateTaxonomy, down as rollbackTaxonomy } from '../../db/migrations/tsepistle-000015-taxonomy-lifecycle.ts'
+import { up as createEditLocks } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
+import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
+import { up as createReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as createLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
 const connection = getPostgresTestConnection('_taxonomy_test', import.meta.path)
 const suite = connection ? describe : describe.skip
 const actor: TaxonomyActor = { requester: { id: 1, permissions: ['manage:system'] }, sessionId: 'taxonomy-test' }
@@ -52,6 +56,7 @@ suite('PostgreSQL taxonomy transactions', () => {
     globalThis.WIKI = runtime(db) as never
     await db.schema.createTable('tags', t => { t.increments('id'); t.string('tag').unique().notNullable(); t.string('title'); t.timestamp('createdAt'); t.timestamp('updatedAt') })
     await migrateTaxonomy(db)
+    await createEditLocks(db)
     await db.schema.createTable('pages', t => {
       t.increments('id'); t.string('title'); t.string('path'); t.string('localeCode'); t.string('visibility'); t.integer('ownerId'); t.bigInteger('sourceRevision').notNullable().defaultTo(1)
       t.string('hash'); t.integer('authorId'); t.text('content'); t.string('contentType'); t.string('description'); t.string('editorKey'); t.boolean('isPublished'); t.jsonb('extra'); t.timestamp('updatedAt')
@@ -66,6 +71,10 @@ suite('PostgreSQL taxonomy transactions', () => {
       t.uuid('id').primary(); t.integer('pageId'); t.bigInteger('sourceRevision'); for (const field of ['effectKind', 'effectKey', 'desiredState', 'payloadSha256', 'payload', 'status']) t.text(field)
       t.integer('attempts'); for (const field of ['availableAt', 'createdAt', 'updatedAt']) t.timestamp(field); t.unique(['pageId', 'sourceRevision', 'effectKind'])
     })
+    await db.schema.createTable('users', table => { table.integer('id').primary() })
+    await createDurableJobs(db)
+    await createReviewRouting(db)
+    await createLifecycle(db)
     service = createTaxonomyService({ db, authorize(input) { if (!input.requester?.permissions?.includes('manage:system')) throw Object.assign(new Error('Forbidden'), { status: 403 }); return 1 },
       async assertUnlocked(_actor, _pageId, transaction?: Knex.Transaction) {
         if (locked) throw Object.assign(new Error('Page locked'), { status: 403 })
@@ -84,7 +93,7 @@ suite('PostgreSQL taxonomy transactions', () => {
   })
   beforeEach(async () => {
     locked = false; failHistory = false; failRefresh = false; checkAuthority = false
-    for (const table of ['outboxEvents', 'pageMutationOutbox', 'pageHistoryTags', 'pageHistory', 'pageTags', 'groups', 'pages']) await db(table).delete()
+    for (const table of ['pageEditLockAudit', 'pageEditLocks', 'outboxEvents', 'pageMutationOutbox', 'pageHistoryTags', 'pageHistory', 'pageTags', 'groups', 'pages']) await db(table).delete()
     await db('tags').update({ redirectToId: null }); await db('tags').delete()
     await db('tags').insert([{ id: 1, tag: 'source', title: 'Source', createdAt: now, updatedAt: now }, { id: 2, tag: 'target', title: 'Target', createdAt: now, updatedAt: now }])
     await db.raw("SELECT setval(pg_get_serial_sequence('tags', 'id'), 2)")
@@ -93,13 +102,19 @@ suite('PostgreSQL taxonomy transactions', () => {
     await db('groups').insert({ id: 1, name: 'Readers', permissions: JSON.stringify(['read:pages']), pageRules: JSON.stringify([{ match: 'TAG', path: 'source', deny: false, roles: ['read:pages'] }]) })
   })
   afterAll(async () => {
-    if (db) {
-      for (const table of ['outboxEvents', 'pageMutationOutbox', 'pageHistoryTags', 'pageHistory', 'pageTags', 'groups', 'pages', 'tags']) await db.schema.dropTableIfExists(table)
-      await db.destroy()
-    }
+    if (db) await db.destroy()
     if (peerDb) await peerDb.destroy()
     globalThis.WIKI = originalWiki
   })
+  it('atomically refuses taxonomy reassignment and display-label rewrites affecting any locked page without disclosing hidden descendants', async () => {
+    await db('pageEditLocks').insert({ pageId: 3, isEditLocked: true, lockVersion: '1', updatedBy: 1, reason: 'Retain the private page taxonomy' })
+    for (const change of [{ action: 'merge', tagId: 1, targetId: 2 }, { action: 'edit', tagId: 1, tag: 'source', title: 'Changed display label' }]) {
+      const preview = await service.preview(actor, change), before = await storedState()
+      await expect(service.apply(actor, { change: preview.change, fingerprint: preview.fingerprint, acknowledgeAccess: true })).rejects.toMatchObject({ name: 'PAGE_EDIT_LOCKED', status: 409 })
+      expect(await storedState()).toEqual(before)
+    }
+  })
+
   it('merges assigned tags with current authority without waiting on its own tag locks', async () => {
     const authorityDb = knexModule({
       client: 'pg',

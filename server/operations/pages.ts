@@ -70,6 +70,7 @@ import { attestPageAccuracy, readPageAccuracy } from '../helpers/page-accuracy.t
 import { FeedbackCreateAdmissionSchema } from '../../shared/page-feedback.ts'
 import { prepareFeedbackSubmission, admitCreatedFeedbackIdea } from './page-feedback.ts'
 import type { CanonicalTransactionHook } from '../models/pages.ts'
+import { pageEditLocked, type PageEditLockRow } from '../helpers/page-edit-lock.ts'
 const MOVE_REVIEW_PAGE_SIZE = 20
 const MOVE_REVIEW_CANDIDATE_BATCH = 100
 const MOVE_REVIEW_SCAN_LIMIT = 10_000
@@ -234,6 +235,8 @@ const evaluateMoveCandidate = async (input: {
     item.reason = 'The current link index is pending; refresh after indexing completes.'
   } else if (byteLength > MOVE_LINK_SOURCE_LIMIT || outputByteLength > MOVE_LINK_SOURCE_LIMIT) {
     item.reason = 'This source exceeds the automatic repair size limit.'
+  } else if (pageEditLocked(await wiki.models.knex<PageEditLockRow>('pageEditLocks').where({ pageId: page.id }).first())) {
+    item.reason = 'This source is administratively edit-locked. A system manager must explicitly unlock it before link repair.'
   } else if (await hasActiveApproval(page.id)) {
     item.reason = 'This source has an active approval request.'
   } else {
@@ -1873,6 +1876,7 @@ const getSource = async (
   description: string | null
   editor: string
   title: string
+  visibility: PageVisibility
   isSearchable: boolean
   pageFeatures: PageFeatures
   changeReason?: string
@@ -1886,6 +1890,7 @@ const getSource = async (
     description: typeof page.description === 'string' ? page.description : null,
     editor: page.editorKey,
     isSearchable: page.isSearchable,
+    visibility: page.visibility,
     title: page.title,
     ...(page.changeReason == null ? {} : { changeReason: page.changeReason }),
     pageFeatures: normalizePageFeatures(page.extra.pageFeatures),

@@ -309,6 +309,16 @@ The group directory emphasizes numeric IDs and timestamps rather than access pur
 The next overhaul should make group purpose and scope understandable, separate saved policy from drafts, review permission and membership effects, protect system groups and current administrative authority, and add a useful access evaluation grounded in the actual authorization rules. Private ownership must remain a separate boundary, and any policy preview must state whether it evaluates this group or a person’s combined memberships. Group creation, deletion, membership, page-rule management and recovery states all remain in scope.
 
 
+### Group form-MFA policy
+
+Migration 79 adds a native `groups.formMfaRequired` boolean, defaulting to false without changing existing memberships, credentials or account generations. Reviewed group administration applies it only to form-based identities: workspace `enforce2FA`, account enrollment/requirement and all current group requirements combine with OR. An enrolled form account receives its normal authenticator challenge; an unenrolled required account completes password authentication and authenticator enrollment before receiving a session.
+
+Enabling or disabling the group requirement ends current members’ existing sessions and version-bound pending sign-in/recovery continuations at transaction commit. Membership changes retain the same retirement boundary. Group review fingerprints, reasons, audit history and protected/elevated authority remain authoritative. Removing a group requirement does not clear account enrollment or any other requirement. A scoped administrator can use the reviewed authenticator reset to retain required enrollment while clearing a lost secret; disabling is unavailable while the workspace or any current group still requires an authenticator.
+
+Redirect identities remain provider-managed: this setting does not verify provider MFA assurance. Anonymous access is unchanged. Personal MCP, service and API credentials retain their independent lifecycle and are not revoked by MFA-only changes. Administrators should arrange scoped recovery access before requiring MFA for their own group; a requirement change affecting the acting administrator also ends that administrator’s session.
+
+Replacement cookies for profile, preferences and avatar writes remain bound to the authenticated request’s generation. A self-service or mandatory password change admits only its own single generation increment; an intervening group-policy transition cannot promote retired proof into a current session.
+
 ### Groups backend checkpoint — interface and deployment pending
 
 The new group administration store supplies a purpose-aware directory, paginated membership/candidate lookup, reviewed creation/policy/membership/deletion operations, and saved or draft access evaluation for a group or a current member’s combined memberships. The directory omits full rule bodies; access reports return at most 200 rule explanations with an explicit total/truncation indicator. Evaluation describes a hypothetical public-page policy decision. Private ownership, authentication availability, provider grants, agent tool approvals and other feature-specific gates remain separate.

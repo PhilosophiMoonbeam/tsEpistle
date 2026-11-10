@@ -177,6 +177,7 @@
       template(v-if='$vuetify.display.mdAndUp')
         v-spacer
         .text-body-small {{ $t(`editor:editor.tiptap`, { label: definition.label, interpolation: { escapeValue: false } }) }}
+        .text-body-small {{ $t(`editor:markup.discoveryHint`) }}
         v-spacer
         .text-body-small {{$t('editor:ckeditor.stats', { chars: stats.characters, words: stats.words })}}
     editor-conflict(v-model='isConflict', v-if='isConflict')
@@ -219,6 +220,7 @@ import { wikiStore } from '@/store/index.ts'
 import EditorConflict from './conflict.vue'
 import {
   createTiptapExtensions,
+  discoveredPageLinkContent,
   getVisualEditorDefinition,
   getVisualEditorStats,
   VisualEditorSource,
@@ -255,7 +257,7 @@ import {
   type EditorImagePropertyPatch,
   type EditorImageStyle
 } from '../../../helpers/editor-image-properties.ts'
-import { installTiptapSlashMenu } from './slash-menu.ts'
+import { installTiptapSlashMenu, type TiptapMenuDisposer } from './slash-menu.ts'
 import { EditorAdapterController } from '../common/editor-adapter'
 import { FORMATTING_TOOLS, toolTooltip, type FormattingToolId } from '../common/formatting-tools'
 import { vRovingToolbar } from '../common/roving-toolbar'
@@ -364,7 +366,7 @@ export default defineComponent({
       editorAdapter: null as EditorAdapterController | null,
       editor: null as Raw<Editor> | null,
       editorSource: null as Raw<VisualEditorSource> | null,
-      disposeSlashMenu: null as (() => void) | null,
+      disposeSlashMenu: null as TiptapMenuDisposer | null,
       imageRequest: null as Raw<AbortController> | null,
       stats: { characters: 0, words: 0 } as VisualEditorStats,
       toolbarVersion: 0,
@@ -465,6 +467,15 @@ export default defineComponent({
     hasSourceSelection (): boolean {
       void this.toolbarVersion
       return this.editor?.isActive('wikiSourceBlock') === true || this.editor?.isActive('wikiSourceInline') === true
+    },
+    discoveryAuthority (): string | null {
+      if (!wikiStore.user.authenticated || !wikiStore.authRefreshSettled || wikiStore.authRefreshPending ||
+        wikiStore.authRefreshOutcome !== 'authenticated' || this.isConflict || this.activeModal ||
+        this.insertLinkDialog || this.sourceDialog || this.admonitionDialog || this.glyphMenuOpen || this.insertMenuOpen) return null
+      return JSON.stringify([
+        wikiStore.user.id, wikiStore.user.authVersion, wikiStore.offlineIdentityEpoch,
+        wikiStore.user.permissions, wikiStore.page.id, this.locale, this.path, this.format, this.wikiLinkOptions
+      ])
     }
   },
   watch: {
@@ -864,6 +875,30 @@ export default defineComponent({
     this.editor = markRaw(editor)
     const source = new VisualEditorSource(editor, this.format, initialSource)
     this.editorSource = markRaw(source)
+    const discoveryDocument = JSON.stringify([wikiStore.page.id, this.locale, this.path, this.format])
+    let discoveryOwner = wikiStore.user.authenticated && wikiStore.user.id > 0
+      ? JSON.stringify([wikiStore.user.id, wikiStore.user.authVersion, wikiStore.offlineIdentityEpoch])
+      : null
+    let discoveryRetired = false
+    const discoveryAuthority = (): string | null => {
+      const document = JSON.stringify([wikiStore.page.id, this.locale, this.path, this.format])
+      const owner = JSON.stringify([wikiStore.user.id, wikiStore.user.authVersion, wikiStore.offlineIdentityEpoch])
+      if (discoveryRetired || discoveryDocument !== document || (discoveryOwner !== null && discoveryOwner !== owner)) {
+        discoveryRetired = true
+        return null
+      }
+      if (discoveryOwner === null) {
+        // The editor can mount before its first whoami response. Bind only that
+        // first settled identity, including any epoch established by the probe.
+        if (wikiStore.authRefreshPending || !wikiStore.authRefreshSettled || wikiStore.authRefreshOutcome === null) return null
+        if (!wikiStore.user.authenticated || wikiStore.authRefreshOutcome !== 'authenticated') {
+          discoveryRetired = true
+          return null
+        }
+        discoveryOwner = owner
+      }
+      return this.discoveryAuthority
+    }
     this.disposeSlashMenu = installTiptapSlashMenu(editor, [
       { id: 'paragraph', label: String(this.$t('editor:markup.paragraph')), icon: 'mdi-format-paragraph', hint: '¶', keywords: 'text paragraph', run: chain => chain.setParagraph() },
       ...([1, 2, 3] as const).map(level => ({
@@ -880,8 +915,32 @@ export default defineComponent({
       { id: 'blockquote', label: this.toolLabel('blockquote'), icon: 'mdi-format-quote-close', hint: '>', keywords: 'quote blockquote', run: chain => chain.toggleBlockquote() },
       { id: 'code', label: this.toolLabel('codeBlock'), icon: 'mdi-code-tags', hint: '```', keywords: 'code block', run: chain => chain.setCodeBlock({ language: 'plaintext' }) },
       { id: 'table', label: String(this.$t('editor:markup.insertTable')), icon: 'mdi-table', hint: '| |', keywords: 'table grid', run: chain => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }) },
-      { id: 'rule', label: this.toolLabel('horizontalBar'), icon: 'mdi-minus', hint: '---', keywords: 'horizontal rule divider', run: chain => chain.setHorizontalRule() }
-    ], String(this.$t('editor:markup.insertTools')), String(this.$t('editor:markup.noMatchingCommands')))
+      { id: 'rule', label: this.toolLabel('horizontalBar'), icon: 'mdi-minus', hint: '---', keywords: 'horizontal rule divider', run: chain => chain.setHorizontalRule() },
+      { id: 'bold', label: this.toolLabel('bold'), icon: 'mdi-format-bold', hint: 'B', keywords: 'bold strong', inlineSafe: true, run: chain => chain.toggleBold() },
+      { id: 'italic', label: this.toolLabel('italic'), icon: 'mdi-format-italic', hint: 'I', keywords: 'italic emphasis', inlineSafe: true, run: chain => chain.toggleItalic() },
+      { id: 'strike', label: this.toolLabel('strikethrough'), icon: 'mdi-format-strikethrough', hint: 'S', keywords: 'strike strikethrough', inlineSafe: true, run: chain => chain.toggleStrike() },
+      { id: 'inline-code', label: this.toolLabel('inlineCode'), icon: 'mdi-code-tags', hint: '`', keywords: 'inline code', inlineSafe: true, run: chain => chain.toggleCode() },
+    ], String(this.$t('editor:markup.insertTools')), String(this.$t('editor:markup.noMatchingCommands')), {
+      authority: discoveryAuthority,
+      links: {
+        locale: () => this.locale,
+        localizedPaths: siteLangs.length > 0,
+        content: page => discoveredPageLinkContent(page, this.format, this.wikiLinkOptions),
+        label: String(this.$t('editor:markup.discoverPageLinks')),
+        emptyLabel: String(this.$t('editor:markup.noMatchingPages')),
+        loadingLabel: String(this.$t('editor:markup.loadingPages')),
+        errorLabel: String(this.$t('editor:markup.pageDiscoveryFailed'))
+      }
+    })
+    this.$watch(
+      () => JSON.stringify([
+        wikiStore.user.authenticated, wikiStore.user.id, wikiStore.user.authVersion, wikiStore.offlineIdentityEpoch,
+        wikiStore.authRefreshPending, wikiStore.authRefreshSettled, wikiStore.authRefreshOutcome,
+        wikiStore.page.id, this.locale, this.path, this.format, this.discoveryAuthority
+      ]),
+      () => { discoveryAuthority(); this.disposeSlashMenu?.invalidate() },
+      { flush: 'sync', immediate: true }
+    )
     const adapter = new EditorAdapterController({
       readText: () => source.readText(),
       writeText: text => this.replaceEditorText(text),
@@ -1070,6 +1129,16 @@ export default defineComponent({
     }
     .editor-tiptap-slash-title { flex: 1; min-width: 0; }
     .editor-tiptap-slash-hint { flex: none; font-family: monospace; color: var(--editor-muted); }
+    &[data-kind='links'] {
+      button { flex-wrap: wrap; }
+      .editor-tiptap-slash-hint {
+        flex: 1 1 100%;
+        min-width: 0;
+        padding-inline-start: 38px;
+        font-size: 0.75rem;
+        overflow-wrap: anywhere;
+      }
+    }
   }
 
 

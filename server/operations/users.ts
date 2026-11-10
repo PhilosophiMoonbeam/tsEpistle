@@ -21,6 +21,7 @@ import {
 } from '../../shared/user-presentation.ts'
 import { normalizeUserAvatar } from '../helpers/user-avatar-processing.ts'
 import { principalId } from '../helpers/page-access.ts'
+import { sessionVersion } from '../helpers/account-session.ts'
 
 export const ProfilePreferencesInputSchema = z
   .object({
@@ -170,7 +171,7 @@ interface WikiUsers {
       updateUser(input: UpdateUserInput): Promise<boolean>
       replaceUserAvatarData(userId: number, data: Buffer | null): Promise<void>
       deleteUser(id: number, replaceId: number): Promise<unknown>
-      refreshToken(user: number | UserRecord): Promise<{ token: string }>
+      refreshToken(user: number | UserRecord, options: { expectedAuthVersion: number }): Promise<{ token: string }>
     }
     pages: { query(): { count(expression: string): CountQuery } }
   }
@@ -606,7 +607,13 @@ const issueReplacementCookie = (response: Response | undefined, token: string): 
   response.cookie('jwt', token, commonHelper.getCookieOpts())
   response.set('Cache-Control', 'no-store')
 }
+const profileSessionVersion = (requester: Express.User | undefined): number => {
+  const version = requester?.authVersion === undefined ? null : sessionVersion(requester.authVersion)
+  if (version === null) throw new wiki.Error.AuthRequired()
+  return version
+}
 const updateProfile = async ({ requester, expectedAccountId, input: value, response }: ProfileMutationRequest): Promise<void> => {
+  const expectedAuthVersion = profileSessionVersion(requester)
   const user = await requireProfileMutationUser(requester, expectedAccountId)
   if (!user.isVerified) throw new wiki.Error.AuthAccountNotVerified()
   const input = recordValue(value)
@@ -633,7 +640,7 @@ const updateProfile = async ({ requester, expectedAccountId, input: value, respo
     ...(timeFormat === undefined ? {} : { timeFormat }),
     appearance
   })
-  issueReplacementCookie(response, (await wiki.models.users.refreshToken(user.id)).token)
+  issueReplacementCookie(response, (await wiki.models.users.refreshToken(user.id, { expectedAuthVersion })).token)
 }
 const requireVerifiedProfileUser = async (requester: Express.User | undefined, expectedAccountId: unknown): Promise<UserRecord> => {
   const user = await requireProfileMutationUser(requester, expectedAccountId)
@@ -641,9 +648,9 @@ const requireVerifiedProfileUser = async (requester: Express.User | undefined, e
   return user
 }
 
-const mutateAvatar = async (user: UserRecord, data: Buffer | null, response: Response | undefined): Promise<{ pictureUrl: string | null }> => {
+const mutateAvatar = async (user: UserRecord, data: Buffer | null, response: Response | undefined, expectedAuthVersion: number): Promise<{ pictureUrl: string | null }> => {
   await wiki.models.users.replaceUserAvatarData(user.id, data)
-  issueReplacementCookie(response, (await wiki.models.users.refreshToken(user.id)).token)
+  issueReplacementCookie(response, (await wiki.models.users.refreshToken(user.id, { expectedAuthVersion })).token)
   return { pictureUrl: data === null ? null : 'internal' }
 }
 
@@ -658,9 +665,10 @@ const updateAvatar = async ({
   data: Buffer
   response?: Response
 }): Promise<{ pictureUrl: string | null }> => {
+  const expectedAuthVersion = profileSessionVersion(requester)
   const user = await requireVerifiedProfileUser(requester, expectedAccountId)
   const canonical = await normalizeUserAvatar(data)
-  return mutateAvatar(user, canonical, response)
+  return mutateAvatar(user, canonical, response, expectedAuthVersion)
 }
 
 const clearAvatar = async ({
@@ -672,21 +680,25 @@ const clearAvatar = async ({
   expectedAccountId: unknown
   response?: Response
 }): Promise<{ pictureUrl: string | null }> => {
+  const expectedAuthVersion = profileSessionVersion(requester)
   const user = await requireVerifiedProfileUser(requester, expectedAccountId)
-  return mutateAvatar(user, null, response)
+  return mutateAvatar(user, null, response, expectedAuthVersion)
 }
 const updateProfilePreferences = async ({ requester, expectedAccountId, input: value, response }: ProfileMutationRequest): Promise<void> => {
+  const expectedAuthVersion = profileSessionVersion(requester)
   const user = await requireProfileMutationUser(requester, expectedAccountId)
   if (!user.isVerified) throw new wiki.Error.AuthAccountNotVerified()
   const result = ProfilePreferencesInputSchema.safeParse(value)
   if (!result.success) throw new wiki.Error.InputInvalid()
   await wiki.models.users.updateUser({ id: user.id, ...result.data })
-  issueReplacementCookie(response, (await wiki.models.users.refreshToken(user.id)).token)
+  issueReplacementCookie(response, (await wiki.models.users.refreshToken(user.id, { expectedAuthVersion })).token)
 }
 
 const changePassword = async (value: unknown): Promise<void> => {
   const input = recordValue(value)
-  const user = await requireProfileMutationUser(isRecord(input.requester) ? input.requester : undefined, input.expectedAccountId)
+  const requester = isRecord(input.requester) ? input.requester : undefined
+  const expectedAuthVersion = profileSessionVersion(requester)
+  const user = await requireProfileMutationUser(requester, input.expectedAccountId)
   if (!user.isVerified) throw new wiki.Error.AuthAccountNotVerified()
   if (user.providerKey !== 'local') throw new wiki.Error.AuthProviderInvalid()
   const current = stringValue(input.current, 'current')
@@ -696,9 +708,10 @@ const changePassword = async (value: unknown): Promise<void> => {
   } catch {
     throw new wiki.Error.AuthPasswordInvalid()
   }
-  if (await wiki.models.users.updateUser({ id: user.id, newPassword })) revoke(user.id)
+  const authorizationChanged = await wiki.models.users.updateUser({ id: user.id, newPassword })
+  if (authorizationChanged) revoke(user.id)
   const response = input.response as Response | undefined
-  issueReplacementCookie(response, (await wiki.models.users.refreshToken(user.id)).token)
+  issueReplacementCookie(response, (await wiki.models.users.refreshToken(user.id, { expectedAuthVersion: expectedAuthVersion + (authorizationChanged ? 1 : 0) })).token)
 }
 const listUserGroups = (user: UserRecord): GroupQuery => user.$relatedQuery('groups')
 const listProfileGroups = async (user: UserRecord): Promise<string[]> => (await user.$relatedQuery('groups')).map(group => group.name)

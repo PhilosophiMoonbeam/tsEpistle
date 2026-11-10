@@ -22,6 +22,7 @@ import { up as createStoragePageImportOwners } from '../../db/migrations/tsepist
 import { up as installRevisionTrigger } from '../../db/migrations/tsepistle-000035-page-search-inclusion.ts'
 import { up as createReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
 import { up as createLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as createEditLocks } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 import { recordStoragePageImportOwner } from '../../helpers/storage-page-import-owner.ts'
 import type PageModel from '../../models/pages.ts'
 import { createAssetRelocationHandler } from '../../jobs/asset-relocation.ts'
@@ -213,6 +214,7 @@ suite('PostgreSQL canonical storage mutations with real Git', () => {
     await createLifecycle(db)
     await createAssetRelocation(db)
     await createStoragePageImportOwners(db)
+    await createEditLocks(db)
     await db('users').insert({ id: author.id, name: author.name, email: author.email })
     await db('groups').insert({ id: 1, permissions: '["manage:system"]', adminRevision: 'initial' })
     await db('userGroups').insert({ userId: author.id, groupId: 1 })

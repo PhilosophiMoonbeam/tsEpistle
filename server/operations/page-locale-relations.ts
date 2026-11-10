@@ -3,6 +3,7 @@ import type { Knex } from 'knex'
 import { canReadPage, canWritePage, type PagePrincipal, type PageVisibility } from '../helpers/page-access.ts'
 import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import errors from './errors.ts'
+import { assertPagesEditUnlocked } from '../helpers/page-edit-lock.ts'
 
 const { ApplicationError } = errors
 
@@ -134,22 +135,24 @@ export const linkPageLocaleRelation = async (input: {
   let authority: PageRuleAuthority | undefined
   try {
     await runtime().models.knex.transaction(async transaction => {
-      const selectedRows = await selectPages(transaction)
-        .whereIn('id', [pageId, relatedPageId].sort((left, right) => left - right))
-        .forUpdate()
+      if (transaction.client.config.client === 'pg') await transaction.raw('SELECT pg_advisory_xact_lock(?)', [0x574c524c])
+      const selectedRows = await selectPages(transaction).whereIn('id', [pageId, relatedPageId])
       const selected = await hydratePageTags(transaction, selectedRows)
-      const page = selected.find(candidate => candidate.id === pageId)
-      const relatedPage = selected.find(candidate => candidate.id === relatedPageId)
+      let page = selected.find(candidate => candidate.id === pageId)
+      let relatedPage = selected.find(candidate => candidate.id === relatedPageId)
       if (!page || !relatedPage) return notFound()
 
       const groupIds = [...new Set([page.localeGroupId, relatedPage.localeGroupId].filter((value): value is string => Boolean(value)))].sort()
-      const members = groupIds.length === 0
-        ? selected
-        : await hydratePageTags(
-            transaction,
-            await selectPages(transaction).whereIn('localeGroupId', groupIds).forUpdate()
-          )
-      const affected = [...new Map([...members, page, relatedPage].map(candidate => [candidate.id, candidate])).values()]
+      const memberQuery = selectPages(transaction).whereIn('id', [pageId, relatedPageId])
+      if (groupIds.length) memberQuery.orWhereIn('localeGroupId', groupIds)
+      const affected = await hydratePageTags(transaction, await memberQuery.orderBy('id').forUpdate())
+      // A concurrent native move may leave a set while these rows are acquired.
+      if (selected.some(previous => !affected.some(current => current.id === previous.id && current.localeGroupId === previous.localeGroupId && current.localeCode === previous.localeCode))) {
+        return relationConflict('The translation set changed. Reload it before trying again.')
+      }
+      page = affected.find(candidate => candidate.id === pageId)
+      relatedPage = affected.find(candidate => candidate.id === relatedPageId)
+      if (!page || !relatedPage) return notFound()
       const loadedAuthority = await runtime().auth.loadPageRuleAuthority(input.requester, transaction)
       authority = loadedAuthority
       if (!canReadPage(input.requester, page, loadedAuthority) || !canReadPage(input.requester, relatedPage, loadedAuthority)) return notFound()
@@ -168,6 +171,7 @@ export const linkPageLocaleRelation = async (input: {
       const destinationGroupId = page.localeGroupId ?? relatedPage.localeGroupId ?? randomUUID()
       const movedIds = affected.filter(candidate => candidate.localeGroupId !== destinationGroupId).map(candidate => candidate.id)
       if (movedIds.length > 0) {
+        await assertPagesEditUnlocked(transaction, movedIds)
         await transaction('pages').whereIn('id', movedIds).update({ localeGroupId: destinationGroupId })
       }
     })
@@ -191,10 +195,12 @@ export const unlinkPageLocaleRelation = async (input: {
 
   let authority: PageRuleAuthority | undefined
   await runtime().models.knex.transaction(async transaction => {
-    const selectedRows = await selectPages(transaction)
-      .whereIn('id', [pageId, relatedPageId].sort((left, right) => left - right))
-      .forUpdate()
-    const selected = await hydratePageTags(transaction, selectedRows)
+    if (transaction.client.config.client === 'pg') await transaction.raw('SELECT pg_advisory_xact_lock(?)', [0x574c524c])
+    const observed = await selectPages(transaction).where({ id: pageId }).first()
+    if (!observed) return notFound()
+    const memberQuery = selectPages(transaction).whereIn('id', [pageId, relatedPageId])
+    if (observed.localeGroupId) memberQuery.orWhere('localeGroupId', observed.localeGroupId)
+    const selected = await hydratePageTags(transaction, await memberQuery.orderBy('id').forUpdate())
     const page = selected.find(candidate => candidate.id === pageId)
     const relatedPage = selected.find(candidate => candidate.id === relatedPageId)
     if (!page || !relatedPage) return notFound()
@@ -206,11 +212,10 @@ export const unlinkPageLocaleRelation = async (input: {
     }
     if (!canWritePage(input.requester, page, loadedAuthority) || !canWritePage(input.requester, relatedPage, loadedAuthority)) return forbidden()
 
+    const remaining = selected.filter(candidate => candidate.id !== relatedPage.id && candidate.localeGroupId === page.localeGroupId)
+    const affectedIds = [relatedPage.id, ...(remaining.length === 1 ? [remaining[0]!.id] : [])]
+    await assertPagesEditUnlocked(transaction, affectedIds)
     await transaction('pages').where({ id: relatedPage.id }).update({ localeGroupId: null })
-    const remaining = await transaction('pages')
-      .select('id')
-      .where({ localeGroupId: page.localeGroupId })
-      .forUpdate() as Array<Pick<LocaleRelationPage, 'id'>>
     if (remaining.length === 1) {
       await transaction('pages').where({ id: remaining[0]!.id }).update({ localeGroupId: null })
     }

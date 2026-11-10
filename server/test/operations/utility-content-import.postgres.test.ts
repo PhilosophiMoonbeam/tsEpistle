@@ -16,6 +16,7 @@ import { up as revisionReasonsMigration } from '../../db/migrations/tsepistle-00
 import { up as reviewRoutingMigration } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
 import { up as lifecycleMigration } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
 import { up as importOwnersMigration } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
+import { up as editLocksMigration } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 import auth, { loadPageRuleAuthority } from '../../core/auth.ts'
 import pageErrors from '../../helpers/error.ts'
 import type StorageModel from '../../models/storage.ts'
@@ -262,6 +263,7 @@ suite('legacy content import storage handoff on PostgreSQL', () => {
     await reviewRoutingMigration(db)
     await lifecycleMigration(db)
     await importOwnersMigration(db)
+    await editLocksMigration(db)
     runtime.models.knex = db
     previousWiki = Reflect.get(globalThis, 'WIKI')
     Reflect.set(globalThis, 'WIKI', runtime)

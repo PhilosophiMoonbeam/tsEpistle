@@ -77,6 +77,8 @@ export interface PageApprovalInboxItem {
   status: ApprovalStatus
   revisionId: number
   revisionUpdatedAt: string
+  reviewedSourceRevision: string | null
+  publishedSourceRevision: string | null
   createdAt: string
   updatedAt: string
   closedAt: string | null

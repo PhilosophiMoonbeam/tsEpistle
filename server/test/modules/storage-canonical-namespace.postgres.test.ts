@@ -23,9 +23,11 @@ import { up as installPageRevisionTrigger } from '../../db/migrations/tsepistle-
 import { up as addRevisionReasons } from '../../db/migrations/tsepistle-000069-page-history-reasons.ts'
 import { up as addAccountAdministration } from '../../db/migrations/tsepistle-000017-account-administration.ts'
 import { up as addGroupAdministration } from '../../db/migrations/tsepistle-000018-group-administration.ts'
+import { up as addGroupFormMfa } from '../../db/migrations/tsepistle-000079-group-form-mfa.ts'
 import { up as addPageReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
 import { up as addPageLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
 import { up as createStoragePageImportOwners } from '../../db/migrations/tsepistle-000077-storage-page-import-owners.ts'
+import { up as createEditLocks } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 import { requireSystemAuthority } from '../../helpers/system-authority.ts'
 import { loadStoragePageImportOwners, recordStoragePageImportOwner, storagePageImportOwnerMatches } from '../../helpers/storage-page-import-owner.ts'
 import { withOkfProducer } from '../../okf/mutation-context.ts'
@@ -74,7 +76,9 @@ const tables = [
   ['userKeys', 'id'],
   ['pageLifecycleClocks', 'pageId'],
   ['pageReviewRouting', 'pageId'],
-  ['comments', 'id']
+  ['comments', 'id'],
+  ['pageEditLocks', 'pageId'],
+  ['pageEditLockAudit', 'id'],
 ] as const
 
 suite('PostgreSQL canonical page and asset physical namespace admission', () => {
@@ -373,9 +377,11 @@ suite('PostgreSQL canonical page and asset physical namespace admission', () => 
     await addRevisionReasons(db)
     await addAccountAdministration(db)
     await addGroupAdministration(db)
+    await addGroupFormMfa(db)
     await addPageReviewRouting(db)
     await addPageLifecycle(db)
     await createStoragePageImportOwners(db)
+    await createEditLocks(db)
     await db('users').insert([author, assetWriter].map(({ id, name, email }) => ({ id, name, email })))
     await db('groups').insert([
       { id: 1, name: 'Administrators', permissions: JSON.stringify(['manage:system']), pageRules: '[]', isSystem: true },
@@ -997,12 +1003,12 @@ suite('PostgreSQL canonical page and asset physical namespace admission', () => 
       const context = { ...plugin, root, repoPath: source, git: true, mode: 'pull', targetKey: 'git', config }
       const update = Page.updatePage
       const interruption = vi.spyOn(Page, 'updatePage').mockImplementation(async options => {
-        if (options.id === original.id) throw new Error('Interruption after native move')
+        if (options.id === original.id) await db('pageEditLocks').insert({ pageId: original.id, isEditLocked: true, lockVersion: '1', updatedBy: author.id, reason: 'Lock after the factual native move, before replacement' })
         return update.call(Page, options)
       })
       try {
         const failed = await plugin.sync!.call(context as never)
-        expect(failed).toEqual(expect.arrayContaining([expect.objectContaining({ relPath: 'fr/new.md', ok: false })]))
+        expect(failed).toEqual(expect.arrayContaining([expect.objectContaining({ relPath: 'fr/new.md', ok: false, error: expect.stringContaining('move already committed') })]))
       } finally {
         interruption.mockRestore()
         expect(Page.updatePage).toBe(update)
@@ -1021,6 +1027,12 @@ suite('PostgreSQL canonical page and asset physical namespace admission', () => 
       })
       expect(movedOwner.moveBinding!.moveOperationId).toBe(movedOwner.operationId)
       expect(movedOwner.moveBinding!.moveNativeRevision).toBe(movedOwner.nativeRevision)
+      const movedPage = await db('pages').where({ id: original.id }).first()
+      const lockPolicy = await db('pageEditLocks').where({ pageId: original.id }).first()
+      expect(lockPolicy).toMatchObject({ isEditLocked: true, lockVersion: '1' })
+      expect(movedPage.sourceRevision).toBe(movedOwner.nativeRevision)
+      const lockOperations = await import('../../operations/page-edit-lock.ts')
+      await lockOperations.setPageEditLock({ requester: author, pageId: original.id, sessionId: 'native-import-manager', input: { isEditLocked: false, expectedLockVersion: '1', reason: 'Explicitly resume the partial import after inspecting its committed move' } })
       const restarted = { ...plugin, root, repoPath: source, git: true, mode: 'pull', targetKey: 'git', config }
       const recovered = await plugin.importAll!.call(restarted as never)
       expect(recovered).toEqual(expect.arrayContaining([expect.objectContaining({ relPath: 'fr/new.md', ok: true })]))
@@ -1326,6 +1338,77 @@ suite('PostgreSQL canonical page and asset physical namespace admission', () => 
     await assertConflict(upload.run())
     expect(await snapshot()).toEqual(before)
     expect(await readFile(upload.source)).toEqual(upload.bytes)
+  })
+
+  it('orders a reasoned lock behind an actual canonical edit transaction, then refuses the next edit until audited unlock', async () => {
+    await seedPage(40, 'guide')
+    const transaction = await db.transaction()
+    const lockOperations = await import('../../operations/page-edit-lock.ts')
+    let locking: Promise<unknown> | undefined
+    try {
+      await Page.updatePage({ id: 40, user: author, content: '<p>Actual edit committed first</p>', expectedSourceRevision: '1', transaction, skipStorage: true })
+      locking = lockOperations.setPageEditLock({ requester: author, pageId: 40, sessionId: 'native-lock-manager', input: { isEditLocked: true, expectedLockVersion: '0', reason: 'Lock after the already admitted edit' } })
+      let observed = false
+      for (let attempt = 0; attempt < 200; attempt++) {
+        const wait = await observer.raw<{ rows: Array<{ waiting: boolean }> }>(`SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%pg_advisory_xact_lock%') AS waiting`)
+        if (wait.rows[0]?.waiting) { observed = true; break }
+        // Observe a real PostgreSQL committing-fence wait, not a guessed JS completion interval.
+        await Bun.sleep(5)
+      }
+      expect(observed).toBe(true)
+      expect(await observer('pageEditLocks').where({ pageId: 40 })).toEqual([])
+      await transaction.commit()
+      await locking
+    } finally {
+      if (!transaction.isCompleted()) await transaction.rollback()
+      if (locking) await locking
+    }
+    const page = await db('pages').where({ id: 40 }).first()
+    expect(page.content).toBe('<p>Actual edit committed first</p>')
+    const before = await snapshot()
+    await expect(Page.updatePage({ id: 40, user: author, title: 'Refused title', expectedSourceRevision: String(page.sourceRevision), skipStorage: true })).rejects.toMatchObject({ name: 'PAGE_EDIT_LOCKED', status: 409 })
+    expect(await snapshot()).toEqual(before)
+    await lockOperations.setPageEditLock({ requester: author, pageId: 40, sessionId: 'native-lock-manager', input: { isEditLocked: false, expectedLockVersion: '1', reason: 'Explicit unlock after inspecting refusal' } })
+    await Page.updatePage({ id: 40, user: author, title: 'Authorized after unlock', expectedSourceRevision: String(page.sourceRevision), skipStorage: true })
+    expect(await db('pages').where({ id: 40 }).first()).toMatchObject({ title: 'Authorized after unlock' })
+    expect(await db('pageEditLockAudit').where({ pageId: 40 }).orderBy('lockVersion').pluck('isEditLocked')).toEqual([true, false])
+  })
+
+  for (const writer of ['body', 'metadata', 'tags', 'publication', 'privacy', 'ownership', 'conversion', 'move', 'import-move', 'delete', 'history-restore', 'locale-migration'] as const) {
+    it(`refuses the real native ${writer} writer while administratively locked without changing source, history or receipts`, async () => {
+      await seedPage(40, 'guide', { contentType: writer === 'conversion' ? 'markdown' : 'html', visibility: writer === 'ownership' ? 'private' : 'public' })
+      await db('pageEditLocks').insert({ pageId: 40, isEditLocked: true, lockVersion: '1', updatedBy: author.id, reason: 'Retain reviewed canonical source' })
+      const before = await snapshot()
+      let mutation: Promise<unknown>
+      switch (writer) {
+        case 'body': mutation = Page.updatePage({ id: 40, user: author, content: '<p>Changed body</p>', expectedSourceRevision: '1' }); break
+        case 'metadata': mutation = Page.updatePage({ id: 40, user: author, title: 'Changed title', description: 'Changed metadata', expectedSourceRevision: '1' }); break
+        case 'tags': mutation = Page.updatePage({ id: 40, user: author, tags: ['changed-tag'], expectedSourceRevision: '1' }); break
+        case 'publication': mutation = Page.updatePage({ id: 40, user: author, isPublished: false, expectedSourceRevision: '1' }); break
+        case 'privacy': mutation = Page.changeVisibility({ id: 40, user: author, visibility: 'private', expectedSourceRevision: '1' }); break
+        case 'ownership': mutation = Page.transferOwnership({ id: 40, user: author, ownerId: 7, expectedSourceRevision: '1' }); break
+        case 'conversion': mutation = Page.convertPage({ id: 40, user: author, editor: 'html', expectedSourceRevision: '1' }); break
+        case 'move': case 'import-move': mutation = Page.movePage({ id: 40, user: author, destinationPath: 'moved', destinationLocale: 'en', expectedSourceRevision: '1', skipStorage: writer === 'import-move' }); break
+        case 'delete': mutation = Page.deletePage({ id: 40, user: author, expectedSourceRevision: '1', skipStorage: true }); break
+        case 'history-restore': mutation = Page.updatePage({ id: 40, user: author, content: '<p>Historical body</p>', action: 'restored', okfRestoreRevision: '1', expectedSourceRevision: '1' }); break
+        case 'locale-migration': mutation = Page.migrateToLocale({ sourceLocale: 'en', targetLocale: 'fr', user: author }); break
+      }
+      await expect(mutation).rejects.toMatchObject({ name: 'PAGE_EDIT_LOCKED', status: 409 })
+      expect(await snapshot()).toEqual(before)
+    })
+  }
+
+  it('truthfully refuses an existing-page native disk import and leaves accepted ownership and all canonical receipts unchanged', async () => {
+    await withImportSource({ 'en/locked.md': 'First accepted canonical body' }, async (root, source) => {
+      expectImportSucceeded(await commonDisk.importFromDisk({ root, moduleName: 'DISK' }))
+      const imported = await db('pages').where({ path: 'locked' }).first()
+      await db('pageEditLocks').insert({ pageId: imported.id, isEditLocked: true, lockVersion: '1', updatedBy: author.id, reason: 'Review before replacement' })
+      await writeFile(path.join(source, 'en/locked.md'), 'Replacement source must not commit')
+      const before = await snapshot()
+      const results = await commonDisk.importFromDisk({ root, moduleName: 'DISK' })
+      expect(results).toEqual([expect.objectContaining({ relPath: 'en/locked.md', ok: false, error: expect.stringContaining('administratively edit-locked') })])
+      expect(await snapshot()).toEqual(before)
+    })
   })
 
   for (const producer of [

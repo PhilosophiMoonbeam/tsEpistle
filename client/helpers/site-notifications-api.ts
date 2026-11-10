@@ -117,6 +117,8 @@ const isPageApprovalInboxItem = (value: unknown): value is PageApprovalInboxItem
   approvalStatuses[value.status] === true &&
   Number.isSafeInteger(value.revisionId) &&
   isTimestamp(value.revisionUpdatedAt) &&
+  (value.reviewedSourceRevision === null || (typeof value.reviewedSourceRevision === 'string' && /^[1-9]\d*$/.test(value.reviewedSourceRevision))) &&
+  (value.publishedSourceRevision === null || (typeof value.publishedSourceRevision === 'string' && /^[1-9]\d*$/.test(value.publishedSourceRevision))) &&
   isTimestamp(value.createdAt) &&
   isTimestamp(value.updatedAt) &&
   (value.closedAt === null || isTimestamp(value.closedAt)) &&

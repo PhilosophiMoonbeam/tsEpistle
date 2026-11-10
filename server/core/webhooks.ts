@@ -4,10 +4,13 @@ import { lookup } from 'node:dns/promises'
 import { request } from 'node:https'
 import { BlockList, type LookupFunction } from 'node:net'
 
-import { COMMENT_WEBHOOK_ACTIONS, isCommentWebhookEventName } from '../../shared/webhook-events.ts'
-import type { CommentWebhookAction } from '../../shared/webhook-events.ts'
+import { APPROVAL_WEBHOOK_VERSION, COMMENT_WEBHOOK_ACTIONS, isApprovalWebhookEventName, isCommentWebhookEventName } from '../../shared/webhook-events.ts'
+import type { ApprovalWebhookEventName, ApprovalWebhookStatus, CommentWebhookAction } from '../../shared/webhook-events.ts'
 import { publicationWindowOpen } from '../../shared/publication-window.ts'
-const blockedAddresses = new BlockList()
+// BlockList compares IPv4 as mapped IPv6 internally. Keep families separate so
+// denying the mapped IPv6 range does not accidentally deny every public IPv4.
+const blockedIpv4Addresses = new BlockList()
+const blockedIpv6Addresses = new BlockList()
 for (const [network, prefix] of [
   ['0.0.0.0', 8],
   ['10.0.0.0', 8],
@@ -23,7 +26,7 @@ for (const [network, prefix] of [
   ['203.0.113.0', 24],
   ['224.0.0.0', 4]
 ] as const)
-  blockedAddresses.addSubnet(network, prefix, 'ipv4')
+  blockedIpv4Addresses.addSubnet(network, prefix, 'ipv4')
 for (const [network, prefix] of [
   ['::', 128],
   ['::1', 128],
@@ -33,7 +36,7 @@ for (const [network, prefix] of [
   ['ff00::', 8],
   ['2001:db8::', 32]
 ] as const)
-  blockedAddresses.addSubnet(network, prefix, 'ipv6')
+  blockedIpv6Addresses.addSubnet(network, prefix, 'ipv6')
 
 export interface ResolvedWebhookUrl {
   url: URL
@@ -81,6 +84,48 @@ export const projectCommentWebhookPayload = (eventType: `comment.${CommentWebhoo
   return { pageId: Number(payload.pageId), commentId: Number(payload.commentId), action }
 }
 
+export interface ApprovalWebhookPayload extends Record<string, unknown> {
+  requestId: string
+  pageId: number
+  status: ApprovalWebhookStatus
+  reviewedSourceRevision: string
+  publishedSourceRevision: string | null
+}
+
+const approvalTransitionStatus = {
+  'approval.submitted': 'submitted',
+  'approval.approve': 'approved',
+  'approval.reject': 'rejected',
+  'approval.requestchanges': 'changes-requested',
+  'approval.resubmit': 'submitted',
+  'approval.cancel': 'cancelled',
+  'approval.publish': 'published'
+} as const
+const approvalStatuses: readonly string[] = ['submitted', 'approved', 'changes-requested', 'rejected', 'cancelled', 'published']
+
+/** Old events without exact canonical revision provenance are suppressed, never reconstructed. */
+export const projectApprovalWebhookPayload = (eventType: ApprovalWebhookEventName, payload: Record<string, unknown>): ApprovalWebhookPayload | null => {
+  const status = payload.status
+  const reviewed = payload.reviewedSourceRevision
+  const published = payload.publishedSourceRevision
+  if (
+    typeof payload.requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.requestId) ||
+    !Number.isSafeInteger(payload.pageId) || Number(payload.pageId) < 1 ||
+    typeof reviewed !== 'string' || !/^[1-9][0-9]*$/.test(reviewed) ||
+    (published !== null && (typeof published !== 'string' || !/^[1-9][0-9]*$/.test(published))) ||
+    typeof status !== 'string' || !approvalStatuses.includes(status) ||
+    (eventType !== 'approval.reassign' && status !== approvalTransitionStatus[eventType]) ||
+    (status === 'published' ? published === null : published !== null)
+  ) return null
+  return {
+    requestId: payload.requestId,
+    pageId: Number(payload.pageId),
+    status: status as ApprovalWebhookStatus,
+    reviewedSourceRevision: reviewed,
+    publishedSourceRevision: published as string | null
+  }
+}
+
 /**
  * Comment events require a final anonymous-visibility check backed by current
  * database state. False suppresses the HTTP request and completes the delivery.
@@ -95,6 +140,7 @@ export interface WebhookDeliveryRequest {
   eventVersion: number
   payload: Record<string, unknown>
   commentEligibility?: CommentWebhookEligibilityCheck
+  approvalEligibility?: () => Promise<boolean>
   secret: string
   target: ResolvedWebhookUrl
   timestamp?: Date
@@ -103,7 +149,7 @@ export interface WebhookDeliveryRequest {
 }
 
 export interface WebhookDeliveryResult {
-  statusCode: number
+  statusCode: number | null
   responseSnippet: string
 }
 
@@ -156,7 +202,9 @@ export const resolveWebhookUrl = async (value: string): Promise<ResolvedWebhookU
   } catch {
     throw new TypeError('Webhook URL hostname could not be resolved')
   }
-  const selected = addresses.find(candidate => !blockedAddresses.check(candidate.address, candidate.family === 4 ? 'ipv4' : 'ipv6'))
+  const selected = addresses.find(candidate => candidate.family === 4
+    ? !blockedIpv4Addresses.check(candidate.address, 'ipv4')
+    : !blockedIpv6Addresses.check(candidate.address, 'ipv6'))
   if (!selected) throw new TypeError('Webhook URL must resolve to a public network address')
   if (selected.family !== 4 && selected.family !== 6) throw new TypeError('Webhook URL resolved to an unsupported address family')
   return { url, address: selected.address, family: selected.family }
@@ -169,7 +217,17 @@ export const sendSignedWebhook = async (input: WebhookDeliveryRequest): Promise<
   input.signal?.throwIfAborted()
   const timestamp = (input.timestamp ?? new Date()).toISOString()
   const commentEventType = isCommentWebhookEventName(input.eventType) ? input.eventType : undefined
-  const payload = commentEventType !== undefined ? projectCommentWebhookPayload(commentEventType, input.payload) : input.payload
+  const approvalEventType = isApprovalWebhookEventName(input.eventType) ? input.eventType : undefined
+  const payload = commentEventType !== undefined
+    ? projectCommentWebhookPayload(commentEventType, input.payload)
+    : approvalEventType !== undefined ? projectApprovalWebhookPayload(approvalEventType, input.payload) : input.payload
+  if (approvalEventType !== undefined) {
+    if (!payload) return { statusCode: null, responseSnippet: 'Approval event lacks unambiguous revision provenance; suppressed without delivery' }
+    if (!input.approvalEligibility) throw new TypeError('Approval webhook delivery requires a current visibility check')
+    const eligible = await input.approvalEligibility()
+    input.signal?.throwIfAborted()
+    if (!eligible) return { statusCode: null, responseSnippet: 'Approval is no longer eligible for public delivery; suppressed without delivery' }
+  }
   if (commentEventType !== undefined) {
     if (!input.commentEligibility) throw new TypeError('Comment webhook delivery requires a current visibility check')
     const eligible = await input.commentEligibility()
@@ -179,7 +237,7 @@ export const sendSignedWebhook = async (input: WebhookDeliveryRequest): Promise<
   const body = JSON.stringify({
     id: input.eventId,
     type: input.eventType,
-    version: input.eventVersion,
+    version: approvalEventType !== undefined ? APPROVAL_WEBHOOK_VERSION : input.eventVersion,
     createdAt: input.eventCreatedAt.toISOString(),
     data: payload
   })

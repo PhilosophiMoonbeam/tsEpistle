@@ -1,4 +1,6 @@
 import { evaluateGroupAccess } from '../../helpers/group-access.ts'
+import { EventEmitter } from 'node:events'
+import { DateTime } from 'luxon'
 
 vi.mockModule('express', import.meta.url, () => {
   const router = { get: vi.fn(), post: vi.fn(), all: vi.fn(), use: vi.fn() }
@@ -44,19 +46,80 @@ const response = () => {
   return res
 }
 
-const request = user => ({
-  params: { id: '7' },
-  path: '/i/7',
-  query: {},
-  user,
-  i18n: { changeLanguage: vi.fn(), dir: vi.fn().mockReturnValue('ltr') }
-})
+const lifecycleAccounts = new Map()
+// Keep the real lifecycle/session/authority read in the reader path. These
+// routing fixtures own empty notice rows plus the accounts and memberships
+// backing each request; protection reads reuse the per-scenario grant fixture.
+const lifecycleTransaction = table => {
+  if (table === 'pageAccessPasswords' || table === 'pageUnlockGrants') return global.WIKI.models.knex(table)
+  const predicates = []
+  const rows = async () => {
+    let values
+    if (table === 'users') values = [...lifecycleAccounts.values()].map(user => ({
+      id: user.id, name: `Account ${user.id}`, email: `account-${user.id}@example.test`,
+      isActive: true, isSystem: false, authVersion: user.authVersion
+    }))
+    else if (table === 'userGroups') values = [...lifecycleAccounts.keys()].map(id => ({ userId: id, groupId: id }))
+    else if (table === 'groups') values = [...lifecycleAccounts.values()].map(user => ({
+      id: user.id, name: `Group ${user.id}`, permissions: user.permissions ?? [],
+      pageRules: [{ match: 'START', path: '', deny: false, roles: user.permissions ?? [], locales: [] }]
+    }))
+    else if (table === 'pages') {
+      const page = await global.WIKI.models.pages.getPageFromDb(privatePage.id)
+      values = page ? [page] : []
+    } else if (['tags', 'pageTags', 'pageLifecycleNotices as notice'].includes(table)) values = []
+    else throw new Error(`Unexpected lifecycle fixture table: ${table}`)
+    return values.filter(row => predicates.every(predicate => predicate(row)))
+  }
+  const query = {
+    select: () => query,
+    orderBy: () => query,
+    forShare: () => query,
+    join: () => query,
+    limit: () => query,
+    where(column, value) {
+      predicates.push(row => typeof column === 'object'
+        ? Object.entries(column).every(([key, expected]) => row[key] === expected)
+        : row[column] === value)
+      return query
+    },
+    whereIn(column, values) {
+      predicates.push(row => values.includes(row[column]))
+      return query
+    },
+    first: async () => (await rows())[0],
+    then: (resolve, reject) => rows().then(resolve, reject)
+  }
+  return query
+}
+
+const request = user => {
+  if (user) {
+    user.authVersion ??= 0
+    lifecycleAccounts.set(user.id, user)
+  }
+  return {
+    params: { id: '7' },
+    path: '/i/7',
+    query: {},
+    user,
+    i18n: { changeLanguage: vi.fn(), dir: vi.fn().mockReturnValue('ltr') }
+  }
+}
 
 describe('common page routing', () => {
   beforeEach(() => {
     vi.resetModules()
     express.__router.get.mockClear()
+    lifecycleAccounts.clear()
     global.WIKI = {
+      configSvc: {
+        saveToDb: vi.fn(async () => { throw new Error('Unexpected authentication configuration write in routing fixture') })
+      },
+      events: { inbound: new EventEmitter(), outbound: new EventEmitter() },
+      lang: { t: key => key },
+      logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+      startedAt: DateTime.fromISO('2026-08-14T00:00:00.000Z', { zone: 'utc' }),
       auth: {
         checkAccess: vi.fn().mockImplementation((user, permissions) => permissions.some(permission => user?.permissions?.includes(permission))),
         checkPageAccess: vi.fn((user, permissions, _page, authority) =>
@@ -90,7 +153,10 @@ describe('common page routing', () => {
             first: vi.fn().mockResolvedValue(undefined),
             select: vi.fn().mockResolvedValue([])
           })
-        })), { client: { pool: { numFree: () => 1, numUsed: () => 0 } } }),
+        })), {
+          client: { pool: { numFree: () => 1, numUsed: () => 0 } },
+          transaction: async work => work(lifecycleTransaction)
+        }),
         pages: {
           getPageFromDb: vi.fn().mockResolvedValue(privatePage),
           getPage: vi.fn(),
@@ -301,7 +367,7 @@ describe('common page routing', () => {
     expect(allowed.render).toHaveBeenCalledWith('page', expect.objectContaining({
       page: privatePage,
       publicSharingEligible: false,
-      effectivePermissions: expect.objectContaining({ pages: { read: true, write: true, manage: true } })
+      effectivePermissions: expect.objectContaining({ pages: expect.objectContaining({ read: true, write: true, manage: true, duplicate: true }) })
     }))
   })
   it('allows authorized direct reads of pages excluded from search', async () => {

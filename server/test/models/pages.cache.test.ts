@@ -63,6 +63,7 @@ beforeEach(async () => {
   const knexTransaction = Object.assign(
     vi.fn((table: string) => {
       if (table === 'storage') return { where: () => ({ orderBy: () => ({ forShare: () => ({ select: async () => [] }) }) }) }
+      if (table === 'pageEditLocks') return { whereIn: () => ({ orderBy: () => ({ select: async () => [] }) }) }
       if (table !== 'pages') throw new Error(`Unexpected transaction table ${table}`)
       return projectionQuery
     }),

@@ -31,11 +31,13 @@ const signJwt = mock((_payload: Record<string, unknown>) => 'signed-jwt')
 mock.module('jsonwebtoken', () => ({ default: { sign: signJwt } }))
 
 type Row = Record<string, unknown>
-type TableName = 'assets' | 'comments' | 'pageHistory' | 'pages' | 'userKeys' | 'users'
+type TableName = 'assets' | 'comments' | 'pageHistory' | 'pages' | 'userKeys' | 'users' | 'pageEditLocks'
 type DatabaseState = Record<TableName, Row[]>
 
 interface TransactionContext {
+  (table: TableName): RawFakeQuery
   state: DatabaseState
+  client: { config: { client: string } }
 }
 
 interface FakeDatabase {
@@ -45,6 +47,31 @@ interface FakeDatabase {
 }
 
 const cloneState = (state: DatabaseState): DatabaseState => structuredClone(state)
+class RawFakeQuery implements PromiseLike<Row[]> {
+  private predicates: Array<(row: Row) => boolean> = []
+  private columns: string[] = []
+  constructor(private readonly trx: TransactionContext, private readonly table: TableName) {}
+  where(column: string | ((query: RawFakeQuery) => void), value?: unknown): this {
+    if (typeof column === 'function') column(this)
+    else this.predicates.push(row => row[column] === value)
+    return this
+  }
+  orWhere(column: string, value: unknown): this {
+    const previous = [...this.predicates]
+    this.predicates = [row => previous.every(predicate => predicate(row)) || row[column] === value]
+    return this
+  }
+  whereIn(column: string, values: unknown[]): this { this.predicates.push(row => values.includes(row[column])); return this }
+  distinct(...columns: string[]): this { this.columns = columns; return this }
+  orderBy(): this { return this }
+  forUpdate(): this { return this }
+  select(...columns: string[]): this { this.columns = columns; return this }
+  then<T = Row[], E = never>(resolve?: ((rows: Row[]) => T | PromiseLike<T>) | null, reject?: ((reason: unknown) => E | PromiseLike<E>) | null): Promise<T | E> {
+    const rows = this.trx.state[this.table].filter(row => this.predicates.every(predicate => predicate(row)))
+      .map(row => this.columns.length ? Object.fromEntries(this.columns.map(column => [column, row[column]])) : row)
+    return Promise.resolve(rows).then(resolve, reject)
+  }
+}
 
 class FakeQuery {
   private criteria: Row = {}
@@ -142,8 +169,9 @@ const modelFor = (database: FakeDatabase, table: TableName) => ({
 const createDatabase = (): FakeDatabase => ({
   state: {
     assets: [{ id: 1, authorId: 10 }],
+    pageEditLocks: [],
     comments: [{ id: 2, authorId: 10 }],
-    pageHistory: [{ id: 3, authorId: 10, ownerId: null, visibility: 'public' }],
+    pageHistory: [{ id: 3, pageId: 4, authorId: 10, ownerId: null, visibility: 'public' }],
     pages: [{ id: 4, authorId: 10, creatorId: 10, ownerId: null, visibility: 'public' }],
     userKeys: [{ id: 5, userId: 10 }],
     users: [{ id: 10 }, { id: 20 }]
@@ -176,7 +204,7 @@ const installDatabase = (database: FakeDatabase): void => {
     users: modelFor(database, 'users'),
     knex: {
       transaction: async <T>(operation: (trx: TransactionContext) => Promise<T>): Promise<T> => {
-        const trx = { state: cloneState(database.state) }
+        const trx: TransactionContext = Object.assign((table: TableName) => new RawFakeQuery(trx, table), { state: cloneState(database.state), client: { config: { client: 'better-sqlite3' } } })
         const result = await operation(trx)
         database.state = trx.state
         return result
@@ -214,12 +242,20 @@ describe('User.deleteUser', () => {
     expect(database.state).toEqual(original)
   })
 
+  test('refuses locked page attribution before mutating the legacy deletion aggregate', async () => {
+    database.state.pageEditLocks.push({ pageId: 4, isEditLocked: true, lockVersion: '1' })
+    const original = cloneState(database.state)
+    await expect(User.deleteUser(10, 20)).rejects.toMatchObject({ name: 'PAGE_EDIT_LOCKED', status: 409 })
+    expect(database.writeAttempts).toBe(0)
+    expect(database.state).toEqual(original)
+  })
+
   test('commits all related mutations for an eligible user', async () => {
     await User.deleteUser(10, 20)
 
     expect(database.state.assets).toEqual([{ id: 1, authorId: 20 }])
     expect(database.state.comments).toEqual([{ id: 2, authorId: 20 }])
-    expect(database.state.pageHistory).toEqual([{ id: 3, authorId: 20, ownerId: null, visibility: 'public' }])
+    expect(database.state.pageHistory).toEqual([{ id: 3, pageId: 4, authorId: 20, ownerId: null, visibility: 'public' }])
     expect(database.state.pages).toEqual([{ id: 4, authorId: 20, creatorId: 20, ownerId: null, visibility: 'public' }])
     expect(database.state.userKeys).toEqual([])
     expect(database.state.users).toEqual([{ id: 20 }])

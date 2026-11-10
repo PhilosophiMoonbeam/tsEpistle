@@ -6,6 +6,7 @@ import {
   unlinkPageLocaleRelation
 } from '../operations/page-locale-relations.ts'
 import { localeRelationMovePatch } from '../helpers/page-locale-relations.ts'
+import { up as createEditLocks } from '../db/migrations/tsepistle-000080-page-edit-locks.ts'
 
 const originalWiki = Reflect.get(globalThis, 'WIKI')
 const editor = { id: 7 }
@@ -31,6 +32,7 @@ describe('page locale relations', () => {
 
   beforeEach(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    await createEditLocks(db)
     await db.schema.createTable('pages', table => {
       table.integer('id').primary()
       table.string('localeCode').notNullable()
@@ -97,6 +99,18 @@ describe('page locale relations', () => {
       '00000000-0000-4000-8000-000000000002',
       '00000000-0000-4000-8000-000000000002'
     ])
+  })
+
+  it('refuses translation merge and singleton unlink atomically when an affected page is locked', async () => {
+    const groupId = '00000000-0000-4000-8000-000000000003'
+    await db('pages').insert([row(1, 'en', groupId), row(2, 'fr', groupId), row(3, 'de')])
+    await db('pageEditLocks').insert({ pageId: 3, isEditLocked: true, lockVersion: '1', updatedBy: 7, reason: 'Retain translation identity' })
+    const before = await db('pages').orderBy('id')
+    await expect(linkPageLocaleRelation({ pageId: 1, relatedPageId: 3, requester: editor })).rejects.toMatchObject({ name: 'PAGE_EDIT_LOCKED', status: 409 })
+    expect(await db('pages').orderBy('id')).toEqual(before)
+    await db('pageEditLocks').insert({ pageId: 1, isEditLocked: true, lockVersion: '1', updatedBy: 7, reason: 'Retain singleton relation' })
+    await expect(unlinkPageLocaleRelation({ pageId: 1, relatedPageId: 2, requester: editor })).rejects.toMatchObject({ name: 'PAGE_EDIT_LOCKED', status: 409 })
+    expect(await db('pages').orderBy('id')).toEqual(before)
   })
 
   it('unlinks one translation and removes a meaningless singleton group', async () => {

@@ -1,10 +1,15 @@
 import createKnex from 'knex'
 import type { Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
+import { up as upJobs } from '../../db/migrations/2.5.130.ts'
 import { up as upOutbox } from '../../db/migrations/2.5.131.ts'
 import { up as upApprovals } from '../../db/migrations/2.5.133.ts'
 import { up as upProtection } from '../../db/migrations/2.5.134.ts'
 import { down as downApprovalConstraints, up as upApprovalConstraints } from '../../db/migrations/tsfranki-000002-approval-lifecycle-constraints.ts'
+import { up as upReviewRouting } from '../../db/migrations/tsepistle-000074-page-review-routing.ts'
+import { up as upLifecycle } from '../../db/migrations/tsepistle-000075-page-lifecycle.ts'
+import { up as upApprovalRevisions } from '../../db/migrations/tsepistle-000078-approval-source-revisions.ts'
+import { up as upEditLocks } from '../../db/migrations/tsepistle-000080-page-edit-locks.ts'
 
 let knex: Knex
 let page: Record<string, unknown>
@@ -40,6 +45,7 @@ beforeEach(async () => {
     table.string('name').nullable()
     table.string('email').nullable()
   })
+  await knex.schema.createTable('groups', table => table.integer('id').primary())
   await knex.schema.createTable('pages', table => {
     table.integer('id').primary()
     table.string('title').notNullable()
@@ -49,6 +55,7 @@ beforeEach(async () => {
     table.integer('authorId').notNullable()
     table.bigInteger('sourceRevision').notNullable()
     table.text('content').notNullable()
+    table.string('contentType').notNullable().defaultTo('markdown')
     table.string('changeReason', 200).nullable()
     table.text('toc').notNullable().defaultTo('[]')
     table.bigInteger('renderedSourceRevision').nullable()
@@ -101,10 +108,15 @@ beforeEach(async () => {
       UPDATE pages SET sourceRevision = OLD.sourceRevision + 1 WHERE id = OLD.id;
     END
   `)
+  await upJobs(knex)
   await upOutbox(knex)
   await upApprovals(knex)
   await upProtection(knex)
   await upApprovalConstraints(knex)
+  await upApprovalRevisions(knex)
+  await upReviewRouting(knex)
+  await upLifecycle(knex)
+  await upEditLocks(knex)
   await knex.schema.createTable('pageMutationOutbox', table => {
     table.uuid('id').primary()
     table.integer('pageId').notNullable()
@@ -219,9 +231,9 @@ describe('page approval workflow', () => {
       assigneeId: 8,
       comment: 'Ready'
     })
-    expect(submitted).toMatchObject({ pageId: 42, submitterId: 7, assigneeId: 8, status: 'submitted', revisionId: revision })
+    expect(submitted).toMatchObject({ pageId: 42, submitterId: 7, assigneeId: 8, status: 'submitted', revisionId: revision, reviewedSourceRevision: '1', publishedSourceRevision: null })
     expect(await knex('pageApprovalTransitions').where({ requestId: submitted.id })).toEqual([
-      expect.objectContaining({ fromStatus: null, toStatus: 'submitted', actorId: 7, revisionId: revision, comment: 'Ready' })
+      expect.objectContaining({ fromStatus: null, toStatus: 'submitted', actorId: 7, revisionId: revision, reviewedSourceRevision: '1', publishedSourceRevision: null, comment: 'Ready' })
     ])
     expect(await knex('outboxEvents').where({ aggregateId: submitted.id }).first()).toMatchObject({ type: 'approval.submitted' })
   })
@@ -333,7 +345,7 @@ describe('page approval workflow', () => {
     ).rejects.toMatchObject({ status: 403 })
   })
 
-  it('refuses a stale revision, then resubmits, approves, and publishes atomically', async () => {
+  it('refuses an attribution-only stale revision with unchanged timestamp, then resubmits and publishes', async () => {
     const operations = await vi.importFresh('../../operations/approvals.ts', import.meta.url)
     await knex('pages').where({ id: 42 }).update({ changeReason: 'Submitted source reason' })
     const submitted = await operations.submitPageApproval({
@@ -343,8 +355,9 @@ describe('page approval workflow', () => {
       expectedSourceRevision: '1',
       assigneeId: 8
     })
-    page.updatedAt = new Date('2026-08-15T00:01:00.000Z')
-    await knex('pages').where({ id: 42 }).update({ updatedAt: page.updatedAt })
+    const before = await knex('pages').where({ id: 42 }).first('updatedAt', 'sourceRevision')
+    await knex('pages').where({ id: 42 }).update({ authorId: 9 })
+    expect(await knex('pages').where({ id: 42 }).first('updatedAt', 'sourceRevision')).toEqual({ updatedAt: before.updatedAt, sourceRevision: 2 })
     await expect(
       Promise.resolve(
         operations.transitionApproval({
@@ -366,11 +379,11 @@ describe('page approval workflow', () => {
       requester: user(7, ['read:pages', 'write:pages']),
       requestId: submitted.id,
       sessionId: 'approval-session',
-      expectedSourceRevision: '1',
+      expectedSourceRevision: '2',
       action: 'resubmit',
       comment: 'Updated'
     })
-    expect(resubmitted).toMatchObject({ status: 'submitted', revisionId: revision })
+    expect(resubmitted).toMatchObject({ status: 'submitted', revisionId: revision, reviewedSourceRevision: '2', publishedSourceRevision: null })
     const approved = await operations.transitionApproval({
       requester: user(8, ['read:pages', 'manage:pages']),
       requestId: submitted.id,
@@ -384,8 +397,8 @@ describe('page approval workflow', () => {
       action: 'publish',
       sessionId: 'approval-session'
     })
-    expect(published.status).toBe('published')
-    expect(await knex('pages').where({ id: 42 }).first()).toMatchObject({ isPublished: 1, authorId: 8, sourceRevision: 2, changeReason: null })
+    expect(published).toMatchObject({ status: 'published', reviewedSourceRevision: '2', publishedSourceRevision: '3' })
+    expect(await knex('pages').where({ id: 42 }).first()).toMatchObject({ isPublished: 1, authorId: 8, sourceRevision: 3, changeReason: null })
     expect(await knex('pageApprovalTransitions').where({ requestId: submitted.id }).pluck('toStatus')).toEqual([
       'submitted',
       'changes-requested',
@@ -395,17 +408,16 @@ describe('page approval workflow', () => {
     ])
     expect(searchUpdated).not.toHaveBeenCalled()
     const publicationRevision = await knex('pageHistory').where({ pageId: 42, action: 'approval-published' }).first()
-    expect(publicationRevision).toMatchObject({ sourceRevision: 1 })
+    expect(publicationRevision).toMatchObject({ sourceRevision: 2 })
     const projections = await knex('pageMutationOutbox').where({ pageId: 42 }).orderBy('effectKind')
     expect(projections).toHaveLength(4)
     expect(projections.map(row => row.effectKind)).toEqual(['knowledge', 'links', 'render', 'search'])
-    expect(projections.map(row => row.sourceRevision)).toEqual([2, 2, 2, 2])
+    expect(projections.map(row => row.sourceRevision)).toEqual([3, 3, 3, 3])
     expect(projections.map(row => JSON.parse(String(row.payload)))).toEqual([
-      expect.objectContaining({ effectKind: 'knowledge', sourceRevision: '2', desiredState: 'present', action: 'update' }),
-      expect.objectContaining({ effectKind: 'links', sourceRevision: '2', desiredState: 'present', action: 'update' }),
-      expect.objectContaining({ effectKind: 'render', sourceRevision: '2', desiredState: 'present', action: 'update' }),
-
-      expect.objectContaining({ effectKind: 'search', sourceRevision: '2', desiredState: 'present', action: 'update' })
+      expect.objectContaining({ effectKind: 'knowledge', sourceRevision: '3', desiredState: 'present', action: 'update' }),
+      expect.objectContaining({ effectKind: 'links', sourceRevision: '3', desiredState: 'present', action: 'update' }),
+      expect.objectContaining({ effectKind: 'render', sourceRevision: '3', desiredState: 'present', action: 'update' }),
+      expect.objectContaining({ effectKind: 'search', sourceRevision: '3', desiredState: 'present', action: 'update' })
     ])
   })
 

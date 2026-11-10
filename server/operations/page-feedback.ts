@@ -1,3 +1,4 @@
+import { assertPageEditUnlocked } from '../helpers/page-edit-lock.ts'
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { Knex } from 'knex'
 import { z } from 'zod'
@@ -288,6 +289,7 @@ export const createPageFeedbackStore = (deps: FeedbackDependencies): PageFeedbac
     if (!page || !(await readable(tx, ctx, page))) return missing()
     if (!canWritePage(ctx.requester, page, ctx.authority)) fail('Current source write authority is required to submit this page.', 403)
     if (board.boardRevision !== command.expectedBoardRevision || page.sourceRevision !== command.expectedSourceRevision) conflict()
+    await assertPageEditUnlocked(tx, page.id)
     if (await tx('feedbackIdeas').where({ pageId: page.id }).first('id')) fail('This page is already explicitly attached to a board.', 409, 'FEEDBACK_ALREADY_ATTACHED')
     const count = await tx('feedbackIdeas').where({ boardId: board.id }).count<{ count: string }[]>('* as count')
     if (Number(count[0]!.count) >= FEEDBACK_MAX_IDEAS) fail('This board has reached its explicit membership limit.', 409, 'FEEDBACK_BOARD_FULL')

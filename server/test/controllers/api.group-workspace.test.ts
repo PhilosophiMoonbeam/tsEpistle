@@ -4,6 +4,7 @@ import * as groupAdministration from '../../operations/group-administration.ts'
 import type { GroupWorkspace } from '../../../shared/group-policy.ts'
 import type { PagePrincipal } from '../../helpers/page-access.ts'
 import { up as addGroupAdministration } from '../../db/migrations/tsepistle-000018-group-administration.ts'
+import { up as mfaUp } from '../../db/migrations/tsepistle-000079-group-form-mfa.ts'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { getPostgresTestConnection } from '../postgres-test-connection.mts'
 const connection = getPostgresTestConnection('_controller_groups_test', import.meta.path)
@@ -82,6 +83,7 @@ if (connection) describe('PostgreSQL reviewed group workspace transport outcomes
   const admin = { id: 7, authVersion: 0 } as never
   const policy = {
     name: 'Readers', description: '', redirectOnLogin: '/', permissions: ['read:pages'],
+    formMfaRequired: false,
     pageRules: [{ id: 'all', match: 'START', path: '', deny: false, roles: ['read:pages'], locales: [] }]
   }
   const tables = ['groupAdministrationEvents', 'tags', 'agentSkillGrants', 'agentProviderGrants', 'navigation', 'authentication', 'apiKeys', 'userAdministrationEvents', 'userGroups', 'groups', 'users']
@@ -103,6 +105,7 @@ if (connection) describe('PostgreSQL reviewed group workspace transport outcomes
     for (const name of ['agentProviderGrants', 'agentSkillGrants']) await db.schema.createTable(name, table => { table.integer('groupId').references('groups.id').onDelete('CASCADE') })
     await db.schema.createTable('tags', table => { table.increments('id'); table.string('tag'); table.integer('redirectToId'); table.boolean('isArchived') })
     await addGroupAdministration(db)
+    await mfaUp(db)
   })
   afterAll(async () => { if (db) { for (const table of tables) await db.schema.dropTableIfExists(table); await db.destroy() } })
   beforeEach(async () => {
