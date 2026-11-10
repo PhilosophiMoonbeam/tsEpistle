@@ -7,6 +7,21 @@ if [[ ! "$apt_snapshot" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
   exit 1
 fi
 
+# Keep acquisition policy for every build stage; Packer removes it after validation.
+sudo bash -euo pipefail -c '
+  policy=/etc/apt/apt.conf.d/99-tsepistle-image-build
+  if [[ -e "$policy" || -L "$policy" ]]; then
+    echo "Refusing to overwrite existing APT build policy: $policy" >&2
+    exit 1
+  fi
+  set -o noclobber
+  cat > "$policy" <<EOF
+Acquire::Retries "5";
+Acquire::http::Timeout "30";
+Acquire::https::Timeout "30";
+EOF
+'
+
 sudo rm -f /etc/apt/sources.list
 sudo rm -rf /etc/apt/sources.list.d
 sudo install -m 0755 -d /etc/apt/sources.list.d
@@ -20,7 +35,7 @@ Check-Valid-Until: no
 EOF
 
 
-sudo apt-get -qq update
+sudo apt-get -qq update --error-on=any
 sudo apt-get -qqy \
   -o Dpkg::Options::='--force-confdef' \
   -o Dpkg::Options::='--force-confold' \

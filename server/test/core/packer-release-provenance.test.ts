@@ -187,6 +187,14 @@ map_source_path() {
   printf '%s/%s' "$TEST_APT_TREE" "\${1#/etc/apt/}"
 }
 case "$command" in
+  bash)
+    [[ "$#" == 4 && "$1" == -euo && "$2" == pipefail && "$3" == -c ]] || exit 99
+    real_apt_root=/etc/apt/
+    fixture_apt_root="$TEST_APT_TREE/"
+    policy_script="\${4//$real_apt_root/$fixture_apt_root}"
+    /bin/mkdir -p "$TEST_APT_TREE/apt.conf.d"
+    /bin/bash "$1" "$2" "$3" "$policy_script"
+    ;;
   tee)
     append=false
     if [[ "\${1:-}" == -a ]]; then append=true; shift; fi
@@ -239,6 +247,7 @@ esac
           .readdirSync(boundaryTree, { recursive: true, withFileTypes: true })
           .filter(entry => entry.isFile())
           .map(entry => path.relative(boundaryTree, path.join(entry.parentPath, entry.name)))
+          .filter(source => source === 'sources.list' || source.startsWith('sources.list.d/'))
           .sort()
         expect(survivingSources).toEqual(['sources.list.d/ubuntu.sources'])
         for (const source of survivingSources) {
@@ -303,8 +312,24 @@ esac
     aptPlan?: string
     pendingPackages?: string[]
     logPaths?: string[]
+    agentPackages?: Record<string, string>
+    agentMetadataFailure?: boolean
+    agentArtifact?: 'directory' | 'file' | 'dangling-symlink'
   }> = [
     { name: 'accepts a clean Marketplace account fixture after successful apt inspection', failures: 0 },
+    {
+      name: 'accepts classifiable not-installed vendor records without purging unrelated packages',
+      agentPackages: { 'droplet-agent': 'purge ok not-installed', 'do-agent': 'unknown ok not-installed' },
+      failures: 0
+    },
+    { name: 'rejects installed droplet-agent without a vendor directory', agentPackages: { 'droplet-agent': 'install ok installed' }, failures: 1 },
+    { name: 'rejects installed do-agent without a vendor directory', agentPackages: { 'do-agent': 'install ok installed' }, failures: 1 },
+    { name: 'rejects config-only vendor agents without a vendor directory', agentPackages: { 'do-agent': 'deinstall ok config-files' }, failures: 1 },
+    { name: 'rejects partially installed vendor agents without a vendor directory', agentPackages: { 'droplet-agent': 'install ok unpacked' }, failures: 1 },
+    { name: 'rejects unclassifiable native package metadata without a vendor directory', agentMetadataFailure: true, failures: 1 },
+    { name: 'rejects a residual vendor directory with absent vendor packages', agentArtifact: 'directory', failures: 1 },
+    { name: 'rejects a residual vendor file with absent vendor packages', agentArtifact: 'file', failures: 1 },
+    { name: 'rejects a dangling vendor symlink with absent vendor packages', agentArtifact: 'dangling-symlink', failures: 1 },
     { name: 'fails Marketplace validation for a non-root account password', password: true, failures: 1 },
     { name: 'detects root private SSH keys without disclosing their bytes', keyPath: 'root/.ssh/id_rsa', failures: 1 },
     { name: 'detects non-root private SSH keys without disclosing their bytes', keyPath: 'home/alice/.ssh/id_rsa', failures: 1 },
@@ -435,6 +460,27 @@ esac
           fs.mkdirSync(path.join(fixtureRoot, directory), { recursive: true })
         }
         fs.mkdirSync(bin)
+        const database = path.join(fixtureRoot, 'var/lib/dpkg')
+        fs.mkdirSync(database, { recursive: true })
+        const packageStates = {
+          'tsepistle-agent': 'install ok installed',
+          'droplet-agent-tools': 'install ok installed',
+          'do-agent-tools': 'install ok installed',
+          ...scenario.agentPackages
+        }
+        const packageMetadata = Object.entries(packageStates).map(([name, state]) =>
+          `Package: ${name}\nStatus: ${state}\nArchitecture: all\nVersion: 1.0\nMaintainer: Fixture <fixture@example.invalid>\nDescription: Guest fixture\n\n`
+        ).join('')
+        const databaseContents = scenario.agentMetadataFailure
+          ? `Package: do-agent\nStatus: install ok unclassifiable-${packageMaterial}\n\n`
+          : packageMetadata
+        fs.writeFileSync(path.join(database, 'status'), databaseContents)
+        const unrelatedArtifact = path.join(fixtureRoot, 'opt/tsepistle-agent')
+        fs.writeFileSync(unrelatedArtifact, 'UNRELATED_NATIVE_AGENT\n')
+        const vendorArtifact = path.join(fixtureRoot, 'opt/digitalocean')
+        if (scenario.agentArtifact === 'directory') fs.mkdirSync(vendorArtifact)
+        if (scenario.agentArtifact === 'file') fs.writeFileSync(vendorArtifact, 'VENDOR_ARTIFACT\n')
+        if (scenario.agentArtifact === 'dangling-symlink') fs.symlinkSync('missing-vendor-artifact', vendorArtifact)
         fs.writeFileSync(
           path.join(fixtureRoot, 'etc/os-release'),
           scenario.yumStatus === undefined ? 'NAME="Ubuntu"\nVERSION_ID="24.04"\n' : 'NAME="Rocky Linux"\nVERSION_ID="9.4"\n'
@@ -471,6 +517,7 @@ esac
         const commands = {
           clear: '#!/bin/bash\nexit 0\n',
           'cloud-init': '#!/bin/bash\nexit 0\n',
+          'dpkg-query': '#!/bin/bash\nexec /usr/bin/dpkg-query --admindir="$TEST_DPKG_DATABASE" "$@"\n',
           ufw: '#!/bin/bash\n[[ "$*" == status ]] || exit 99\nprintf "Status: active\\n"\n',
           'firewall-cmd': '#!/bin/bash\nexit 0\n',
           systemctl: `#!/bin/bash
@@ -548,6 +595,7 @@ esac
             BASH_ENV: '',
             PATH: `${bin}:/usr/bin:/bin`,
             TEST_GUEST_TMP: path.join(fixtureRoot, 'tmp'),
+            TEST_DPKG_DATABASE: database,
             TEST_APT_OPERATIONS: aptOperations,
             TEST_APT_PLAN: aptPlan,
             TEST_APT_UPDATE_STATUS: String(scenario.aptUpdateStatus ?? 0),
@@ -569,7 +617,21 @@ esac
         expect(output).not.toContain(packageMaterial)
         expect(output).not.toContain(securityInstall)
         expect(output).toContain('Checking the root account')
-        expect(output).toContain('DigitalOcean Monitoring agent was not found')
+        const agentFailure = scenario.agentMetadataFailure || scenario.agentArtifact ||
+          Object.values(scenario.agentPackages ?? {}).some(state => !state.endsWith('not-installed'))
+        if (agentFailure) {
+          expect(output).not.toContain('DigitalOcean Monitoring agent was not found')
+          expect(output).toContain('DigitalOcean')
+          if (scenario.agentArtifact) expect(output).toContain(vendorArtifact)
+          if (scenario.agentMetadataFailure) expect(output).toContain('Unable to inspect DigitalOcean agent package metadata')
+          for (const [name, state] of Object.entries(scenario.agentPackages ?? {})) {
+            if (!state.endsWith('not-installed')) expect(output).toContain(name)
+          }
+        } else {
+          expect(output).toContain('DigitalOcean Monitoring agent was not found')
+        }
+        expect(fs.readFileSync(unrelatedArtifact, 'utf8')).toBe('UNRELATED_NATIVE_AGENT\n')
+        expect(fs.readFileSync(path.join(database, 'status'), 'utf8')).toBe(databaseContents)
         const operations = fs.readFileSync(aptOperations, 'utf8').trim().split('\n')
         expect(operations).toEqual(scenario.yumStatus !== undefined ? ['yum'] : scenario.aptUpdateStatus ? ['update'] : ['update', 'plan'])
         if (scenario.aptUpdateStatus || scenario.aptPlanStatus || scenario.inspectionIncomplete || scenario.yumStatus === 1) {

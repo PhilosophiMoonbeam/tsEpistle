@@ -70,17 +70,39 @@ SHADOW=$(cat /etc/shadow)
 }
 
 function checkAgent {
-  # Check for the presence of the DO directory in the filesystem
-  if [ -d /opt/digitalocean ];then
-     echo -en "\e[41m[FAIL]\e[0m DigitalOcean directory detected.\n"
-            ((FAIL++))
-            STATUS=2
-      if [[ $OS == "CentOS Linux" ]] || [[ $OS == "CentOS Stream" ]] || [[ $OS == "Rocky Linux" ]] || [[ $OS == "AlmaLinux" ]] || [[ $OS == "CloudLinux" ]]; then
-        echo "To uninstall the agent: 'sudo yum remove droplet-agent'"
-        echo "To remove the DO directory: 'find /opt/digitalocean/ -type d -empty -delete'"
-      elif [[ $OS == "Ubuntu" ]] || [[ $OS == "Debian" ]]; then
-        echo "To uninstall the agent and remove the DO directory: 'sudo apt-get purge droplet-agent'"
-      fi
+  local agent_failure=0 metadata package status
+  local absent_pattern='^(unknown|install|hold|deinstall|purge) ok not-installed$'
+  if [[ $OS == "Ubuntu" ]] || [[ $OS == "Debian" ]]; then
+    # A whole-database query distinguishes missing packages from dpkg failures.
+    if metadata=$(LC_ALL=C dpkg-query -W -f='${Package}\t${Status}\n' 2>/dev/null); then
+      while IFS=$'\t' read -r package status; do
+        case "$package" in
+          droplet-agent|do-agent)
+            if [[ ! "$status" =~ $absent_pattern ]]; then
+              printf '\e[41m[FAIL]\e[0m DigitalOcean agent package is present or unclassifiable: %s.\n' "$package"
+              agent_failure=1
+            fi
+            ;;
+        esac
+      done <<< "$metadata"
+    else
+      printf '\e[41m[FAIL]\e[0m Unable to inspect DigitalOcean agent package metadata.\n'
+      agent_failure=1
+    fi
+  fi
+  if [[ -e /opt/digitalocean || -L /opt/digitalocean ]]; then
+    echo -en "\e[41m[FAIL]\e[0m DigitalOcean artifact path detected: /opt/digitalocean.\n"
+    agent_failure=1
+    if [[ $OS == "CentOS Linux" ]] || [[ $OS == "CentOS Stream" ]] || [[ $OS == "Rocky Linux" ]] || [[ $OS == "AlmaLinux" ]] || [[ $OS == "CloudLinux" ]]; then
+      echo "To uninstall the agent: 'sudo yum remove droplet-agent'"
+      echo "To remove the DO directory: 'find /opt/digitalocean/ -type d -empty -delete'"
+    elif [[ $OS == "Ubuntu" ]] || [[ $OS == "Debian" ]]; then
+      echo "To uninstall the agents: 'sudo apt-get purge droplet-agent do-agent'"
+    fi
+  fi
+  if [[ $agent_failure == 1 ]]; then
+    ((FAIL++))
+    STATUS=2
   else
     echo -en "\e[32m[PASS]\e[0m DigitalOcean Monitoring agent was not found\n"
     ((PASS++))

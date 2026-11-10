@@ -65,6 +65,18 @@ docker run --rm --platform linux/amd64 \
   ubuntu:24.04 \
   bash -euo pipefail -c '
     export DEBIAN_FRONTEND=noninteractive
+    policy=/etc/apt/apt.conf.d/99-tsepistle-image-build
+    if [[ -e "$policy" || -L "$policy" ]]; then
+      echo "Refusing to overwrite existing APT build policy: $policy" >&2
+      exit 1
+    fi
+    set -o noclobber
+    cat > "$policy" <<EOF
+Acquire::Retries "5";
+Acquire::http::Timeout "30";
+Acquire::https::Timeout "30";
+EOF
+    set +o noclobber
     cat > /etc/apt/sources.list.d/ubuntu.sources <<EOF
 Types: deb
 URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/
@@ -73,7 +85,7 @@ Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 Check-Valid-Until: no
 EOF
-    apt-get -qq update
+    apt-get -qq update --error-on=any
     apt-get -qqy install ca-certificates curl
     install -m 0755 -d /etc/apt/keyrings
     curl --fail --silent --show-error --location https://download.docker.com/linux/ubuntu/gpg \
@@ -87,7 +99,7 @@ Components: stable
 Architectures: amd64
 Signed-By: /etc/apt/keyrings/docker.asc
 EOF
-    apt-get -qq update
+    apt-get -qq update --error-on=any
     cd /out
     for package in docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; do
       apt-get -qq download "${package}:amd64"

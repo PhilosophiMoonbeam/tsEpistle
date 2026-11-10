@@ -17,7 +17,7 @@ variable "application_image" {
 
   validation {
     condition     = can(regex("^ghcr\\.io/philosophimoonbeam/wiki@sha256:[0-9a-f]{64}$", var.application_image))
-    error_message = "application_image must be the canonical application repository pinned to a sha256 digest."
+    error_message = "The application_image must be the canonical application repository pinned to a sha256 digest."
   }
 }
 
@@ -26,7 +26,7 @@ variable "release_version" {
 
   validation {
     condition     = length(trimspace(var.release_version)) > 0
-    error_message = "release_version must not be empty."
+    error_message = "The release_version must not be empty."
   }
 }
 
@@ -35,7 +35,7 @@ variable "source_revision" {
 
   validation {
     condition     = can(regex("^[0-9a-f]{40}$", var.source_revision))
-    error_message = "source_revision must be a full lowercase Git SHA."
+    error_message = "The source_revision must be a full lowercase Git SHA."
   }
 }
 
@@ -44,7 +44,7 @@ variable "base_image_id" {
 
   validation {
     condition     = can(regex("^[1-9][0-9]*$", var.base_image_id))
-    error_message = "base_image_id must be a resolved numeric DigitalOcean image ID."
+    error_message = "The base_image_id must be a resolved numeric DigitalOcean image ID."
   }
 }
 
@@ -53,7 +53,7 @@ variable "apt_snapshot" {
 
   validation {
     condition     = can(regex("^[0-9]{8}T[0-9]{6}Z$", var.apt_snapshot))
-    error_message = "apt_snapshot must be an Ubuntu snapshot timestamp in YYYYMMDDTHHMMSSZ format."
+    error_message = "The apt_snapshot must be an Ubuntu snapshot timestamp in YYYYMMDDTHHMMSSZ format."
   }
 }
 
@@ -62,7 +62,7 @@ variable "postgres_image" {
 
   validation {
     condition     = can(regex("^docker\\.io/library/postgres@sha256:[0-9a-f]{64}$", var.postgres_image))
-    error_message = "postgres_image must be the canonical PostgreSQL repository pinned to a sha256 digest."
+    error_message = "The postgres_image must be the canonical PostgreSQL repository pinned to a sha256 digest."
   }
 }
 
@@ -71,7 +71,7 @@ variable "docker_package_manifest_sha256" {
 
   validation {
     condition     = can(regex("^[0-9a-f]{64}$", var.docker_package_manifest_sha256))
-    error_message = "docker_package_manifest_sha256 must be a sha256 digest."
+    error_message = "The docker_package_manifest_sha256 must be a sha256 digest."
   }
 }
 
@@ -155,6 +155,16 @@ build {
       "scripts/020-force-ssh-logout.sh",
       "scripts/900-cleanup.sh",
       "scripts/999-img-check.sh"
+    ]
+  }
+
+  # Keep build-only acquisition policy through cleanup and validation, never in the snapshot.
+  provisioner "shell" {
+    inline = [
+      "set -eu",
+      "test -f /etc/apt/apt.conf.d/99-tsepistle-image-build",
+      "test ! -L /etc/apt/apt.conf.d/99-tsepistle-image-build",
+      "rm -- /etc/apt/apt.conf.d/99-tsepistle-image-build"
     ]
   }
 

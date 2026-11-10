@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import type { SpawnSyncReturns } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -17,6 +18,11 @@ type Scenario = {
   cleanupFailure?: boolean
   available?: number | string
   dfStatus?: number
+  vendorPackages?: Record<string, string>
+  metadataFailure?: 'before' | 'after'
+  purgeFailure?: boolean
+  purgeNoEffect?: boolean
+  aptUpdateFailure?: boolean
 }
 
 type Operation = {
@@ -24,6 +30,7 @@ type Operation = {
   output?: string
   locale?: string
   path?: string
+  packages?: string[]
   message?: string
 }
 
@@ -34,6 +41,7 @@ const commandFixture = `#!${process.execPath}
 const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
+const { spawnSync } = require('node:child_process')
 const root = process.env.TEST_GUEST_ROOT
 const events = process.env.TEST_EVENTS
 const scenario = JSON.parse(process.env.TEST_SCENARIO)
@@ -56,9 +64,44 @@ const owned = candidate => {
 const operands = () => args.filter(arg => arg !== '--' && !arg.startsWith('-')).map(owned)
 try {
   switch (command) {
-    case 'apt-get':
-      if (!['-y update', '-y purge droplet-agent', '-y autoremove', '-y autoclean'].includes(args.join(' '))) fail('Unsupported apt invocation')
+    case 'apt-get': {
+      const operation = args.find(arg => ['update', 'purge', 'autoremove', 'autoclean'].includes(arg))
+      if (operation === 'update') {
+        if (!args.includes('--error-on=any')) fail('Package refresh must fail on any fetch error')
+        if (scenario.aptUpdateFailure) process.exit(100)
+      } else if (operation === 'purge') {
+        const packages = args.slice(args.indexOf('purge') + 1)
+        if (!packages.length || packages.some(name => !['droplet-agent', 'do-agent'].includes(name))) fail('Unrelated package purge')
+        record({ command: 'purge', packages })
+        if (scenario.purgeFailure) process.exit(100)
+        if (!scenario.purgeNoEffect) {
+          const result = spawnSync('/usr/bin/dpkg', ['--root=' + root, '--force-not-root', '--force-bad-path', '--purge', ...packages], {
+            encoding: 'utf8',
+            env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C' }
+          })
+          if (result.error) fail(result.error.message)
+          process.stdout.write(result.stdout)
+          process.stderr.write(result.stderr)
+          process.exit(result.status ?? 98)
+        }
+      } else if (!['autoremove', 'autoclean'].includes(operation)) fail('Unsupported apt invocation')
       break
+    }
+    case 'dpkg-query': {
+      const inspected = fs.readFileSync(events, 'utf8').split('\\n').filter(Boolean).map(line => JSON.parse(line))
+        .filter(event => event.command === 'dpkg-query').length
+      const broken = scenario.metadataFailure === (inspected === 0 ? 'before' : 'after')
+      const database = path.join(root, broken ? 'broken-dpkg' : 'var/lib/dpkg')
+      record({ command: 'dpkg-query' })
+      const result = spawnSync('/usr/bin/dpkg-query', ['--admindir=' + database, ...args], {
+        encoding: 'utf8',
+        env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' }
+      })
+      if (result.error) fail(result.error.message)
+      process.stdout.write(result.stdout)
+      process.stderr.write(result.stderr)
+      process.exit(result.status ?? 98)
+    }
     case 'mkdir':
       for (const target of operands()) fs.mkdirSync(target, { recursive: args.includes('-p') })
       break
@@ -208,7 +251,32 @@ function withCleanupFixture(scenario: Scenario, verify: (fixture: { result: Spaw
     fs.writeFileSync(path.join(guest, 'tsepistle-zero-fill.preexisting'), unrelatedZeroFile)
     fs.writeFileSync(path.join(guest, 'root/.bash_history'), 'guest history\n')
     fs.writeFileSync(path.join(guest, 'var/log/application.log'), 'guest log\n')
-    for (const command of ['apt-get', 'mkdir', 'chmod', 'rm', 'cat', 'touch', 'truncate', 'find', 'mktemp', 'dd', 'df', 'grep']) {
+    const packageStates = {
+      'tsepistle-agent': 'install ok installed',
+      'droplet-agent-tools': 'install ok installed',
+      'do-agent-tools': 'install ok installed',
+      ...scenario.vendorPackages
+    }
+    const database = path.join(guest, 'var/lib/dpkg')
+    fs.mkdirSync(path.join(database, 'info'), { recursive: true })
+    fs.mkdirSync(path.join(database, 'updates'))
+    fs.writeFileSync(
+      path.join(database, 'status'),
+      Object.entries(packageStates).map(([name, state]) => {
+        if (state.endsWith('not-installed')) return `Package: ${name}\nStatus: ${state}\nArchitecture: all\n\n`
+        const config = `PACKAGE_CONFIGURATION_${name}\n`
+        fs.writeFileSync(path.join(guest, 'etc', `${name}.conf`), config)
+        fs.writeFileSync(path.join(database, 'info', `${name}.list`), `/etc/${name}.conf\n`)
+        return `Package: ${name}\nStatus: ${state}\nArchitecture: all\nVersion: 1.0\nMaintainer: Fixture <fixture@example.invalid>\nDescription: Guest fixture\nConffiles:\n /etc/${name}.conf ${createHash('md5').update(config).digest('hex')}\n\n`
+      }).join('')
+    )
+    fs.mkdirSync(path.join(guest, 'broken-dpkg'))
+    fs.writeFileSync(path.join(guest, 'broken-dpkg/status'), 'Package: do-agent\nStatus: install ok unclassifiable\n\n')
+    fs.writeFileSync(path.join(guest, 'opt/digitalocean/vendor-data'), 'VENDOR_ARTIFACT\n')
+    fs.mkdirSync(path.join(guest, 'opt/tsepistle-agent'))
+    fs.writeFileSync(path.join(guest, 'opt/tsepistle-agent/keep'), unrelatedZeroFile)
+    fs.writeFileSync(path.join(guest, 'opt/digitalocean-unrelated'), unrelatedZeroFile)
+    for (const command of ['apt-get', 'dpkg-query', 'mkdir', 'chmod', 'rm', 'cat', 'touch', 'truncate', 'find', 'mktemp', 'dd', 'df', 'grep']) {
       fs.writeFileSync(path.join(bin, command), commandFixture, { mode: 0o755 })
     }
     // No host PATH fallback, and missing commands are recorded even if the script
@@ -249,7 +317,6 @@ function withCleanupFixture(scenario: Scenario, verify: (fixture: { result: Spaw
       .map(line => JSON.parse(line))
     expect(result.error).toBeUndefined()
     expect(operations.filter(operation => operation.command === 'fixture-error')).toEqual([])
-    expect(operations.filter(operation => operation.command === 'dd')).toHaveLength(1)
     verify({ result, guest, operations })
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true })
@@ -257,6 +324,7 @@ function withCleanupFixture(scenario: Scenario, verify: (fixture: { result: Spaw
 }
 
 function expectOwnedFill(guest: string, operations: Operation[], removed = true): string {
+  expect(operations.filter(operation => operation.command === 'dd')).toHaveLength(1)
   const fill = operations.find(operation => operation.command === 'dd')!
   expect(fill.locale).toBe('C')
   expect(path.dirname(fill.output!)).toBe(guest)
@@ -322,4 +390,71 @@ describe('Packer guest disk-fill cleanup lifecycle', () => {
       expect(removed).toBeGreaterThan(stopped)
     })
   })
+})
+
+describe('Packer DigitalOcean vendor-agent retirement', () => {
+  const completedFill = { status: 1, diagnostic: 'dd: error writing output: No space left on device' }
+  const unrelatedPackages = ['tsepistle-agent', 'droplet-agent-tools', 'do-agent-tools']
+
+  function expectUnrelatedArtifacts(guest: string): void {
+    expect(fs.readFileSync(path.join(guest, 'opt/tsepistle-agent/keep'), 'utf8')).toBe(unrelatedZeroFile)
+    expect(fs.readFileSync(path.join(guest, 'opt/digitalocean-unrelated'), 'utf8')).toBe(unrelatedZeroFile)
+    const metadata = fs.readFileSync(path.join(guest, 'var/lib/dpkg/status'), 'utf8')
+    for (const name of unrelatedPackages) {
+      expect(metadata).toContain(`Package: ${name}\nStatus: install ok installed\n`)
+      expect(fs.readFileSync(path.join(guest, 'etc', `${name}.conf`), 'utf8')).toBe(`PACKAGE_CONFIGURATION_${name}\n`)
+    }
+  }
+
+  const packageScenarios: Array<Record<string, string>> = [
+    {},
+    { 'droplet-agent': 'purge ok not-installed', 'do-agent': 'unknown ok not-installed' },
+    { 'droplet-agent': 'install ok installed', 'do-agent': 'install ok installed' },
+    { 'droplet-agent': 'deinstall ok config-files', 'do-agent': 'deinstall ok config-files' },
+    { 'droplet-agent': 'install ok unpacked', 'do-agent': 'install ok half-configured' },
+    { 'do-agent': 'install ok installed' }
+  ]
+  for (const vendorPackages of packageScenarios) {
+    it(`retires only present vendor agents for ${JSON.stringify(vendorPackages)}`, () => {
+      withCleanupFixture({ ...completedFill, vendorPackages }, ({ result, guest, operations }) => {
+        expect(result.status).toBe(0)
+        expect(fs.existsSync(path.join(guest, 'opt/digitalocean'))).toBe(false)
+        const metadata = fs.readFileSync(path.join(guest, 'var/lib/dpkg/status'), 'utf8')
+        for (const name of ['droplet-agent', 'do-agent']) {
+          expect(metadata).not.toMatch(new RegExp(`Package: ${name}\\nStatus: (?![^\\n]*not-installed)`))
+          const state = vendorPackages[name]
+          if (state && !state.endsWith('not-installed')) expect(fs.existsSync(path.join(guest, 'etc', `${name}.conf`))).toBe(false)
+        }
+        if (Object.values(vendorPackages).every(state => state.endsWith('not-installed'))) {
+          expect(operations.filter(operation => operation.command === 'purge')).toEqual([])
+        }
+        expectUnrelatedArtifacts(guest)
+        expectOwnedFill(guest, operations)
+      })
+    })
+  }
+
+  for (const failure of [
+    { metadataFailure: 'before' as const },
+    { metadataFailure: 'after' as const },
+    { purgeFailure: true },
+    { purgeNoEffect: true },
+    { aptUpdateFailure: true }
+  ]) {
+    it(`fails before deleting vendor artifacts for ${JSON.stringify(failure)}`, () => {
+      withCleanupFixture(
+        { ...completedFill, vendorPackages: { 'droplet-agent': 'install ok installed', 'do-agent': 'deinstall ok config-files' }, ...failure },
+        ({ result, guest, operations }) => {
+          expect(result.status).not.toBe(0)
+          expect(result.signal).toBeNull()
+          expect(fs.readFileSync(path.join(guest, 'opt/digitalocean/vendor-data'), 'utf8')).toBe('VENDOR_ARTIFACT\n')
+          expect(operations.filter(operation => operation.command === 'dd')).toEqual([])
+          expectUnrelatedArtifacts(guest)
+          if (failure.metadataFailure === 'before' || failure.aptUpdateFailure) {
+            expect(operations.filter(operation => operation.command === 'purge')).toEqual([])
+          }
+        }
+      )
+    })
+  }
 })

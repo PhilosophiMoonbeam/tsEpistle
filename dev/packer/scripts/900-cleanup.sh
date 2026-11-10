@@ -15,8 +15,48 @@ fi
 chmod 1777 /tmp
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get -y update
-apt-get -y purge droplet-agent
+apt-get -y --error-on=any update
+
+# Query the complete status database: querying a missing package alone returns
+# the same failure status as an inspection error, which must not mean "absent".
+inspect_vendor_agents() {
+  local metadata package status
+  local status_pattern='^(unknown|install|hold|deinstall|purge) (ok|reinstreq) (not-installed|config-files|half-installed|unpacked|half-configured|triggers-awaited|triggers-pending|installed)$'
+  local -A present=()
+  vendor_agents=()
+  if ! metadata=$(LC_ALL=C dpkg-query -W -f='${Package}\t${Status}\n'); then
+    printf 'Unable to inspect DigitalOcean agent package metadata.\n' >&2
+    return 1
+  fi
+  while IFS=$'\t' read -r package status; do
+    case "$package" in
+      droplet-agent|do-agent)
+        if [[ ! "$status" =~ $status_pattern ]]; then
+          printf 'Unclassifiable DigitalOcean agent package state: %s.\n' "$package" >&2
+          return 1
+        fi
+        if [[ "${BASH_REMATCH[2]}" != ok || "${BASH_REMATCH[3]}" != not-installed ]]; then
+          present["$package"]=1
+        fi
+        ;;
+    esac
+  done <<< "$metadata"
+  for package in droplet-agent do-agent; do
+    if [[ -n "${present[$package]:-}" ]]; then
+      vendor_agents+=("$package")
+    fi
+  done
+}
+
+inspect_vendor_agents
+if [[ "${#vendor_agents[@]}" -gt 0 ]]; then
+  apt-get -y purge "${vendor_agents[@]}"
+fi
+inspect_vendor_agents
+if [[ "${#vendor_agents[@]}" -gt 0 ]]; then
+  printf 'DigitalOcean agent packages remain after purge: %s.\n' "${vendor_agents[*]}" >&2
+  exit 1
+fi
 rm -rf /opt/digitalocean
 apt-get -y autoremove
 apt-get -y autoclean
