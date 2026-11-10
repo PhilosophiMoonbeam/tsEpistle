@@ -65,13 +65,13 @@ props:
   mapGroups:
     type: Boolean
     title: Map Groups
-    hint: Map groups matching names from the groups claim value
+    hint: Planned authoritative name matching (tsEpistle-q0g.3, not yet verified) replaces groups only for the current authorized provider/account, transactionally. Changed membership updates authorization revisions and retires existing sessions; unchanged membership does not. This is not an additive enrollment grant.
     default: false
     order: 10
   groupsClaim:
     type: String
     title: Groups Claim
-    hint: Field containing the group names
+    hint: Field containing group names. Planned strict mapping (tsEpistle-q0g.3, not yet verified) preserves groups when absent, replaces them with an explicit empty list, and rejects present malformed claims rather than filtering entries into a partial or empty snapshot.
     default: groups
     maxWidth: 500
     order: 11

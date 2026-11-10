@@ -1,7 +1,7 @@
-import { asError, wiki, type AuthenticationConfig, type AuthenticationPlugin, type WikiUser } from '../../types.ts'
+import { synchronizeProviderGroups } from '../../../helpers/authentication-provisioning.ts'
+import { asError, wiki, type AuthenticationConfig, type AuthenticationPlugin } from '../../types.ts'
 import { oauth2StateOptions } from '../oauth-state.ts'
 import _ from 'lodash'
-
 
 // ------------------------------------
 // OAuth2 Account
@@ -14,81 +14,59 @@ interface OAuth2Plugin extends AuthenticationPlugin {
   logout(conf: AuthenticationConfig): string
 }
 
-interface GroupRow { id: number }
-interface WikiGroup extends GroupRow { name: string }
-interface GroupQuery {
-  select(column: 'groups.id'): Promise<GroupRow[]>
-  relate(groupId: number): Promise<unknown>
-  unrelate(): { where(column: 'groupId', groupId: number): Promise<unknown> }
-}
-interface GroupRelatedUser extends WikiUser {
-  $relatedQuery(relation: 'groups'): GroupQuery
-}
-
-const isWikiGroup = (value: unknown): value is WikiGroup => (
-  typeof value === 'object' && value !== null &&
-  'id' in value && typeof value.id === 'number' &&
-  'name' in value && typeof value.name === 'string'
-)
-
-const hasGroupRelations = (user: WikiUser): user is GroupRelatedUser => (
-  typeof user.$relatedQuery === 'function'
-)
-
-const isOAuthProfile = (value: unknown): value is Record<string, unknown> => (
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-)
+const isOAuthProfile = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const plugin: OAuth2Plugin = {
-  init (passport, conf) {
-    const client = new OAuth2Strategy({
-      authorizationURL: conf.authorizationURL,
-      tokenURL: conf.tokenURL,
-      clientID: conf.clientId,
-      clientSecret: conf.clientSecret,
-      userInfoURL: conf.userInfoURL,
-      callbackURL: conf.callbackURL,
-      ...oauth2StateOptions(conf),
-      passReqToCallback: true,
-      scope: conf.scope
-    }, async (req, accessToken, refreshToken, profile, cb) => {
-      try {
-        const picture = _.get(profile, conf.pictureClaim, '')
-        const user = await wiki.models.users.processProfile({
-          providerKey: req.params.strategy,
-          profile: {
-            ...profile,
-            id: _.get(profile, conf.userIdClaim),
-            displayName: _.get(profile, conf.displayNameClaim, '???'),
-            email: _.get(profile, conf.emailClaim),
-            picture: picture
+  init(passport, conf) {
+    const client = new OAuth2Strategy(
+      {
+        authorizationURL: conf.authorizationURL,
+        tokenURL: conf.tokenURL,
+        clientID: conf.clientId,
+        clientSecret: conf.clientSecret,
+        userInfoURL: conf.userInfoURL,
+        callbackURL: conf.callbackURL,
+        ...oauth2StateOptions(conf),
+        passReqToCallback: true,
+        scope: conf.scope
+      },
+      async (req, accessToken, refreshToken, profile, cb) => {
+        try {
+          const picture = _.get(profile, conf.pictureClaim, '')
+          let groupNames: string[] | undefined
+          if (conf.mapGroups && _.has(profile, conf.groupsClaim)) {
+            const groups: unknown = _.get(profile, conf.groupsClaim)
+            if (!Array.isArray(groups) || groups.length > 2000) {
+              throw new Error('Provider group claim is invalid.')
+            }
+            for (const group of groups) {
+              if (typeof group !== 'string' || group.length > 255) {
+                throw new Error('Provider group claim is invalid.')
+              }
+            }
+            groupNames = groups
           }
-        })
-        if (conf.mapGroups) {
-          const groups = _.get(profile, conf.groupsClaim)
-          if (Array.isArray(groups)) {
-            if (!hasGroupRelations(user)) {
-              throw new Error('OAuth2 user does not support group relations.')
+          const user = await wiki.models.users.processProfile({
+            providerKey: req.params.strategy,
+            profile: {
+              ...profile,
+              id: _.get(profile, conf.userIdClaim),
+              displayName: _.get(profile, conf.displayNameClaim, '???'),
+              email: _.get(profile, conf.emailClaim),
+              picture: picture
             }
-            const groupNames = groups.filter((group: unknown): group is string => typeof group === 'string')
-            const currentGroups = (await user.$relatedQuery('groups').select('groups.id')).map(group => group.id)
-            const expectedGroups = Object.values<unknown>(wiki.auth.groups)
-              .filter(isWikiGroup)
-              .filter(group => groupNames.includes(group.name))
-              .map(group => group.id)
-            for (const groupId of _.difference(expectedGroups, currentGroups)) {
-              await user.$relatedQuery('groups').relate(groupId)
-            }
-            for (const groupId of _.difference(currentGroups, expectedGroups)) {
-              await user.$relatedQuery('groups').unrelate().where('groupId', groupId)
-            }
+          })
+          if (groupNames !== undefined) {
+            const membership = await synchronizeProviderGroups({ userId: user.id, providerKey: String(req.params.strategy), groupNames })
+            Object.assign(user, { authVersion: membership.authVersion, adminRevision: membership.adminRevision })
+            if (membership.changed) Reflect.deleteProperty(user, 'groups')
           }
+          cb(null, user)
+        } catch (err: unknown) {
+          cb(asError(err))
         }
-        cb(null, user)
-      } catch (err: unknown) {
-        cb(asError(err))
       }
-    })
+    )
 
     client.userProfile = function (accesstoken, done) {
       this._oauth2._useAuthorizationHeaderForGET = !conf.useQueryStringForAccessToken
@@ -109,7 +87,7 @@ const plugin: OAuth2Plugin = {
     }
     passport.use(conf.key, client)
   },
-  logout (conf) {
+  logout(conf) {
     if (!conf.logoutURL) {
       return '/'
     } else {

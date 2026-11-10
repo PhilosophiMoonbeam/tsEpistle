@@ -61,6 +61,24 @@ const plugin: AuthenticationPlugin = {
             if (!userId) {
               throw new Error('Invalid Unique ID field mapping!')
             }
+            let groups: string[] | undefined
+            if (conf.mapGroups && hasProperty(profile, '_groups')) {
+              const ldapGroups = profile._groups
+              if (!Array.isArray(ldapGroups) || ldapGroups.length > 2000) {
+                throw new Error('LDAP group mapping collection is invalid.')
+              }
+              groups = []
+              for (const group of ldapGroups) {
+                if (typeof group !== 'object' || group === null || Array.isArray(group) || !hasProperty(group, conf.groupNameField)) {
+                  throw new Error('LDAP group mapping entry is invalid.')
+                }
+                const name = group[conf.groupNameField]
+                if (typeof name !== 'string' || name.length > 255) {
+                  throw new Error('LDAP group mapping name is invalid.')
+                }
+                groups.push(name)
+              }
+            }
 
             const user = await wiki.models.users.processProfile({
               providerKey: getStrategy(req),
@@ -72,21 +90,11 @@ const plugin: AuthenticationPlugin = {
                 providerProfile: mappedProviderProfile(profile, { location: conf.mappingLocation, jobTitle: conf.mappingJobTitle }, true)
               }
             })
-            // map users LDAP groups to wiki groups with the same name, and remove any groups that don't match LDAP
-            if (conf.mapGroups) {
-              const ldapGroups = _.get(profile, '_groups')
-              if (Array.isArray(ldapGroups)) {
-                const groups = ldapGroups.flatMap((group: unknown) => {
-                  if (typeof group !== 'object' || group === null || !hasProperty(group, conf.groupNameField)) {
-                    return []
-                  }
-                  const name = group[conf.groupNameField]
-                  return typeof name === 'string' ? [name] : []
-                })
-                const membership = await synchronizeProviderGroups({ userId: user.id, providerKey: getStrategy(req), groupNames: groups })
-                Object.assign(user, { authVersion: membership.authVersion, adminRevision: membership.adminRevision })
-                if (membership.changed) Reflect.deleteProperty(user, 'groups')
-              }
+            // Only a complete, present group claim is authoritative.
+            if (groups !== undefined) {
+              const membership = await synchronizeProviderGroups({ userId: user.id, providerKey: getStrategy(req), groupNames: groups })
+              Object.assign(user, { authVersion: membership.authVersion, adminRevision: membership.adminRevision })
+              if (membership.changed) Reflect.deleteProperty(user, 'groups')
             }
             cb(null, user)
           } catch (err: unknown) {

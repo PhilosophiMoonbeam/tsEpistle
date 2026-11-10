@@ -32,14 +32,61 @@ rm -f /root/.ssh/authorized_keys /etc/ssh/*key*
 touch /etc/ssh/revoked_keys
 chmod 600 /etc/ssh/revoked_keys
 
-# Securely erase the unused portion of the filesystem
-GREEN='\033[0;32m'
-NC='\033[0m'
-printf "\n${GREEN}Writing zeros to the remaining disk space to securely
-erase the unused portion of the file system.
-Depending on your disk size this may take several minutes.
-The secure erase will complete successfully when you see:${NC}
-    dd: writing to '/zerofile': No space left on device\n
-Beginning secure erase now\n"
+# Zero-fill free space in this disposable image build. This is not a guarantee
+# of physical secure erasure on the underlying storage.
+fill_file=''
+diagnostic_file=''
+dd_pid=''
 
-dd if=/dev/zero of=/zerofile bs=4096 || rm /zerofile
+cleanup_zero_fill() {
+  local status=$?
+  trap - EXIT HUP INT TERM
+  if [[ -n "$dd_pid" ]]; then
+    # Stop and reap the writer before unlinking its output, including on signals.
+    kill -TERM "$dd_pid" 2>/dev/null || :
+    wait "$dd_pid" 2>/dev/null || :
+  fi
+  if [[ -n "$fill_file" ]]; then
+    if rm -f -- "$fill_file"; then
+      :
+    else
+      [[ "$status" -ne 0 ]] || status=1
+    fi
+  fi
+  if [[ -n "$diagnostic_file" ]]; then
+    if rm -f -- "$diagnostic_file"; then
+      :
+    else
+      [[ "$status" -ne 0 ]] || status=1
+    fi
+  fi
+  exit "$status"
+}
+
+trap cleanup_zero_fill EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+diagnostic_file=$(mktemp /run/tsepistle-zero-fill.XXXXXX)
+fill_file=$(mktemp /tsepistle-zero-fill.XXXXXX)
+printf '\nZero-filling unused image filesystem space.\n'
+LC_ALL=C dd if=/dev/zero of="$fill_file" bs=4096 2>"$diagnostic_file" &
+dd_pid=$!
+dd_status=0
+wait "$dd_pid" || dd_status=$?
+dd_pid=''
+
+# An unbounded fill must fail specifically because the filesystem is full.
+# Do not accept text on stdout, another error, or even an unexpected exit 0.
+if [[ "$dd_status" -eq 1 ]] &&
+  LC_ALL=C grep -qE '^dd: .*writing .*: No space left on device$' "$diagnostic_file"; then
+  printf 'Image filesystem zero-fill completed.\n'
+else
+  cat "$diagnostic_file" >&2
+  printf 'Image filesystem zero-fill failed (dd status %s).\n' "$dd_status" >&2
+  if [[ "$dd_status" -eq 0 ]]; then
+    exit 1
+  fi
+  exit "$dd_status"
+fi

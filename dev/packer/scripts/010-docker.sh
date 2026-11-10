@@ -57,10 +57,24 @@ systemctl start docker
 
 # Setup containers
 
+# The parent stays private on the host; consumers receive only the readable file.
+if [[ -L /etc/wiki ]]; then
+  echo "Refusing a symlinked credential directory" >&2
+  exit 1
+fi
 mkdir -p /etc/wiki
+chown root:root /etc/wiki
+chmod 0700 /etc/wiki
+if [[ -e /etc/wiki/.db-secret || -L /etc/wiki/.db-secret ]]; then
+  echo "Refusing to bake an existing database credential into the image" >&2
+  exit 1
+fi
+(umask 077; set -o noclobber; : > /etc/wiki/.db-secret)
+chown root:root /etc/wiki/.db-secret
+chmod 0444 /etc/wiki/.db-secret
 sudo install -m 0644 "$runtime_inputs" /etc/wiki/snapshot-provenance-inputs.json
 
 docker network create wikinet
 docker volume create pgdata
-docker create --name=db -e POSTGRES_DB=wiki -e POSTGRES_USER=wiki -e POSTGRES_PASSWORD_FILE=/etc/wiki/.db-secret -v /etc/wiki/.db-secret:/etc/wiki/.db-secret:ro -v pgdata:/var/lib/postgresql/data --restart=unless-stopped -h db --network=wikinet "$postgres_image"
-docker create --name=wiki -e DB_TYPE=postgres -e DB_HOST=db -e DB_PORT=5432 -e DB_PASS_FILE=/etc/wiki/.db-secret -v /etc/wiki/.db-secret:/etc/wiki/.db-secret:ro -e DB_USER=wiki -e DB_NAME=wiki --restart=unless-stopped -h wiki --network=wikinet -p 80:3000 -p 443:3443 "$application_image"
+docker create --name=db -e POSTGRES_DB=wiki -e POSTGRES_USER=wiki -e POSTGRES_PASSWORD_FILE=/etc/wiki/.db-secret --mount type=bind,source=/etc/wiki/.db-secret,target=/etc/wiki/.db-secret,readonly -v pgdata:/var/lib/postgresql/data --restart=unless-stopped -h db --network=wikinet "$postgres_image"
+docker create --name=wiki -e DB_TYPE=postgres -e DB_HOST=db -e DB_PORT=5432 -e DB_PASS_FILE=/etc/wiki/.db-secret --mount type=bind,source=/etc/wiki/.db-secret,target=/etc/wiki/.db-secret,readonly -e DB_USER=wiki -e DB_NAME=wiki --restart=unless-stopped -h wiki --network=wikinet -p 80:3000 -p 443:3443 "$application_image"

@@ -40,6 +40,7 @@ vi.mockModule('../../modules/types.ts', import.meta.url, () => ({
   asError: (value: unknown) => (value instanceof Error ? value : new Error(String(value)))
 }))
 vi.mockModule('passport-openidconnect', import.meta.url, () => ({ default: { Strategy: PassportStrategy } }))
+vi.mockModule('passport-oauth2', import.meta.url, () => ({ default: { Strategy: PassportStrategy } }))
 vi.mockModule('@node-saml/passport-saml', import.meta.url, () => ({ MultiSamlStrategy: PassportStrategy, ValidateInResponseTo }))
 vi.mockModule('openid-client', import.meta.url, () => ({ discovery: async () => ({}) }))
 vi.mockModule('../../modules/authentication/openid-client-strategy.ts', import.meta.url, () => ({ OpenIDClientStrategy }))
@@ -151,7 +152,7 @@ const resetDatabase = async (): Promise<void> => {
 }
 
 beforeEach(async () => {
-  user = { id: 3, authVersion: 1, adminRevision: 'initial' }
+  user = { id: 3, authVersion: 1, adminRevision: 'initial', groups: [{ id: 4, name: 'Writers' }] }
   processProfile.mockReset().mockResolvedValue(user)
   revokeUserTokens.mockReset()
   emit.mockReset()
@@ -211,7 +212,7 @@ const configuration = (kind: string): Record<string, unknown> => ({
 
 const run = async (
   kind: string,
-  names: string[] | undefined,
+  names: unknown,
   callback: ReturnType<typeof vi.fn>,
   config: Record<string, unknown> = {},
   claims: Record<string, unknown> = {}
@@ -222,13 +223,41 @@ const run = async (
   await plugin.init({ use: vi.fn() }, { ...configuration(kind), ...config })
   const request = { params: { strategy: 'organization' } }
   if (kind === 'oidc') {
-    await verify(request, 'issuer', { _json: { groups: names, email: 'person@example.invalid', ...claims } }, {}, null, null, null, null, null, callback)
+    await verify(
+      request,
+      'issuer',
+      { _json: { ...(names === undefined ? {} : { groups: names }), email: 'person@example.invalid', ...claims } },
+      {},
+      null,
+      null,
+      null,
+      null,
+      null,
+      callback
+    )
   } else if (kind === 'azure') {
-    await verify(request, { claims: () => ({ groups: names, email: 'person@example.invalid', sub: 'subject' }) }, callback)
+    await verify(request, { claims: () => ({ ...(names === undefined ? {} : { groups: names }), email: 'person@example.invalid', sub: 'subject' }) }, callback)
+  } else if (kind === 'oauth2') {
+    await verify(
+      request,
+      'access-token',
+      'refresh-token',
+      { id: 'subject', email: 'person@example.invalid', ...(names === undefined ? {} : { groups: names }), ...claims },
+      callback
+    )
   } else if (kind === 'saml') {
-    await verify(request, { uid: 'subject', email: 'person@example.invalid', name: 'Person', attributes: { memberOf: names }, ...claims }, callback)
+    await verify(
+      request,
+      { uid: 'subject', email: 'person@example.invalid', name: 'Person', attributes: names === undefined ? {} : { memberOf: names }, ...claims },
+      callback
+    )
   } else {
-    await verify(request, { uid: 'subject', email: 'person@example.invalid', name: 'Person', _groups: names?.map(cn => ({ cn })), ...claims }, callback)
+    const groups = Array.isArray(names) ? names.map(cn => ({ cn })) : names
+    await verify(
+      request,
+      { uid: 'subject', email: 'person@example.invalid', name: 'Person', ...(groups === undefined ? {} : { _groups: groups }), ...claims },
+      callback
+    )
   }
 }
 
@@ -241,16 +270,57 @@ const membershipNames = async (): Promise<string[]> => {
   return rows.map(row => String(row.name))
 }
 
+const expectUnchangedMembership = async (): Promise<void> => {
+  expect(await membershipNames()).toEqual(['Writers'])
+  expect(await database('users').where({ id: 3 }).first()).toMatchObject({
+    authVersion: 1,
+    adminRevision: 'initial',
+    sessionsRevokedAt: null
+  })
+  expect(await database('userAdministrationEvents').select()).toEqual([])
+  expect(await database('groupAdministrationEvents').select()).toEqual([])
+  expect(revokeUserTokens).not.toHaveBeenCalled()
+  expect(emit).not.toHaveBeenCalled()
+  expect(user).toEqual({ id: 3, authVersion: 1, adminRevision: 'initial', groups: [{ id: 4, name: 'Writers' }] })
+}
+
+const expectCommittedMembership = async (added: number[], removed: number[]): Promise<void> => {
+  const persisted = await database('users').where({ id: 3 }).first()
+  expect(persisted?.authVersion).toBe(2)
+  expect(persisted?.adminRevision).not.toBe('initial')
+  expect(persisted?.sessionsRevokedAt).not.toBeNull()
+  expect(user.authVersion).toBe(2)
+  expect(user.adminRevision).toBe(persisted?.adminRevision)
+  expect(Object.hasOwn(user, 'groups')).toBe(false)
+  const events = await database('userAdministrationEvents').select()
+  expect(events).toHaveLength(1)
+  expect(events[0]).toMatchObject({ userId: 3, actorId: null, action: 'directory-groups-synchronized' })
+  expect(JSON.parse(events[0].details)).toEqual({
+    providerKey: 'organization',
+    groupsAdded: added,
+    groupsRemoved: removed,
+    sessionsEnded: true
+  })
+  expect(await database('groupAdministrationEvents').orderBy('groupId').select('groupId', 'action')).toEqual(
+    [...added.map(groupId => ({ groupId, action: 'members-added' })), ...removed.map(groupId => ({ groupId, action: 'members-removed' }))].sort(
+      (left, right) => left.groupId - right.groupId
+    )
+  )
+  expect(revokeUserTokens).toHaveBeenCalledTimes(1)
+  expect(revokeUserTokens).toHaveBeenCalledWith({ id: 3, kind: 'u' })
+  expect(emit).toHaveBeenCalledTimes(1)
+  expect(emit).toHaveBeenCalledWith('addAuthRevoke', { id: 3, kind: 'u' })
+}
+
 describe('directory mapping protocol adapters', () => {
-  for (const kind of ['ldap', 'oidc', 'saml', 'azure']) {
+  for (const kind of ['ldap', 'oidc', 'saml', 'azure', 'oauth2']) {
     it(`${kind} persists the provider claim as current memberships`, async () => {
       const callback = vi.fn()
       await run(kind, ['Readers'], callback)
 
       expect(await membershipNames()).toEqual(['Readers'])
-      const persisted = await database('users').where({ id: 3 }).first()
-      expect(persisted?.authVersion).toBe(2)
-      expect(persisted?.adminRevision).not.toBe('initial')
+      await expectCommittedMembership([3], [4])
+      expect(callback).toHaveBeenCalledTimes(1)
       expect(callback.mock.calls[0]?.[0]).toBeNull()
       expect(callback.mock.calls[0]?.[1]).toMatchObject({ id: 3, authVersion: 2 })
     })
@@ -259,17 +329,56 @@ describe('directory mapping protocol adapters', () => {
       const callback = vi.fn()
       await run(kind, undefined, callback)
 
-      expect(await membershipNames()).toEqual(['Writers'])
-      expect(await database('users').where({ id: 3 }).first()).toMatchObject({ authVersion: 1, adminRevision: 'initial' })
+      await expectUnchangedMembership()
+      expect(callback).toHaveBeenCalledTimes(1)
       expect(callback.mock.calls[0]?.[0]).toBeNull()
     })
+
+    it(`${kind} preserves versions, cached groups and sessions when the authoritative claim is unchanged`, async () => {
+      const callback = vi.fn()
+      await run(kind, ['Writers'], callback)
+
+      await expectUnchangedMembership()
+      expect(callback).toHaveBeenCalledTimes(1)
+      expect(callback.mock.calls[0]?.[0]).toBeNull()
+      expect(callback.mock.calls[0]?.[1]).toEqual(user)
+    })
+
+    for (const malformed of [
+      { name: 'mixed non-string members', value: ['Readers', 7] },
+      { name: 'null collection', value: null }
+    ]) {
+      it(`${kind} rejects ${malformed.name} without changing membership, revisions, events or sessions`, async () => {
+        const callback = vi.fn()
+        await run(kind, malformed.value, callback)
+
+        expect(callback).toHaveBeenCalledTimes(1)
+        expect(callback.mock.calls[0]?.[0]).toBeInstanceOf(Error)
+        expect(callback.mock.calls[0]?.[1] ?? null).toBeNull()
+        if (kind !== 'ldap') expect(processProfile).not.toHaveBeenCalled()
+        await expectUnchangedMembership()
+      })
+    }
+
+    if (kind !== 'saml') {
+      it(`${kind} rejects a scalar group claim instead of treating it as absent`, async () => {
+        const callback = vi.fn()
+        await run(kind, 'Readers', callback)
+
+        expect(callback.mock.calls[0]?.[0]).toBeInstanceOf(Error)
+        expect(callback.mock.calls[0]?.[1] ?? null).toBeNull()
+        if (kind !== 'ldap') expect(processProfile).not.toHaveBeenCalled()
+        await expectUnchangedMembership()
+      })
+    }
 
     it(`${kind} clears persisted memberships for an explicitly empty claim`, async () => {
       const callback = vi.fn()
       await run(kind, [], callback)
 
       expect(await membershipNames()).toEqual([])
-      expect(await database('users').where({ id: 3 }).first()).toMatchObject({ authVersion: 2 })
+      await expectCommittedMembership([], [4])
+      expect(callback).toHaveBeenCalledTimes(1)
       expect(callback.mock.calls[0]?.[0]).toBeNull()
     })
 
@@ -283,13 +392,72 @@ describe('directory mapping protocol adapters', () => {
         const failure = callback.mock.calls[0]?.[0]
         expect(failure).toBeInstanceOf(Error)
         expect((failure as Error).message).toContain('membership mapping failure')
-        expect(await membershipNames()).toEqual(['Writers'])
-        expect(await database('users').where({ id: 3 }).first()).toMatchObject({ authVersion: 1, adminRevision: 'initial' })
+        expect(callback).toHaveBeenCalledTimes(1)
+        expect(callback.mock.calls[0]?.[1] ?? null).toBeNull()
+        await expectUnchangedMembership()
       } finally {
         await database.raw('DROP TRIGGER reject_membership_event')
       }
     })
   }
+
+  it('SAML accepts a scalar string as an authoritative membership claim', async () => {
+    const callback = vi.fn()
+    await run('saml', 'Readers', callback)
+
+    expect(await membershipNames()).toEqual(['Readers'])
+    await expectCommittedMembership([3], [4])
+    expect(callback.mock.calls[0]?.[0]).toBeNull()
+    expect(callback.mock.calls[0]?.[1]).toMatchObject({ id: 3, authVersion: 2 })
+  })
+
+  for (const fixture of [
+    { name: 'a missing configured cn', groups: [{}] },
+    { name: 'a missing cn among valid entries', groups: [{ cn: 'Readers' }, {}] },
+    { name: 'a null entry', groups: [{ cn: 'Readers' }, null] }
+  ]) {
+    it(`LDAP rejects ${fixture.name} rather than dropping the entry`, async () => {
+      const callback = vi.fn()
+      await run('ldap', undefined, callback, {}, { _groups: fixture.groups })
+
+      expect(callback).toHaveBeenCalledTimes(1)
+      expect(callback.mock.calls[0]?.[0]).toBeInstanceOf(Error)
+      expect(callback.mock.calls[0]?.[1] ?? null).toBeNull()
+      await expectUnchangedMembership()
+    })
+  }
+
+  for (const fixture of [
+    { name: 'a disabled provider', table: 'authentication', values: { isEnabled: false } },
+    { name: 'an inactive account', table: 'users', values: { isActive: false } },
+    { name: 'a system account', table: 'users', values: { isSystem: true } },
+    { name: 'an account belonging to another provider', table: 'users', values: { providerKey: 'other-provider' } }
+  ]) {
+    it(`OAuth2 refuses ${fixture.name} without membership or session side effects`, async () => {
+      await database(fixture.table).update(fixture.values)
+      const callback = vi.fn()
+      await run('oauth2', ['Readers'], callback)
+
+      expect(callback).toHaveBeenCalledTimes(1)
+      const failure = callback.mock.calls[0]?.[0]
+      expect(failure).toBeInstanceOf(Error)
+      if (!(failure instanceof Error)) throw new Error('Expected OAuth2 sign-in to fail with an Error')
+      expect(failure.message).toContain('account or provider is unavailable')
+      expect(callback.mock.calls[0]?.[1] ?? null).toBeNull()
+      await expectUnchangedMembership()
+    })
+  }
+
+  it('OAuth2 honors disabled mapping in the current persisted provider configuration', async () => {
+    await database('authentication').update({ config: JSON.stringify({ mapGroups: false }) })
+    const callback = vi.fn()
+    await run('oauth2', ['Readers'], callback)
+
+    expect(callback).toHaveBeenCalledTimes(1)
+    expect(callback.mock.calls[0]?.[0]).toBeNull()
+    expect(callback.mock.calls[0]?.[1]).toEqual(user)
+    await expectUnchangedMembership()
+  })
 })
 
 describe('federated profile claim admission', () => {
@@ -337,9 +505,9 @@ describe('federated profile claim admission', () => {
     await run('oidc', undefined, vi.fn(), { requireVerifiedEmail: true, locationClaim: 'place', skipUserProfile: true })
     processProfile.mockClear()
     const callback = vi.fn()
-    const payload = Buffer.from(JSON.stringify({ sub: 'subject', email: 'person@example.invalid', email_verified: true, place: 'London' })).toString(
-      'base64url'
-    )
+    const payload = Buffer.from(
+      JSON.stringify({ sub: 'subject', email: 'person@example.invalid', email_verified: true, place: 'London', groups: ['Readers'] })
+    ).toString('base64url')
     await verify(
       { params: { strategy: 'organization' } },
       'issuer',
@@ -354,6 +522,8 @@ describe('federated profile claim admission', () => {
     )
     expect(callback.mock.calls[0]?.[0]).toBeNull()
     expect(processProfile.mock.calls[0]?.[0].profile).toMatchObject({ email: 'person@example.invalid', providerProfile: { location: 'London' } })
+    expect(await membershipNames()).toEqual(['Readers'])
+    await expectCommittedMembership([3], [4])
   })
 
   for (const kind of ['oidc', 'saml', 'ldap']) {

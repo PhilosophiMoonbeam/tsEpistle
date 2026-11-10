@@ -313,6 +313,32 @@ const plugin: AuthenticationPlugin = {
               throw new Error('Invalid or Missing Unique ID field!')
             }
 
+            let groupNames: string[] | undefined
+            if (conf.mapGroups) {
+              const attributes: unknown = profile.attributes
+              if (attributes !== undefined && (typeof attributes !== 'object' || attributes === null || Array.isArray(attributes))) {
+                throw new Error('Provider group claim is invalid.')
+              }
+              if (_.has(attributes, conf.mappingGroups)) {
+                const groups: unknown = _.get(attributes, conf.mappingGroups)
+                if (typeof groups === 'string') {
+                  groupNames = [groups]
+                } else if (Array.isArray(groups)) {
+                  groupNames = groups
+                } else {
+                  throw new Error('Provider group claim is invalid.')
+                }
+                if (groupNames.length > 2000) {
+                  throw new Error('Provider group claim is invalid.')
+                }
+                for (const group of groupNames) {
+                  if (typeof group !== 'string' || group.length > 255) {
+                    throw new Error('Provider group claim is invalid.')
+                  }
+                }
+              }
+            }
+
             const user = await wiki.models.users.processProfile({
               providerKey: req.params.strategy,
               profile: {
@@ -327,20 +353,10 @@ const plugin: AuthenticationPlugin = {
               }
             })
 
-            // map users provider groups to wiki groups with the same name, and remove any groups that don't match
-            // Code copied from the LDAP implementation with a slight variation on the field we extract the value from
-            // In SAML v2 groups come in profile.attributes and can be 1 string or an array of strings
-            if (conf.mapGroups) {
-              const attributes = typeof profile.attributes === 'object' && profile.attributes !== null ? profile.attributes : {}
-              const mappedGroups = _.get(attributes, conf.mappingGroups)
-              const groups = Array.isArray(mappedGroups) ? mappedGroups : mappedGroups ? [mappedGroups] : null
-
-              if (groups) {
-                const groupNames = groups.filter((group: unknown): group is string => typeof group === 'string')
-                const membership = await synchronizeProviderGroups({ userId: user.id, providerKey: String(req.params.strategy), groupNames: groupNames })
-                Object.assign(user, { authVersion: membership.authVersion, adminRevision: membership.adminRevision })
-                if (membership.changed) Reflect.deleteProperty(user, 'groups')
-              }
+            if (groupNames !== undefined) {
+              const membership = await synchronizeProviderGroups({ userId: user.id, providerKey: String(req.params.strategy), groupNames })
+              Object.assign(user, { authVersion: membership.authVersion, adminRevision: membership.adminRevision })
+              if (membership.changed) Reflect.deleteProperty(user, 'groups')
             }
 
             cb(null, asPassportUser(user))

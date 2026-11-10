@@ -14,7 +14,7 @@ type LdapRequest = Request & {
   params: { strategy: string }
 }
 
-type LdapClient = Pick<Client, 'bind' | 'search' | 'unbind'>
+type LdapClient = Pick<Client, 'bind' | 'search' | 'searchPaginated' | 'unbind'>
 type LdapClientFactory = (options: ClientOptions) => LdapClient
 type VerifyDone = (error: Error | null, user?: Record<string, unknown> | false, info?: unknown) => void
 type Verify = (request: LdapRequest, profile: Record<string, unknown>, done: VerifyDone) => Promise<void> | void
@@ -68,7 +68,10 @@ const valueAt = (value: unknown, field: string): unknown => {
 const stringAt = (entry: Entry, field: string): string => {
   const value = entry[field]
   const first = Array.isArray(value) ? value[0] : value
-  return typeof first === 'string' ? first : ''
+  if (typeof first !== 'string' || first.length === 0) {
+    throw new Error(`LDAP group filter requires a nonempty string value for ${field}.`)
+  }
+  return first
 }
 
 const safeUnbind = async (client: LdapClient): Promise<void> => {
@@ -85,7 +88,7 @@ class LdapStrategy extends PassportStrategy {
   readonly verify: Verify
   readonly createClient: LdapClientFactory
 
-  constructor (options: LdapStrategyOptions, verify: Verify) {
+  constructor(options: LdapStrategyOptions, verify: Verify) {
     super()
     if (!verify) throw new TypeError('LDAP authentication strategy requires a verify callback.')
     if (!options.server.searchFilter.includes('{{username}}')) {
@@ -107,7 +110,7 @@ class LdapStrategy extends PassportStrategy {
     this.createClient = options.clientFactory ?? (clientOptions => new Client(clientOptions))
   }
 
-  override authenticate (request: LdapRequest, options: AuthenticateOptions = {}): void {
+  override authenticate(request: LdapRequest, options: AuthenticateOptions = {}): void {
     const usernameValue = valueAt(request.body, this.options.usernameField) ?? valueAt(request.query, this.options.usernameField)
     const passwordValue = valueAt(request.body, this.options.passwordField) ?? valueAt(request.query, this.options.passwordField)
     if (typeof usernameValue !== 'string' || !usernameValue || typeof passwordValue !== 'string' || !passwordValue) {
@@ -116,19 +119,21 @@ class LdapStrategy extends PassportStrategy {
     }
 
     void this.authenticateCredentials(usernameValue, passwordValue)
-      .then(profile => this.verify(request, profile, (error, user, info) => {
-        if (error) {
-          this.error(error)
-        } else if (!user) {
-          this.fail(info)
-        } else {
-          this.success(user, info)
-        }
-      }))
+      .then(profile =>
+        this.verify(request, profile, (error, user, info) => {
+          if (error) {
+            this.error(error)
+          } else if (!user) {
+            this.fail(info)
+          } else {
+            this.success(user, info)
+          }
+        })
+      )
       .catch((error: unknown) => this.handleAuthenticationError(error, options))
   }
 
-  private async authenticateCredentials (username: string, password: string): Promise<Record<string, unknown>> {
+  private async authenticateCredentials(username: string, password: string): Promise<Record<string, unknown>> {
     const { server } = this.options
     const clientOptions: ClientOptions = {
       url: server.url,
@@ -147,6 +152,9 @@ class LdapStrategy extends PassportStrategy {
         filter: server.searchFilter.replaceAll('{{username}}', Filter.escape(username)),
         ...(server.binaryAttributes !== undefined && { explicitBufferAttributes: server.binaryAttributes })
       })
+      if (userSearch.searchReferences.length > 0) {
+        throw new Error('LDAP user search returned unresolved references.')
+      }
       if (userSearch.searchEntries.length === 0) throw new LdapUserNotFoundError()
       if (userSearch.searchEntries.length !== 1) {
         throw new Error(`LDAP user search returned ${userSearch.searchEntries.length} entries.`)
@@ -163,25 +171,35 @@ class LdapStrategy extends PassportStrategy {
 
       const profile: Record<string, unknown> = { ...entry }
       if (server.binaryAttributes?.length) {
-        profile._raw = Object.fromEntries(server.binaryAttributes.flatMap(attribute => {
-          const value = entry[attribute]
-          return Buffer.isBuffer(value) || (Array.isArray(value) && value.every(Buffer.isBuffer))
-            ? [[attribute, value]]
-            : []
-        }))
+        profile._raw = Object.fromEntries(
+          server.binaryAttributes.flatMap(attribute => {
+            const value = entry[attribute]
+            return Buffer.isBuffer(value) || (Array.isArray(value) && value.every(Buffer.isBuffer)) ? [[attribute, value]] : []
+          })
+        )
       }
 
       if (server.groupSearchBase && server.groupSearchFilter) {
         const dnProperty = server.groupDnProperty ?? 'dn'
-        const groupFilter = server.groupSearchFilter
-          .replaceAll('{{dn}}', Filter.escape(stringAt(entry, dnProperty)))
-          .replaceAll('{{username}}', Filter.escape(stringAt(entry, 'uid')))
-        const groupSearch = await adminClient.search(server.groupSearchBase, {
+        const groupFilter = server.groupSearchFilter.replace(/\{\{(dn|username)\}\}/g, (_placeholder, name: string) =>
+          Filter.escape(stringAt(entry, name === 'dn' ? dnProperty : 'uid'))
+        )
+        const groups: Entry[] = []
+        // Do not set sizeLimit: ldapts otherwise accepts server-truncated results.
+        for await (const page of adminClient.searchPaginated(server.groupSearchBase, {
           scope: server.groupSearchScope ?? 'sub',
           filter: groupFilter,
           ...(server.groupSearchAttributes !== undefined && { attributes: server.groupSearchAttributes })
-        })
-        profile._groups = groupSearch.searchEntries
+        })) {
+          if (page.searchReferences.length > 0) {
+            throw new Error('LDAP group search returned unresolved references.')
+          }
+          if (groups.length + page.searchEntries.length > 2000) {
+            throw new Error('LDAP group search exceeded the 2000 group limit.')
+          }
+          for (const group of page.searchEntries) groups.push(group)
+        }
+        profile._groups = groups
       }
 
       return profile
@@ -190,7 +208,7 @@ class LdapStrategy extends PassportStrategy {
     }
   }
 
-  private handleAuthenticationError (error: unknown, options: AuthenticateOptions): void {
+  private handleAuthenticationError(error: unknown, options: AuthenticateOptions): void {
     const normalized = error instanceof Error ? error : new Error(String(error))
     if (normalized instanceof LdapUserNotFoundError) {
       this.fail({ message: options.userNotFound ?? 'Invalid username/password' }, 401)
@@ -216,7 +234,7 @@ class LdapStrategy extends PassportStrategy {
         '775': options.accountLockedOut ?? 'User account locked'
       }
       const code = normalized.message.match(/data ([0-9a-f]+), v[0-9a-f]+/i)?.[1]
-      this.fail({ message: code && messages[code] ? messages[code] : options.invalidCredentials ?? 'Invalid username/password' }, 401)
+      this.fail({ message: code && messages[code] ? messages[code] : (options.invalidCredentials ?? 'Invalid username/password') }, 401)
       return
     }
     this.error(normalized)
@@ -227,12 +245,4 @@ class LdapUserNotFoundError extends Error {
   override readonly name = 'LdapUserNotFoundError'
 }
 
-export {
-  LdapStrategy,
-  type LdapClient,
-  type LdapClientFactory,
-  type LdapRequest,
-  type LdapServerOptions,
-  type LdapStrategyOptions,
-  type VerifyDone
-}
+export { LdapStrategy, type LdapClient, type LdapClientFactory, type LdapRequest, type LdapServerOptions, type LdapStrategyOptions, type VerifyDone }

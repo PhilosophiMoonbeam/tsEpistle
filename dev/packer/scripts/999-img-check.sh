@@ -94,8 +94,7 @@ function checkLogs {
     for f in /var/log/*-????????; do
       [[ -e $f ]] || break
       if [ "${f}" != "${cp_ignore}" ]; then
-        echo -en "\e[93m[WARN]\e[0m Log archive ${f} found; Contents:\n"
-        cat "${f}"
+        echo -en "\e[93m[WARN]\e[0m Log archive ${f} found.\n"
         ((WARN++))
         if [[ $STATUS != 2 ]]; then
             STATUS=1
@@ -104,8 +103,7 @@ function checkLogs {
     done
     for f in  /var/log/*.[0-9];do
       [[ -e $f ]] || break
-        echo -en "\e[93m[WARN]\e[0m Log archive ${f} found; Contents:\n"
-        cat "${f}"
+        echo -en "\e[93m[WARN]\e[0m Log archive ${f} found.\n"
         ((WARN++))
         if [[ $STATUS != 2 ]]; then
             STATUS=1
@@ -115,8 +113,7 @@ function checkLogs {
       [[ -e $f ]] || break
       if [[ "${f}" = '/var/log/lfd.log' && "$(grep -E -v '/var/log/messages has been reset| Watching /var/log/messages' "${f}" | wc -c)" -gt 50 ]]; then
       if [ "${f}" != "${cp_ignore}" ]; then
-        echo -en "\e[93m[WARN]\e[0m un-cleared log file, ${f} found; Contents:\n"
-        cat "${f}"
+        echo -en "\e[93m[WARN]\e[0m un-cleared log file, ${f} found.\n"
         ((WARN++))
         if [[ $STATUS != 2 ]]; then
             STATUS=1
@@ -124,8 +121,7 @@ function checkLogs {
       fi
       elif [[ "${f}" != '/var/log/lfd.log' && "$(wc -c < "${f}")" -gt 50 ]]; then
       if [ "${f}" != "${cp_ignore}" ]; then
-        echo -en "\e[93m[WARN]\e[0m un-cleared log file, ${f} found; Contents:\n"
-        cat "${f}"
+        echo -en "\e[93m[WARN]\e[0m un-cleared log file, ${f} found.\n"
         ((WARN++))
         if [[ $STATUS != 2 ]]; then
             STATUS=1
@@ -339,12 +335,13 @@ function checkFirewall {
     elif [[ $OS == "CentOS Linux" ]] || [[ $OS == "CentOS Stream" ]] || [[ $OS == "Rocky Linux" ]] || [[ $OS == "AlmaLinux" ]] || [[ $OS == "CloudLinux" ]]; then
       if [ -f /usr/lib/systemd/system/csf.service ]; then
         fw="csf"
-        if [[ $(systemctl status $fw >/dev/null 2>&1) ]]; then
+        if systemctl status "$fw" >/dev/null 2>&1; then
 
         FW_VER="\e[32m[PASS]\e[0m Firewall service (${fw}) is active\n"
         ((PASS++))
         elif cmdExists "firewall-cmd"; then
-          if [[ $(systemctl is-active firewalld >/dev/null 2>&1 && echo 1 || echo 0) ]]; then
+          fw="firewalld"
+          if systemctl is-active "$fw" >/dev/null 2>&1; then
            FW_VER="\e[32m[PASS]\e[0m Firewall service (${fw}) is active\n"
           ((PASS++))
           else
@@ -357,7 +354,7 @@ function checkFirewall {
         fi
       else
         fw="firewalld"
-        if [[ $(systemctl is-active firewalld >/dev/null 2>&1 && echo 1 || echo 0) ]]; then
+        if systemctl is-active "$fw" >/dev/null 2>&1; then
           FW_VER="\e[32m[PASS]\e[0m Firewall service (${fw}) is active\n"
         ((PASS++))
         else
@@ -380,7 +377,7 @@ function checkFirewall {
       fi
       elif cmdExists "firewall-cmd"; then
         fw="firewalld"
-        if [[ $(systemctl is-active --quiet $fw) ]]; then
+        if systemctl is-active --quiet "$fw"; then
           FW_VER="\e[32m[PASS]\e[0m Firewall service (${fw}) is active\n"
         ((PASS++))
         else
@@ -402,6 +399,7 @@ function checkFirewall {
 
 }
 function checkUpdates {
+    local plan security_packages update_count inspection_status package
     if [[ $OS == "Ubuntu" ]] || [[ "$OS" =~ Debian.* ]]; then
         # Ensure /tmp exists and has the proper permissions before
         # checking for security updates
@@ -412,22 +410,53 @@ function checkUpdates {
         chmod 1777 /tmp
 
         echo -en "\nUpdating apt package database to check for security updates, this may take a minute...\n\n"
-        apt-get -y update > /dev/null
-
-        uc=$(apt-get --just-print upgrade | grep -i "security" -c)
-        if [[ $uc -gt 0 ]]; then
-          update_count=$(( uc / 2 ))
-        else
-          update_count=0
+        # Partial index refreshes must fail too; stale metadata is not evidence
+        # that an image has no pending security updates. Never print apt input.
+        if ! LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get -y --error-on=any update > /dev/null 2>&1; then
+            echo -en "\e[41m[FAIL]\e[0m Unable to refresh apt package metadata; security update status is unknown.\n"
+            ((FAIL++))
+            STATUS=2
+            return 1
         fi
 
+        if ! plan=$(LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get --just-print upgrade 2>/dev/null); then
+            echo -en "\e[41m[FAIL]\e[0m Unable to inspect apt upgrades; security update status is unknown.\n"
+            ((FAIL++))
+            STATUS=2
+            return 1
+        fi
+
+        # Require a completed, C-locale plan, and count unique unpack operations
+        # from security suites, not Conf records or incidental "security" text.
+        if ! security_packages=$(LC_ALL=C awk '
+            /^[0-9]+ upgraded, [0-9]+ newly installed, [0-9]+ to remove and [0-9]+ not upgraded\.$/ {
+                complete = 1
+                expected = $1 + $3
+            }
+            $1 == "Inst" && $2 ~ /^[a-z0-9][a-z0-9+.-]*(:[a-z0-9][a-z0-9-]*)?$/ {
+                if (!installed[$2]++) install_count++
+                origin = $0
+                if (sub(/^[^(]*\([^[:space:]]+[[:space:]]+/, "", origin) &&
+                    tolower(origin) ~ /[-\/]security([[:space:],)]|$)/ && !seen[$2]++) print $2
+            }
+            END { if (!complete || install_count != expected) exit 1 }
+        ' <<< "$plan"); then
+            echo -en "\e[41m[FAIL]\e[0m Apt upgrade inspection was incomplete; security update status is unknown.\n"
+            ((FAIL++))
+            STATUS=2
+            return 1
+        fi
+
+        update_count=0
+        if [[ -n $security_packages ]]; then
+            while IFS= read -r package; do
+                ((update_count++))
+            done <<< "$security_packages"
+        fi
         if [[ $update_count -gt 0 ]]; then
             echo -en "\e[41m[FAIL]\e[0m There are ${update_count} security updates available for this image that have not been installed.\n"
-            echo -en
-            echo -en "Here is a list of the security updates that are not installed:\n"
-            sleep 2
-            apt-get --just-print upgrade | grep -i security | awk '{print $2}' | awk '!seen[$0]++'
-            echo -en
+            echo "Here is a list of the security updates that are not installed:"
+            printf '%s\n' "$security_packages"
             ((FAIL++))
             STATUS=2
         else
@@ -437,14 +466,20 @@ function checkUpdates {
     elif [[ $OS == "CentOS Linux" ]] || [[ $OS == "CentOS Stream" ]] || [[ $OS == "Rocky Linux" ]] || [[ $OS == "AlmaLinux" ]] || [[ $OS == "CloudLinux" ]]; then
         echo -en "\nChecking for available security updates, this may take a minute...\n\n"
 
-        update_count=$(yum check-update --security --quiet | wc -l)
-         if [[ $update_count -gt 0 ]]; then
+        plan=$(LC_ALL=C yum check-update --security --quiet 2>/dev/null)
+        inspection_status=$?
+        if [[ $inspection_status == 100 && -n $plan ]]; then
+            update_count=$(awk 'NF { count++ } END { print count+0 }' <<< "$plan")
             echo -en "\e[41m[FAIL]\e[0m There are ${update_count} security updates available for this image that have not been installed.\n"
             ((FAIL++))
             STATUS=2
-        else
+        elif [[ $inspection_status == 0 ]]; then
             echo -en "\e[32m[PASS]\e[0m There are no pending security updates for this image.\n"
             ((PASS++))
+        else
+            echo -en "\e[41m[FAIL]\e[0m Unable to inspect yum security updates; security update status is unknown.\n"
+            ((FAIL++))
+            STATUS=2
         fi
     else
         echo "Error encountered"

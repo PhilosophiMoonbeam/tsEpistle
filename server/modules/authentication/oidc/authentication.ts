@@ -46,6 +46,19 @@ const plugin: OidcPlugin = {
             if (conf.requireVerifiedEmail === true && _.get(rawClaims, verifiedEmailClaim) !== true) {
               throw new Error('Provider email verification is required.')
             }
+            let groupNames: string[] | undefined
+            if (conf.mapGroups && _.has(rawClaims, conf.groupsClaim)) {
+              const groups: unknown = _.get(rawClaims, conf.groupsClaim)
+              if (!Array.isArray(groups) || groups.length > 2000) {
+                throw new Error('Provider group claim is invalid.')
+              }
+              for (const group of groups) {
+                if (typeof group !== 'string' || group.length > 255) {
+                  throw new Error('Provider group claim is invalid.')
+                }
+              }
+              groupNames = groups
+            }
             const user = await wiki.models.users.processProfile({
               providerKey: req.params.strategy,
               profile: {
@@ -56,14 +69,10 @@ const plugin: OidcPlugin = {
                 providerProfile: mappedProviderProfile(rawClaims, { location: conf.locationClaim, jobTitle: conf.jobTitleClaim })
               }
             })
-            if (conf.mapGroups) {
-              const groups = _.get(profile, '_json.' + conf.groupsClaim)
-              if (Array.isArray(groups)) {
-                const groupNames = groups.filter((group: unknown): group is string => typeof group === 'string')
-                const membership = await synchronizeProviderGroups({ userId: user.id, providerKey: String(req.params.strategy), groupNames: groupNames })
-                Object.assign(user, { authVersion: membership.authVersion, adminRevision: membership.adminRevision })
-                if (membership.changed) Reflect.deleteProperty(user, 'groups')
-              }
+            if (groupNames !== undefined) {
+              const membership = await synchronizeProviderGroups({ userId: user.id, providerKey: String(req.params.strategy), groupNames })
+              Object.assign(user, { authVersion: membership.authVersion, adminRevision: membership.adminRevision })
+              if (membership.changed) Reflect.deleteProperty(user, 'groups')
             }
             cb(null, user)
           } catch (err: unknown) {

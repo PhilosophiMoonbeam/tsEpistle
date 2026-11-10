@@ -87,7 +87,7 @@ props:
   mapGroups:
     type: Boolean
     title: Map Groups
-    hint: Map groups matching names from the users LDAP/Active Directory groups. Group Search Base must also be defined for this to work. Note this will remove any groups the user has that doesn't match an LDAP/Active Directory group.
+    hint: Authoritative name matching replaces local groups, including clearing them for a complete empty result. Operators must ensure the search identity, base and filter can see every relevant membership; pagination cannot prove directory-wide visibility. Planned hardening (tsEpistle-q0g.4, not yet verified) rejects malformed group names, referrals and detectable completion errors before replacement.
     default: false
     order: 24
   groupSearchBase:
@@ -99,7 +99,7 @@ props:
   groupSearchFilter:
     type: String
     title: Group Search Filter
-    hint: LDAP search filter for groups. (member={{dn}}) will use the distinguished name of the user and will work in most cases.
+    hint: LDAP search filter for groups. (member={{dn}}) uses the user's distinguished name. Planned hardening (tsEpistle-q0g.4, not yet verified) requires nonempty values for placeholders actually used and collects paged results; search errors or referrals must not become an empty authoritative snapshot.
     default: (member={{dn}})
     order: 26
   groupSearchScope:
@@ -117,7 +117,7 @@ props:
   groupNameField:
     type: String
     title: Group Name Field
-    hint: The field that contains the name of the LDAP group to match on, usually "name" or "cn".
+    hint: Field containing the LDAP group name to match, usually "name" or "cn". Planned strict mapping (tsEpistle-q0g.4, not yet verified) rejects missing or malformed names rather than silently dropping entries.
     default: name
     order: 29
   mappingLocation:
