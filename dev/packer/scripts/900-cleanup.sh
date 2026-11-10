@@ -77,10 +77,14 @@ dd_status=0
 wait "$dd_pid" || dd_status=$?
 dd_pid=''
 
-# An unbounded fill must fail specifically because the filesystem is full.
+# An unbounded fill must fail with ENOSPC, corroborated on its own filesystem.
+# Match the errno meaning, not dd's implementation-specific writing/IO wording.
+# A failed inspection or anything other than numeric zero is not exhaustion.
 # Do not accept text on stdout, another error, or even an unexpected exit 0.
 if [[ "$dd_status" -eq 1 ]] &&
-  LC_ALL=C grep -qE '^dd: .*writing .*: No space left on device$' "$diagnostic_file"; then
+  LC_ALL=C grep -qE '^dd: .*: No space left on device$' "$diagnostic_file" &&
+  available_space=$(LC_ALL=C df -B1 --output=avail -- "$fill_file") &&
+  [[ "$available_space" =~ ^[[:space:]]*Avail[[:space:]]+0[[:space:]]*$ ]]; then
   printf 'Image filesystem zero-fill completed.\n'
 else
   cat "$diagnostic_file" >&2

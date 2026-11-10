@@ -15,6 +15,8 @@ type Scenario = {
   stdout?: string
   interrupt?: boolean
   cleanupFailure?: boolean
+  available?: number | string
+  dfStatus?: number
 }
 
 type Operation = {
@@ -151,12 +153,16 @@ try {
     case 'df': {
       const targets = args.filter(arg => !arg.startsWith('-'))
       if (targets.length !== 1) fail('Unsupported df invocation')
-      owned(targets[0])
-      const available = scenario.status === 1 && scenario.diagnostic.includes('No space left on device') ? 0 : 1024
+      const target = owned(targets[0])
+      fs.statSync(target)
+      record({ command: 'df', path: target, locale: process.env.LC_ALL })
+      // /run is a separate filesystem; its free space cannot prove root exhaustion.
+      const run = path.join(root, 'run')
+      const available = target === run || target.startsWith(run + '/') ? 1024 : scenario.available ?? 0
       process.stdout.write(args.some(arg => arg.startsWith('--output='))
         ? 'Avail\\n' + available + '\\n'
         : 'Filesystem 1024-blocks Used Available Capacity Mounted on\\nfixture 2048 ' + (2048 - available) + ' ' + available + ' 100% ' + root + '\\n')
-      break
+      process.exit(scenario.dfStatus ?? 0)
     }
     case 'grep': {
       let quiet = false
@@ -264,18 +270,24 @@ function expectOwnedFill(guest: string, operations: Operation[], removed = true)
 }
 
 describe('Packer guest disk-fill cleanup lifecycle', () => {
-  it('accepts exit 1 with ENOSPC and removes only its unique root fill file', () => {
-    withCleanupFixture({ status: 1, diagnostic: 'dd: error writing output: No space left on device' }, ({ result, guest, operations }) => {
-      expect(result.status).toBe(0)
-      expectOwnedFill(guest, operations)
+  for (const diagnostic of ['dd: error writing output: No space left on device', 'dd: IO error: No space left on device']) {
+    it(`accepts exit 1 with ${diagnostic} only on a full filesystem and removes only its owned file`, () => {
+      withCleanupFixture({ status: 1, diagnostic, available: 0 }, ({ result, guest, operations }) => {
+        expect(result.status).toBe(0)
+        expectOwnedFill(guest, operations)
+      })
     })
-  })
+  }
 
   for (const scenario of [
     { name: 'an unrelated write failure', status: 1, diagnostic: 'dd: error writing output: Input/output error' },
     { name: 'an ENOSPC diagnostic with the wrong exit code', status: 2, diagnostic: 'dd: error writing output: No space left on device' },
     { name: 'ENOSPC text only on stdout', status: 1, diagnostic: 'dd: failed to open output: Permission denied', stdout: 'No space left on device\n' },
-    { name: 'unexpected success from an unbounded fill', status: 0, diagnostic: '1+0 records in\n1+0 records out' }
+    { name: 'unexpected success from an unbounded fill', status: 0, diagnostic: '1+0 records in\n1+0 records out' },
+    { name: 'ENOSPC on a filesystem that still has free space', status: 1, diagnostic: 'dd: IO error: No space left on device', available: 1 },
+    { name: 'indeterminate filesystem free space', status: 1, diagnostic: 'dd: IO error: No space left on device', available: '-' },
+    { name: 'missing filesystem free space', status: 1, diagnostic: 'dd: IO error: No space left on device', available: '' },
+    { name: 'a failed filesystem inspection despite zero output', status: 1, diagnostic: 'dd: IO error: No space left on device', available: 0, dfStatus: 1 }
   ]) {
     it(`fails for ${scenario.name} while removing its partial file`, () => {
       withCleanupFixture(scenario, ({ result, guest, operations }) => {
