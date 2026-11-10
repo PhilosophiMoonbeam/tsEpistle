@@ -3,9 +3,9 @@
   "upstream": {
     "repository": "https://github.com/requarks/wiki.git",
     "branch": "scarlett",
-    "recordedTip": "161c93af7723290b3a49c7d42b3d64f6d4c7921d",
-    "recordedAt": "2026-11-10T05:43:37Z",
-    "lastFetchedAt": "2026-11-10T05:32:54.574581526Z",
+    "recordedTip": "de32880e6a217a6993887ae58dc8b12525ca27a1",
+    "recordedAt": "2026-11-10T08:44:12.120Z",
+    "lastFetchedAt": "2026-11-10T08:44:12.120Z",
     "auditBaseline": "b5b4b0880ae26f4b137242267b6674b51af8688c",
     "candidateBaseline": "249758e3f923a77e1b62d26a47e142c312642a5f",
     "historicalReview": {
@@ -15,7 +15,7 @@
       "contract": "Every upstream commit after the common ancestor through this tip was inspected by full patch; applicable behavior is either present, superseded by a stronger current contract, or explicitly conditional or rejected."
     }
   },
-  "forkCheckpoint": "34e6469d68fcbcd19c98ce3316b487dba44732cc",
+  "forkCheckpoint": "16f472c3881ac7f618460378200728a6e5bb41b0",
   "candidates": [
     {
       "id": "typed-api-schemas",
@@ -2554,73 +2554,97 @@
     {
       "id": "strict-federated-membership-2026-11-10",
       "disposition": "synthesize",
-      "state": "active",
+      "state": "completed",
       "commits": [
         "750f664a3b56ed9f171c2667d0d0c150f628598f"
       ],
       "category": "Reject malformed federated membership claims",
       "workstream": "tsEpistle-q0g.2",
-      "contract": "Beads: tsEpistle-q0g.2 (beads://tsEpistle-q0g.2), audit tsEpistle-q0g.1, epic tsEpistle-q0g. Source: https://github.com/requarks/wiki/commit/750f664a3b56ed9f171c2667d0d0c150f628598f. Source-inferred native gap; implementation and runtime acceptance UNVERIFIED, not deployed. Finite pre-change source spans: server/modules/authentication/azure/authentication.ts:38-65; server/modules/authentication/oidc/authentication.ts:59-66; server/modules/authentication/saml/authentication.ts:332-343. Acceptance: Reject present malformed lists before synchronization without changing persisted memberships, revisions, events or sessions; preserve absent claims, explicit empty replacement and SAML scalar strings. No Google Cloud Identity feature, PostgreSQL major upgrade, Caddy/Compose transplant, seeded admin, official image publication or credential reset. Main retains final verification authority.",
+      "contract": "Beads: tsEpistle-q0g.2, audit tsEpistle-q0g.1, epic tsEpistle-q0g. Synthesized the membership-evidence lesson from https://github.com/requarks/wiki/commit/750f664a3b56ed9f171c2667d0d0c150f628598f without adding Google Cloud Identity groups. Azure/OIDC/SAML and OAuth2 validate present bounded string collections before profile admission or synchronization; absent claims preserve, complete empty clears and SAML scalar remains supported. Native adapter/persistence regressions passed; PostgreSQL authentication-administration exercised 25 cases with zero skips. Final-image OAuth malformed-claim flow preserved exact memberships, revisions, session-revocation field and administration events. Delivered app artifact and scoped runtime proof are recorded in this commit's coverage row; no external-tenant compatibility claim.",
       "lastReviewed": "2026-11-10"
     },
     {
       "id": "authoritative-oauth2-membership-2026-11-10",
       "disposition": "synthesize",
-      "state": "active",
+      "state": "completed",
       "commits": [
         "750f664a3b56ed9f171c2667d0d0c150f628598f"
       ],
       "category": "Authorize transactional generic OAuth2 group replacement",
       "workstream": "tsEpistle-q0g.3",
-      "contract": "Beads: tsEpistle-q0g.3 (beads://tsEpistle-q0g.3), audit tsEpistle-q0g.1, epic tsEpistle-q0g. Source: https://github.com/requarks/wiki/commit/750f664a3b56ed9f171c2667d0d0c150f628598f. Source-inferred native gap; implementation and runtime acceptance UNVERIFIED, not deployed. Finite pre-change source spans: server/modules/authentication/oauth2/authentication.ts:67-97. Acceptance: Use native synchronizeProviderGroups under current provider/account authority; valid and empty snapshots replace transactionally, absent claims preserve, malformed claims reject. Changed memberships retire sessions and update revisions/events; unchanged memberships do not. Wrong owner, disabled account and transaction failure leave no partial writes. No Google Cloud Identity feature, PostgreSQL major upgrade, Caddy/Compose transplant, seeded admin, official image publication or credential reset. Main retains final verification authority.",
+      "contract": "Beads: tsEpistle-q0g.3, audit tsEpistle-q0g.1. Generic OAuth2 uses existing synchronizeProviderGroups instead of direct relation writes; current provider/account authority, transaction rollback, revisions, events, cache eviction and session retirement remain native. Real final-image browser S256-PKCE flows proved alpha enrollment, beta replacement and old-JWT rejection, malformed rejection with prior session preserved, absent preservation, empty clearing and unchanged-empty no-op on one stable account. Versions/events progressed 1/1, 2/2, 3/3 only for actual membership changes. Native verification also discovered and repaired fresh-browser session-cookie issuance: initialize non-authoritative transport before durable save, never seed correlation authority. Cross-instance native PostgreSQL session suite: 10 executed, zero skips; two federated unit files and strict server/test typechecks passed.",
       "lastReviewed": "2026-11-10"
     },
     {
       "id": "complete-ldap-membership-evidence-2026-11-10",
       "disposition": "synthesize",
-      "state": "active",
+      "state": "completed",
       "commits": [
         "750f664a3b56ed9f171c2667d0d0c150f628598f"
       ],
       "category": "Require complete classifiable LDAP membership evidence",
       "workstream": "tsEpistle-q0g.4",
-      "contract": "Beads: tsEpistle-q0g.4 (beads://tsEpistle-q0g.4), audit tsEpistle-q0g.1, epic tsEpistle-q0g. Source: https://github.com/requarks/wiki/commit/750f664a3b56ed9f171c2667d0d0c150f628598f. Source-inferred native gap; implementation and runtime acceptance UNVERIFIED, not deployed. Finite pre-change source spans: server/modules/authentication/ldap/ldap-strategy.ts:131-190; server/modules/authentication/ldap/authentication.ts:75-89. Acceptance: Collect automatic paged LDAP results; reject detectable referrals/completion errors, missing used interpolation values and malformed configured group names before synchronization. Preserve complete-empty replacement, escaping, distinct user/search binds and cleanup. Directory visibility remains an operator assumption, not a pagination guarantee. No Google Cloud Identity feature, PostgreSQL major upgrade, Caddy/Compose transplant, seeded admin, official image publication or credential reset. Main retains final verification authority.",
+      "contract": "Beads: tsEpistle-q0g.4, audit tsEpistle-q0g.1. LDAP collects ldapts searchPaginated results without the explicit sizeLimit that can hide SizeLimitExceeded, caps evidence, rejects referrals/late errors, requires used interpolation attributes and classifiable group names before admission, and retains escaping, distinct binds and cleanup. Actual ldapts9/OpenLDAP proof returned 205 exact memberships in pages 100/100/5; complete empty succeeded; missing used attributes and a genuine referral rejected before verification; both connections unbound. Strategy and adapter regressions passed. Directory visibility remains an operator assumption, not a pagination guarantee; Google's API explicitly filters inaccessible groups and is not treated as authoritative complete directory evidence.",
       "lastReviewed": "2026-11-10"
     },
     {
       "id": "marketplace-firstboot-lifecycle-2026-11-10",
       "disposition": "synthesize",
-      "state": "active",
+      "state": "completed",
       "commits": [
         "387e1e2df0aa59cdcbec6c45eb41fc53281d1f0c"
       ],
       "category": "Repair native firstboot secret/readiness lifecycle",
       "workstream": "tsEpistle-q0g.5",
-      "contract": "Beads: tsEpistle-q0g.5 (beads://tsEpistle-q0g.5), audit tsEpistle-q0g.1, epic tsEpistle-q0g. Source: https://github.com/requarks/wiki/commit/387e1e2df0aa59cdcbec6c45eb41fc53281d1f0c. Source-inferred native gap; implementation and runtime acceptance UNVERIFIED, not deployed. Finite pre-change source spans: dev/packer/scripts/010-docker.sh:58-66; dev/packer/scripts/001-onboot.sh:3-17. Acceptance: No image-build credential; avoid missing bind source directory creation, atomically create distinct protected per-instance credentials readable by intended app UID1000/Postgres, preserve valid retries, fail on unusable state, and bound real TCP DB readiness before Wiki startup. Release only the owned SSH lock on every outcome; preserve interactive administrator setup. No Google Cloud Identity feature, PostgreSQL major upgrade, Caddy/Compose transplant, seeded admin, official image publication or credential reset. Main retains final verification authority.",
+      "contract": "Beads: tsEpistle-q0g.5, audit tsEpistle-q0g.1. Native firstboot uses an empty regular image placeholder and strict readonly bind, atomically generates protected per-instance credentials, preserves valid retries, refuses lost credentials after database startup, gates Wiki on bounded real TCP pg_isready and releases only its owned SSH dropin on every outcome. Two isolated root Docker instances with actual PostgreSQL17/app proved distinct credentials, root0700 parent/root0444 file, UID1000 readability, preserved retries and native interactive setup with zero preseeded accounts. Actual database-start failure did not start Wiki and released the gate; initialized-secret loss refused replacement. Real sshd -t accepted the owned dropin. Firstboot/provenance regressions and shell checks passed. No PostgreSQL major upgrade, admin seed, credential reset or public marketplace image publication.",
       "lastReviewed": "2026-11-10"
     },
     {
       "id": "marketplace-checker-fail-closed-2026-11-10",
       "disposition": "synthesize",
-      "state": "active",
+      "state": "completed",
       "commits": [
         "387e1e2df0aa59cdcbec6c45eb41fc53281d1f0c"
       ],
       "category": "Fail closed and redact native image validation",
       "workstream": "tsEpistle-q0g.6",
-      "contract": "Beads: tsEpistle-q0g.6 (beads://tsEpistle-q0g.6), audit tsEpistle-q0g.1, epic tsEpistle-q0g. Source: https://github.com/requarks/wiki/commit/387e1e2df0aa59cdcbec6c45eb41fc53281d1f0c. Source-inferred native gap; implementation and runtime acceptance UNVERIFIED, not deployed. Finite pre-change source spans: dev/packer/scripts/999-img-check.sh:90-136,414-436. Acceptance: Treat failed apt update or inspection as critical; count actual pending security records including one record, not line pairs or descriptive text. Report residual-log paths/findings without contents; preserve warning/critical policy and existing account aggregation/key redaction. No Google Cloud Identity feature, PostgreSQL major upgrade, Caddy/Compose transplant, seeded admin, official image publication or credential reset. Main retains final verification authority.",
+      "contract": "Beads: tsEpistle-q0g.6, audit tsEpistle-q0g.1. Native checker treats failed or indeterminate apt refresh/inspection as critical, parses completed plans and actual unique security Inst records, and reports residual-log paths without contents. Fixed CSF/firewalld/Debian truthy-string service-state checks using actual exit status while retaining warning-only unconfigured-firewall policy and account/key redaction. Root-admitted whole-checker fixtures proved clean exit0 and update failure, plan failure and one-security-record exit1, with synthetic residual content absent from output. Executable checker/provenance regressions and shell checks passed. This is isolated script proof, not a public image certification or a real-cloud workflow run.",
       "lastReviewed": "2026-11-10"
     },
     {
       "id": "marketplace-owned-zero-fill-2026-11-10",
       "disposition": "synthesize",
-      "state": "active",
+      "state": "completed",
       "commits": [
         "387e1e2df0aa59cdcbec6c45eb41fc53281d1f0c"
       ],
       "category": "Bound native zero-fill lifecycle and failures",
       "workstream": "tsEpistle-q0g.7",
-      "contract": "Beads: tsEpistle-q0g.7 (beads://tsEpistle-q0g.7), audit tsEpistle-q0g.1, epic tsEpistle-q0g. Source: https://github.com/requarks/wiki/commit/387e1e2df0aa59cdcbec6c45eb41fc53281d1f0c. Source-inferred native gap; implementation and runtime acceptance UNVERIFIED, not deployed. Finite pre-change source spans: dev/packer/scripts/900-cleanup.sh:35-45. Acceptance: Own a temporary zero-fill file and remove it on every exit. Only expected device exhaustion followed by successful removal may succeed; propagate unrelated write errors, unexpected success, interruption and removal failures. Execute only in isolated image-build guests, never workstation or maintained host. No Google Cloud Identity feature, PostgreSQL major upgrade, Caddy/Compose transplant, seeded admin, official image publication or credential reset. Main retains final verification authority.",
+      "contract": "Beads: tsEpistle-q0g.7, audit tsEpistle-q0g.1. Native image cleanup owns unique fill/diagnostic paths, terminates and reaps the writer before removal and propagates write, interruption and cleanup failures. Success requires dd status1, a C-locale ENOSPC diagnostic and independent df zero available-space evidence; wording does not depend on dd saying writing. Actual native dd/df/kernel in an isolated 16MiB root and 64KiB diagnostic tmpfs proved genuine exhaustion succeeds, unexpected EOF/status0 fails, owned paths disappear and an unrelated file survives. Executable regressions cover diagnostic/status/space/removal/signal boundaries. Zero-fill was never run against workstation or maintained storage and is not a claim of physical secure erasure.",
+      "lastReviewed": "2026-11-10"
+    },
+    {
+      "id": "marketplace-bounded-apt-acquisition-2026-11-10",
+      "disposition": "synthesize",
+      "state": "completed",
+      "commits": [
+        "c549d01b9e3eda6c98d86b622d0be824ae337a1e"
+      ],
+      "category": "Bound build-only APT acquisition",
+      "workstream": "tsEpistle-q0g.8",
+      "contract": "Beads: tsEpistle-q0g.8, audit tsEpistle-q0g.1; all work planned before its implementation. Guest and resolver use an owned five-retry, 30s HTTP/HTTPS policy without relaxing snapshot/Signed-By/digest authority. Actual Noble apt2.8.3 proved both source prefixes' effective configuration, six regular/symlink/dangling collision refusals without changes and actual HCL policy removal. Signed metadata and a genuine digest-verified deb each recovered after 503/503/200. Permanent outage with populated authenticated indexes made six requests and exited100 after31.075s; tampered metadata produced native BADSIG and exited100 after one request, without validation retries. Packer1.16 syntax passed after grammar-only repair of preexisting invalid error messages. Scoped regressions, strict test typecheck/lint and shell checks passed. Implementation is at forkCheckpoint; deployed application remains d3a81806379e4686d57bc464bf05fa8c209593d2 because this follow-up changes build/test surfaces, not application behavior. No cloud build or publication claimed.",
+      "lastReviewed": "2026-11-10"
+    },
+    {
+      "id": "marketplace-vendor-agent-retirement-2026-11-10",
+      "disposition": "synthesize",
+      "state": "completed",
+      "commits": [
+        "de32880e6a217a6993887ae58dc8b12525ca27a1"
+      ],
+      "category": "Retire complete DigitalOcean vendor-agent state",
+      "workstream": "tsEpistle-q0g.9",
+      "contract": "Beads: tsEpistle-q0g.9, audit tsEpistle-q0g.1; all work planned before its implementation. Existing cleanup classifies whole-dpkg metadata, purges both exact vendor packages and verifies absence before artifact deletion; Ubuntu/Debian checker rejects package residue without a directory, failed inspection and any vendor-prefix file/symlink. Actual isolated Noble apt/dpkg passed seven cases: absent/retry, both installed, genuine config-only without directory, unpacked partial, real prerm23 failure propagating APT100 with prefix preserved then retry, corrupt metadata query2/native inspector1/critical checker with prefix preserved, and dangling symlink. Unrelated package and four file hashes survived all cases. Executed cleanup prefix stops before zero-fill, whose unchanged native kernel behavior is separately proved. Scoped regressions/types/lint/shell gates passed; resources removed. No second cleanup path, native tsEpistle agent removal or public marketplace certification.",
       "lastReviewed": "2026-11-10"
     }
   ],
@@ -6650,8 +6674,8 @@
         "authoritative-oauth2-membership-2026-11-10",
         "complete-ldap-membership-evidence-2026-11-10"
       ],
-      "classification": "proposed",
-      "reason": "Synthesize three native membership-safety targets, not the Google Cloud Identity feature. Reference rejects server-side label queries but silently filters inaccessible groups; it is not proof of directory-wide complete membership. Native strict claims, generic OAuth2 transactional authority and LDAP detectable completeness are separate source-inferred lessons. Source URL: https://github.com/requarks/wiki/commit/750f664a3b56ed9f171c2667d0d0c150f628598f. Audit tsEpistle-q0g.1; frozen rubric SHA256 97daa20de8c81f1c2d34c3589d41ce362cdd83578f5a7df7cdfe023f0d4891d1. Bulk judge counts: direct_candidate=2, lesson_candidate=1; prefilter removals=0, truncations=0, errors=0. All three flagged; complete patches read and manually inspected. Final evidence overrides automated labels; no runtime verification claimed."
+      "classification": "accepted-rewrite",
+      "reason": "Synthesized three completed native membership-safety targets, not Google Cloud Identity groups. Google reference silently filters inaccessible groups: https://docs.cloud.google.com/identity/docs/reference/rest/v1/groups.memberships/searchDirectGroups; pagination is not directory-wide visibility proof. Strict claims, transactional generic OAuth2 authority and detectable LDAP completeness are separately implemented and verified. Initial three-commit batch jdgb-15c849f069bd60c0 used frozen rubric SHA256 97daa20de8c81f1c2d34c3589d41ce362cdd83578f5a7df7cdfe023f0d4891d1: direct_candidate2, lesson_candidate1, no prefilter exclusions/truncations/errors; all three complete patches manually escalated. Native PostgreSQL25, cross-instance session10, actual LDAP205 and six browser S256-PKCE transitions passed. App source d3a81806379e4686d57bc464bf05fa8c209593d2/image sha256:05a911a66ca2e2f5c135679e73ff8d8688117c6ee3eff9ebb1632612a954636c was app-only deployed; maintained HTTPS login, unchanged PostgreSQL/migrations/core counts, runtime environment/config/mounts/keys/capabilities/ports and archived layer bytes/UID/GID/modes verified. No external tenant or public publication claim. Source: https://github.com/requarks/wiki/commit/750f664a3b56ed9f171c2667d0d0c150f628598f."
     },
     {
       "commit": "387e1e2df0aa59cdcbec6c45eb41fc53281d1f0c",
@@ -6660,14 +6684,30 @@
         "marketplace-checker-fail-closed-2026-11-10",
         "marketplace-owned-zero-fill-2026-11-10"
       ],
-      "classification": "proposed",
-      "reason": "Split three native lifecycle, checker and cleanup lessons. Preserve native digest-pinned PostgreSQL17, interactive administrator setup and architecture; no PG18 upgrade, Caddy/Compose transplant or admin seed. Upstream zero-fill shares the unsafe failure pattern; synthesize a safer native contract rather than copy it. Source URL: https://github.com/requarks/wiki/commit/387e1e2df0aa59cdcbec6c45eb41fc53281d1f0c. Audit tsEpistle-q0g.1; frozen rubric SHA256 97daa20de8c81f1c2d34c3589d41ce362cdd83578f5a7df7cdfe023f0d4891d1. Bulk judge counts: direct_candidate=2, lesson_candidate=1; prefilter removals=0, truncations=0, errors=0. All three flagged; complete patches read and manually inspected. Final evidence overrides automated labels; no runtime verification claimed."
+      "classification": "accepted-rewrite",
+      "reason": "Synthesized and completed native firstboot, fail-closed/redacted checker and owned zero-fill lifecycle lessons rather than transplanting Ubuntu26/PG18, mutable images, Caddy/Compose or administrator seeding. Actual isolated root Docker firstboot on two instances, whole-checker success/failure fixtures, sshd syntax and bounded native dd/df/kernel exhaustion/EOF proof passed, alongside scoped executable regressions and shell checks. These are script/fixture proofs, not a public marketplace certification or cloud workflow run. Initial batch jdgb-15c849f069bd60c0 used unchanged rubric SHA256 97daa20de8c81f1c2d34c3589d41ce362cdd83578f5a7df7cdfe023f0d4891d1: direct_candidate2, lesson_candidate1; zero prefilter removals/truncations/errors; all three complete patches manually inspected and final native evidence overrides labels. Source: https://github.com/requarks/wiki/commit/387e1e2df0aa59cdcbec6c45eb41fc53281d1f0c."
     },
     {
       "commit": "161c93af7723290b3a49c7d42b3d64f6d4c7921d",
       "candidateIds": [],
       "classification": "already-covered",
       "reason": "Already satisfied/superseded: public main-only relay delegates to the actual private controller main revision 4a928de4740c411f5768c922f901cc4fc34dd444, read by parent through gh API. marketplace.yml pins hashicorp/setup-packer@ce93c3c08a6c2ff2275bf4b54ff0d9a75f6c9789 (v3.4.0), installing Packer1.16.0, with no Hashicorp apt install. Native scoped Signed-By Docker apt/snapshot sources retain the trust boundary. No private edits or workflow runs performed; no unavailable-prerequisite claim. Source URL: https://github.com/requarks/wiki/commit/161c93af7723290b3a49c7d42b3d64f6d4c7921d. Audit tsEpistle-q0g.1; frozen rubric SHA256 97daa20de8c81f1c2d34c3589d41ce362cdd83578f5a7df7cdfe023f0d4891d1. Bulk judge counts: direct_candidate=2, lesson_candidate=1; prefilter removals=0, truncations=0, errors=0. All three flagged; complete patches read and manually inspected. Final evidence overrides automated labels; no runtime verification claimed."
+    },
+    {
+      "commit": "c549d01b9e3eda6c98d86b622d0be824ae337a1e",
+      "candidateIds": [
+        "marketplace-bounded-apt-acquisition-2026-11-10"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Freshness extension batch jdgb-15c86c726e7d6166 classified both complete arrivals direct_candidate; no exclusions/truncations/errors, unchanged rubric SHA256 97daa20de8c81f1c2d34c3589d41ce362cdd83578f5a7df7cdfe023f0d4891d1. Both were manually inspected. Native guest and resolver acquisition bounds, strict refresh and policy lifecycle are implemented and verified in tsEpistle-q0g.8. Real signed APT recovered transient metadata/package failures, rejected exhausted requests despite populated indexes and rejected BADSIG without retrying validation; collisions and actual HCL removal passed. Packer1.16 syntax, scoped tests/typechecks/lint/shell passed. Cumulative intake: five manually inspected commits, four direct_candidate plus one lesson_candidate, eight implemented/verified native targets. Source: https://github.com/requarks/wiki/commit/c549d01b9e3eda6c98d86b622d0be824ae337a1e."
+    },
+    {
+      "commit": "de32880e6a217a6993887ae58dc8b12525ca27a1",
+      "candidateIds": [
+        "marketplace-vendor-agent-retirement-2026-11-10"
+      ],
+      "classification": "accepted-rewrite",
+      "reason": "Both extension arrivals manually inspected after jdgb-15c86c726e7d6166, with zero exclusions/truncations/errors under unchanged rubric SHA256 97daa20de8c81f1c2d34c3589d41ce362cdd83578f5a7df7cdfe023f0d4891d1. Fixed native droplet-agent-only retirement and directory-only false-clean validation together in tsEpistle-q0g.9, preserving unrelated state and existing zero-fill behavior. Seven actual Noble apt/dpkg cases proved absent/installed/config-only/partial states, real maintainer-script failure and retry, corrupt metadata failure and dangling-symlink rejection; executable regressions and scoped gates passed. Build-only source checkpoint is recorded above; no new deployed application behavior or public cloud-image certification is claimed. Source: https://github.com/requarks/wiki/commit/de32880e6a217a6993887ae58dc8b12525ca27a1."
     }
   ]
 }
