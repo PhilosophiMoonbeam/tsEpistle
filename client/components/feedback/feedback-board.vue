@@ -62,7 +62,14 @@ function fromUrl() {
   categoryIds.value = query.categoryIds ? [...query.categoryIds] : []
   limit.value = query.limit
 }
-function updateUrl() { const url = new URL(window.location.href); for (const key of queryKeys) url.searchParams.delete(key); for (const [key, value] of new URLSearchParams(feedbackQueryString(query))) url.searchParams.set(key, value); window.history.pushState(null, '', url); }
+function updateUrl() {
+  const url = new URL(window.location.href)
+  for (const key of queryKeys) url.searchParams.delete(key)
+  for (const [key, value] of new URLSearchParams(feedbackQueryString(query))) url.searchParams.set(key, value)
+  // This is query state owned by the current native document, not a new page.
+  window.history.pushState({ ...window.history.state }, '', url)
+  window.dispatchEvent(new CustomEvent('wiki:navigation', { detail: { url: url.href } }))
+}
 function applyFilters() {
   try {
     query = normalizeFeedbackQuery({ q: search.value, sort: sort.value, limit: limit.value,

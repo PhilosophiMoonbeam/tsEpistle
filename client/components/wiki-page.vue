@@ -102,6 +102,7 @@ export default defineComponent({
       contentHtml: '',
       commentsHtml: '',
       navigationKey: 0,
+      navigationDocumentKey: crypto.randomUUID(),
       navigationPending: false,
       readerDisposed: false,
       currentUrl: window.location.href,
@@ -143,6 +144,8 @@ export default defineComponent({
       flush: 'sync',
       handler() {
         this.navigationAuthorizationGeneration += 1
+        // History from a retired authority must not retain the current reader.
+        this.navigationDocumentKey = crypto.randomUUID()
         this.navigationSequence += 1
         this.navigationAbortController?.abort()
         this.navigationAbortController = null
@@ -191,6 +194,9 @@ export default defineComponent({
       const initializingIdentity = accountId === 0 && authVersion === 0 && !wikiStore.user.authenticated &&
         wikiStore.authRefreshPending && !wikiStore.authRefreshSettled && wikiStore.authRefreshOutcome === null
       const authorizationGeneration = this.navigationAuthorizationGeneration
+      const initialPage = this.currentPage
+      const initialUrl = this.currentUrl
+      const initialDocumentKey = this.navigationDocumentKey
       let installedIdentity: string | null = null
       const stopIdentityWatch = initializingIdentity ? watch(() => wikiStore.user, user => {
         // Bind the profile installed before outcome observers can mutate it.
@@ -214,6 +220,11 @@ export default defineComponent({
         if ((outcome !== 'authenticated' && outcome !== 'anonymous') || outcome !== wikiStore.authRefreshOutcome ||
           verifiedNavigationIdentity() === null || this.navigationAuthorizationGeneration !== authorizationGeneration + 1 ||
           installedIdentity !== JSON.stringify([wikiStore.user.id, wikiStore.user.authVersion, wikiStore.offlineIdentityEpoch])) return
+        // The first verified publication admits this still-mounted cold reader,
+        // not an old account's representation or any earlier history entry.
+        if (this.currentPage.spaNavigation && this.currentPage === initialPage &&
+          this.currentUrl === initialUrl && window.location.href === initialUrl &&
+          window.history.state?.[NAVIGATION_STATE_KEY] === initialDocumentKey) this.saveCurrentHistoryScroll()
       } else if (accountId !== wikiStore.user.id || authVersion !== wikiStore.user.authVersion ||
         identityEpoch !== wikiStore.offlineIdentityEpoch) return
       recordPageVisit(pageId, capturePageWorkingSetScope())
@@ -236,7 +247,7 @@ export default defineComponent({
       if (view === 'talk') destination.hash = 'discussion'
       else if (view === 'links') destination.hash = 'page-links'
       else if (destination.hash === '#discussion' || destination.hash.startsWith('#comment-post-id-') || destination.hash === '#page-links') destination.hash = ''
-      window.history.pushState({ ...window.history.state, [NAVIGATION_STATE_KEY]: true, scrollY: window.scrollY }, '', destination)
+      window.history.pushState({ ...window.history.state, [NAVIGATION_STATE_KEY]: this.navigationDocumentKey, scrollY: window.scrollY }, '', destination)
       this.currentUrl = destination.href
       this.activePageView = view
       await nextTick()
@@ -262,9 +273,17 @@ export default defineComponent({
     handleReaderLocation(): void {
       const destination = new URL(window.location.href)
       const current = new URL(this.currentUrl)
-      if (destination.pathname === current.pathname && destination.hash === current.hash && pageQueryWithoutGlossary(destination) === pageQueryWithoutGlossary(current)) {
+      if (verifiedNavigationIdentity() !== null && (this.ownsHistoryDocument(destination) ||
+        (destination.pathname === current.pathname && destination.hash === current.hash && pageQueryWithoutGlossary(destination) === pageQueryWithoutGlossary(current)))) {
         this.currentUrl = destination.href
       }
+    },
+    ownsHistoryDocument(destination: URL): boolean {
+      const current = new URL(this.currentUrl)
+      // Only a native consumer carrying this representation's history ownership
+      // may restore query state without loading a new canonical representation.
+      return destination.origin === current.origin && destination.pathname === current.pathname &&
+        window.history.state?.[NAVIGATION_STATE_KEY] === this.navigationDocumentKey
     },
     saveCurrentHistoryScroll(): void {
       const currentState = typeof window.history.state === 'object' && window.history.state !== null
@@ -272,7 +291,7 @@ export default defineComponent({
         : {}
       window.history.replaceState({
         ...currentState,
-        [NAVIGATION_STATE_KEY]: true,
+        [NAVIGATION_STATE_KEY]: this.navigationDocumentKey,
         scrollY: window.scrollY
       }, '', window.location.href)
     },
@@ -313,12 +332,19 @@ export default defineComponent({
         identity === verifiedNavigationIdentity()
 
       const current = new URL(this.currentUrl)
-      if (destination.pathname === current.pathname && pageQueryWithoutGlossary(destination) === pageQueryWithoutGlossary(current)) {
+      const sameDocumentHistory = options.popState && this.ownsHistoryDocument(destination)
+      if (sameDocumentHistory || (destination.pathname === current.pathname && pageQueryWithoutGlossary(destination) === pageQueryWithoutGlossary(current))) {
+        if (sameDocumentHistory) {
+          this.navigationSequence += 1
+          this.navigationAbortController?.abort()
+          this.navigationAbortController = null
+          this.navigationPending = false
+        }
         const glossaryOnly = destination.hash === current.hash && destination.search !== current.search
         this.activePageView = pageViewForUrl(destination, this.linksVisible)
         if (!options.popState) {
           this.saveCurrentHistoryScroll()
-          window.history.pushState({ ...window.history.state, [NAVIGATION_STATE_KEY]: true, scrollY: window.scrollY }, '', destination)
+          window.history.pushState({ ...window.history.state, [NAVIGATION_STATE_KEY]: this.navigationDocumentKey, scrollY: window.scrollY }, '', destination)
         }
         this.currentUrl = destination.href
         await nextTick()
@@ -366,7 +392,7 @@ export default defineComponent({
 
         if (!options.popState) {
           this.saveCurrentHistoryScroll()
-          window.history.pushState({ ...window.history.state, [NAVIGATION_STATE_KEY]: true, scrollY: 0 }, '', parsed.url)
+          window.history.pushState({ ...window.history.state, scrollY: 0 }, '', parsed.url)
         }
         this.currentPage = markRaw(parsed.payload)
         this.contentHtml = parsed.contentHtml
@@ -374,6 +400,8 @@ export default defineComponent({
         this.currentUrl = parsed.url.href
         this.activePageView = pageViewForUrl(parsed.url, this.linksVisible)
         this.navigationKey += 1
+        this.navigationDocumentKey = crypto.randomUUID()
+        window.history.replaceState({ ...window.history.state, [NAVIGATION_STATE_KEY]: this.navigationDocumentKey }, '')
         this.updateDocumentMetadata(parsed.documentTitle, parsed.description, parsed.url)
 
         await nextTick()

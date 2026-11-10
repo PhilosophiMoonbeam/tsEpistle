@@ -1,6 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { document } from '../test/browser-dom.mts'
+import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
+import type { Component } from 'vue'
+import { browserWindow, document } from '../test/browser-dom.mts'
 
 import { describe, expect, test, vi } from '../../server/test/bun-test.mts'
 import { parseWikiNavigationDocument, type WikiPagePayload } from '../helpers/wiki-navigation'
@@ -34,6 +36,8 @@ type NavigationVm = {
   contentHtml: string
   commentsHtml: string
   navigationKey: number
+  navigationDocumentKey: string
+  ownsHistoryDocument: (destination: URL) => boolean
   saveCurrentHistoryScroll: () => void
   hardNavigate: (destination: URL, popState?: boolean) => void
   updateDocumentMetadata: (title: string, description: string, url: URL) => void
@@ -55,6 +59,7 @@ type WikiPageComponentOptions = {
   }
   methods: {
     navigate: (this: NavigationVm, destination: URL, options?: NavigationOptions) => Promise<void>
+    ownsHistoryDocument: (this: NavigationVm, destination: URL) => boolean
     handleHashChange: (this: NavigationVm) => void
     focusHashThread: (this: NavigationVm) => void
     prepareFeedbackDraft: (this: NavigationVm, content: string) => Promise<void>
@@ -225,6 +230,10 @@ const navigationVm = (component = loadComponent(new Response()).component): Navi
   commentsHtml: '',
   navigationKey: 0,
   saveCurrentHistoryScroll: vi.fn(),
+  navigationDocumentKey: crypto.randomUUID(),
+  ownsHistoryDocument(destination) {
+    return component.methods.ownsHistoryDocument.call(this, destination)
+  },
   hardNavigate: vi.fn(),
   updateDocumentMetadata: vi.fn(),
   restoreScroll: vi.fn(),
@@ -572,6 +581,157 @@ describe('contextual feedback discussion handoff', () => {
       }
     })
   }
+})
+
+describe('native document history with mounted governance consumers', () => {
+  test.each(['verified', 'cold'] as const)('retains all five unsent admission fields and open details through board Back/Forward after %s startup, but retires them for real representation navigation', async startup => {
+    const originalUrl = window.location.href, originalState = window.history.state
+    const globals = ['siteConfig', 'siteLangs'].flatMap(name => [globalThis, browserWindow].map(target => ({ target, name, descriptor: Object.getOwnPropertyDescriptor(target, name) })))
+    for (const target of [globalThis, browserWindow]) {
+      Object.defineProperty(target, 'siteConfig', { configurable: true, writable: true, value: { title: 'Navigation test', lang: 'en', product: { name: 'tsEpistle', version: 'test' }, agentCsrfToken: 'navigation-test' } })
+      Object.defineProperty(target, 'siteLangs', { configurable: true, writable: true, value: [{ code: 'en', name: 'English' }] })
+    }
+    Bun.plugin({ name: 'wiki-history-governance-consumers', setup(builder) {
+      builder.onLoad({ filter: /(?:feedback-board|feedback-submit|feedback-triage|feedback-board-settings|page-governance|page-review-routing|page-lifecycle|page-selector|async-state|v-card-chin)\.vue$/ }, async ({ path: filename }) => {
+        const parsed = parse(await Bun.file(filename).text(), { filename })
+        if (parsed.errors.length) throw parsed.errors[0]
+        const id = path.basename(filename, '.vue')
+        const script = parsed.descriptor.script?.content.trim() || parsed.descriptor.scriptSetup?.content.trim()
+          ? compileScript(parsed.descriptor, { id, genDefaultAs: '__component' })
+          : { content: 'const __component = {};', bindings: {} }
+        const template = compileTemplate({ source: parsed.descriptor.template!.content, filename, id, preprocessLang: parsed.descriptor.template!.lang, preprocessOptions: { doctype: 'html' }, compilerOptions: { bindingMetadata: script.bindings, expressionPlugins: ['typescript'] } })
+        if (template.errors.length) throw template.errors[0]
+        return { loader: 'ts', contents: `${script.content}\n${template.code}\n__component.render = render;\nexport default __component;` }
+      })
+    } })
+    // Static imports cannot load these SFCs before the executable compiler plugin
+    // or the store before its browser configuration has been installed.
+    const Governance = (await import('./page-governance.vue')).default as Component
+    const CardChin = (await import('./common/v-card-chin.vue')).default as Component
+    const { createVuetify } = await import('vuetify')
+    const components = await import('vuetify/components')
+    const { pinia, wikiStore } = await import('../store/index.ts')
+    const oldUser = { ...wikiStore.user }, oldAuth = { authRefreshSettled: wikiStore.authRefreshSettled, authRefreshPending: wikiStore.authRefreshPending, authRefreshOutcome: wikiStore.authRefreshOutcome }
+    const verification = Promise.withResolvers<'authenticated'>()
+    const waitForVerification = vi.fn(() => verification.promise)
+    // Override the dependency at the reader boundary, not a reactive Pinia action
+    // descriptor: the cold reader must actually await this publication.
+    const readerAuthority = startup === 'cold' ? new Proxy(wikiStore, {
+      get(target, key, receiver) {
+        return key === 'waitForAuthRefresh' ? waitForVerification : Reflect.get(target, key, receiver)
+      }
+    }) : wikiStore
+    Object.assign(wikiStore.user, { id: startup === 'cold' ? 0 : 7, authVersion: startup === 'cold' ? 0 : 3, authenticated: startup !== 'cold' })
+    Object.assign(wikiStore, { authRefreshSettled: startup !== 'cold', authRefreshPending: startup === 'cold', authRefreshOutcome: startup === 'cold' ? null : 'authenticated' })
+    const board = { id: '11111111-1111-4111-8111-111111111111', boardPageId: 42, name: 'Reader proposals', enabled: true, boardRevision: '2', canManage: false, canSubmit: true, categories: [] }
+    const oldFetch = browserWindow.fetch
+    browserWindow.fetch = async input => new Response(JSON.stringify(String(input).endsWith('/boards') ? [board] : String(input).includes('/duplicates?') ? [] : {
+      schemaVersion: 1, board: { ...board }, items: [], total: 0, permittedTotal: 0, facets: { statuses: {}, categories: {} }, nextCursor: null, state: 'empty'
+    }), { headers: { 'Content-Type': 'application/json' } })
+    window.history.replaceState({}, '', '/en/board')
+    const { value } = response({ url: new URL('/en/board?representation=other', window.location.origin).href })
+    const { component, fetch } = loadComponent(value, wikiStore.site, readerAuthority, Vue.nextTick)
+    const host = document.createElement('div'); document.body.append(host)
+    // The large reader chrome is omitted. Its transport-readiness boundary is
+    // supplied here; board discovery, history writes, form fields and retirement
+    // are the real mounted production consumers, not keyed test doubles.
+    const app = Vue.createApp({
+      ...component,
+      render(this: NavigationVm) {
+        return Vue.h(Governance, { pageId: this.currentPage.props.pageId, sourceRevision: this.currentPage.props.sourceRevision, locale: 'en', path: 'board', ready: !this.navigationPending, writer: false, manage: false, attestationHref: '/en/board' })
+      }
+    }, { payload: 'initial-payload' })
+    app.use(pinia)
+    app.use(createVuetify({ components }))
+    app.component('v-card-chin', CardChin)
+    app.component('vue-scroll', Vue.defineComponent({ setup(_props, { slots }) { return () => Vue.h('div', slots.default?.()) } }))
+    app.config.globalProperties.$t = (key: string) => key
+    const vm = app.mount(host) as unknown as NavigationVm
+    const mountedHistoryState: unknown = window.history.state
+    vm.restoreScroll = () => undefined
+    const settle = async () => { for (let i = 0; i < 24; i++) { await Promise.resolve(); await Vue.nextTick() } }
+    const field = (label: string) => {
+      const input = [...host.querySelectorAll('label')].find(item => item.textContent?.includes(label))?.querySelector('input')
+      if (!input) throw new Error(`Missing field ${label}`)
+      return input
+    }
+    const change = (input: HTMLInputElement, value: string) => { input.value = value; input.dispatchEvent(new browserWindow.Event('input', { bubbles: true })) }
+    const traverse = async (direction: 'back' | 'forward') => {
+      const popped = Promise.withResolvers<void>()
+      window.addEventListener('popstate', () => popped.resolve(), { once: true })
+      window.history[direction]()
+      await popped.promise
+      await settle()
+    }
+    try {
+      if (startup === 'cold') {
+        expect(waitForVerification).toHaveBeenCalledTimes(1)
+        await settle()
+        expect(host.querySelector('.feedback-board')).toBeNull()
+        // Control the async publication, not history ownership. The preceding
+        // cold-start cases independently exercise the real refreshAuth action.
+        wikiStore.user = { ...wikiStore.user, id: 7, authVersion: 3, authenticated: true }
+        Object.assign(wikiStore, { authRefreshPending: false, authRefreshSettled: true, authRefreshOutcome: 'authenticated' })
+        verification.resolve('authenticated')
+      }
+      await settle()
+      const details = host.querySelector<HTMLDetailsElement>('.feedback-board > details')!
+      details.open = true
+      details.querySelector('details')!.open = true
+      change(field('Proposed title'), 'Unsent reader proposal')
+      change(field('Canonical page ID'), '19')
+      change(field('Current source revision'), '12')
+      field('Explicitly attach the page I create').click()
+      field('I deliberately attach this existing canonical page').click()
+      await settle()
+      const assertDraft = () => {
+        expect(host.querySelector<HTMLDetailsElement>('.feedback-board > details')?.open).toBe(true)
+        expect(host.querySelector<HTMLDetailsElement>('.feedback-board > details details')?.open).toBe(true)
+        expect(field('Proposed title').value).toBe('Unsent reader proposal')
+        expect(field('Canonical page ID').value).toBe('19')
+        expect(field('Current source revision').value).toBe('12')
+        expect(field('Explicitly attach the page I create').checked).toBe(true)
+        expect(field('I deliberately attach this existing canonical page').checked).toBe(true)
+      }
+      change(field('Search permitted proposals'), 'editor')
+      host.querySelector('form')!.dispatchEvent(new browserWindow.Event('submit', { bubbles: true, cancelable: true }))
+      await settle()
+      const select = host.querySelector('select')!
+      select.value = 'newest'; select.dispatchEvent(new browserWindow.Event('change', { bubbles: true }))
+      await settle()
+      assertDraft()
+      await traverse('back')
+      expect(host.querySelector('select')?.value).toBe('top')
+      expect(field('Search permitted proposals').value).toBe('editor')
+      assertDraft()
+      await traverse('forward')
+      expect(host.querySelector('select')?.value).toBe('newest')
+      assertDraft()
+      expect(fetch).not.toHaveBeenCalled()
+      // Same pathname is insufficient. Cold startup must leave its earlier
+      // pre-verification ownership retired rather than re-own every old entry.
+      const retiredState = startup === 'cold' ? mountedHistoryState : null
+      window.history.pushState(retiredState, '', '/en/board?representation=other')
+      window.dispatchEvent(new browserWindow.PopStateEvent('popstate', { state: retiredState }))
+      await settle()
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(field('Proposed title').value).toBe('')
+      expect(field('Canonical page ID').value).toBe('')
+      expect(field('Current source revision').value).toBe('')
+      expect(field('Explicitly attach the page I create').checked).toBe(false)
+      expect(field('I deliberately attach this existing canonical page').checked).toBe(false)
+      expect(host.querySelector<HTMLDetailsElement>('.feedback-board > details')?.open).toBe(false)
+    } finally {
+      app.unmount(); host.remove()
+      browserWindow.fetch = oldFetch
+      Object.assign(wikiStore.user, oldUser); Object.assign(wikiStore, oldAuth)
+      window.history.replaceState(originalState, '', originalUrl)
+      for (const { target, name, descriptor } of globals) {
+        if (descriptor) Object.defineProperty(target, name, descriptor)
+        else Reflect.deleteProperty(target, name)
+      }
+    }
+  })
 })
 
 describe('wiki page navigation response boundary', () => {
