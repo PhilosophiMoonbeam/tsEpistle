@@ -126,6 +126,7 @@ import {
 import { encryptOfflinePrivateRecord, generateOfflineReadingPairId } from ${JSON.stringify(absoluteCryptoPath)};
 import { readPrivateCorpus } from ${JSON.stringify(absoluteCryptoPath)};
 import { prepareOfflineSearchCorpus, searchPreparedOfflineDocuments } from ${JSON.stringify(fileURLToPath(new URL('../helpers/offline-search.ts', import.meta.url)))};
+import { OfflinePrivateSearchDocumentV1Schema } from ${JSON.stringify(fileURLToPath(new URL('../../shared/offline.ts', import.meta.url)))};
 
 type RawHandle = IDBDatabase;
 const handles = new Map<string, OfflineStorage>();
@@ -468,7 +469,7 @@ export async function run(operation: string, payload: Record<string, unknown> = 
       }
     }
     if (operation === 'isClosed') return { ok: true, value: storageFor(payload.id).isClosed };
-    if (operation === 'removePrivateWithForeignRows' || operation === 'replaceCoherentPrivatePair') {
+    if (operation === 'removePrivateWithForeignRows' || operation === 'replaceCoherentPrivatePair' || operation === 'prunePrivateUnselected') {
       const storage = storageFor(payload.id);
       const snapshot = payload.snapshot as never;
       const enroll = async (target: OfflineStorage, siteId: string, accountId: number, keyId: string) => {
@@ -499,6 +500,102 @@ export async function run(operation: string, payload: Record<string, unknown> = 
           expectedSessionGeneration: await target.currentSessionGeneration(), confirmSecret: () => true
         });
       };
+      if (operation === 'prunePrivateUnselected') {
+        const active = await enroll(storage, 'private-site', 1, privateKeyId);
+        active.secret.fill(0);
+        const options = { readingHandle: active.handle, expectedSessionGeneration: active.handle.sessionGeneration };
+        const source = payload.snapshot as Record<string, unknown>;
+        const selector = (pageId: number) => ({ siteId: 'private-site', pageId, locale: 'en' });
+        for (const pageId of [42, 43]) {
+          await storage.setManualOfflineIntent(selector(pageId), true, options);
+          const policy = await storage.readOfflinePolicy(options);
+          const page = policy.pages.find(page => page.pageId === pageId)!;
+          const selectors = { pageId, locale: 'en', recordRevision: 1, pairId: generateOfflineReadingPairId() };
+          const searchText = pageId === 42 ? 'retainedprivatetoken' : 'prunedprivatetoken';
+          const body = await encryptOfflinePrivateRecord(active.handle, 'snapshot', {
+            schemaVersion: 1, audience: 'private',
+            context: { canonicalOrigin: location.origin, siteId: 'private-site', accountId: 1, authVersion: 1 },
+            snapshot: { ...source, pageId, searchText }
+          }, selectors);
+          const search = await encryptOfflinePrivateRecord(active.handle, 'search', {
+            schemaVersion: 1, siteId: 'private-site', pageId, locale: 'en',
+            path: source.path, canonicalPath: source.canonicalPath, title: source.title,
+            description: source.description, searchText, capturedAt: source.capturedAt,
+            sourceRevision: source.sourceRevision, byteSize: 0
+          }, selectors);
+          await storage.putPrivateSnapshotRecords(body, search, {
+            ...options, expectedPolicyRevision: policy.state.policyRevision, expectedRecordRevision: null,
+            policyState: { ...policy.state, policyRevision: policy.state.policyRevision + 1 },
+            policyPage: { ...page, availability: 'available' }
+          });
+        }
+        await storage.recordEligibleReaderVisit(selector(99), options);
+        await storage.setManualOfflineIntent(selector(43), false, options);
+        const beforePolicy = await storage.readOfflinePolicy(options);
+        const beforeRecords = await storage.listPrivateRecords(privateKeyId, options);
+        const beforeEstimate = await storage.storageEstimate();
+        const beforeCorpusRevision = await storage.currentCorpusRevision();
+        let unselectedReadRejected = false;
+        try { await storage.readSnapshotCorpus(options); } catch { unselectedReadRejected = true; }
+        const guardErrors: string[] = [];
+        const guarded = async (operation: () => Promise<unknown>) => {
+          try { await operation(); guardErrors.push('accepted'); }
+          catch (error) { guardErrors.push(error && typeof error === 'object' && 'code' in error ? String(error.code) : 'unknown'); }
+        };
+        await guarded(() => storage.pruneUnselectedPageBodies({ ...options, expectedPolicyRevision: beforePolicy.state.policyRevision - 1 }));
+        await guarded(() => storage.pruneUnselectedPageBodies({ ...options, expectedSessionGeneration: options.expectedSessionGeneration + 1 }));
+        // A nonadvancing encrypted policy must roll back even after body deletes.
+        await guarded(() => storage.putPrivatePolicyRecords(
+          beforeRecords.filter(record => record.kind === 'policy-state' || record.kind === 'policy-page'),
+          { ...options, expectedPolicyRevision: beforePolicy.state.policyRevision, removePrivatePageIds: [43] }
+        ));
+        const rolledBackRecords = await storage.listPrivateRecords(privateKeyId, options);
+        const rolledBackEstimate = await storage.storageEstimate();
+        const rollbackPreserved =
+          JSON.stringify(serialise(rolledBackRecords)) === JSON.stringify(serialise(beforeRecords)) &&
+          rolledBackEstimate.managedBytes === beforeEstimate.managedBytes &&
+          rolledBackEstimate.snapshotCount === beforeEstimate.snapshotCount &&
+          await storage.currentCorpusRevision() === beforeCorpusRevision;
+        const removedCandidates = await storage.pruneUnselectedPageBodies({ ...options, expectedPolicyRevision: beforePolicy.state.policyRevision });
+        const afterPolicy = await storage.readOfflinePolicy(options);
+        const afterRecords = await storage.listPrivateRecords(privateKeyId, options);
+        const afterEstimate = await storage.storageEstimate();
+        const afterCorpusRevision = await storage.currentCorpusRevision();
+        const logicalBytes = (record: typeof beforeRecords[number]) => {
+          const { nonce, ciphertext, ...metadata } = record;
+          return new TextEncoder().encode(JSON.stringify({
+            ...metadata, nonceBytes: nonce.byteLength, ciphertextBytes: ciphertext.byteLength
+          })).byteLength + nonce.byteLength + ciphertext.byteLength;
+        };
+        const visitOnlyCandidates = await storage.pruneUnselectedPageBodies({ ...options, expectedPolicyRevision: afterPolicy.state.policyRevision });
+        const visitOnlyPolicy = await storage.readOfflinePolicy(options);
+        const recovered = await storage.readSnapshotCorpus(options);
+        const retainedCorpus = await readPrivateCorpus(active.handle, storage);
+        const preparedSearch = await prepareOfflineSearchCorpus(retainedCorpus.searchDocuments.map(value => {
+          const { sourceRevision, ...document } = OfflinePrivateSearchDocumentV1Schema.parse(value);
+          return document;
+        }));
+        const retainedSearch = searchPreparedOfflineDocuments(preparedSearch, 'retainedprivatetoken');
+        const prunedSearch = searchPreparedOfflineDocuments(preparedSearch, 'prunedprivatetoken');
+        return { ok: true, value: {
+          beforeBodyPageIds: beforeRecords.filter(record => record.kind === 'snapshot').map(record => record.pageId),
+          unselectedReadRejected, guardErrors, rollbackPreserved, removedCandidates, visitOnlyCandidates,
+          revisionBefore: beforePolicy.state.policyRevision, revisionAfter: afterPolicy.state.policyRevision,
+          visitOnlyRevision: visitOnlyPolicy.state.policyRevision,
+          snapshotCountBefore: beforeEstimate.snapshotCount, snapshotCountAfter: afterEstimate.snapshotCount,
+          corpusRevisionBefore: beforeCorpusRevision, corpusRevisionAfter: afterCorpusRevision,
+          visitOnlyCorpusRevision: await storage.currentCorpusRevision(),
+          accountingMatches: afterEstimate.managedBytes === beforeEstimate.managedBytes +
+            afterRecords.reduce((total, record) => total + logicalBytes(record), 0) -
+            beforeRecords.reduce((total, record) => total + logicalBytes(record), 0),
+          selectedPreserved: JSON.stringify(serialise(afterRecords.filter(record => record.pageId === 42 && (record.kind === 'snapshot' || record.kind === 'search')))) ===
+            JSON.stringify(serialise(beforeRecords.filter(record => record.pageId === 42 && (record.kind === 'snapshot' || record.kind === 'search')))),
+          retainedBodies: recovered.snapshots.map(record => record.pageId),
+          retainedSearch: retainedSearch.results.map(result => result.document.pageId),
+          prunedSearchMatches: prunedSearch.results.length,
+          retainedPolicy: visitOnlyPolicy.pages.map(page => ({ pageId: page.pageId, manual: page.manual, excluded: page.excluded }))
+        } };
+      }
       if (operation === 'replaceCoherentPrivatePair') {
         const active = await enroll(storage, 'private-site', 1, privateKeyId);
         active.secret.fill(0);
@@ -1159,6 +1256,55 @@ describe('real IndexedDB offline storage adapter', () => {
     expect(result.refreshedOldMatches).toBe(0)
     expect(result.refreshedNewMatches).toBe(1)
     expect(result.replacementText).toBe('newprivatetoken')
+  })
+
+  test('prunes a genuinely deselected encrypted body with advancing policy CAS and exact accounting', async () => {
+    const name = freshDatabase('private-unselected-pruning')
+    await succeeded('open', { id: 'storage', name })
+    const result = await succeeded<{
+      beforeBodyPageIds: number[]
+      unselectedReadRejected: boolean
+      guardErrors: string[]
+      rollbackPreserved: boolean
+      removedCandidates: number
+      visitOnlyCandidates: number
+      revisionBefore: number
+      revisionAfter: number
+      visitOnlyRevision: number
+      snapshotCountBefore: number
+      snapshotCountAfter: number
+      corpusRevisionBefore: number
+      corpusRevisionAfter: number
+      visitOnlyCorpusRevision: number
+      accountingMatches: boolean
+      selectedPreserved: boolean
+      retainedBodies: number[]
+      retainedSearch: number[]
+      prunedSearchMatches: number
+      retainedPolicy: Array<{ pageId: number; manual: boolean; excluded: boolean }>
+    }>('prunePrivateUnselected', { id: 'storage', snapshot: makeSnapshot() })
+    expect(result.beforeBodyPageIds).toEqual([42, 43])
+    expect(result.unselectedReadRejected).toBe(true)
+    expect(result.guardErrors).toEqual(['policy-revision-fenced', 'generation-fenced', 'transaction'])
+    expect(result.rollbackPreserved).toBe(true)
+    expect(result.removedCandidates).toBe(2)
+    expect(result.visitOnlyCandidates).toBe(2)
+    expect(result.revisionAfter).toBe(result.revisionBefore + 1)
+    expect(result.visitOnlyRevision).toBe(result.revisionAfter + 1)
+    expect(result.snapshotCountBefore).toBe(2)
+    expect(result.snapshotCountAfter).toBe(1)
+    expect(result.corpusRevisionAfter).toBe(result.corpusRevisionBefore + 1)
+    expect(result.visitOnlyCorpusRevision).toBe(result.corpusRevisionAfter)
+    expect(result.accountingMatches).toBe(true)
+    expect(result.selectedPreserved).toBe(true)
+    expect(result.retainedBodies).toEqual([42])
+    expect(result.retainedSearch).toEqual([42])
+    expect(result.prunedSearchMatches).toBe(0)
+    expect(result.retainedPolicy).toEqual([
+      { pageId: 42, manual: true, excluded: false },
+      { pageId: 43, manual: false, excluded: false },
+      { pageId: 99, manual: false, excluded: false }
+    ])
   })
 
   test('removes active private pages without inspecting or changing foreign encrypted and opaque vault rows', async () => {

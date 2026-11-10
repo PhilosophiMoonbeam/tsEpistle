@@ -331,6 +331,10 @@ export async function run(operation, payload = {}) {
         await storage.setOfflineTagSubscriptions(['alpha', 'beta'], { readingHandle: privateHandle });
       } else {
         await storage.setManualOfflineIntent(privateSelector(1), true, { readingHandle: privateHandle });
+        if (kind === 'private-pruning') {
+          await storage.setAutomaticSavingEnabled(false, { readingHandle: privateHandle });
+          await storage.recordEligibleReaderVisit(privateSelector(99), { readingHandle: privateHandle });
+        }
       }
       if (kind === 'private-quota') {
         const originalPut = IDBObjectStore.prototype.put;
@@ -652,6 +656,8 @@ export async function run(operation, payload = {}) {
       if (kind === 'private-denied-403' || kind === 'private-denied-404') result = await coordinator.reconcile('manual');
       if (kind === 'private-manual') {
         await coordinator.reconcile('manual');
+      }
+      if (kind === 'private-manual' || kind === 'private-pruning') {
         privateCorpus = await storage.readSnapshotCorpus({ readingHandle: privateHandle });
       }
     } else if (kind === 'dispose') {
@@ -1174,6 +1180,21 @@ describe('foreground offline sync coordinator', () => {
         ? ['Page 200', 'docs/en/200', '<p>Page 200</p>', 'alpha', 'beta', currentTime]
         : ['Page 1', 'docs/en/1', '<p>Page 1</p>', currentTime]
     for (const secret of secrets) expect(persisted).not.toContain(secret)
+  })
+
+  test('completes private synchronization past a nonempty visit-only pruning policy CAS', async () => {
+    const run = await runScenario('private-pruning')
+    expect(run.result.status).toBe('complete')
+    expect(run.result.saved).toBe(1)
+    expect(run.result.failed).toBe(0)
+    expect(run.result.removed).toBe(0)
+    expect(run.privatePolicy?.state.syncDiagnostics).toMatchObject({ status: 'complete', lastError: null })
+    expect(run.privateCorpus?.snapshots).toMatchObject([{ pageId: 1, locale: 'en', snapshot: { sourceRevision: 'revision-1' } }])
+    expect(run.privateRecords?.filter(record => record.kind === 'snapshot' || record.kind === 'search')).toHaveLength(2)
+    expect(run.privatePolicy?.pages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ pageId: 1, manual: true, availability: 'available' }),
+      expect.objectContaining({ pageId: 99, manual: false, automatic: false, tag: false, excluded: false })
+    ]))
   })
 
   test('keeps encrypted private body search independent of the default case-conversion locale', async () => {

@@ -350,6 +350,8 @@ Bulk saved-page removal requires unlocking an existing private vault. It removes
 
 Private mutations select the active vault by its physical IndexedDB key prefix, not a record-supplied vault index. Malformed selectors inside that prefix still fail closed. Foreign encrypted or opaque vault rows are neither interpreted as active-vault records nor rewritten, and their existing byte accounting is preserved; incomplete accounting remains incomplete after scoped removal.
 
+Private unselected-body pruning authenticates the current vault's policy independently of body readability, advances that policy's compare-and-swap revision, and removes only unselected, nonexcluded candidates with their search records and byte accounting in one transaction. A deselected retained body remains unreadable until pruning completes; selected bodies and their recovery material are retained.
+
 ### 8.1 Foreground snapshot synchronization
 
 An app-owned foreground coordinator owns offline snapshot reconciliation. It coalesces startup, online, foreground, manual-download, automatic-policy, and tag-subscription triggers, and runs only while the page is visible and the network is reachable. Each pass captures the session generation and policy revision; generation/revision fences reject stale writes and request a fresh pass. The service worker remains shell/cache-only and never replays snapshot mutations in the background.

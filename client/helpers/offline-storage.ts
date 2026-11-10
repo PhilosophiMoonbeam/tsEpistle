@@ -1372,7 +1372,17 @@ export class OfflineStorage {
     if (options.expectedSessionGeneration !== undefined && options.expectedSessionGeneration !== handle.sessionGeneration)
       throw new OfflineGenerationFencedError(options.expectedSessionGeneration, handle.sessionGeneration)
     try {
-      const corpus = await readPrivateCorpus(handle, this, options.expectedCorpusRevision)
+      // Policy remains authenticated independently of body eligibility so a
+      // deselected retained body can be pruned without making it readable.
+      const corpus = await readPrivateCorpus(
+        handle,
+        {
+          currentCorpusRevision: () => this.currentCorpusRevision(),
+          listPrivateRecords: async (keyId, readOptions) =>
+            (await this.listPrivateRecords(keyId, readOptions)).filter(record => record.kind === 'policy-state' || record.kind === 'policy-page')
+        },
+        options.expectedCorpusRevision
+      )
       let state: OfflinePolicyState | null = null
       const pages: OfflinePagePolicyRecord[] = []
       for (const value of corpus.policies) {
@@ -2339,14 +2349,19 @@ export class OfflineStorage {
   async pruneUnselectedPageBodies(options: OfflineStorageGenerationOptions = {}): Promise<number> {
     this.assertOpen(true)
     if (options.readingHandle) {
-      const candidates = (await this.readPrivatePolicy(options.readingHandle, options)).pages.filter(
-        page => !page.manual && !page.automatic && !page.tag && !page.excluded
-      )
-      await this.mutatePrivatePolicy(options.readingHandle, options, current => ({
-        policy: current,
-        removePageIds: candidates.map(page => page.pageId)
-      }))
-      return candidates.length
+      let removedCount = 0
+      await this.mutatePrivatePolicy(options.readingHandle, options, current => {
+        const candidates = current.pages.filter(page => !page.manual && !page.automatic && !page.tag && !page.excluded)
+        removedCount = candidates.length
+        return {
+          policy: {
+            state: candidates.length > 0 ? makePolicyState({ ...current.state, policyRevision: current.state.policyRevision + 1 }) : current.state,
+            pages: current.pages
+          },
+          removePageIds: candidates.map(page => page.pageId)
+        }
+      })
+      return removedCount
     }
     const expectedGeneration = await this.expectedGeneration(options.expectedSessionGeneration)
     const expectedPolicy = await this.expectedPolicyRevision(options.expectedPolicyRevision)

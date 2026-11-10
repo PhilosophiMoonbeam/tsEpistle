@@ -1137,7 +1137,7 @@ export class OfflineSyncCoordinator {
       if (fence) return this.fencedResult(policy, result)
       this.assertCurrent(context, true)
       const corpusBeforePrune = bodyKeys
-      await this.awaitCurrent(
+      const prunedPages = await this.awaitCurrent(
         this.options.storage.pruneUnselectedPageBodies(
           storageOptions({
             expectedSessionGeneration: generation,
@@ -1147,6 +1147,7 @@ export class OfflineSyncCoordinator {
         context,
         true
       )
+      if (privateStorageHandle && prunedPages > 0) revision += 1
       const corpusAfterPrune = bodyKeysFromCorpus(
         await this.awaitCurrent(
           this.options.storage.readSnapshotCorpus(storageOptions({ expectedSessionGeneration: generation, expectedPolicyRevision: revision })),

@@ -499,6 +499,9 @@ export const examples: readonly Example[] = [
         const client = new AxMCPClient(legacy, { namespace: 'legacy_sse', era: 'legacy',
           onResourceUpdated: (uri) => { observed.resolve(uri); } });
         let timer: NodeJS.Timeout | undefined;
+        let structuredContent: unknown;
+        let streamFailed = false;
+        let streamFailure: unknown;
         try {
           await client.init();
           const result = await client.callTool('lookup', { sku: 'SKU-42' });
@@ -507,8 +510,7 @@ export const examples: readonly Example[] = [
           timer = setTimeout(() => { observed.reject(new Error('Legacy SSE update deadline exceeded')); }, 5000);
           assert.equal(await observed.promise, 'inventory://policy');
           await client.unsubscribeResource('inventory://policy');
-          return { binding: 'legacy HTTP/SSE', result: result.structuredContent, resourceUpdate: true,
-            proof: 'Real authenticated GET endpoint negotiation plus POST requests and SSE notification. New remote deployments should select Streamable HTTP instead.' };
+          structuredContent = result.structuredContent;
         } finally {
           clearTimeout(timer);
           closing = true;
@@ -517,10 +519,14 @@ export const examples: readonly Example[] = [
             const outcome = await streamDone;
             if (outcome?.status === 'rejected' &&
               !(outcome.closedByHost && outcome.reason instanceof Error && outcome.reason.name === 'AbortError')) {
-              throw outcome.reason;
+              streamFailed = true;
+              streamFailure = outcome.reason;
             }
           }
         }
+        if (streamFailed) throw streamFailure;
+        return { binding: 'legacy HTTP/SSE', result: structuredContent, resourceUpdate: true,
+          proof: 'Real authenticated GET endpoint negotiation plus POST requests and SSE notification. New remote deployments should select Streamable HTTP instead.' };
       }, { legacySSE: true });
     },
   },

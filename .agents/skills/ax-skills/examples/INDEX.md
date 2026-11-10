@@ -81,7 +81,7 @@ Supported APIs and exported modes describe intended scope. Only recorded command
 | [35-ucp.ts](examples/35-ucp.ts) | Verified commerce webhooks, single-member freshness binding and native UCP inheritance | [Event runtime](references/event-runtime.md#ucp-adapter), [Flows](references/flow.md#native-mcpucp) |
 | [19-mcp.ts](examples/19-mcp.ts) | Native MCP operations/catalogs; `function-overrides` covers legacy-wrapper compatibility only, leaving native/raw catalogs unchanged | [MCP](references/mcp.md) |
 | [20-mcp-host.ts](examples/20-mcp-host.ts) | Host capabilities, events and authority | [MCP](references/mcp.md) |
-| [29-mcp-oauth.ts](examples/29-mcp-oauth.ts) | OAuth ownership and protocol fixtures | [MCP](references/mcp.md) |
+| [29-mcp-oauth.ts](examples/29-mcp-oauth.ts) | OAuth ownership and protocol fixtures; unexpected legacy SSE listener errors propagate after successful operations rather than from `finally` | [MCP](references/mcp.md) |
 | [21-audio.ts](examples/21-audio.ts) | Batch and structured audio fixtures | [Audio](references/audio.md) |
 | [22-audio-live.ts](examples/22-audio-live.ts) | Realtime protocol fixtures, not a live microphone | [Audio](references/audio.md) |
 | [31-audio-streams.ts](examples/31-audio-streams.ts) | Streaming audio and turn lifecycle fixtures | [Audio](references/audio.md) |
