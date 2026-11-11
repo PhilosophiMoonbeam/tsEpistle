@@ -23,6 +23,8 @@ This mode section governs whether repository contribution, deployment, recovery,
 
 Git commits, pushes, and Dolt remote sync require explicit user authorization or explicit repository team-maintainer opt-in. Current no-commit/no-push instructions override opt-in. A deployment request, Sprint workflow, or Beads guidance grants no such permission.
 
+Read the `URL`, `USER`, and `PASS` key-values from: `.agent-ready_login` to access the relevant container.
+
 <!-- trail:start -->
 ## Trail — repo context graph
 
